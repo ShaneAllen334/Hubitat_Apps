@@ -6,7 +6,7 @@ definition(
     name: "Advanced Ceiling Fan Climate Control",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Multi-zone ceiling fan controller supporting both Multi-Speed and Simple fans, with Wet/Dry Bulb options, configurable speed thresholds, dynamic occupancy, and Smart Lighting Relay overrides.",
+    description: "Multi-zone ceiling fan controller supporting 3-Speed, 6-Speed, and Simple fans, with Wet/Dry Bulb options, configurable speed thresholds, dynamic occupancy, and Smart Lighting Relay overrides.",
     category: "Comfort",
     iconUrl: "",
     iconX2Url: "",
@@ -48,12 +48,14 @@ def mainPage() {
             def isNightDash = nightModes ? (nightModes as List).contains(location.mode) : false
             
             for (int i = 1; i <= 8; i++) {
-                def fanType = settings["z${i}FanType"] ?: "speed"
-                def hasDevice = (fanType == "speed" && settings["z${i}Fan"]) || (fanType == "switch" && settings["z${i}SimpleFan"])
+                def rawFanType = settings["z${i}FanType"] ?: "speed3"
+                def fanType = (rawFanType == "speed") ? "speed3" : rawFanType // Backward compatibility
+                def hasDevice = (fanType.startsWith("speed") && settings["z${i}Fan"]) || (fanType == "switch" && settings["z${i}SimpleFan"])
                 
                 if (settings["enableZ${i}"] && hasDevice) {
                     hasZones = true
                     def zName = settings["z${i}Name"] ?: "Room ${i}"
+            
                     def tDev = settings["z${i}Temp"]
                     def hDev = settings["z${i}Hum"]
                     def cMethod = settings["z${i}ControlMethod"] ?: "wetBulb"
@@ -85,8 +87,8 @@ def mainPage() {
                     def relayDisplay = ""
                     def gnStatus = ""
                     
-                    if (fanType == "speed") {
-                        typeDisplay = "Multi-Speed"
+                    if (fanType.startsWith("speed")) {
+                        typeDisplay = (fanType == "speed6") ? "6-Speed Fan" : "3-Speed Fan"
                         def fDev = settings["z${i}Fan"]
                         def pDev = settings["z${i}Power"]
                         def zSpeed = fDev.currentValue("speed") ?: "unknown"
@@ -152,14 +154,24 @@ def mainPage() {
             input "overcastSwitch", "capability.switch", title: "Virtual Overcast Switch (Keeps relays ON if Occupied)", required: false
         }
 
-        section("<b>Multi-Speed Fan Temperature Thresholds (Global)</b>") {
+        section("<b>3-Speed Fan Thresholds (Global)</b>") {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Defines how far the room temperature must rise above the target setpoint to trigger each multi-speed fan step. (Anything above your Medium threshold will trigger High speed).</div>"
             input "thresholdLow", "decimal", title: "Delta for Low Speed (+°F)", required: true, defaultValue: 1.5
             input "thresholdMed", "decimal", title: "Delta for Medium Speed (+°F)", required: true, defaultValue: 3.0
         }
 
+        section("<b>6-Speed Fan Thresholds (Global)</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Specific temperature thresholds for 6-Speed fans.</div>"
+            input "t6S1", "decimal", title: "Speed 1: Low (+°F)", required: true, defaultValue: 0.5
+            input "t6S2", "decimal", title: "Speed 2: Med-Low (+°F)", required: true, defaultValue: 1.0
+            input "t6S3", "decimal", title: "Speed 3: Medium (+°F)", required: true, defaultValue: 1.5
+            input "t6S4", "decimal", title: "Speed 4: Med-High (+°F)", required: true, defaultValue: 2.0
+            input "t6S5", "decimal", title: "Speed 5: High (+°F)", required: true, defaultValue: 2.5
+            paragraph "<i>Anything above Speed 5 triggers Speed 6 (Auto/Max).</i>"
+        }
+
         section("<b>RF / Bond Fan Reliability & Relays</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> <b>1) Stepping:</b> Prevents RF fans from missing commands. <b>2) Wiggle:</b> Hourly routine to drop the fan one speed and bump it back. <b>3) Spin-Down:</b> Delays power relay shutoff until blades stop. <i>(These settings only apply to Multi-Speed fans)</i></div>"
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> <b>1) Stepping:</b> Prevents RF fans from missing commands.<br><b>2) Wiggle:</b> Hourly routine to drop the fan one speed and bump it back.<br><b>3) Spin-Down:</b> Delays power relay shutoff until blades stop. <i>(These settings only apply to Multi-Speed fans)</i></div>"
             input "rfStepDelay", "number", title: "Seconds between sequential fan speed steps", required: true, defaultValue: 3
             input "enableWiggle", "bool", title: "Enable Hourly Fan Wiggle (Self-Healing)", defaultValue: true
             input "relaySpinDown", "number", title: "Seconds to wait before killing power relay (Spin-down delay)", required: true, defaultValue: 15
@@ -183,9 +195,11 @@ def mainPage() {
                 input "enableZ${i}", "bool", title: "<b>Enable Room ${i}</b>", submitOnChange: true
                 if (settings["enableZ${i}"]) {
                     input "z${i}Name", "text", title: "Room Name", required: false, defaultValue: "Room ${i}"
-                    input "z${i}FanType", "enum", title: "Fan Control Type", options: ["speed":"Multi-Speed Fan", "switch":"Simple On/Off Switch"], required: true, defaultValue: "speed", submitOnChange: true
+                    input "z${i}FanType", "enum", title: "Fan Control Type", options: ["speed3":"3-Speed Fan", "speed6":"6-Speed Fan", "switch":"Simple On/Off Switch"], required: true, defaultValue: "speed3", submitOnChange: true
                     
-                    if (settings["z${i}FanType"] == "switch") {
+                    def currentFanType = settings["z${i}FanType"] ?: "speed3"
+                    
+                    if (currentFanType == "switch") {
                         input "z${i}SimpleFan", "capability.switch", title: "Fan Power Switch", required: true
                     } else {
                         input "z${i}Fan", "capability.fanControl", title: "Ceiling Fan Device", required: true
@@ -220,9 +234,21 @@ def mainPage() {
 // INTERNAL LOGIC ENGINE
 // ==============================================================================
 
-// REMOVED "medium-high" from the internal speed dictionary
-def getSpeedLevels() { return ["off": 0, "low": 1, "medium": 2, "high": 3] }
-def getLevelSpeeds() { return [0: "off", 1: "low", 2: "medium", 3: "high"] }
+def getSpeedLevels(fanType) {
+    if (fanType == "speed6") {
+        return ["off": 0, "low": 1, "medium-low": 2, "medium": 3, "medium-high": 4, "high": 5, "auto": 6]
+    }
+    // Default 3-Speed
+    return ["off": 0, "low": 1, "medium": 2, "high": 3]
+}
+
+def getLevelSpeeds(fanType) {
+    if (fanType == "speed6") {
+        return [0: "off", 1: "low", 2: "medium-low", 3: "medium", 4: "medium-high", 5: "high", 6: "auto"]
+    }
+    // Default 3-Speed
+    return [0: "off", 1: "low", 2: "medium", 3: "high"]
+}
 
 def installed() { logInfo("Installed"); initialize() }
 def updated() { logInfo("Updated"); unsubscribe(); unschedule(); initialize() }
@@ -249,7 +275,6 @@ def initialize() {
             if (settings["z${i}Motion"]) subscribe(settings["z${i}Motion"], "motion", motionHandler)
             if (settings["z${i}GnSwitch"]) subscribe(settings["z${i}GnSwitch"], "switch", sensorHandler)
             if (settings["z${i}ShadeContact"]) subscribe(settings["z${i}ShadeContact"], "contact", sensorHandler)
-            
             if (settings["z${i}ActivitySwitch"]) subscribe(settings["z${i}ActivitySwitch"], "switch", sensorHandler)
         }
     }
@@ -329,8 +354,9 @@ def evaluateFans() {
     def timeoutMs = (occupancyTimeout ?: 15) * 60000
 
     for (int i = 1; i <= 8; i++) {
-        def fanType = settings["z${i}FanType"] ?: "speed"
-        def hasDevice = (fanType == "speed" && settings["z${i}Fan"]) || (fanType == "switch" && settings["z${i}SimpleFan"])
+        def rawFanType = settings["z${i}FanType"] ?: "speed3"
+        def fanType = (rawFanType == "speed") ? "speed3" : rawFanType
+        def hasDevice = (fanType.startsWith("speed") && settings["z${i}Fan"]) || (fanType == "switch" && settings["z${i}SimpleFan"])
         
         if (settings["enableZ${i}"] && hasDevice) {
             def zName = settings["z${i}Name"] ?: "Room ${i}"
@@ -371,10 +397,10 @@ def evaluateFans() {
                             controlTemp = getWetBulbF(tVal.toBigDecimal(), hVal.toBigDecimal())
                         }
                         
-                        if (fanType == "speed") {
+                        if (fanType.startsWith("speed")) {
                             def fDev = settings["z${i}Fan"]
                             def pDev = settings["z${i}Power"]
-                            def targetSpeed = calculateSpeedLevel(controlTemp, setpoint.toBigDecimal())
+                            def targetSpeed = calculateSpeedLevel(controlTemp, setpoint.toBigDecimal(), fanType)
                             def delta = (controlTemp - setpoint.toBigDecimal()).setScale(1, BigDecimal.ROUND_HALF_UP)
                             
                             setFanTarget(i, fDev, pDev, zName, targetSpeed, "Temp: ${controlTemp}°, Target: ${setpoint}°, Delta: +${delta}°")
@@ -387,7 +413,7 @@ def evaluateFans() {
             }
             
             // 4. SMART LIGHTING RELAY PROACTIVE ENGAGEMENT & CLEANUP
-            if (fanType == "speed") {
+            if (fanType.startsWith("speed")) {
                 def fDev = settings["z${i}Fan"]
                 def pDev = settings["z${i}Power"]
                 
@@ -423,7 +449,7 @@ def refreshSwitch(data) {
 }
 
 def turnRoomOff(roomId, fanType, roomName, reason) {
-    if (fanType == "speed") {
+    if (fanType.startsWith("speed")) {
         def fDev = settings["z${roomId}Fan"]
         def pDev = settings["z${roomId}Power"]
         setFanTarget(roomId, fDev, pDev, roomName, "off", reason)
@@ -458,25 +484,44 @@ def evaluateSimpleFan(switchDevice, roomName, currentTemp, targetSetpoint, label
 }
 
 // === MULTI-SPEED FAN LOGIC ===
-def calculateSpeedLevel(currentTemp, targetSetpoint) {
+def calculateSpeedLevel(currentTemp, targetSetpoint, fanType) {
     def delta = currentTemp - targetSetpoint
-    
-    def tLow = settings.thresholdLow != null ? settings.thresholdLow.toBigDecimal() : 1.5
-    def tMed = settings.thresholdMed != null ? settings.thresholdMed.toBigDecimal() : 3.0
-    
     if (delta <= 0) return "off"
-    if (delta <= tLow) return "low"
-    if (delta <= tMed) return "medium"
     
-    // Everything above your Medium threshold triggers High speed
-    return "high"
+    if (fanType == "speed3") {
+        def tLow = settings.thresholdLow != null ? settings.thresholdLow.toBigDecimal() : 1.5
+        def tMed = settings.thresholdMed != null ? settings.thresholdMed.toBigDecimal() : 3.0
+        
+        if (delta <= tLow) return "low"
+        if (delta <= tMed) return "medium"
+        return "high"
+    } 
+    else if (fanType == "speed6") {
+        def t1 = settings.t6S1 != null ? settings.t6S1.toBigDecimal() : 0.5
+        def t2 = settings.t6S2 != null ? settings.t6S2.toBigDecimal() : 1.0
+        def t3 = settings.t6S3 != null ? settings.t6S3.toBigDecimal() : 1.5
+        def t4 = settings.t6S4 != null ? settings.t6S4.toBigDecimal() : 2.0
+        def t5 = settings.t6S5 != null ? settings.t6S5.toBigDecimal() : 2.5
+        
+        if (delta <= t1) return "low"
+        if (delta <= t2) return "medium-low"
+        if (delta <= t3) return "medium"
+        if (delta <= t4) return "medium-high"
+        if (delta <= t5) return "high"
+        return "auto" 
+    }
+    
+    return "off" // Fallback safety
 }
 
 def setFanTarget(roomId, fDev, pDev, roomName, newTargetSpeed, reason) {
     def currentTarget = state["z${roomId}Target"] ?: "off"
     
+    def rawFanType = settings["z${roomId}FanType"] ?: "speed3"
+    def fanType = (rawFanType == "speed") ? "speed3" : rawFanType
+    
     if (currentTarget != newTargetSpeed) {
-        def sMap = getSpeedLevels()
+        def sMap = getSpeedLevels(fanType)
         def currInt = sMap[currentTarget] ?: 0
         def newInt = sMap[newTargetSpeed] ?: 0
         
@@ -513,8 +558,11 @@ def stepFan(roomId) {
     def targetSpeed = state["z${roomId}Target"] ?: "off"
     def currentSpeed = fDev.currentValue("speed") ?: "off"
     
-    def sMap = getSpeedLevels()
-    def lMap = getLevelSpeeds()
+    def rawFanType = settings["z${roomId}FanType"] ?: "speed3"
+    def fanType = (rawFanType == "speed") ? "speed3" : rawFanType
+    
+    def sMap = getSpeedLevels(fanType)
+    def lMap = getLevelSpeeds(fanType)
     
     def targetInt = sMap[targetSpeed] != null ? sMap[targetSpeed] : 0
     def currentInt = sMap[currentSpeed] != null ? sMap[currentSpeed] : 0
@@ -570,14 +618,17 @@ def killPowerRelay(data) {
 
 def doHourlyWiggle() {
     logAction("Executing Hourly RF Fan Wiggle to verify speeds...")
-    def lMap = getLevelSpeeds()
-    def sMap = getSpeedLevels()
     
     for (int i = 1; i <= 8; i++) {
-        def fanType = settings["z${i}FanType"] ?: "speed"
-        if (settings["enableZ${i}"] && fanType == "speed" && settings["z${i}Fan"]) {
+        def rawFanType = settings["z${i}FanType"] ?: "speed3"
+        def fanType = (rawFanType == "speed") ? "speed3" : rawFanType
+        
+        if (settings["enableZ${i}"] && fanType.startsWith("speed") && settings["z${i}Fan"]) {
             def gnSwitch = settings["z${i}GnSwitch"]
             if (gnSwitch && gnSwitch.currentValue("switch") == "on") continue 
+            
+            def sMap = getSpeedLevels(fanType)
+            def lMap = getLevelSpeeds(fanType)
             
             def fDev = settings["z${i}Fan"]
             def current = fDev.currentValue("speed") ?: "off"
