@@ -82,10 +82,9 @@ def mainPage() {
                     }
                 }
 
-                // NEW: Calculated Deadband Metric
+                // Calculated Deadband Metric
                 def currentDeadbandStr = "N/A"
                 if (tstatCool != "--" && tstatHeat != "--") {
-                    // Added .toBigDecimal() wrapper here for safety
                     def gap = (tstatCool.toBigDecimal() - tstatHeat.toBigDecimal()).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
                     if (gap < 3.0) {
                         currentDeadbandStr = "<span style='color:red;'><b>${gap}° (Violation - Conflict Detected)</b></span>"
@@ -362,7 +361,6 @@ def mainPage() {
                 input "returnSensor", "capability.temperatureMeasurement", title: "Return Air Sensor", required: false
                 input "dischargeSensor", "capability.temperatureMeasurement", title: "Discharge (Supply) Air Sensor", required: false
                 
-                // Default delay changed to 30 to accommodate 15-minute sensor polling
                 input "deltaTCheckDelay", "number", title: "Minutes before checking Delta-T", required: false, defaultValue: 30
                 input "minCoolingDeltaT", "decimal", title: "Min Cooling Delta-T (°F)", required: false, defaultValue: 12.0
                 input "minHeatingDeltaT", "decimal", title: "Min Heating Delta-T (°F)", required: false, defaultValue: 15.0
@@ -481,9 +479,7 @@ def initialize() {
 }
 
 def routineSweep() {
-    // Keep logs clean by aborting the sweep silently if the system is paused
     if (state.manualHold || state.windowOpenHold || state.isBuffering) return 
-    
     logAction("Running routine setpoint enforcement sweep.")
     evaluateSystem()
 }
@@ -503,11 +499,10 @@ def hubRestartHandler(evt) {
         else if (interval == "30") runEvery30Minutes(routineSweep)
         else if (interval == "60") runEvery1Hour(routineSweep)
     }
-    
     evaluateSystem()
 }
 
-def getHumanReadableStatus() {
+String getHumanReadableStatus() {
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return "The application is disabled via the Master Switch."
     
     if (allowedModes && !(allowedModes as List).contains(location.mode)) {
@@ -595,11 +590,22 @@ def modeChangeHandler(evt) { state.manualHold = false; state.isAdaptiveRecoverin
 def setpointHandler(evt) {
     // --- UPDATED: Block hardware bounce-back while buffering ---
     if (state.windowOpenHold || state.isBuffering) return 
-    // -----------------------------------------------------------
-    def newVal = evt.value.toBigDecimal(); def isManual = false
-    if (evt.name == "coolingSetpoint" && state.expectedCool != null && newVal != state.expectedCool) isManual = true
-    if (evt.name == "heatingSetpoint" && state.expectedHeat != null && newVal != state.expectedHeat) isManual = true
-    if (isManual && !state.manualHold) { state.manualHold = true; logAction("MANUAL OVERRIDE: Physical thermostat changed to ${newVal}°. Automation suspended until mode change.") }
+    
+    def newVal = evt.value.toBigDecimal()
+    def isManual = false
+    
+    // --- UPDATED: Tolerance Window for Hardware Rounding ---
+    if (evt.name == "coolingSetpoint" && state.expectedCool != null) {
+        if (Math.abs(newVal - state.expectedCool) > 0.6) isManual = true
+    }
+    if (evt.name == "heatingSetpoint" && state.expectedHeat != null) {
+        if (Math.abs(newVal - state.expectedHeat) > 0.6) isManual = true
+    }
+    
+    if (isManual && !state.manualHold) { 
+        state.manualHold = true
+        logAction("MANUAL OVERRIDE: Physical thermostat changed to ${newVal}°. Automation suspended until mode change.") 
+    }
 }
 
 def outdoorSensorHandler(evt) { evaluateSystem() }
@@ -695,10 +701,16 @@ def trackFreeCoolingSavings() {
 def evaluateSystem() {
     if (!thermostat) return
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return
-    
     if (allowedModes && !(allowedModes as List).contains(location.mode)) return
-    
     if (state.windowOpenHold || state.manualHold || state.isBuffering) return 
+    
+    // --- UPDATED: Critical Run Time Protection Lockout ---
+    if (enableMinRuntime && state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
+        def runMins = (now() - state.cycleStartTime) / 60000.0
+        if (runMins < (minRunTime ?: 10)) {
+            return // Abort evaluation. Shifting setpoints right now could cause a short-cycle.
+        }
+    }
     
     def isAway = awayModes ? (awayModes as List).contains(location.mode) : false
     def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
@@ -724,6 +736,11 @@ def evaluateSystem() {
         }
     }
     
+    // --- Store Base Targets BEFORE Alignment for Anti-Yo-Yo Clamp ---
+    def baseCool = targetCool
+    def baseHeat = targetHeat
+    def swapDB = enableAutoSwap ? (autoSwapDeadband ?: 1.0) : 1.0
+    
     // --- Dynamic Setpoint Alignment ---
     def syncMessage = ""
     if (enableAverageSync && thermostat.currentValue("temperature") != null) {
@@ -737,20 +754,31 @@ def evaluateSystem() {
         if (offset < -maxShift) offset = -maxShift
         
         if (offset != 0.0) {
-            // Added .toBigDecimal() here before .setScale
-            targetCool = (targetCool - offset).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
-            targetHeat = (targetHeat - offset).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
-            syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
+            // Forced rounding to 0 decimal places to stop hardware bounce-backs
+            targetCool = (targetCool - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+            targetHeat = (targetHeat - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+            
+            // --- UPDATED: ANTI-YOYO CLAMP ---
+            if (targetCool <= (baseHeat + swapDB)) {
+                targetCool = baseHeat + swapDB + 1.0
+                targetHeat = targetCool - 3.0 
+                syncMessage = " [Alignment Clamped: Hit Heating Floor]"
+            }
+            else if (targetHeat >= (baseCool - swapDB)) {
+                targetHeat = baseCool - swapDB - 1.0
+                targetCool = targetHeat + 3.0 
+                syncMessage = " [Alignment Clamped: Hit Cooling Ceiling]"
+            } else {
+                syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
+            }
         }
     }
     
     // --- Universal Deadband Enforcer ---
-    // Ensures modifiers (like Dehum/Pre-Cool/Alignment) never push Cool and Heat too close together
     def hardwareDeadband = 3.0
     if ((targetCool - targetHeat) < hardwareDeadband) {
-        // Added .toBigDecimal() here before .setScale
-        targetHeat = (targetCool - hardwareDeadband).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
-        syncMessage += " [Deadband Enforced]"
+        targetHeat = (targetCool - hardwareDeadband).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+        if (!syncMessage.contains("Clamped")) syncMessage += " [Deadband Enforced]"
     }
     // -----------------------------------
     
@@ -763,13 +791,12 @@ def evaluateSystem() {
     if (enableAutoSwap && !(state.freeCoolState in ["pending", "active"])) {
         def currentAvg = getAverageTemp()
         def tMode = thermostat.currentValue("thermostatMode")?.toLowerCase()
-        def deadband = autoSwapDeadband ?: 1.0
         
         if (tMode == "heat" || tMode == "cool" || tMode == "auto") {
-            if (currentAvg >= (targetCool + deadband) && tMode != "cool") {
+            if (currentAvg >= (targetCool + swapDB) && tMode != "cool") {
                 logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to COOL mode.")
                 thermostat.setThermostatMode("cool")
-            } else if (currentAvg <= (targetHeat - deadband) && tMode != "heat") {
+            } else if (currentAvg <= (targetHeat - swapDB) && tMode != "heat") {
                 logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to HEAT mode.")
                 thermostat.setThermostatMode("heat")
             }
@@ -837,7 +864,6 @@ def hvacStateHandler(evt) {
         
         def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
         
-        // Block buffer shifting if it's Good Night mode
         if (enableMinRuntime && !isNight && state.currentAction in ["cooling", "heating"]) {
             def activeSetpoint = (state.currentAction == "cooling") ? thermostat.currentValue("coolingSetpoint") : thermostat.currentValue("heatingSetpoint")
             def threshold = shortCycleThreshold ?: 1.0
@@ -857,7 +883,6 @@ def hvacStateHandler(evt) {
             if (enableFilterTracker) processFilterWear(runMinutes)
             if (enableCostTracker && state.currentAction) trackEnergyCost(state.currentAction, runMinutes)
             
-            // Log recent cycles
             if (state.currentAction && state.currentAction != "idle") {
                 trackRecentCycle(state.currentAction, runMinutes)
             }
@@ -915,7 +940,6 @@ def renderCostDashboard() {
 def sensorHandler(evt) {
     def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
     
-    // Abort if Min Runtime is disabled, or if Good Night mode is active
     if (!enableMinRuntime || isNight || state.currentAction == "idle" || state.isBuffering || !state.cycleStartTime) return
     if (state.currentAction == "auxHeating") return
     
@@ -925,17 +949,15 @@ def sensorHandler(evt) {
     if (dropRate >= (tempDropThreshold ?: 0.5)) engageBuffer(runMins)
 }
 
-// --- UPDATED: Proactively manage hardware deadbands and protect against string math ---
 def engageBuffer(runMins) {
     state.isBuffering = true
     def bufferAmt = setpointBuffer ?: 2.0
-    def deadband = 3.0 // Safety gap to prevent thermostat hardware from panicking
+    def deadband = 3.0 
     
     if (state.currentAction == "cooling") { 
         def newCool = (thermostat.currentValue("coolingSetpoint")?.toBigDecimal() ?: 72.0) - bufferAmt
         def newHeat = (thermostat.currentValue("heatingSetpoint")?.toBigDecimal() ?: 68.0)
         
-        // Prevent deadband collision
         if ((newCool - newHeat) < deadband) newHeat = newCool - deadband
         
         state.expectedCool = newCool; state.expectedHeat = newHeat
@@ -948,7 +970,6 @@ def engageBuffer(runMins) {
         def newHeat = (thermostat.currentValue("heatingSetpoint")?.toBigDecimal() ?: 68.0) + bufferAmt
         def newCool = (thermostat.currentValue("coolingSetpoint")?.toBigDecimal() ?: 72.0)
         
-        // Prevent deadband collision
         if ((newCool - newHeat) < deadband) newCool = newHeat + deadband
         
         state.expectedHeat = newHeat; state.expectedCool = newCool
@@ -961,7 +982,6 @@ def engageBuffer(runMins) {
     
     runIn((((minRunTime ?: 10) - runMins) * 60).toInteger(), releaseBuffer)
 }
-// --------------------------------------------------------------------------
 
 def releaseBuffer() { state.isBuffering = false; logAction("Equipment Protection Buffer Complete. Restoring normal targets."); evaluateSystem() }
 
@@ -979,7 +999,6 @@ def checkDeltaT() {
         logAction("Delta-T Check Passed: ${String.format('%.1f', dT)}°F.")
     }
     
-    // Continuous Monitoring Loop
     runIn((deltaTCheckDelay ?: 30) * 60, checkDeltaT)
 }
 
@@ -996,7 +1015,6 @@ def trackRecentCycle(action, runMinutes) {
     def timestamp = new Date().format("MM/dd hh:mm a", location.timeZone)
     def formattedTime = String.format("%.1f", runMinutes)
     
-    // Format the action name nicely
     def actionName = action.capitalize()
     if (action == "auxHeating") actionName = "Aux Heat"
     
