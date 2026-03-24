@@ -15,6 +15,7 @@ definition(
 
 preferences {
     page(name: "mainPage")
+    page(name: "roomConfigPage")
 }
 
 def mainPage() {
@@ -71,10 +72,8 @@ def mainPage() {
                         
                         def mReqHits = settings["z${i}MotionActivationHits"] ?: 1
                         if (mReqHits > 1 && !isOccupied) {
-                            def mWindow = (settings["z${i}MotionActivationWindow"] ?: 1) * 60000
-                            def mHits = state.motionHits ? (state.motionHits["z${i}"] ?: []) : []
-                            mHits = mHits.findAll { (now() - it) <= mWindow }
-                            if (mHits.size() > 0) statusAdditions << "<span style='color:purple;'>Motion Hits: ${mHits.size()}/${mReqHits}</span>"
+                            def mHits = state.motionHitCount ? (state.motionHitCount["z${i}"] ?: 0) : 0
+                            if (mHits > 0) statusAdditions << "<span style='color:purple;'>Motion Hits: ${mHits}/${mReqHits}</span>"
                         }
                     }
 
@@ -88,10 +87,8 @@ def mainPage() {
                         
                         def vReqHits = settings["z${i}VibeActivationHits"] ?: 1
                         if (vReqHits > 1 && !isOccupied) {
-                            def vWindow = (settings["z${i}VibeActivationWindow"] ?: 1) * 60000
-                            def vHits = state.vibeHits ? (state.vibeHits["z${i}"] ?: []) : []
-                            vHits = vHits.findAll { (now() - it) <= vWindow }
-                            if (vHits.size() > 0) statusAdditions << "<span style='color:purple;'>Vibe Hits: ${vHits.size()}/${vReqHits}</span>"
+                            def vHits = state.vibeHitCount ? (state.vibeHitCount["z${i}"] ?: 0) : 0
+                            if (vHits > 0) statusAdditions << "<span style='color:purple;'>Vibe Hits: ${vHits}/${vReqHits}</span>"
                         }
                     }
 
@@ -188,23 +185,22 @@ def mainPage() {
                 
                 paragraph statusText
             } else {
-                paragraph "<i>No rooms configured yet.</i>"
+                paragraph "<i>No rooms configured yet. Click a room below to begin.</i>"
             }
         }
 
-        section("<b>Action History</b>") {
-            input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
-            if (state.actionHistory) {
-                paragraph "<span style='font-size: 13px; font-family: monospace;'>${state.actionHistory.join("<br>")}</span>"
+        section("<b>Room Management</b>") {
+            paragraph "Click a room below to configure its sensors, smart plugs, timeouts, and rules."
+            for (int i = 1; i <= 12; i++) {
+                def zName = settings["z${i}Name"] ?: "Room ${i}"
+                def statusTag = settings["enableZ${i}"] ? " <span style='color:green;'>(Active)</span>" : ""
+                href(name: "roomPage${i}", page: "roomConfigPage", params: [roomId: i], title: "▶ Configure ${zName}${statusTag}", description: "")
             }
         }
 
         section("<b>Global Configuration & Restrictions</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'><b>ROI Settings:</b> Enter your current electricity rate to calculate how much money turning these devices off is saving you over time.</div>"
             input "kwhCost", "decimal", title: 'Electricity Cost ($ per kWh)', required: true, defaultValue: 0.13
             input "appEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch (Optional)", required: false, multiple: false
-            
-            paragraph "<div style='font-size:13px; color:#555; margin-top:10px;'><b>Global Mode Restrictions:</b> Select modes where the entire app should pause its automation.</div>"
             input "restrictedModes", "mode", title: "Restricted Modes (Pause all occupancy rules)", multiple: true, required: false
             
             input "resetSavings", "bool", title: "Reset All Savings Data to Zero", defaultValue: false, submitOnChange: true
@@ -221,66 +217,75 @@ def mainPage() {
             }
         }
 
-        // --- COLLAPSIBLE ROOM CONFIGURATION SECTIONS ---
-        for (int i = 1; i <= 12; i++) {
-            def zName = settings["z${i}Name"] ?: "Room ${i}"
-            def statusTag = settings["enableZ${i}"] ? " <span style='color:green;'>(Active)</span>" : ""
-            
-            section("<b>▶ ${zName} Configuration</b>${statusTag}", hideable: true, hidden: true) {
-                input "enableZ${i}", "bool", title: "<b>Enable this Room</b>", submitOnChange: true
-                
-                if (settings["enableZ${i}"]) {
-                    input "z${i}Name", "text", title: "Room Name", required: false, defaultValue: "Room ${i}", submitOnChange: true
-                    
-                    paragraph "<b>Triggers & Sensors</b>"
-                    
-                    input "z${i}OverrideSwitch", "capability.switch", title: "Virtual Override Switch (ON = Force Occupied)", required: false, submitOnChange: true
-                    if (settings["z${i}OverrideSwitch"]) {
-                        input "z${i}OverrideTimeout", "number", title: "↳ Auto-Off Timeout (Minutes of NO movement before turning switch OFF)", required: false, defaultValue: 120
-                    }
-                    
-                    input "z${i}Motion", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false, submitOnChange: true
-                    if (settings["z${i}Motion"]) {
-                        input "z${i}MotionActivationWindow", "number", title: "↳ Activation Window (Minutes to count hits)", required: true, defaultValue: 1
-                        input "z${i}MotionActivationHits", "number", title: "↳ Required Active Hits to trigger Occupied", required: true, defaultValue: 1
-                        input "z${i}Timeout", "number", title: "↳ Motion Empty Timeout (Minutes before turning OFF)", required: true, defaultValue: 15
-                    }
-                    
-                    input "z${i}Vibration", "capability.accelerationSensor", title: "Vibration Sensors (e.g. Chair/Bed)", multiple: true, required: false, submitOnChange: true
-                    if (settings["z${i}Vibration"]) {
-                        input "z${i}VibeActivationWindow", "number", title: "↳ Activation Window (Minutes to count hits)", required: true, defaultValue: 1
-                        input "z${i}VibeActivationHits", "number", title: "↳ Required Active Hits to trigger Occupied", required: true, defaultValue: 1
-                        input "z${i}VibeTimeout", "number", title: "↳ Vibration Empty Timeout (Minutes before turning OFF)", required: true, defaultValue: 5
-                    }
-                    
-                    input "z${i}Presence", "capability.presenceSensor", title: "mmWave / Presence Sensors (Instant Occupied)", multiple: true, required: false
-                    
-                    paragraph "<b>Actuators & Device Power Profiles</b>"
-                    input "z${i}Switches", "capability.switch", title: "Hard Power Relays (Smart Plugs, Wall Switches)", multiple: true, required: false, submitOnChange: true
-                    
-                    if (settings["z${i}Switches"]) {
-                        settings["z${i}Switches"].each { dev ->
-                            input "z${i}_${dev.id}_active", "decimal", title: "↳ ${dev.displayName} - Active/Idle Watts", required: true, defaultValue: 50.0
-                            input "z${i}_${dev.id}_standby", "decimal", title: "↳ ${dev.displayName} - Standby/Phantom Watts", required: true, defaultValue: 5.0
-                        }
-                    }
+        section("<b>Action History</b>") {
+            input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
+            if (state.actionHistory) {
+                paragraph "<span style='font-size: 13px; font-family: monospace;'>${state.actionHistory.join("<br>")}</span>"
+            }
+        }
+    }
+}
 
-                    paragraph "<b>Two-Stage Graceful Shutdown & Power Failsafe</b>"
-                    input "z${i}SoftKillDevices", "capability.switch", title: "Network Devices (PCs, TVs, APIs) for Graceful Shutdown", multiple: true, required: false, submitOnChange: true
-                    if (settings["z${i}SoftKillDevices"]) {
-                        input "z${i}HardKillDelay", "number", title: "Delay before cutting Hard Power (Seconds)", defaultValue: 60, required: true, description: "Provides time for operating systems to shut down and screens to run pixel refresh."
-                    }
-                    
-                    input "z${i}PowerMonitor", "capability.powerMeter", title: "Failsafe Power Monitor (Prevents shutdown if device is active)", required: false, submitOnChange: true
-                    if (settings["z${i}PowerMonitor"]) {
-                        input "z${i}ActiveWattageThreshold", "decimal", title: "↳ Protection Threshold (Watts)", required: true, defaultValue: 15.0, description: "If the monitor reads above this wattage, the room will ignore empty timeouts and stay ON."
-                    }
-                    
-                    paragraph "<b>Room Scheduling Restrictions</b>"
-                    input "z${i}ActiveDays", "enum", title: "Active Days (Leave blank for all days)", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
-                    input "z${i}StartTime", "time", title: "Active Start Time (Optional)", required: false
-                    input "z${i}EndTime", "time", title: "Active End Time (Optional)", required: false
+def roomConfigPage(params) {
+    if (params?.roomId) state.editingRoom = params.roomId
+    def i = state.editingRoom ?: 1
+    def zName = settings["z${i}Name"] ?: "Room ${i}"
+
+    dynamicPage(name: "roomConfigPage", title: "<b>Configuration: ${zName}</b>", install: false, uninstall: false) {
+        section("<b>▶ Setup</b>") {
+            input "enableZ${i}", "bool", title: "<b>Enable this Room</b>", submitOnChange: true
+            
+            if (settings["enableZ${i}"]) {
+                input "z${i}Name", "text", title: "Room Name", required: false, defaultValue: "Room ${i}", submitOnChange: true
+                
+                paragraph "<b>Triggers & Sensors</b>"
+                
+                input "z${i}OverrideSwitch", "capability.switch", title: "Virtual Override Switch (ON = Force Occupied)", required: false, submitOnChange: true
+                if (settings["z${i}OverrideSwitch"]) {
+                    input "z${i}OverrideTimeout", "number", title: "↳ Auto-Off Timeout (Minutes of NO movement before turning switch OFF)", required: false, defaultValue: 120
                 }
+                
+                input "z${i}Motion", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false, submitOnChange: true
+                if (settings["z${i}Motion"]) {
+                    input "z${i}MotionActivationWindow", "number", title: "↳ Activation Window (Minutes to count hits)", required: true, defaultValue: 1
+                    input "z${i}MotionActivationHits", "number", title: "↳ Required Active Hits to trigger Occupied", required: true, defaultValue: 1
+                    input "z${i}Timeout", "number", title: "↳ Motion Empty Timeout (Minutes before turning OFF)", required: true, defaultValue: 15
+                }
+                
+                input "z${i}Vibration", "capability.accelerationSensor", title: "Vibration Sensors (e.g. Chair/Bed)", multiple: true, required: false, submitOnChange: true
+                if (settings["z${i}Vibration"]) {
+                    input "z${i}VibeActivationWindow", "number", title: "↳ Activation Window (Minutes to count hits)", required: true, defaultValue: 1
+                    input "z${i}VibeActivationHits", "number", title: "↳ Required Active Hits to trigger Occupied", required: true, defaultValue: 1
+                    input "z${i}VibeTimeout", "number", title: "↳ Vibration Empty Timeout (Minutes before turning OFF)", required: true, defaultValue: 5
+                }
+                
+                input "z${i}Presence", "capability.presenceSensor", title: "mmWave / Presence Sensors (Instant Occupied)", multiple: true, required: false
+                
+                paragraph "<b>Actuators & Device Power Profiles</b>"
+                input "z${i}Switches", "capability.switch", title: "Hard Power Relays (Smart Plugs, Wall Switches)", multiple: true, required: false, submitOnChange: true
+                
+                if (settings["z${i}Switches"]) {
+                    settings["z${i}Switches"].each { dev ->
+                        input "z${i}_${dev.id}_active", "decimal", title: "↳ ${dev.displayName} - Active/Idle Watts", required: true, defaultValue: 50.0
+                        input "z${i}_${dev.id}_standby", "decimal", title: "↳ ${dev.displayName} - Standby/Phantom Watts", required: true, defaultValue: 5.0
+                    }
+                }
+
+                paragraph "<b>Two-Stage Graceful Shutdown & Power Failsafe</b>"
+                input "z${i}SoftKillDevices", "capability.switch", title: "Network Devices (PCs, TVs, APIs) for Graceful Shutdown", multiple: true, required: false, submitOnChange: true
+                if (settings["z${i}SoftKillDevices"]) {
+                    input "z${i}HardKillDelay", "number", title: "Delay before cutting Hard Power (Seconds)", defaultValue: 60, required: true, description: "Provides time for operating systems to shut down and screens to run pixel refresh."
+                }
+                
+                input "z${i}PowerMonitor", "capability.powerMeter", title: "Failsafe Power Monitor (Prevents shutdown if device is active)", required: false, submitOnChange: true
+                if (settings["z${i}PowerMonitor"]) {
+                    input "z${i}ActiveWattageThreshold", "decimal", title: "↳ Protection Threshold (Watts)", required: true, defaultValue: 15.0, description: "If the monitor reads above this wattage, the room will ignore empty timeouts and stay ON."
+                }
+                
+                paragraph "<b>Room Scheduling Restrictions</b>"
+                input "z${i}ActiveDays", "enum", title: "Active Days (Leave blank for all days)", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+                input "z${i}StartTime", "time", title: "Active Start Time (Optional)", required: false
+                input "z${i}EndTime", "time", title: "Active End Time (Optional)", required: false
             }
         }
     }
@@ -297,8 +302,8 @@ def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     if (!state.zoneLastActive) state.zoneLastActive = [:]
     if (!state.vibeLastActive) state.vibeLastActive = [:]
-    if (!state.motionHits) state.motionHits = [:]
-    if (!state.vibeHits) state.vibeHits = [:]
+    if (!state.motionHitCount) state.motionHitCount = [:]
+    if (!state.vibeHitCount) state.vibeHitCount = [:]
     if (!state.roomStats) state.roomStats = [:]
     if (!state.currentRoomStates) state.currentRoomStates = [:]
     if (!state.shutdownDelayActive) state.shutdownDelayActive = []
@@ -306,6 +311,8 @@ def initialize() {
     for (int i = 1; i <= 12; i++) {
         if (!state.roomStats["z${i}"]) state.roomStats["z${i}"] = [totalSecondsOff: 0, unoccupiedSince: null]
         if (!state.currentRoomStates["z${i}"]) state.currentRoomStates["z${i}"] = "unknown"
+        state.motionHitCount["z${i}"] = 0
+        state.vibeHitCount["z${i}"] = 0
     }
     
     // Core Subscriptions
@@ -322,15 +329,17 @@ def initialize() {
         }
     }
     
-    runEvery5Minutes(evaluateRoomsLoop)
-    logAction("Advanced Room Occupancy Initialized.")
+    // Explicitly quoted schedule to prevent Hubitat String.call() evaluation errors
+    runEvery5Minutes("evaluateRooms")
+    
+    logAction("Advanced Room Occupancy Initialized (Event-Driven Mode Active).")
     evaluateRooms(false)
 }
 
 def hubRestartHandler(evt) {
     logAction("SYSTEM REBOOT DETECTED: Clearing corrupted shutdown timers and forcing a hardware sync to correct physical device desyncs.")
-    state.shutdownDelayActive = [] // Clear any timers lost in RAM during reboot
-    evaluateRooms(true) // Force physical sync
+    state.shutdownDelayActive = [] 
+    evaluateRooms(true) 
 }
 
 def modeChangeHandler(evt) {
@@ -338,13 +347,9 @@ def modeChangeHandler(evt) {
     evaluateRooms(false)
 }
 
-def evaluateRoomsLoop() {
-    evaluateRooms(false)
-}
-
 def motionHandler(evt) {
     if (!state.zoneLastActive) state.zoneLastActive = [:]
-    if (!state.motionHits) state.motionHits = [:]
+    if (!state.motionHitCount) state.motionHitCount = [:]
     
     def isActive = (evt.value == "active")
     
@@ -352,16 +357,27 @@ def motionHandler(evt) {
         if (settings["enableZ${i}"]) {
             def mDevs = settings["z${i}Motion"]
             if (mDevs && mDevs.find { it.id == evt.device.id }) {
-                state.zoneLastActive["z${i}"] = now()
                 
                 if (isActive) {
+                    state.zoneLastActive["z${i}"] = now()
+                    
+                    def count = (state.motionHitCount["z${i}"] ?: 0) + 1
+                    state.motionHitCount["z${i}"] = count
+                    
                     def windowMs = (settings["z${i}MotionActivationWindow"] ?: 1) * 60000
-                    def hits = state.motionHits["z${i}"] ?: []
-                    hits.add(now())
-                    if (windowMs > 0) {
-                        hits = hits.findAll { (now() - it) <= windowMs }
+                    if (count == 1 && windowMs > 0) {
+                        def windowSecs = (windowMs / 1000).toInteger()
+                        runIn(windowSecs, "resetMotionZ${i}")
                     }
-                    state.motionHits["z${i}"] = hits
+                    
+                    // Cancel any pending timeout shutdown for this specific room
+                    unschedule("evalR${i}")
+                } else {
+                    // Only schedule the empty timeout if ALL motion sensors in the room are inactive
+                    if (!mDevs.any { it.currentValue("motion") == "active" }) {
+                        def timeoutSecs = (settings["z${i}Timeout"] ?: 15) * 60
+                        runIn(timeoutSecs, "evalR${i}")
+                    }
                 }
             }
         }
@@ -371,7 +387,7 @@ def motionHandler(evt) {
 
 def vibrationHandler(evt) {
     if (!state.vibeLastActive) state.vibeLastActive = [:]
-    if (!state.vibeHits) state.vibeHits = [:]
+    if (!state.vibeHitCount) state.vibeHitCount = [:]
     
     def isActive = (evt.value == "active")
     
@@ -379,16 +395,27 @@ def vibrationHandler(evt) {
         if (settings["enableZ${i}"]) {
             def vDevs = settings["z${i}Vibration"]
             if (vDevs && vDevs.find { it.id == evt.device.id }) {
-                state.vibeLastActive["z${i}"] = now()
                 
                 if (isActive) {
+                    state.vibeLastActive["z${i}"] = now()
+                    
+                    def count = (state.vibeHitCount["z${i}"] ?: 0) + 1
+                    state.vibeHitCount["z${i}"] = count
+                    
                     def windowMs = (settings["z${i}VibeActivationWindow"] ?: 1) * 60000
-                    def hits = state.vibeHits["z${i}"] ?: []
-                    hits.add(now())
-                    if (windowMs > 0) {
-                        hits = hits.findAll { (now() - it) <= windowMs }
+                    if (count == 1 && windowMs > 0) {
+                        def windowSecs = (windowMs / 1000).toInteger()
+                        runIn(windowSecs, "resetVibeZ${i}")
                     }
-                    state.vibeHits["z${i}"] = hits
+                    
+                    // Cancel any pending timeout shutdown for this specific room
+                    unschedule("evalR${i}")
+                } else {
+                    // Only schedule the empty timeout if ALL vibration sensors in the room are inactive
+                    if (!vDevs.any { it.currentValue("acceleration") == "active" }) {
+                        def timeoutSecs = (settings["z${i}VibeTimeout"] ?: 5) * 60
+                        runIn(timeoutSecs, "evalR${i}")
+                    }
                 }
             }
         }
@@ -405,7 +432,7 @@ def sensorHandler(evt) {
             }
         }
     }
-    runInMillis(1000, "evaluateRoomsLoop")
+    runIn(1, "evalR_All")
 }
 
 def getRoomOccupancyState(roomId) {
@@ -421,7 +448,6 @@ def getRoomOccupancyState(roomId) {
         def currentDraw = pMonitor.currentValue("power") ?: 0.0
         def safeThresh = settings["z${roomId}ActiveWattageThreshold"] ?: 15.0
         if (currentDraw > safeThresh) {
-            // Keep timers refreshed so it doesn't instantly die when power drops
             if (!state.zoneLastActive) state.zoneLastActive = [:]
             state.zoneLastActive["z${roomId}"] = now()
             return true
@@ -466,34 +492,30 @@ def getRoomOccupancyState(roomId) {
     
     def wasAlreadyOccupied = (state.currentRoomStates["z${roomId}"] == "occupied")
     
-    // 4. Check Vibration with Hit Counter
+    // 4. Check Vibration with Integer Hit Counter
     if (vDevs) {
         def vTimeoutMs = (settings["z${roomId}VibeTimeout"] ?: 5) * 60000
         def vLastActive = state.vibeLastActive ? state.vibeLastActive["z${roomId}"] : null
         
-        def windowMs = (settings["z${roomId}VibeActivationWindow"] ?: 1) * 60000
         def reqHits = settings["z${roomId}VibeActivationHits"] ?: 1
-        def hits = state.vibeHits ? (state.vibeHits["z${roomId}"] ?: []) : []
-        if (windowMs > 0) hits = hits.findAll { (now() - it) <= windowMs }
+        def hitCount = state.vibeHitCount ? (state.vibeHitCount["z${roomId}"] ?: 0) : 0
         
-        if (hits.size() >= reqHits || (wasAlreadyOccupied && vDevs.any { it.currentValue("acceleration") == "active" })) {
+        if (hitCount >= reqHits || (wasAlreadyOccupied && vDevs.any { it.currentValue("acceleration") == "active" })) {
             isOccupied = true
         } else if (wasAlreadyOccupied && vLastActive && (now() - vLastActive) < vTimeoutMs) {
             isOccupied = true
         }
     }
     
-    // 5. Check Motion with Hit Counter
+    // 5. Check Motion with Integer Hit Counter
     if (mDevs && !isOccupied) { 
         def mTimeoutMs = (settings["z${roomId}Timeout"] ?: 15) * 60000
         def mLastActive = state.zoneLastActive ? state.zoneLastActive["z${roomId}"] : null
         
-        def windowMs = (settings["z${roomId}MotionActivationWindow"] ?: 1) * 60000
         def reqHits = settings["z${roomId}MotionActivationHits"] ?: 1
-        def hits = state.motionHits ? (state.motionHits["z${roomId}"] ?: []) : []
-        if (windowMs > 0) hits = hits.findAll { (now() - it) <= windowMs }
+        def hitCount = state.motionHitCount ? (state.motionHitCount["z${roomId}"] ?: 0) : 0
         
-        if (hits.size() >= reqHits || (wasAlreadyOccupied && mDevs.any { it.currentValue("motion") == "active" })) {
+        if (hitCount >= reqHits || (wasAlreadyOccupied && mDevs.any { it.currentValue("motion") == "active" })) {
             isOccupied = true
         } else if (wasAlreadyOccupied && mLastActive && (now() - mLastActive) < mTimeoutMs) {
             isOccupied = true
@@ -536,7 +558,8 @@ def getRoomRestrictionReason(roomId) {
     return null
 }
 
-def evaluateRooms(boolean forceSync) {
+// Adding the default parameter value (forceSync = false) immediately prevents the Hubitat String.call() error
+def evaluateRooms(boolean forceSync = false) {
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return
     if (!state.shutdownDelayActive) state.shutdownDelayActive = []
 
@@ -686,3 +709,47 @@ def logAction(msg) {
 }
 
 def logInfo(msg) { if(txtEnable) log.info "${app.label}: ${msg}" }
+
+// ==============================================================================
+// SCHEDULING WRAPPERS (Prevents cross-room overwriting in Hubitat memory)
+// ==============================================================================
+def evalR_All() { evaluateRooms(false) }
+
+def evalR1() { evaluateRooms(false) }
+def evalR2() { evaluateRooms(false) }
+def evalR3() { evaluateRooms(false) }
+def evalR4() { evaluateRooms(false) }
+def evalR5() { evaluateRooms(false) }
+def evalR6() { evaluateRooms(false) }
+def evalR7() { evaluateRooms(false) }
+def evalR8() { evaluateRooms(false) }
+def evalR9() { evaluateRooms(false) }
+def evalR10() { evaluateRooms(false) }
+def evalR11() { evaluateRooms(false) }
+def evalR12() { evaluateRooms(false) }
+
+def resetMotionZ1() { if (state.motionHitCount) state.motionHitCount["z1"] = 0 }
+def resetMotionZ2() { if (state.motionHitCount) state.motionHitCount["z2"] = 0 }
+def resetMotionZ3() { if (state.motionHitCount) state.motionHitCount["z3"] = 0 }
+def resetMotionZ4() { if (state.motionHitCount) state.motionHitCount["z4"] = 0 }
+def resetMotionZ5() { if (state.motionHitCount) state.motionHitCount["z5"] = 0 }
+def resetMotionZ6() { if (state.motionHitCount) state.motionHitCount["z6"] = 0 }
+def resetMotionZ7() { if (state.motionHitCount) state.motionHitCount["z7"] = 0 }
+def resetMotionZ8() { if (state.motionHitCount) state.motionHitCount["z8"] = 0 }
+def resetMotionZ9() { if (state.motionHitCount) state.motionHitCount["z9"] = 0 }
+def resetMotionZ10() { if (state.motionHitCount) state.motionHitCount["z10"] = 0 }
+def resetMotionZ11() { if (state.motionHitCount) state.motionHitCount["z11"] = 0 }
+def resetMotionZ12() { if (state.motionHitCount) state.motionHitCount["z12"] = 0 }
+
+def resetVibeZ1() { if (state.vibeHitCount) state.vibeHitCount["z1"] = 0 }
+def resetVibeZ2() { if (state.vibeHitCount) state.vibeHitCount["z2"] = 0 }
+def resetVibeZ3() { if (state.vibeHitCount) state.vibeHitCount["z3"] = 0 }
+def resetVibeZ4() { if (state.vibeHitCount) state.vibeHitCount["z4"] = 0 }
+def resetVibeZ5() { if (state.vibeHitCount) state.vibeHitCount["z5"] = 0 }
+def resetVibeZ6() { if (state.vibeHitCount) state.vibeHitCount["z6"] = 0 }
+def resetVibeZ7() { if (state.vibeHitCount) state.vibeHitCount["z7"] = 0 }
+def resetVibeZ8() { if (state.vibeHitCount) state.vibeHitCount["z8"] = 0 }
+def resetVibeZ9() { if (state.vibeHitCount) state.vibeHitCount["z9"] = 0 }
+def resetVibeZ10() { if (state.vibeHitCount) state.vibeHitCount["z10"] = 0 }
+def resetVibeZ11() { if (state.vibeHitCount) state.vibeHitCount["z11"] = 0 }
+def resetVibeZ12() { if (state.vibeHitCount) state.vibeHitCount["z12"] = 0 }
