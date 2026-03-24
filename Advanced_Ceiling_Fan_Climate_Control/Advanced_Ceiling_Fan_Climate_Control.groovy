@@ -426,12 +426,12 @@ def evaluateFans() {
                         if (keepOn && pwrState != "on") {
                             logAction("Smart Lighting Needed: Proactively powering ON relay for ${zName}.")
                             pDev.on()
-                            runIn(3, "refreshSwitch", [data: [id: pDev.id]])
+                            runIn(15, "refreshSwitch", [data: [id: pDev.id]])
                         } 
                         else if (!keepOn && pwrState != "off" && fDev.currentValue("speed") == "off") {
                             logAction("Smart Lighting conditions cleared. Sweeping power relay OFF for ${zName}.")
                             pDev.off()
-                            runIn(3, "refreshSwitch", [data: [id: pDev.id]])
+                            runIn(15, "refreshSwitch", [data: [id: pDev.id]])
                         }
                     }
                 }
@@ -458,7 +458,7 @@ def turnRoomOff(roomId, fanType, roomName, reason) {
         if (sDev && sDev.currentValue("switch") != "off") {
             logAction("Stopping ${roomName} simple fan relay. (${reason})")
             sDev.off()
-            runIn(3, "refreshSwitch", [data: [id: sDev.id]])
+            runIn(15, "refreshSwitch", [data: [id: sDev.id]])
         }
     }
 }
@@ -472,13 +472,13 @@ def evaluateSimpleFan(switchDevice, roomName, currentTemp, targetSetpoint, label
         if (switchDevice.currentValue("switch") != "on") {
             logAction("Starting ${roomName} relay. (${label} Temp: ${currentTemp}°, Target: ${targetSetpoint}°, Delta: +${delta}°)")
             switchDevice.on()
-            runIn(3, "refreshSwitch", [data: [id: switchDevice.id]])
+            runIn(15, "refreshSwitch", [data: [id: switchDevice.id]])
         }
     } else if (currentTemp <= (targetSetpoint - 0.5)) {
         if (switchDevice.currentValue("switch") != "off") {
             logAction("Stopping ${roomName} relay. (Deadband satisfied: ${currentTemp}° <= ${targetSetpoint - 0.5}°)")
             switchDevice.off()
-            runIn(3, "refreshSwitch", [data: [id: switchDevice.id]])
+            runIn(15, "refreshSwitch", [data: [id: switchDevice.id]])
         }
     }
 }
@@ -538,7 +538,7 @@ def setFanTarget(roomId, fDev, pDev, roomName, newTargetSpeed, reason) {
     if (newTargetSpeed != "off" && pDev && pDev.currentValue("switch") != "on") {
         logAction("Powering ON ${roomName} relay for active cooling.")
         pDev.on()
-        runIn(3, "refreshSwitch", [data: [id: pDev.id]])
+        runIn(15, "refreshSwitch", [data: [id: pDev.id]])
         runInMillis(1500, "stepFanTrigger", [data: [room: roomId]])
         return
     }
@@ -612,7 +612,7 @@ def killPowerRelay(data) {
         
         logAction("Spin-down delay complete. No lighting overrides active. Killing power relay for Room ${roomId}.")
         pDev.off()
-        runIn(3, "refreshSwitch", [data: [id: pDev.id]])
+        runIn(15, "refreshSwitch", [data: [id: pDev.id]])
     }
 }
 
