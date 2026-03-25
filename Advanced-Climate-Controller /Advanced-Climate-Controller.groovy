@@ -50,7 +50,7 @@ def mainPage() {
                 def fcRemaining = state.freeCoolState == "pending" && state.freeCoolTargetTime ? Math.max(0, Math.round((state.freeCoolTargetTime - now()) / 60000)) : 0
                 def fcStatusStr = state.freeCoolState == "pending" ? "<span style='color:orange;'>Pending (${fcRemaining} mins remaining)</span>" : (state.freeCoolState == "active" ? "<span style='color:green;'>Active</span>" : state.freeCoolState.capitalize())
                 
-                // --- NEW: Timer Calculations for Dashboard ---
+                // --- Timer Calculations for Dashboard ---
                 def yoyoRemaining = (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) ? Math.max(0, Math.round((state.yoyoCooldownEnds - now()) / 60000)) : 0
                 def yoyoStr = yoyoRemaining > 0 ? "<span style='color:orange;'><b>Paused (${yoyoRemaining} mins remaining)</b></span>" : "<span style='color:green;'>Ready</span>"
 
@@ -60,8 +60,7 @@ def mainPage() {
                     def remaining = Math.max(0, Math.round((minRunTime ?: 10) - elapsedMins))
                     bufferStr = "<span style='color:blue;'><b>Engaged (${remaining} mins remaining)</b></span>"
                 }
-                // ---------------------------------------------
-
+                
                 def swapText = "N/A (Disabled)"
                 if (enableAutoSwap && !(state.freeCoolState in ["pending", "active"])) {
                     def db = autoSwapDeadband ?: 1.0
@@ -529,7 +528,6 @@ String getHumanReadableStatus() {
     if (state.windowOpenHold) return "<span style='color:red;'><b>HVAC is OFF</b></span> because a monitored perimeter window or door is open."
     if (state.manualHold) return "<span style='color:orange;'><b>Automation Paused</b></span> because someone manually adjusted the physical thermostat."
     
-    // --- UPDATED: Explicit diagnostic explanations ---
     if (state.isBuffering) return "<span style='color:blue;'><b>Compressor Protection Engaged:</b></span> The system is locked ON to satisfy the Minimum Run Time and prevent hardware damage."
     if (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) return "<span style='color:orange;'><b>Anti-Yo-Yo Cooldown Active:</b></span> Dynamic Setpoint Alignment is temporarily paused to prevent the system from rapidly turning back on."
     
@@ -762,33 +760,51 @@ def evaluateSystem() {
             def tstatTemp = thermostat.currentValue("temperature").toBigDecimal()
             def currentAvg = getAverageTemp()
             
-            def isSatisfied = (state.currentAction == "cooling" && currentAvg <= (baseCool + 0.5))
+            def offset = (currentAvg - tstatTemp)
+            def maxShift = maxSyncOffset ?: 3.0
             
-            if (isSatisfied) {
-                syncMessage = " [Alignment Satisfied: Average within 0.5°]"
-            } else {
-                def offset = (currentAvg - tstatTemp)
-                def maxShift = maxSyncOffset ?: 3.0
+            if (offset > maxShift) offset = maxShift
+            if (offset < -maxShift) offset = -maxShift
+            
+            if (offset != 0.0) {
+                def calcCool = (targetCool - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+                def calcHeat = (targetHeat - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
                 
-                if (offset > maxShift) offset = maxShift
-                if (offset < -maxShift) offset = -maxShift
+                // --- NEW: Smart Satisfaction Snap-Back ---
+                // If the app is dropping the cooling setpoint to force the AC on, 
+                // but the house average is already at or below the base target, cancel the shift.
+                def coolSnapped = false
+                if (calcCool < baseCool && currentAvg <= baseCool) {
+                    calcCool = baseCool
+                    coolSnapped = true
+                }
                 
-                if (offset != 0.0) {
-                    targetCool = (targetCool - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
-                    targetHeat = (targetHeat - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
-                    
-                    if (targetCool <= (baseHeat + swapDB)) {
-                        targetCool = baseHeat + swapDB + 1.0
-                        targetHeat = targetCool - 3.0 
-                        syncMessage = " [Alignment Clamped: Hit Heating Floor]"
-                    }
-                    else if (targetHeat >= (baseCool - swapDB)) {
-                        targetHeat = baseCool - swapDB - 1.0
-                        targetCool = targetHeat + 3.0 
-                        syncMessage = " [Alignment Clamped: Hit Cooling Ceiling]"
-                    } else {
-                        syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
-                    }
+                // If the app is raising the heating setpoint to force the Heater on,
+                // but the house average is already at or above the base target, cancel the shift.
+                def heatSnapped = false
+                if (calcHeat > baseHeat && currentAvg >= baseHeat) {
+                    calcHeat = baseHeat
+                    heatSnapped = true
+                }
+                
+                if (coolSnapped && heatSnapped) syncMessage = " [Alignment Satisfied: Snapped to Base]"
+                else if (coolSnapped) syncMessage = " [Alignment Satisfied: Cooling Snapped to Base]"
+                else if (heatSnapped) syncMessage = " [Alignment Satisfied: Heating Snapped to Base]"
+                else syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
+                
+                targetCool = calcCool
+                targetHeat = calcHeat
+                
+                // --- ANTI-YOYO CLAMP ---
+                if (targetCool <= (baseHeat + swapDB)) {
+                    targetCool = baseHeat + swapDB + 1.0
+                    targetHeat = targetCool - 3.0 
+                    syncMessage = " [Alignment Clamped: Hit Heating Floor]"
+                }
+                else if (targetHeat >= (baseCool - swapDB)) {
+                    targetHeat = baseCool - swapDB - 1.0
+                    targetCool = targetHeat + 3.0 
+                    syncMessage = " [Alignment Clamped: Hit Cooling Ceiling]"
                 }
             }
         }
@@ -798,7 +814,7 @@ def evaluateSystem() {
     def hardwareDeadband = 3.0
     if ((targetCool - targetHeat) < hardwareDeadband) {
         targetHeat = (targetCool - hardwareDeadband).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
-        if (!syncMessage.contains("Clamped")) syncMessage += " [Deadband Enforced]"
+        if (!syncMessage.contains("Clamped") && !syncMessage.contains("Satisfied")) syncMessage += " [Deadband Enforced]"
     }
     // -----------------------------------
 
@@ -918,7 +934,6 @@ def hvacStateHandler(evt) {
             def threshold = shortCycleThreshold ?: 1.0
             
             if (activeSetpoint != null && Math.abs(state.startTemp - activeSetpoint) <= threshold) {
-                // --- UPDATED: Explicit Compressor Protection Log ---
                 logAction("BMS Command -> Compressor Protection Engaged! HVAC started within ${threshold}° of setpoint. Forcing minimum run time.")
                 engageBuffer(0)
             }
@@ -1024,7 +1039,6 @@ def engageBuffer(runMins) {
         thermostat.setCoolingSetpoint(newCool)
         if (thermostat.currentValue("heatingSetpoint") != newHeat) thermostat.setHeatingSetpoint(newHeat)
         
-        // --- UPDATED: Explicit Compressor Protection Log ---
         logAction("BMS Command -> Compressor Protection Engaged! Temperature dropping too fast. Target temporarily shifted to ${newCool}° to ensure minimum runtime.")
     } else { 
         def newHeat = (thermostat.currentValue("heatingSetpoint")?.toBigDecimal() ?: 68.0) + bufferAmt
@@ -1037,7 +1051,6 @@ def engageBuffer(runMins) {
         thermostat.setHeatingSetpoint(newHeat)
         if (thermostat.currentValue("coolingSetpoint") != newCool) thermostat.setCoolingSetpoint(newCool)
         
-        // --- UPDATED: Explicit Compressor Protection Log ---
         logAction("BMS Command -> Compressor Protection Engaged! Temperature rising too fast. Target temporarily shifted to ${newHeat}° to ensure minimum runtime.")
     }
     
@@ -1051,7 +1064,6 @@ def releaseBuffer() {
         state.yoyoCooldownEnds = now() + (15 * 60000)
     }
     
-    // --- UPDATED: Explicit Compressor Protection Log ---
     logAction("Compressor Protection Buffer Complete. Restoring normal targets and starting 15-Min Anti-Yo-Yo Cooldown.") 
     evaluateSystem() 
 }
