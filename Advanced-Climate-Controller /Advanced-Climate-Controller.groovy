@@ -236,20 +236,25 @@ def mainPage() {
             }
         }
 
-        section("<b>2. Zones & Dynamic Occupancy</b>") {
+        section("<b>2. Zones & Dynamic Occupancy (Global Settings)</b>") {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Connects motion sensors to temperature sensors. If a room has no motion for the set timeout, it is mathematically dropped from the home's average temperature to stop wasting energy on empty rooms.</div>"
             input "enableOccupancy", "bool", title: "<b>Enable Dynamic Occupancy Weighting</b>", defaultValue: false, submitOnChange: true
             if (enableOccupancy) {
                 input "occupancyTimeout", "number", title: "Minutes of no motion before dropping room", required: false, defaultValue: 60
             }
-            for (int i = 1; i <= 12; i++) {
-                input "enableZ${i}", "bool", title: "Enable Zone ${i}", submitOnChange: true
+            paragraph "<div style='font-size:13px; color:#555;'>Click on a zone below to expand its settings.</div>"
+        }
+
+        for (int i = 1; i <= 12; i++) {
+            def currentZoneName = settings["z${i}Name"] ?: "Zone ${i}"
+            
+            section("<b>⚙️ ${currentZoneName}</b>", hideable: true, hidden: true) {
+                input "enableZ${i}", "bool", title: "<b>Enable Zone ${i}</b>", submitOnChange: true
                 if (settings["enableZ${i}"]) {
-                    input "z${i}Name", "text", title: "Zone ${i} Name", required: false, defaultValue: "Zone ${i}"
+                    input "z${i}Name", "text", title: "Zone Name", required: false, defaultValue: "Zone ${i}"
                     input "z${i}Temp", "capability.temperatureMeasurement", title: "Temp Sensor", required: false
                     input "z${i}Hum", "capability.relativeHumidityMeasurement", title: "Humidity Sensor (Optional)", required: false
                     input "z${i}Motion", "capability.motionSensor", title: "Motion Sensor (Optional)", required: false
-                    paragraph "<hr>"
                 }
             }
         }
@@ -507,6 +512,7 @@ def hubRestartHandler(evt) {
     state.cycleStartTime = null; state.currentAction = "idle"
     if (state.savedPlugStates) restorePlugs() 
     unschedule()
+  
     schedulePeakTimes(); schedulePreConditioning(); scheduleAdaptiveRecoveryCheck()
     
     if (enableEnforcement) {
@@ -1045,7 +1051,7 @@ def engageBuffer(runMins) {
     } else { 
         def newHeat = (thermostat.currentValue("heatingSetpoint")?.toBigDecimal() ?: 68.0) + bufferAmt
         def newCool = (thermostat.currentValue("coolingSetpoint")?.toBigDecimal() ?: 72.0)
-        
+ 
         if ((newCool - newHeat) < deadband) newCool = newHeat + deadband
         
         state.expectedHeat = newHeat; state.expectedCool = newCool
