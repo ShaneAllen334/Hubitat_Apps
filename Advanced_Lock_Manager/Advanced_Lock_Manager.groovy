@@ -138,11 +138,11 @@ def mainPage() {
         }
 
         section("Access Audit Log (Last 10 Entries)") {
-            if (state.accessLog && state.accessLog.size() > 0) {
+            if (atomicState.accessLog && atomicState.accessLog.size() > 0) {
                 def logText = "<table style='width:100%; font-size: 13px; border-collapse: collapse; border: 1px solid #ccc;'>"
                 logText += "<tr style='background-color: #eee; border-bottom: 1px solid #ccc; text-align: left;'><th style='padding: 6px;'>Date & Time</th><th style='padding: 6px;'>Event Details</th></tr>"
                 
-                state.accessLog.each { entry ->
+                atomicState.accessLog.each { entry ->
                     logText += "<tr style='border-bottom: 1px solid #eee;'><td style='padding: 6px; width: 35%;'>${entry.time}</td><td style='padding: 6px;'>${entry.event}</td></tr>"
                 }
                 logText += "</table>"
@@ -153,8 +153,8 @@ def mainPage() {
         }
         
         section("Application History") {
-            if (state.historyLog && state.historyLog.size() > 0) {
-                def logText = state.historyLog.join("<br>")
+            if (atomicState.historyLog && atomicState.historyLog.size() > 0) {
+                def logText = atomicState.historyLog.join("<br>")
                 paragraph "<div style='font-size: 13px; font-family: monospace; background-color: #f4f4f4; padding: 10px; border-radius: 5px; border: 1px solid #ccc;'>${logText}</div>"
             }
         }
@@ -249,7 +249,7 @@ def userPage(params) {
         
         section("Identity-Based Automations (Primary Code Only)") {
             paragraph "If this specific user unlocks the door using their Primary Code while the house is in one of the 'Trigger Modes', automatically change the house to the 'Target Mode'."
-            input "triggerFromModes_${uNum}", "mode", title: "If the house is currently in these modes (e.g., Away)...", multiple: true, required: false
+            input "triggerFromModes_${uNum}", "mode", title: "If the house is currently in these modes (e.g., Good Night)...", multiple: true, required: false
             input "arrivalTargetMode_${uNum}", "mode", title: "...Change the house to this mode (e.g., Home)", multiple: false, required: false
         }
     }
@@ -268,8 +268,9 @@ def updated() {
 }
 
 def initialize() {
-    state.historyLog = state.historyLog ?: []
-    state.accessLog = state.accessLog ?: []
+    atomicState.historyLog = atomicState.historyLog ?: []
+    atomicState.accessLog = atomicState.accessLog ?: []
+    
     state.lastAction = state.lastAction ?: [:]
     state.userProgrammed = state.userProgrammed ?: [:]
     
@@ -318,19 +319,22 @@ def forceSyncSchedules() {
 
 // --- UTILITY: LOGGER ---
 def addToHistory(String msg) {
-    if (!state.historyLog) state.historyLog = []
+    def currentLog = atomicState.historyLog ?: []
     def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
-    state.historyLog.add(0, "<b>[${timestamp}]</b> ${msg}")
-    if (state.historyLog.size() > 20) state.historyLog = state.historyLog.take(20)
+    currentLog.add(0, "<b>[${timestamp}]</b> ${msg}")
+    if (currentLog.size() > 20) currentLog = currentLog.take(20)
+    atomicState.historyLog = currentLog
+    
     log.info "HISTORY: " + msg.replaceAll("\\<.*?\\>", "")
 }
 
 def addToAccessLog(String msg) {
-    if (!state.accessLog) state.accessLog = []
+    def currentLog = atomicState.accessLog ?: []
     def timestamp = new Date().format("MM/dd hh:mm a", location.timeZone)
     def entry = [time: timestamp, event: msg]
-    state.accessLog.add(0, entry)
-    if (state.accessLog.size() > 10) state.accessLog = state.accessLog.take(10)
+    currentLog.add(0, entry)
+    if (currentLog.size() > 10) currentLog = currentLog.take(10)
+    atomicState.accessLog = currentLog
 }
 
 def isSystemPaused() {
