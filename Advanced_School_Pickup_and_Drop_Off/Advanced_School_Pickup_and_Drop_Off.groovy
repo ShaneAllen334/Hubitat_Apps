@@ -157,6 +157,7 @@ def initialize() {
     state.pmDoorCount = state.pmDoorCount ?: 0
     state.isBlinking = false
     state.isTesting = false
+    state.lightActiveByApp = state.lightActiveByApp ?: false // NEW: Initialize the app light control state
     state.actionHistory = state.actionHistory ?: []
     state.calendarForecastHtml = state.calendarForecastHtml ?: ""
 
@@ -311,6 +312,8 @@ def startLightingSequence(colorName, isRainOverride, nextTargetEpoch) {
         colorMap = getHueColor("Blue")
         logAction("Rain detected: Overriding light color to Blue.")
     }
+
+    state.lightActiveByApp = true // NEW: Flag that the app has taken control of the light
 
     state.currentStageColor = colorMap
     if (busLight) busLight.setColor([hue: colorMap.hue, saturation: colorMap.saturation, level: 80])
@@ -563,6 +566,13 @@ def checkSafeArrival() {
 }
 
 def turnLightOff() {
+    // NEW: Abort if the app didn't actually turn the light on 
+    if (!state.lightActiveByApp && !state.isTesting) {
+        return // Leave the light alone!
+    }
+
+    state.lightActiveByApp = false // NEW: Reset the flag
+    
     state.isBlinking = false
     state.isTesting = false
     if (busLight) busLight.off()
@@ -611,8 +621,7 @@ def doCalendarSync(boolean isForced) {
                     } else if (response.data instanceof String) {
                         icsData = response.data
                     } else {
-                        // If it is not a String, it is a data stream.
-                        // We safely request the text via a try-catch to prevent sandbox crashes.
+                        // If it is not a String, it is a data stream. We safely request the text via a try-catch to prevent sandbox crashes.
                         try {
                             icsData = response.data.text
                         } catch (e) {
