@@ -89,6 +89,16 @@ def mainPage() {
             input "deliveryLockout", "number", title: "Delivery-to-Retrieval Lockout (Minutes)", defaultValue: 2, required: true, description: "Prevents immediate retrieval if the mail carrier opens the box multiple times."
         }
 
+        section("False Retrieval Prevention (Secondary Deliveries)") {
+            input "enableSecondaryCheck", "bool", title: "Enable Secondary Delivery Protection?", defaultValue: false, submitOnChange: true
+            if (enableSecondaryCheck) {
+                paragraph "Requires recent home activity (door open or person arriving) to validate a mail retrieval. Otherwise, it logs as a second delivery."
+                input "exteriorDoors", "capability.contactSensor", title: "Exterior Doors (Front, Garage, Side, etc.)", multiple: true, required: false
+                input "arrivalSensors", "capability.presenceSensor", title: "Arrival Sensors (Mobile Phones)", multiple: true, required: false
+                input "activityTimeWindow", "number", title: "Activity Time Window (Minutes)", defaultValue: 10, required: true, description: "How long after arriving or opening a door do you have to grab the mail?"
+            }
+        }
+
         section("Audio Announcements (Smart Speakers)") {
             input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers for Announcements", multiple: true, required: false
             input "ttsDeliveryText", "text", title: "Delivery Announcement Text", defaultValue: "The mail has arrived", required: false
@@ -161,6 +171,16 @@ def initialize() {
         subscribe(tempSensor, "temperature", tempHandler)
     }
     
+    // Subscribe to secondary check devices if enabled
+    if (enableSecondaryCheck) {
+        if (exteriorDoors) {
+            subscribe(exteriorDoors, "contact.open", homeActivityHandler)
+        }
+        if (arrivalSensors) {
+            subscribe(arrivalSensors, "presence.present", homeActivityHandler)
+        }
+    }
+    
     schedule("0 0 0 * * ?", "midnightReset")
     schedule("0 0 10 * * ?", "batteryCheckHandler") // Checks battery daily at 10 AM
     
@@ -180,6 +200,11 @@ def appButtonHandler(btn) {
         state.todayRetrievalTime = null
         addToHistory("SYSTEM: Historical averages and logs manually reset by user.")
     }
+}
+
+def homeActivityHandler(evt) {
+    // Records the exact time a door opened or a phone arrived home
+    state.lastHomeActivity = new Date().time
 }
 
 def sensorOpenHandler(evt) {
@@ -226,7 +251,29 @@ def sensorOpenHandler(evt) {
             return
         }
         
-        // Passed lockout, process RETRIEVAL
+        // --- MULTIPLE DELIVERY CHECK ---
+        if (enableSecondaryCheck && (exteriorDoors || arrivalSensors)) {
+            def lastActivity = state.lastHomeActivity ?: 0
+            def activityWindowMillis = (activityTimeWindow != null ? activityTimeWindow.toInteger() : 10) * 60000
+            
+            if ((now - lastActivity) > activityWindowMillis) {
+                // No doors opened and no one arrived recently. This is a secondary delivery.
+                log.info "Mail Monitor: Box opened, but no home activity detected. Assuming secondary delivery."
+                addToHistory("SECONDARY DELIVERY: Mailbox opened again. No home activity detected.")
+                
+                // Reset the lockout timer so the new carrier has time to close the box
+                state.lastDeliveryTime = now
+                state.lastEventTime = now
+                
+                if (sendPushDelivery) {
+                    sendMessage("📫 More mail/packages were just delivered to the box!")
+                }
+                return // Stop the script here so it DOES NOT process a retrieval
+            }
+        }
+        // --- END MULTIPLE DELIVERY CHECK ---
+
+        // Passed lockout and activity checks, process RETRIEVAL
         mailSwitch.off()
         state.todayRetrievalTime = currentTimeStr
         updateAverage("retrieval", currentMinutes)
