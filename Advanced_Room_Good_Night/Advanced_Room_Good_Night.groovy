@@ -215,12 +215,17 @@ def mainPage() {
         }
         
         for (int i = 1; i <= 4; i++) {
-            section("<b>Room ${i} Configuration</b>") {
-                input "enableRoom${i}", "bool", title: "<b>Enable Room ${i}</b>", submitOnChange: true
+            // Dynamically pull the custom room name, or default to "Room X"
+            def rName = settings["roomName${i}"] ?: "Room ${i}"
+            
+            // Use the dynamic rName in the section title
+            section("<b>${rName} Configuration</b>", hideable: true, hidden: true) {
+                input "enableRoom${i}", "bool", title: "<b>Enable ${rName}</b>", submitOnChange: true
                 
                 if (settings["enableRoom${i}"]) {
-                    input "roomName${i}", "text", title: "Custom Room Name", defaultValue: "Room ${i}"
-                    input "roomSwitch${i}", "capability.switch", title: "Room ${i} Good Night Virtual Switch", required: true
+                    // Added submitOnChange: true here so the section title updates immediately
+                    input "roomName${i}", "text", title: "Custom Room Name", defaultValue: "Room ${i}", submitOnChange: true
+                    input "roomSwitch${i}", "capability.switch", title: "${rName} Good Night Virtual Switch", required: true
                     
                     paragraph "<b>1. Climate & Environment</b>"
                     input "tempSensor${i}", "capability.temperatureMeasurement", title: "Temperature Sensor", required: true
@@ -749,7 +754,7 @@ def executeRoomGoodNight(roomNum) {
     def shadeContact = settings["shadeContact${roomNum}"]
     def shade = settings["roomShade${roomNum}"]
     if (shadeContact && shade && shadeContact.currentValue("contact") == "open") {
-        shade.close();
+        shade.close()
         logInfo("${rName}: Shade contact is open. Closing shade.")
     }
     
@@ -814,7 +819,7 @@ def endRoomGoodNight(roomNum) {
     } else if (cFanSwitch) {
         cFanSwitch.off() // Fallback or direct control for On/Off fans
     }
-    
+
     def speaker = settings["roomSpeaker${roomNum}"]
     if (speaker && speaker.hasCommand("stop")) speaker.stop()
     
