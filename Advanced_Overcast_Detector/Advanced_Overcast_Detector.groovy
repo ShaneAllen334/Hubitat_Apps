@@ -25,6 +25,20 @@ def mainPage() {
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Environment</th><th style='padding: 8px;'>System Evaluation</th><th style='padding: 8px;'>Outputs</th></tr>"
             
             def currentLux = luxSensor ? "${luxSensor.currentValue('illuminance')} lx" : "-- lx"
+            
+            // Environment Display (Showing Dynamic Calculations)
+            def envDisplay = "<div style='font-size: 14px; margin-bottom: 5px;'><b>${currentLux}</b></div>"
+            def oLimit = overcastThreshold ?: 2000
+            envDisplay += "<div style='font-size: 11px; color: #555;'><b>Drop Target:</b> ${oLimit} lx</div>"
+            
+            if (useDynamicClear) {
+                def cLimit = getDynamicClearThreshold()
+                envDisplay += "<div style='font-size: 11px; color: #2e8b57;'><b>Clear Target:</b> ${cLimit} lx (Auto-Curve)</div>"
+            } else {
+                def cLimit = clearThreshold ?: 4000
+                envDisplay += "<div style='font-size: 11px; color: #2e8b57;'><b>Clear Target:</b> ${cLimit} lx (Static)</div>"
+            }
+            
             def sState = state.currentCondition ?: "Awaiting Sync..."
             
             def sColor = "orange"
@@ -45,7 +59,7 @@ def mainPage() {
             
             def outputsDisplay = "<b>Switch:</b> <span style='color: ${switchColor};'>${vSwitch}</span><br><b>Dimmer:</b> <span style='color: ${dimColor};'>${vDim}</span>"
             
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${currentLux}</b></td><td style='padding: 8px; color: ${sColor}; font-weight: bold;'>${sState}${pendingMsg}</td><td style='padding: 8px;'>${outputsDisplay}</td></tr>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'>${envDisplay}</td><td style='padding: 8px; color: ${sColor}; font-weight: bold;'>${sState}${pendingMsg}</td><td style='padding: 8px;'>${outputsDisplay}</td></tr>"
             statusText += "</table>"
            
             // System Status Evaluation
