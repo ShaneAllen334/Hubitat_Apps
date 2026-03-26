@@ -124,9 +124,11 @@ def mainPage() {
             input "deliveryColor", "enum", title: "Color when Mail is Delivered", required: false, defaultValue: "Green", options: ["Red", "Green", "Blue", "Yellow", "Orange", "Purple", "Pink", "White"]
             input "lightLevel", "number", title: "Indicator Light Level (%)", defaultValue: 100, required: false, range: "1..100"
             input "retrievalLightAction", "enum", title: "Action when Mail is Retrieved", required: false, defaultValue: "Turn Off", options: ["Turn Off", "Leave On"]
-            
-            paragraph "<b>Integration & Overrides</b>"
-            input "overrideSwitch", "capability.switch", title: "State Override Switch (Freezes Motion Lighting while Active)", required: false
+        }
+        
+        section("Integration & External Overrides") {
+            paragraph "<b>Freeze other applications during delivery</b><br>If you are using shared lights for your mail notification (such as a living room lamp managed by a motion lighting app), those other apps might try to turn the light off while the mail notification is active.<br><br>Select a Virtual Switch here. This app will turn it ON during a delivery. You can use that switch in your other apps to 'freeze' or 'disable' them until the mail is retrieved."
+            input "overrideSwitch", "capability.switch", title: "State Override Switch (Freezes external apps)", required: false
         }
 
         section("Audio Announcements & Notifications") {
