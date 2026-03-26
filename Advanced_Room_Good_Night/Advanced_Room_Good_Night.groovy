@@ -246,6 +246,7 @@ def mainPage() {
                     
                     paragraph "<b>2. Lighting & Shades</b>"
                     input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF", multiple: true, required: false
+                    input "pauseLightingEnforcement${i}", "capability.switch", title: "Pause Lighting Enforcement Switch (Syncs with Sunrise App)", required: false
                     input "shadeContact${i}", "capability.contactSensor", title: "Shade Open/Close Contact Sensor", required: false
                     input "roomShade${i}", "capability.windowShade", title: "Window Shade to Close", required: false
                     input "shadeHoldRelease${i}", "capability.switch", title: "Manual Hold Release Switch (Signals Shade Controller)", required: false
@@ -413,19 +414,27 @@ def periodicEnforcementHandler() {
                 def rName = settings["roomName${i}"] ?: "Room ${i}"
                 
                 if (sw && sw.currentValue("switch") == "on") {
-                    // Enforce Lights OFF with Flashbang Fix
-                    def lights = settings["roomLights${i}"]
-                    if (lights) {
-                        lights.each { lgt -> 
-                            if (lgt.currentValue("switch") == "on") {
-                                if (lgt.hasCommand("setLevel")) {
-                                    lgt.setLevel(1)
-                                    pauseExecution(400)
+                    
+                    def pauseEnforce = settings["pauseLightingEnforcement${i}"]
+                    def isPaused = pauseEnforce && pauseEnforce.currentValue("switch") == "on"
+                    
+                    if (!isPaused) {
+                        // Enforce Lights OFF with Flashbang Fix
+                        def lights = settings["roomLights${i}"]
+                        if (lights) {
+                            lights.each { lgt -> 
+                                if (lgt.currentValue("switch") == "on") {
+                                    if (lgt.hasCommand("setLevel")) {
+                                        lgt.setLevel(1)
+                                        pauseExecution(400)
+                                    }
+                                    lgt.off()
+                                    logInfo("ENFORCEMENT: ${rName} is asleep but light [${lgt.displayName}] was ON. Forced OFF.")
                                 }
-                                lgt.off()
-                                logInfo("ENFORCEMENT: ${rName} is asleep but light [${lgt.displayName}] was ON. Forced OFF.")
                             }
                         }
+                    } else {
+                        if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks paused for ${rName} (Sunrise Active)."
                     }
                     
                     // Enforce Shades CLOSED
