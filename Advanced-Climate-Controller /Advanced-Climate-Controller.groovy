@@ -76,7 +76,13 @@ def mainPage() {
                 // --- Timer Calculations for Dashboard ---
                 def yoyoRemaining = (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) ? Math.max(0, Math.round((state.yoyoCooldownEnds - now()) / 60000)) : 0
                 def yoyoStr = ""
-                if (state.alignmentLockout) {
+                def isAlignmentModeAllowed = !alignmentModes || (alignmentModes as List).contains(location.mode)
+                
+                if (!enableAverageSync) {
+                    yoyoStr = "<span style='color:gray;'>Disabled</span>"
+                } else if (!isAlignmentModeAllowed) {
+                    yoyoStr = "<span style='color:orange;'><b>Disabled by Mode (${currentLocMode})</b></span>"
+                } else if (state.alignmentLockout) {
                     yoyoStr = "<span style='color:red;'><b>Aborted (Waiting for local temp to reach ${state.alignmentLockoutTarget}°)</b></span>"
                 } else if (yoyoRemaining > 0) {
                     yoyoStr = "<span style='color:orange;'><b>Paused (${yoyoRemaining} mins remaining)</b></span>"
@@ -326,6 +332,7 @@ def mainPage() {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically shifts the physical thermostat's target to force it to run based on the Average Home Temp.</div>"
             input "enableAverageSync", "bool", title: "<b>Enable Dynamic Setpoint Alignment</b>", defaultValue: false, submitOnChange: true
             if (enableAverageSync) {
+                input "alignmentModes", "mode", title: "Modes to ALLOW Dynamic Alignment (Leave blank for 24/7)", multiple: true, required: false
                 input "maxSyncOffset", "decimal", title: "Maximum Allowed Shift (°F) - Safety limit", required: false, defaultValue: 3.0
                 input "yoyoCooldownMins", "number", title: "Anti-Yo-Yo Cooldown (Minutes)", required: false, defaultValue: 15
                 
@@ -715,7 +722,7 @@ def modeChangeHandler(evt) { state.manualHold = false; state.isAdaptiveRecoverin
 def setpointHandler(evt) {
     if (state.windowOpenHold || state.isBuffering) return 
     
-    // THE FIX: 15-second blindspot for incoming setpoint echoes right after the BMS sends a command.
+    // 15-second blindspot for incoming setpoint echoes right after the BMS sends a command.
     if (state.lastCommandTime && (now() - state.lastCommandTime) < 15000) {
         return 
     }
@@ -843,6 +850,7 @@ def evaluateSystem() {
     
     def isAway = awayModes ? (awayModes as List).contains(location.mode) : false
     def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
+    def isAlignmentModeAllowed = !alignmentModes || (alignmentModes as List).contains(location.mode)
     
     def targetCool = homeCoolingSetpoint ?: 74.0; def targetHeat = homeHeatingSetpoint ?: 68.0
     
@@ -884,7 +892,7 @@ def evaluateSystem() {
     def baseSwapDB = enableAutoSwap ? (autoSwapDeadband ?: 1.0) : 1.0
     def safeSwapDB = baseSwapDB
     
-    if (enableAverageSync && enableHysteresis) {
+    if (enableAverageSync && isAlignmentModeAllowed && enableHysteresis) {
         def drift = hysteresisDrift ?: 1.0
         // Ensure the Auto-Swap threshold doesn't overlap or compete with the Hysteresis Drift
         if (safeSwapDB <= drift) {
@@ -898,7 +906,7 @@ def evaluateSystem() {
     // --- Stage 1: Hysteresis & Deadband Evaluation ---
     def isHysteresisIdle = false
     def hysMessage = ""
-    if (enableAverageSync && enableHysteresis && thermostat.currentValue("temperature") != null) {
+    if (enableAverageSync && isAlignmentModeAllowed && enableHysteresis && thermostat.currentValue("temperature") != null) {
         def currentAvg = getAverageTemp()
         def drift = hysteresisDrift ?: 1.0
         def recovery = hysteresisRecovery ?: 0.5
@@ -939,7 +947,7 @@ def evaluateSystem() {
 
     // --- Dynamic Setpoint Alignment ---
     def syncMessage = ""
-    if (enableAverageSync && thermostat.currentValue("temperature") != null) {
+    if (enableAverageSync && isAlignmentModeAllowed && thermostat.currentValue("temperature") != null) {
         
         if (state.alignmentLockout) {
             syncMessage = " [Alignment Suspended: Awaiting Temp Recovery]"
@@ -1000,6 +1008,8 @@ def evaluateSystem() {
                 }
             }
         }
+    } else if (enableAverageSync && !isAlignmentModeAllowed) {
+        state.alignmentLockout = null // Clear any lockouts when transitioning to a disabled mode
     }
     
     // --- Universal Deadband Enforcer ---
@@ -1035,7 +1045,7 @@ def evaluateSystem() {
                              syncMessage += " [CRITICAL: Cannot protect compressor. Min buffer limit reached.]"
                         }
                         
-                        if (enableAverageSync && !state.alignmentLockout) {
+                        if (enableAverageSync && isAlignmentModeAllowed && !state.alignmentLockout) {
                             state.alignmentLockout = "cooling"
                             state.alignmentLockoutTarget = baseCool
                             syncMessage += " [CRITICAL: Max Buffer Hit. Alignment ABORTED until temp recovers]"
@@ -1064,7 +1074,7 @@ def evaluateSystem() {
                              syncMessage += " [CRITICAL: Cannot protect compressor. Max buffer limit reached.]"
                         }
                         
-                        if (enableAverageSync && !state.alignmentLockout) {
+                        if (enableAverageSync && isAlignmentModeAllowed && !state.alignmentLockout) {
                             state.alignmentLockout = "heating"
                             state.alignmentLockoutTarget = baseHeat
                             syncMessage += " [CRITICAL: Max Buffer Hit. Alignment ABORTED until temp recovers]"
@@ -1117,7 +1127,7 @@ def evaluateSystem() {
     }
 }
 
-// THE FIX: Active Compressor Watchdog - Polls the system every 60 seconds while running to prevent premature local satisfaction
+// Active Compressor Watchdog - Polls the system every 60 seconds while running to prevent premature local satisfaction
 def compressorWatchdog() {
     if (state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
         def runMins = (now() - state.cycleStartTime) / 60000.0
@@ -1190,7 +1200,6 @@ def hvacStateHandler(evt) {
         
         if (enableMinRuntime && !isNight && state.currentAction in ["cooling", "heating"]) {
             
-            // THE FIX: Engage the active watchdog while running to protect the compressor
             runIn(60, compressorWatchdog)
             
             def activeSetpoint = (state.currentAction == "cooling") ? thermostat.currentValue("coolingSetpoint") : thermostat.currentValue("heatingSetpoint")
