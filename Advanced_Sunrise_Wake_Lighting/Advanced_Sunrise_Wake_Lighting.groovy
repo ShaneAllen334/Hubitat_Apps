@@ -113,6 +113,7 @@ def mainPage() {
                     
                     paragraph "<b>Controls & Handoffs</b>"
                     input "r${rNum}_gnSwitch", "capability.switch", title: "Virtual 'Good Night' Switch", required: true, description: "Must be ON for simulation to run. Turning OFF halts the fade."
+                    input "r${rNum}_sunriseStateSwitch", "capability.switch", title: "Sunrise Active State Switch (To pause Good Night enforcement)", required: false
                     input "r${rNum}_activeDaySwitch", "capability.switch", title: "Work/School Day Switch (Optional)", required: false, description: "If selected, this switch MUST be ON for the sunrise to run."
                     input "r${rNum}_modes", "mode", title: "Active Modes (Optional)", multiple: true, required: false
                     
@@ -240,6 +241,9 @@ def startFadeProcess(rNum) {
     
     addToHistory("SUNRISE: ${rName} simulation started.")
     
+    def stateSwitch = settings["r${rNum}_sunriseStateSwitch"]
+    if (stateSwitch) stateSwitch.on()
+    
     state["r${rNum}_isFading"] = true
     state["r${rNum}_isSnoozing"] = false
     state["r${rNum}_startMs"] = new Date().time
@@ -283,6 +287,8 @@ def fadeLoopProcess(rNum) {
         if (actualLevel > expectedLevel + 10 || actualLevel < expectedLevel - 10) {
             addToHistory("MANUAL OVERRIDE: ${rName} lights were manually adjusted. Aborting fade.")
             state["r${rNum}_isFading"] = false
+            def stateSwitch = settings["r${rNum}_sunriseStateSwitch"]
+            if (stateSwitch) stateSwitch.off()
             return
         }
     }
@@ -329,6 +335,9 @@ def fadeLoopProcess(rNum) {
     } else {
         state["r${rNum}_isFading"] = false
         addToHistory("SUNRISE: ${rName} complete. Reached ${newLevel}% at ${newTemp}K.")
+        
+        def stateSwitch = settings["r${rNum}_sunriseStateSwitch"]
+        if (stateSwitch) stateSwitch.off()
         
         def notifier = settings["r${rNum}_notifier"]
         def wakeMsg = settings["r${rNum}_wakeMsg"] ?: "Time to wake up!"
@@ -384,6 +393,9 @@ def handleSwitchOff(rNum) {
     def rName = settings["r${rNum}_name"] ?: "Room ${rNum}"
     
     addToHistory("GOOD NIGHT OFF: ${rName} switch turned off. Halting logic.")
+    
+    def stateSwitch = settings["r${rNum}_sunriseStateSwitch"]
+    if (stateSwitch) stateSwitch.off()
     
     state["r${rNum}_isFading"] = false
     state["r${rNum}_isSnoozing"] = false
