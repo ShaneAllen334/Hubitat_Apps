@@ -124,6 +124,9 @@ def mainPage() {
             input "deliveryColor", "enum", title: "Color when Mail is Delivered", required: false, defaultValue: "Green", options: ["Red", "Green", "Blue", "Yellow", "Orange", "Purple", "Pink", "White"]
             input "lightLevel", "number", title: "Indicator Light Level (%)", defaultValue: 100, required: false, range: "1..100"
             input "retrievalLightAction", "enum", title: "Action when Mail is Retrieved", required: false, defaultValue: "Turn Off", options: ["Turn Off", "Leave On"]
+            
+            paragraph "<b>Integration & Overrides</b>"
+            input "overrideSwitch", "capability.switch", title: "State Override Switch (Freezes Motion Lighting while Active)", required: false
         }
 
         section("Audio Announcements & Notifications") {
@@ -165,10 +168,9 @@ def initialize() {
         subscribe(outsideTempSensor, "temperature", tempHandler)
     }
     
-    // Subscribe to activity sensors regardless of secondary protection toggle
     if (exteriorDoors) subscribe(exteriorDoors, "contact.open", homeActivityHandler)
     if (arrivalSensors) subscribe(arrivalSensors, "presence.present", homeActivityHandler)
-    
+ 
     schedule("0 0 0 * * ?", "midnightReset")
     if (enableNag && nagTime) schedule(nagTime, "nagHandler")
 }
@@ -177,7 +179,9 @@ def appButtonHandler(btn) {
     if (btn == "btnClearMail") {
         log.info "Manually clearing mail status..."
         if (mailSwitch) mailSwitch.off()
-        if (indicatorLight) indicatorLight.off()
+        if (indicatorLight) {
+            if (retrievalLightAction == "Turn Off") restoreLightState(indicatorLight)
+        }
         if (inovelliSwitches) {
             inovelliSwitches.each { device -> 
                 if (device.hasCommand("ledEffectAll")) {
@@ -185,6 +189,7 @@ def appButtonHandler(btn) {
                 }
             }
         }
+        if (overrideSwitch) overrideSwitch.off()
         state.lastValidStateChange = new Date().time 
         addToHistory("MANUAL CLEAR: System reset via app dashboard.")
         
@@ -207,7 +212,7 @@ def homeActivityHandler(evt) { state.lastHomeActivity = new Date().time }
 def sensorOpenHandler(evt) {
     def now = new Date().time
     
-    // HARD DEBOUNCE (5 seconds) to kill simultaneous dual-sensor triggers
+    // HARD DEBOUNCE
     def lastEvt = state.lastSensorEvent ?: 0
     if ((now - lastEvt) < 5000) return 
     state.lastSensorEvent = now
@@ -217,14 +222,13 @@ def sensorOpenHandler(evt) {
     def currentTimeStr = new Date().format("h:mm a", tz)
     def currentMinutes = getMinutesSinceMidnight(new Date(), tz)
     
-    // SYMMETRICAL LOCKOUT
     def lastStateChange = state.lastValidStateChange ?: 0
     def lockoutMillis = (deliveryLockout != null ? deliveryLockout.toInteger() : 2) * 60000
     
     if ((now - lastStateChange) < lockoutMillis) return
 
     if (switchState == "on") {
-        // Evaluate Secondary Delivery check if enabled
+        // --- MAIL RETRIEVAL LOGIC ---
         if (enableSecondaryCheck && (exteriorDoors || arrivalSensors)) {
             def lastActivity = state.lastHomeActivity ?: 0
             def window = (activityTimeWindow ?: 10) * 60000
@@ -236,7 +240,6 @@ def sensorOpenHandler(evt) {
             }
         }
 
-        // Calculate Trip Time (max valid trip is 15 mins / 900,000 ms)
         def tripTimeStr = ""
         if ((exteriorDoors || arrivalSensors) && state.lastHomeActivity) {
             def timeDiff = now - state.lastHomeActivity
@@ -254,15 +257,26 @@ def sensorOpenHandler(evt) {
         addToHistory("RETRIEVAL DETECTED.${tripTimeStr}")
         
         if (retrievalLightAction == "Turn Off") {
-            if (indicatorLight) indicatorLight.off()
+            if (indicatorLight) restoreLightState(indicatorLight)
             if (inovelliSwitches) inovelliSwitches.each { it.ledEffectAll(255, 0, 0, 0) }
         }
+        
+        // UNFREEZE Motion App
+        if (overrideSwitch) overrideSwitch.off()
   
         if (sendPushRetrieval) sendMessage("📬 Mail retrieved!")
         if (ttsSpeakers && ttsRetrievalText) ttsSpeakers.speak(ttsRetrievalText)
-        
+ 
     } else {
+        // --- MAIL DELIVERY LOGIC ---
         mailSwitch.on()
+        
+        // FREEZE Motion App & Capture State BEFORE changing lights
+        if (overrideSwitch && overrideSwitch.currentValue("switch") != "on") {
+            overrideSwitch.on()
+            if (indicatorLight) captureLightState(indicatorLight)
+        }
+        
         state.lastValidStateChange = now
         state.todayDeliveryTime = currentTimeStr
         updateAverage("delivery", currentMinutes)
@@ -276,28 +290,63 @@ def sensorOpenHandler(evt) {
     }
 }
 
+// --- STATE CAPTURE ENGINE ---
+def captureLightState(devices) {
+    if (!state.savedLightStates) state.savedLightStates = [:]
+    
+    devices.each { dev ->
+        state.savedLightStates[dev.id] = [
+            switch: dev.currentValue("switch"),
+            hue: dev.currentValue("hue"),
+            saturation: dev.currentValue("saturation"),
+            level: dev.currentValue("level"),
+            colorTemperature: dev.currentValue("colorTemperature")
+        ]
+        log.info "Captured previous state for ${dev.displayName}: ${state.savedLightStates[dev.id]}"
+    }
+}
+
+def restoreLightState(devices) {
+    if (!state.savedLightStates) return
+    
+    devices.each { dev ->
+        def saved = state.savedLightStates[dev.id]
+        if (saved) {
+            if (saved.switch == "on") {
+                if (saved.colorTemperature) {
+                    dev.setColorTemperature(saved.colorTemperature, saved.level)
+                } else if (saved.hue != null && saved.saturation != null) {
+                    dev.setColor([hue: saved.hue, saturation: saved.saturation, level: saved.level])
+                } else {
+                    dev.on()
+                    if (saved.level) dev.setLevel(saved.level)
+                }
+                log.info "Restored ${dev.displayName} to ON state."
+            } else {
+                dev.off()
+                log.info "Restored ${dev.displayName} to OFF state."
+            }
+        } else {
+            dev.off() // Fallback if no state saved
+        }
+    }
+    state.savedLightStates = [:] // Clear saved states
+}
+
 def setLightColor(devices, colorName, level) {
     def inovelliHue = 0 
     def standardHue = 0
     def standardSat = 100
     
     switch(colorName) {
-        case "White": 
-            inovelliHue = 255; standardSat = 0; break 
-        case "Red": 
-            inovelliHue = 0; standardHue = 0; break 
-        case "Green": 
-            inovelliHue = 85; standardHue = 33; break 
-        case "Blue": 
-            inovelliHue = 170; standardHue = 66; break 
-        case "Yellow": 
-            inovelliHue = 42; standardHue = 16; break 
-        case "Orange": 
-            inovelliHue = 14; standardHue = 10; break 
-        case "Purple": 
-            inovelliHue = 191; standardHue = 75; break 
-        case "Pink": 
-            inovelliHue = 234; standardHue = 83; break 
+        case "White": inovelliHue = 255; standardSat = 0; break 
+        case "Red": inovelliHue = 0; standardHue = 0; break 
+        case "Green": inovelliHue = 85; standardHue = 33; break 
+        case "Blue": inovelliHue = 170; standardHue = 66; break 
+        case "Yellow": inovelliHue = 42; standardHue = 16; break 
+        case "Orange": inovelliHue = 14; standardHue = 10; break 
+        case "Purple": inovelliHue = 191; standardHue = 75; break 
+        case "Pink": inovelliHue = 234; standardHue = 83; break 
     }
     
     devices.each { device -> 
