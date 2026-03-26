@@ -47,12 +47,46 @@ def mainPage() {
                 // Gather Diagnostics
                 def currentLocMode = location.mode ?: "Unknown"
            
-                def fcRemaining = state.freeCoolState == "pending" && state.freeCoolTargetTime ? Math.max(0, Math.round((state.freeCoolTargetTime - now()) / 60000)) : 0
-                def fcStatusStr = state.freeCoolState == "pending" ? "<span style='color:orange;'>Pending (${fcRemaining} mins remaining)</span>" : (state.freeCoolState == "active" ? "<span style='color:green;'>Active</span>" : state.freeCoolState.capitalize())
+                // Free Cooling Dashboard Updates
+                def fcStatusStr = "Idle / Not Favorable"
+                if (state.freeCoolState == "pending") {
+                    def fcRemaining = state.freeCoolTargetTime ? Math.max(0, Math.round((state.freeCoolTargetTime - now()) / 60000)) : 0
+                    fcStatusStr = "<span style='color:orange;'><b>Available & Recommended!</b> (Open windows to start - ${fcRemaining} mins remaining)</span>"
+                } else if (state.freeCoolState == "active") {
+                    def fanStatus = freeCoolFan ? "ON" : "Auto"
+                    fcStatusStr = "<span style='color:green;'><b>Active</b> (AC Paused, Fan: ${fanStatus})</span>"
+                } else if (state.freeCoolState == "lockedOut") {
+                    fcStatusStr = "<span style='color:red;'>Locked Out (Timeout Reached)</span>"
+                }
+
+                // System Load Score (Indoor vs Outdoor)
+                def loadStr = "N/A (Outdoor Sensor Missing)"
+                if (outdoorSensor && outdoorSensor.currentValue("temperature") != null) {
+                    def outT = outdoorSensor.currentValue("temperature").toBigDecimal()
+                    def delta = Math.abs(outT - avgTemp.toBigDecimal()).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+                    def loadWord = "Low"
+                    def loadColor = "green"
+                    
+                    if (delta > 20.0) { loadWord = "Extreme"; loadColor = "red" }
+                    else if (delta > 10.0) { loadWord = "Moderate"; loadColor = "orange" }
+                    
+                    loadStr = "<span style='color:${loadColor};'><b>${delta}°F Delta (${loadWord} Load)</b></span> (Out: ${outT}°)"
+                }
                 
                 // --- Timer Calculations for Dashboard ---
                 def yoyoRemaining = (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) ? Math.max(0, Math.round((state.yoyoCooldownEnds - now()) / 60000)) : 0
-                def yoyoStr = yoyoRemaining > 0 ? "<span style='color:orange;'><b>Paused (${yoyoRemaining} mins remaining)</b></span>" : "<span style='color:green;'>Ready</span>"
+                def yoyoStr = ""
+                if (state.alignmentLockout) {
+                    yoyoStr = "<span style='color:red;'><b>Aborted (Waiting for local temp to reach ${state.alignmentLockoutTarget}°)</b></span>"
+                } else if (yoyoRemaining > 0) {
+                    yoyoStr = "<span style='color:orange;'><b>Paused (${yoyoRemaining} mins remaining)</b></span>"
+                } else if (enableHysteresis && state.activeHysteresis == "idle") {
+                    yoyoStr = "<span style='color:blue;'><b>Floating in Deadband (System Idle)</b></span>"
+                } else if (enableHysteresis && state.activeHysteresis != "idle") {
+                    yoyoStr = "<span style='color:green;'><b>Active Recovery (${state.activeHysteresis.capitalize()})</b></span>"
+                } else {
+                    yoyoStr = "<span style='color:green;'>Ready</span>"
+                }
 
                 def bufferStr = "<span style='color:gray;'>Inactive</span>"
                 if (state.isBuffering && state.cycleStartTime) {
@@ -63,13 +97,17 @@ def mainPage() {
                 
                 def swapText = "N/A (Disabled)"
                 if (enableAutoSwap && !(state.freeCoolState in ["pending", "active"])) {
-                    def db = autoSwapDeadband ?: 1.0
+                    def safeSwapDB = autoSwapDeadband ?: 1.0
+                    if (enableAverageSync && enableHysteresis) {
+                        def drift = hysteresisDrift ?: 1.0
+                        if (safeSwapDB <= drift) safeSwapDB = drift + 0.5
+                    }
    
-                    def distToCool = tstatCool != "--" ? Math.round(( (tstatCool.toBigDecimal() + db) - avgTemp.toBigDecimal() ) * 10) / 10.0 : 0
-                    def distToHeat = tstatHeat != "--" ? Math.round(( avgTemp.toBigDecimal() - (tstatHeat.toBigDecimal() - db) ) * 10) / 10.0 : 0
+                    def distToCool = tstatCool != "--" ? Math.round(( (tstatCool.toBigDecimal() + safeSwapDB) - avgTemp.toBigDecimal() ) * 10) / 10.0 : 0
+                    def distToHeat = tstatHeat != "--" ? Math.round(( avgTemp.toBigDecimal() - (tstatHeat.toBigDecimal() - safeSwapDB) ) * 10) / 10.0 : 0
                     
-                    if (tstatMode == "HEAT") swapText = "<span style='color:blue;'>↑ ${distToCool}° until Swap to COOL</span>"
-                    else if (tstatMode == "COOL") swapText = "<span style='color:red;'>↓ ${distToHeat}° until Swap to HEAT</span>"
+                    if (tstatMode == "HEAT") swapText = "<span style='color:blue;'>↑ ${distToCool}° until Swap to COOL (DB: ${safeSwapDB}°)</span>"
+                    else if (tstatMode == "COOL") swapText = "<span style='color:red;'>↓ ${distToHeat}° until Swap to HEAT (DB: ${safeSwapDB}°)</span>"
                     else swapText = "Thermostat not in Heat/Cool mode"
                 }
 
@@ -142,11 +180,12 @@ def mainPage() {
                         
                         <tr><td colspan="4" class="dash-subhead">Internal Diagnostics</td></tr>
                         <tr><td class="dash-hl">Location Mode</td><td colspan="3" class="dash-val">${currentLocMode}</td></tr>
+                        <tr><td class="dash-hl">System Load (HVAC Strain)</td><td colspan="3" class="dash-val">${loadStr}</td></tr>
                         <tr><td class="dash-hl">Economizer Status</td><td colspan="3" class="dash-val">${fcStatusStr}</td></tr>
                         <tr><td class="dash-hl">Auto-Swap Distance</td><td colspan="3" class="dash-val">${swapText}</td></tr>
                         <tr><td class="dash-hl">Calculated Deadband</td><td colspan="3" class="dash-val">${currentDeadbandStr}</td></tr>
                         <tr><td class="dash-hl">Live Delta-T</td><td colspan="3" class="dash-val">${deltaTStr}</td></tr>
-                        <tr><td class="dash-hl">Dynamic Alignment (Yo-Yo)</td><td colspan="3" class="dash-val">${yoyoStr}</td></tr>
+                        <tr><td class="dash-hl">Dynamic Alignment Status</td><td colspan="3" class="dash-val">${yoyoStr}</td></tr>
                         <tr><td class="dash-hl">Compressor Protection</td><td colspan="3" class="dash-val">${bufferStr}</td></tr>
                         
                         <tr><td colspan="4" class="dash-subhead">Maintenance & Service</td></tr>
@@ -169,23 +208,46 @@ def mainPage() {
         }
 
         section("<b>Zone Breakdown</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Displays real-time data from all configured room sensors. Shows which rooms are actively factoring into the home's average temperature based on recent motion.</div>"
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Displays real-time data from all configured room sensors. <i>In Night mode, only rooms with the Good Night Switch active are averaged.</i></div>"
             def zoneHTML = "<table class='dash-table' style='margin-top:0px;'><thead><tr><th>Zone Name</th><th>Temp</th><th>Humidity</th><th>Occupied?</th><th>Status</th></tr></thead><tbody>"
             def timeoutMs = (occupancyTimeout ?: 60) * 60000
             def hasZones = false
+            def maxAgeMs = 24 * 60 * 60 * 1000 
+            def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
             
             for (int i = 1; i <= 12; i++) {
                 if (settings["enableZ${i}"] && settings["z${i}Temp"]) {
                     hasZones = true
                     def zName = settings["z${i}Name"] ?: "Zone ${i}"
-                    def zTemp = settings["z${i}Temp"].currentValue("temperature") ?: "--"
+                    def zTempDev = settings["z${i}Temp"]
+                    
+                    def tempState = zTempDev.currentState("temperature")
+                    def tVal = tempState?.value != null ? tempState.value.toBigDecimal() : null
+                    def lastUpdate = tempState?.date?.time ?: now()
+                    
+                    def isError = tVal == null || tVal < 40.0 || tVal > 100.0 || (now() - lastUpdate) > maxAgeMs
+                    def zTempStr = tVal != null ? "${tVal}°" : "--"
+                    
                     def zHum = settings["z${i}Hum"] ? (settings["z${i}Hum"].currentValue("humidity") ?: "--") : "N/A"
                     def zMotion = settings["z${i}Motion"]
                     
                     def isOccupied = "N/A"
                     def zStatus = "<span style='color:green;'>Averaging</span>"
                     
-                    if (enableOccupancy && zMotion) {
+                    if (isError) {
+                        zStatus = "<span style='color:red;'>Sensor Error (Ignored)</span>"
+                        isOccupied = "N/A"
+                    } else if (isNight) {
+                        def nSwitch = settings["z${i}NightSwitch"]
+                        def isNightForced = nSwitch && nSwitch.currentValue("switch") == "on"
+                        if (isNightForced) {
+                            isOccupied = "Yes (Night Lock)"
+                            zStatus = "<span style='color:blue;'>Averaging (Night Lock)</span>"
+                        } else {
+                            isOccupied = "N/A (Night Mode)"
+                            zStatus = "<span style='color:gray;'>Ignored (Not Night Room)</span>"
+                        }
+                    } else if (enableOccupancy && zMotion) {
                         def lastActive = state.zoneLastActive ? state.zoneLastActive[zMotion.id] : null
                         if (lastActive && (now() - lastActive) < timeoutMs) {
                             isOccupied = "Yes"
@@ -194,7 +256,7 @@ def mainPage() {
                             zStatus = "<span style='color:gray;'>Ignored (Empty)</span>"
                         }
                     }
-                    zoneHTML += "<tr><td><b>${zName}</b></td><td>${zTemp}°</td><td>${zHum}%</td><td>${isOccupied}</td><td>${zStatus}</td></tr>"
+                    zoneHTML += "<tr><td><b>${zName}</b></td><td>${zTempStr}</td><td>${zHum}%</td><td>${isOccupied}</td><td>${zStatus}</td></tr>"
                 }
             }
             zoneHTML += "</tbody></table>"
@@ -255,15 +317,25 @@ def mainPage() {
                     input "z${i}Temp", "capability.temperatureMeasurement", title: "Temp Sensor", required: false
                     input "z${i}Hum", "capability.relativeHumidityMeasurement", title: "Humidity Sensor (Optional)", required: false
                     input "z${i}Motion", "capability.motionSensor", title: "Motion Sensor (Optional)", required: false
+                    input "z${i}NightSwitch", "capability.switch", title: "Good Night Virtual Switch (Keeps active in Night Mode)", required: false
                 }
             }
         }
 
-        section("<b>2b. Dynamic Setpoint Alignment</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> If your thermostat is in a cool hallway but the bedrooms are hot, the AC will shut off early. This automatically shifts the physical thermostat's setpoint to force it to keep running until the <i>Average Temperature</i> reaches your true target.</div>"
+        section("<b>2b. Dynamic Setpoint Alignment & Deadband</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically shifts the physical thermostat's target to force it to run based on the Average Home Temp.</div>"
             input "enableAverageSync", "bool", title: "<b>Enable Dynamic Setpoint Alignment</b>", defaultValue: false, submitOnChange: true
             if (enableAverageSync) {
-                input "maxSyncOffset", "decimal", title: "Maximum Allowed Shift (°F) - Safety limit to prevent freezing/overheating", required: false, defaultValue: 3.0
+                input "maxSyncOffset", "decimal", title: "Maximum Allowed Shift (°F) - Safety limit", required: false, defaultValue: 3.0
+                input "yoyoCooldownMins", "number", title: "Anti-Yo-Yo Cooldown (Minutes)", required: false, defaultValue: 15
+                
+                paragraph "<b>Stage 1: Smart Deadband & Hysteresis</b>"
+                paragraph "<div style='font-size:13px; color:#555;'>Prevents micro-cycling. E.g., if setpoint is 70° and allowed drift is 1.0°, the system ignores the average until it hits 71.0°, then cools until it recovers to 70.5°.</div>"
+                input "enableHysteresis", "bool", title: "<b>Enable Stage 1 Hysteresis Deadband</b>", defaultValue: true, submitOnChange: true
+                if (enableHysteresis) {
+                    input "hysteresisDrift", "decimal", title: "Allowed Drift Before Starting (°F)", required: false, defaultValue: 1.0
+                    input "hysteresisRecovery", "decimal", title: "Stop When Within X° of Setpoint", required: false, defaultValue: 0.5
+                }
             }
         }
 
@@ -276,6 +348,7 @@ def mainPage() {
                 input "freeCoolTempDelta", "decimal", title: "Minimum Temp Difference (°F)", required: false, defaultValue: 3.0
                 input "freeCoolMaxHumidity", "decimal", title: "Maximum Outdoor Humidity Allowed (%)", required: false, defaultValue: 60.0
                 input "freeCoolTimeout", "number", title: "Minutes to wait for windows to open before aborting", required: false, defaultValue: 15
+                input "freeCoolFan", "bool", title: "Run HVAC Fan during Free Cooling", defaultValue: false, required: false
                 input "freeCoolNotify", "capability.notification", title: "Send Push Notification", required: false, multiple: true
                 input "freeCoolSwitch", "capability.switch", title: "Trigger Virtual Switch", required: false, multiple: false
             }
@@ -394,6 +467,10 @@ def mainPage() {
                 input "tempDropThreshold", "decimal", title: "Max Temp Drop per Min", required: false, defaultValue: 0.5
                 input "setpointBuffer", "decimal", title: "Temporary Setpoint Buffer (°F)", required: false, defaultValue: 2.0
                 input "shortCycleThreshold", "decimal", title: "Short-Cycle Degree Threshold (°F)", required: false, defaultValue: 1.0
+                input "enableShortCycleNotify", "bool", title: "Notify on Short-Cycle", defaultValue: false, submitOnChange: true
+                if (enableShortCycleNotify) {
+                    input "shortCycleNotifyDevices", "capability.notification", title: "Select Notification Devices", required: false, multiple: true
+                }
             }
         }
 
@@ -457,6 +534,9 @@ def initialize() {
     state.fcStartTime = null
     
     state.expectedCool = null; state.expectedHeat = null
+    state.alignmentLockout = null; state.alignmentLockoutTarget = null
+    state.activeHysteresis = "idle"
+    state.lastCommandTime = null
     
     if (thermostat) {
         subscribe(thermostat, "thermostatOperatingState", hvacStateHandler)
@@ -510,6 +590,8 @@ def hubRestartHandler(evt) {
     state.isBuffering = false; state.windowOpenHold = false; state.dehumidifyingStage = 0
     state.isPreConditioning = false; state.isAdaptiveRecovering = false; state.freeCoolState = "idle"
     state.cycleStartTime = null; state.currentAction = "idle"
+    state.alignmentLockout = null; state.alignmentLockoutTarget = null
+    state.activeHysteresis = "idle"
     if (state.savedPlugStates) restorePlugs() 
     unschedule()
   
@@ -555,12 +637,31 @@ String getHumanReadableStatus() {
 def getAverageTemp() {
     def total = 0.0; def count = 0
     def timeoutMs = (occupancyTimeout ?: 60) * 60000
+    def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
+    def maxAgeMs = 24 * 60 * 60 * 1000 
+    
     for (int i = 1; i <= 12; i++) {
         if (settings["enableZ${i}"] && settings["z${i}Temp"]) {
             def tempDev = settings["z${i}Temp"]; def motionDev = settings["z${i}Motion"]
-            if (tempDev.currentValue("temperature") != null) {
-                if (!enableOccupancy || !motionDev || (state.zoneLastActive && state.zoneLastActive[motionDev.id] && (now() - state.zoneLastActive[motionDev.id]) < timeoutMs)) {
-                    total += tempDev.currentValue("temperature"); count++
+            def tempState = tempDev.currentState("temperature")
+            
+            if (tempState != null && tempState.value != null) {
+                def tVal = tempState.value.toBigDecimal()
+                def lastUpdate = tempState.date?.time ?: now()
+                
+                if (tVal >= 40.0 && tVal <= 100.0 && (now() - lastUpdate) <= maxAgeMs) {
+                    if (isNight) {
+                        def nightSwitch = settings["z${i}NightSwitch"]
+                        if (nightSwitch && nightSwitch.currentValue("switch") == "on") {
+                            total += tVal; count++
+                        }
+                    } else {
+                        if (!enableOccupancy || !motionDev || (state.zoneLastActive && state.zoneLastActive[motionDev.id] && (now() - state.zoneLastActive[motionDev.id]) < timeoutMs)) {
+                            total += tVal; count++
+                        }
+                    }
+                } else {
+                    logAction("WARNING: Ignored sensor ${tempDev.displayName} due to stale or out-of-bounds data (${tVal}°).")
                 }
             }
         }
@@ -614,19 +715,25 @@ def modeChangeHandler(evt) { state.manualHold = false; state.isAdaptiveRecoverin
 def setpointHandler(evt) {
     if (state.windowOpenHold || state.isBuffering) return 
     
+    // THE FIX: 15-second blindspot for incoming setpoint echoes right after the BMS sends a command.
+    if (state.lastCommandTime && (now() - state.lastCommandTime) < 15000) {
+        return 
+    }
+    
     def newVal = evt.value.toBigDecimal()
     def isManual = false
     
     if (evt.name == "coolingSetpoint" && state.expectedCool != null) {
-        if (Math.abs(newVal - state.expectedCool) > 0.6) isManual = true
+        if (Math.abs(newVal - state.expectedCool) > 1.0) isManual = true
     }
     if (evt.name == "heatingSetpoint" && state.expectedHeat != null) {
-        if (Math.abs(newVal - state.expectedHeat) > 0.6) isManual = true
+        if (Math.abs(newVal - state.expectedHeat) > 1.0) isManual = true
     }
     
     if (isManual && !state.manualHold) { 
         state.manualHold = true
         logAction("MANUAL OVERRIDE: Physical thermostat changed to ${newVal}°. Automation suspended until mode change.") 
+        evaluateSystem() // Update UI right away
     }
 }
 
@@ -696,12 +803,20 @@ def engageFreeCooling() {
     logAction("Free Cooling ACTIVE: AC suspended.")
     state.fcStartTime = now()
     if (freeCoolSwitch) freeCoolSwitch.on()
+    if (freeCoolFan && thermostat) {
+        logAction("Free Cooling: Turning HVAC Fan ON to circulate outside air.")
+        thermostat.setThermostatFanMode("on")
+    }
 }
 
 def disengageFreeCooling() {
     logAction("Free Cooling disabled or weather reset. Restoring AC.")
     if (state.fcStartTime) trackFreeCoolingSavings()
     if (freeCoolSwitch) freeCoolSwitch.off()
+    if (freeCoolFan && thermostat && thermostat.currentValue("thermostatFanMode") != "auto") {
+        logAction("Free Cooling Ended: Restoring HVAC Fan to Auto.")
+        thermostat.setThermostatFanMode("auto")
+    }
     if (freeCoolNotify) freeCoolNotify.deviceNotification("Free Cooling ended. Please close the windows.")
 }
 
@@ -734,6 +849,18 @@ def evaluateSystem() {
     if (isNight) { targetCool = nightCoolingSetpoint ?: 70.0; targetHeat = nightHeatingSetpoint ?: 66.0 } 
     else if (isAway) { targetCool = awayCoolingSetpoint ?: 78.0; targetHeat = awayHeatingSetpoint ?: 62.0 }
     
+    // Check if we can release a previous alignment lockout based on local ambient recovery
+    def currentLocalTemp = thermostat.currentValue("temperature")?.toBigDecimal()
+    if (currentLocalTemp != null) {
+        if (state.alignmentLockout == "cooling" && currentLocalTemp >= (state.alignmentLockoutTarget ?: targetCool)) {
+            state.alignmentLockout = null
+            logAction("Local temperature recovered to ${state.alignmentLockoutTarget}°. Dynamic Setpoint Alignment re-enabled.")
+        } else if (state.alignmentLockout == "heating" && currentLocalTemp <= (state.alignmentLockoutTarget ?: targetHeat)) {
+            state.alignmentLockout = null
+            logAction("Local temperature recovered to ${state.alignmentLockoutTarget}°. Dynamic Setpoint Alignment re-enabled.")
+        }
+    }
+
     if (!isNight) {
         if (state.isAdaptiveRecovering) { targetCool = homeCoolingSetpoint ?: 74.0; targetHeat = homeHeatingSetpoint ?: 68.0 }
         if (enablePeakShaving && state.isPeakHours) { targetCool += (peakCoolingOffset ?: 3.0); targetHeat -= (peakHeatingOffset ?: 3.0) }
@@ -752,67 +879,124 @@ def evaluateSystem() {
     
     def baseCool = targetCool
     def baseHeat = targetHeat
-    def swapDB = enableAutoSwap ? (autoSwapDeadband ?: 1.0) : 1.0
+    
+    // --- Auto-Swap & Hysteresis Conflict Resolution ---
+    def baseSwapDB = enableAutoSwap ? (autoSwapDeadband ?: 1.0) : 1.0
+    def safeSwapDB = baseSwapDB
+    
+    if (enableAverageSync && enableHysteresis) {
+        def drift = hysteresisDrift ?: 1.0
+        // Ensure the Auto-Swap threshold doesn't overlap or compete with the Hysteresis Drift
+        if (safeSwapDB <= drift) {
+            safeSwapDB = drift + 0.5
+        }
+    }
     
     def isYoYoCooldown = state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds
+    def yoyoMins = yoyoCooldownMins != null ? yoyoCooldownMins : 15
     
+    // --- Stage 1: Hysteresis & Deadband Evaluation ---
+    def isHysteresisIdle = false
+    def hysMessage = ""
+    if (enableAverageSync && enableHysteresis && thermostat.currentValue("temperature") != null) {
+        def currentAvg = getAverageTemp()
+        def drift = hysteresisDrift ?: 1.0
+        def recovery = hysteresisRecovery ?: 0.5
+        
+        if (state.activeHysteresis == null || state.activeHysteresis == "idle") {
+            if (currentAvg >= (baseCool + drift)) {
+                state.activeHysteresis = "cooling"
+                logAction("Stage 1 Hysteresis: Temp drifted to ${currentAvg}° (+${drift}° limit). Initiating Cooling Recovery to ${baseCool + recovery}°.")
+            } else if (currentAvg <= (baseHeat - drift)) {
+                state.activeHysteresis = "heating"
+                logAction("Stage 1 Hysteresis: Temp drifted to ${currentAvg}° (-${drift}° limit). Initiating Heating Recovery to ${baseHeat - recovery}°.")
+            } else {
+                isHysteresisIdle = true
+                hysMessage = " [Stage 1: Floating in Deadband]"
+            }
+        } else if (state.activeHysteresis == "cooling") {
+            if (currentAvg <= (baseCool + recovery)) {
+                state.activeHysteresis = "idle"
+                isHysteresisIdle = true
+                logAction("Stage 1 Hysteresis: Cooled to ${currentAvg}° (Within ${recovery}° of target). Satisfied and entering Idle.")
+                hysMessage = " [Stage 1: Recovery Satisfied]"
+            } else {
+                hysMessage = " [Stage 1: Active Cool Recovery]"
+            }
+        } else if (state.activeHysteresis == "heating") {
+            if (currentAvg >= (baseHeat - recovery)) {
+                state.activeHysteresis = "idle"
+                isHysteresisIdle = true
+                logAction("Stage 1 Hysteresis: Heated to ${currentAvg}° (Within ${recovery}° of target). Satisfied and entering Idle.")
+                hysMessage = " [Stage 1: Recovery Satisfied]"
+            } else {
+                hysMessage = " [Stage 1: Active Heat Recovery]"
+            }
+        }
+    } else {
+        state.activeHysteresis = "idle"
+    }
+
     // --- Dynamic Setpoint Alignment ---
     def syncMessage = ""
     if (enableAverageSync && thermostat.currentValue("temperature") != null) {
         
-        if (isYoYoCooldown) {
-            syncMessage = " [Alignment Paused: 15-Min Yo-Yo Cooldown]"
+        if (state.alignmentLockout) {
+            syncMessage = " [Alignment Suspended: Awaiting Temp Recovery]"
+        } else if (isYoYoCooldown) {
+            syncMessage = " [Alignment Paused: ${yoyoMins}-Min Yo-Yo Cooldown]"
         } else {
             def tstatTemp = thermostat.currentValue("temperature").toBigDecimal()
             def currentAvg = getAverageTemp()
             
-            def offset = (currentAvg - tstatTemp)
-            def maxShift = maxSyncOffset ?: 3.0
-            
-            if (offset > maxShift) offset = maxShift
-            if (offset < -maxShift) offset = -maxShift
-            
-            if (offset != 0.0) {
-                def calcCool = (targetCool - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
-                def calcHeat = (targetHeat - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+            if (enableHysteresis && isHysteresisIdle) {
+                // Bracket the physical thermostat to forcefully keep it IDLE while the average floats
+                targetCool = (tstatTemp + 1.5).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+                targetHeat = (tstatTemp - 1.5).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+                syncMessage = hysMessage
+            } else {
+                def offset = (currentAvg - tstatTemp)
+                def maxShift = maxSyncOffset ?: 3.0
                 
-                // --- NEW: Smart Satisfaction Snap-Back ---
-                // If the app is dropping the cooling setpoint to force the AC on, 
-                // but the house average is already at or below the base target, cancel the shift.
-                def coolSnapped = false
-                if (calcCool < baseCool && currentAvg <= baseCool) {
-                    coolSnapped = true
-                }
+                if (offset > maxShift) offset = maxShift
+                if (offset < -maxShift) offset = -maxShift
                 
-                // If the app is raising the heating setpoint to force the Heater on,
-                // but the house average is already at or above the base target, cancel the shift.
-                def heatSnapped = false
-                if (calcHeat > baseHeat && currentAvg >= baseHeat) {
-                    heatSnapped = true
-                }
-                
-                // Tie them together: If either side is satisfied and idling, snap BOTH back to baseline
-                if (coolSnapped || heatSnapped) {
-                    calcCool = baseCool
-                    calcHeat = baseHeat
-                    syncMessage = " [Alignment Satisfied: System Idle, Snapped to Base]"
-                } else {
-                    syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
-                }
-                
-                targetCool = calcCool
-                targetHeat = calcHeat
-                
-                // --- ANTI-YOYO CLAMP ---
-                if (targetCool <= (baseHeat + swapDB)) {
-                    targetCool = baseHeat + swapDB + 1.0
-                    targetHeat = targetCool - 3.0 
-                    syncMessage = " [Alignment Clamped: Hit Heating Floor]"
-                }
-                else if (targetHeat >= (baseCool - swapDB)) {
-                    targetHeat = baseCool - swapDB - 1.0
-                    targetCool = targetHeat + 3.0 
-                    syncMessage = " [Alignment Clamped: Hit Cooling Ceiling]"
+                if (offset != 0.0) {
+                    def calcCool = (targetCool - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+                    def calcHeat = (targetHeat - offset).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
+                    
+                    // If Hysteresis is disabled, fall back to basic smart snap-back
+                    if (!enableHysteresis) {
+                        def coolSnapped = false
+                        if (calcCool < baseCool && currentAvg <= baseCool) coolSnapped = true
+                        def heatSnapped = false
+                        if (calcHeat > baseHeat && currentAvg >= baseHeat) heatSnapped = true
+                        
+                        if (coolSnapped || heatSnapped) {
+                            calcCool = baseCool
+                            calcHeat = baseHeat
+                            syncMessage = " [Alignment Satisfied: System Idle, Snapped to Base]"
+                        } else {
+                            syncMessage = " [Alignment Active: Shifted by ${String.format('%.1f', -offset)}°]"
+                        }
+                    } else {
+                        syncMessage = hysMessage + " [Shifted by ${String.format('%.1f', -offset)}°]"
+                    }
+                    
+                    targetCool = calcCool
+                    targetHeat = calcHeat
+                    
+                    // --- ANTI-YOYO CLAMP ---
+                    if (targetCool <= (baseHeat + safeSwapDB)) {
+                        targetCool = baseHeat + safeSwapDB + 1.0
+                        targetHeat = targetCool - 3.0 
+                        syncMessage += " [Clamped: Hit Heating Floor]"
+                    }
+                    else if (targetHeat >= (baseCool - safeSwapDB)) {
+                        targetHeat = baseCool - safeSwapDB - 1.0
+                        targetCool = targetHeat + 3.0 
+                        syncMessage += " [Clamped: Hit Cooling Ceiling]"
+                    }
                 }
             }
         }
@@ -822,7 +1006,7 @@ def evaluateSystem() {
     def hardwareDeadband = 3.0
     if ((targetCool - targetHeat) < hardwareDeadband) {
         targetHeat = (targetCool - hardwareDeadband).toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
-        if (!syncMessage.contains("Clamped") && !syncMessage.contains("Satisfied")) syncMessage += " [Deadband Enforced]"
+        if (!syncMessage.contains("Clamped") && !syncMessage.contains("Satisfied") && !syncMessage.contains("Suspended")) syncMessage += " [Deadband Enforced]"
     }
     // -----------------------------------
 
@@ -830,18 +1014,72 @@ def evaluateSystem() {
         def runMins = (now() - state.cycleStartTime) / 60000.0
         if (runMins < (minRunTime ?: 10)) {
             
-            if (state.currentAction == "cooling" && targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
-                targetCool = thermostat.currentValue("coolingSetpoint").toBigDecimal()
-                syncMessage += " [Compressor Protection: Min Run Lockout Prevented Setpoint Rise]"
+            def localTemp = thermostat.currentValue("temperature")?.toBigDecimal() ?: targetCool
+            def buffer = setpointBuffer ?: 2.0
+            
+            if (state.currentAction == "cooling") {
+                if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
+                    targetCool = thermostat.currentValue("coolingSetpoint").toBigDecimal()
+                    syncMessage += " [Compressor Protection: Lockout Prevented Setpoint Rise]"
+                }
+                // Force target below physical temp to prevent the thermostat from deciding to shut down locally
+                if (targetCool >= localTemp) {
+                    targetCool = localTemp - 1.0
+                    def minAllowed = baseCool - buffer
+                    
+                    if (targetCool < minAllowed) {
+                        targetCool = minAllowed
+                        
+                        // If clamped limit is still above local temp, the physical stat will shut off anyway
+                        if (targetCool >= localTemp) {
+                             syncMessage += " [CRITICAL: Cannot protect compressor. Min buffer limit reached.]"
+                        }
+                        
+                        if (enableAverageSync && !state.alignmentLockout) {
+                            state.alignmentLockout = "cooling"
+                            state.alignmentLockoutTarget = baseCool
+                            syncMessage += " [CRITICAL: Max Buffer Hit. Alignment ABORTED until temp recovers]"
+                        } else {
+                            syncMessage += " [Compressor Protection: Clamped to Max Buffer (-${buffer}°)]"
+                        }
+                    } else {
+                        syncMessage += " [Compressor Protection: Pushed below local temp to maintain run]"
+                    }
+                }
             }
-            else if (state.currentAction == "heating" && targetHeat < thermostat.currentValue("heatingSetpoint").toBigDecimal()) {
-                targetHeat = thermostat.currentValue("heatingSetpoint").toBigDecimal()
-                syncMessage += " [Compressor Protection: Min Run Lockout Prevented Setpoint Drop]"
+            else if (state.currentAction == "heating") {
+                if (targetHeat < thermostat.currentValue("heatingSetpoint").toBigDecimal()) {
+                    targetHeat = thermostat.currentValue("heatingSetpoint").toBigDecimal()
+                    syncMessage += " [Compressor Protection: Lockout Prevented Setpoint Drop]"
+                }
+                // Force target above physical temp to prevent the thermostat from deciding to shut down locally
+                if (targetHeat <= localTemp) {
+                    targetHeat = localTemp + 1.0
+                    def maxAllowed = baseHeat + buffer
+                    
+                    if (targetHeat > maxAllowed) {
+                        targetHeat = maxAllowed
+                        
+                        if (targetHeat <= localTemp) {
+                             syncMessage += " [CRITICAL: Cannot protect compressor. Max buffer limit reached.]"
+                        }
+                        
+                        if (enableAverageSync && !state.alignmentLockout) {
+                            state.alignmentLockout = "heating"
+                            state.alignmentLockoutTarget = baseHeat
+                            syncMessage += " [CRITICAL: Max Buffer Hit. Alignment ABORTED until temp recovers]"
+                        } else {
+                            syncMessage += " [Compressor Protection: Clamped to Max Buffer (+${buffer}°)]"
+                        }
+                    } else {
+                        syncMessage += " [Compressor Protection: Pushed above local temp to maintain run]"
+                    }
+                }
             }
 
             if (enableAutoSwap) {
-                def minCoolFloor = baseHeat + swapDB + 1.5 
-                def maxHeatCeiling = baseCool - swapDB - 1.5
+                def minCoolFloor = baseHeat + safeSwapDB + 1.5 
+                def maxHeatCeiling = baseCool - safeSwapDB - 1.5
                 
                 if (state.currentAction == "cooling" && targetCool < minCoolFloor) {
                     targetCool = minCoolFloor.toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP)
@@ -857,7 +1095,9 @@ def evaluateSystem() {
     
     if (thermostat.currentValue("coolingSetpoint") != targetCool || thermostat.currentValue("heatingSetpoint") != targetHeat) {
         state.expectedCool = targetCool; state.expectedHeat = targetHeat
-        thermostat.setCoolingSetpoint(targetCool); thermostat.setHeatingSetpoint(targetHeat)
+        state.lastCommandTime = now() // Track execution time to prevent network echo
+        thermostat.setCoolingSetpoint(targetCool)
+        thermostat.setHeatingSetpoint(targetHeat)
         logAction("BMS Command -> Pushing Setpoints to Thermostat: COOL ${targetCool}° | HEAT ${targetHeat}°${syncMessage}")
     }
     
@@ -866,13 +1106,24 @@ def evaluateSystem() {
         def tMode = thermostat.currentValue("thermostatMode")?.toLowerCase()
         
         if (tMode == "heat" || tMode == "cool" || tMode == "auto") {
-            if (currentAvg >= (targetCool + swapDB) && tMode != "cool") {
-                logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to COOL mode.")
+            if (currentAvg >= (targetCool + safeSwapDB) && tMode != "cool") {
+                logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to COOL mode. (Temp: ${currentAvg}°, Target: ${targetCool}°, Safe DB: ${safeSwapDB}°)")
                 thermostat.setThermostatMode("cool")
-            } else if (currentAvg <= (targetHeat - swapDB) && tMode != "heat") {
-                logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to HEAT mode.")
+            } else if (currentAvg <= (targetHeat - safeSwapDB) && tMode != "heat") {
+                logAction("BMS Command -> Auto-Swap triggered. Switching thermostat to HEAT mode. (Temp: ${currentAvg}°, Target: ${targetHeat}°, Safe DB: ${safeSwapDB}°)")
                 thermostat.setThermostatMode("heat")
             }
+        }
+    }
+}
+
+// THE FIX: Active Compressor Watchdog - Polls the system every 60 seconds while running to prevent premature local satisfaction
+def compressorWatchdog() {
+    if (state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
+        def runMins = (now() - state.cycleStartTime) / 60000.0
+        if (runMins < (minRunTime ?: 10)) {
+            evaluateSystem() 
+            runIn(60, compressorWatchdog)
         }
     }
 }
@@ -938,6 +1189,10 @@ def hvacStateHandler(evt) {
         def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
         
         if (enableMinRuntime && !isNight && state.currentAction in ["cooling", "heating"]) {
+            
+            // THE FIX: Engage the active watchdog while running to protect the compressor
+            runIn(60, compressorWatchdog)
+            
             def activeSetpoint = (state.currentAction == "cooling") ? thermostat.currentValue("coolingSetpoint") : thermostat.currentValue("heatingSetpoint")
             def threshold = shortCycleThreshold ?: 1.0
             
@@ -950,10 +1205,12 @@ def hvacStateHandler(evt) {
         if (enableDeltaT && returnSensor && dischargeSensor) runIn((deltaTCheckDelay ?: 30) * 60, checkDeltaT)
     } else if (stateVal == "idle" || stateVal == "pending cool" || stateVal == "pending heat") {
         unschedule(checkDeltaT)
+        unschedule(compressorWatchdog)
         
+        def yoyoMins = yoyoCooldownMins != null ? yoyoCooldownMins : 15
         if (state.currentAction == "cooling") {
-            state.yoyoCooldownEnds = now() + (15 * 60000)
-            logAction("Cooling cycle complete. Starting 15-Minute Anti-Yo-Yo Cooldown.")
+            state.yoyoCooldownEnds = now() + (yoyoMins * 60000)
+            logAction("Cooling cycle complete. Starting ${yoyoMins}-Minute Anti-Yo-Yo Cooldown.")
         }
 
         if (state.isBuffering) releaseBuffer()
@@ -965,9 +1222,22 @@ def hvacStateHandler(evt) {
             
             if (state.currentAction && state.currentAction != "idle") {
                 trackRecentCycle(state.currentAction, runMinutes)
+                
+                if (enableMinRuntime && state.currentAction in ["cooling", "heating"]) {
+                    def targetMin = minRunTime ?: 10
+                    if (runMinutes < targetMin) {
+                        logAction("WARNING: Short-cycle detected! Compressor ran for ${String.format('%.1f', runMinutes)} mins (Goal: ${targetMin} mins).")
+                        if (enableShortCycleNotify && shortCycleNotifyDevices) {
+                            def alertMsg = "HVAC Alert: Short-cycle detected. ${state.currentAction.capitalize()} ran for only ${String.format('%.1f', runMinutes)} minutes."
+                            shortCycleNotifyDevices.deviceNotification(alertMsg)
+                        }
+                    }
+                }
             }
         }
         state.cycleStartTime = null; state.currentAction = "idle"
+        
+        evaluateSystem()
     }
 }
 
@@ -1043,7 +1313,7 @@ def engageBuffer(runMins) {
         if ((newCool - newHeat) < deadband) newHeat = newCool - deadband
         
         state.expectedCool = newCool; state.expectedHeat = newHeat
-        
+        state.lastCommandTime = now()
         thermostat.setCoolingSetpoint(newCool)
         if (thermostat.currentValue("heatingSetpoint") != newHeat) thermostat.setHeatingSetpoint(newHeat)
         
@@ -1055,7 +1325,7 @@ def engageBuffer(runMins) {
         if ((newCool - newHeat) < deadband) newCool = newHeat + deadband
         
         state.expectedHeat = newHeat; state.expectedCool = newCool
-        
+        state.lastCommandTime = now()
         thermostat.setHeatingSetpoint(newHeat)
         if (thermostat.currentValue("coolingSetpoint") != newCool) thermostat.setCoolingSetpoint(newCool)
         
@@ -1068,11 +1338,12 @@ def engageBuffer(runMins) {
 def releaseBuffer() { 
     state.isBuffering = false
     
+    def yoyoMins = yoyoCooldownMins != null ? yoyoCooldownMins : 15
     if (state.currentAction == "cooling") {
-        state.yoyoCooldownEnds = now() + (15 * 60000)
+        state.yoyoCooldownEnds = now() + (yoyoMins * 60000)
     }
     
-    logAction("Compressor Protection Buffer Complete. Restoring normal targets and starting 15-Min Anti-Yo-Yo Cooldown.") 
+    logAction("Compressor Protection Buffer Complete. Restoring normal targets and starting Anti-Yo-Yo Cooldown.") 
     evaluateSystem() 
 }
 
