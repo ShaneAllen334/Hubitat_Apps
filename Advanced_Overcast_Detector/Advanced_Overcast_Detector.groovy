@@ -21,6 +21,8 @@ def mainPage() {
     dynamicPage(name: "mainPage", title: "Advanced Overcast Detector", install: true, uninstall: true) {
         
         section("Live System Dashboard") {
+            input name: "refreshBtn", type: "button", title: "🔄 Refresh Data"
+            
             def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Environment</th><th style='padding: 8px;'>System Evaluation</th><th style='padding: 8px;'>Outputs</th></tr>"
             
@@ -28,16 +30,38 @@ def mainPage() {
             
             // Environment Display (Showing Dynamic Calculations)
             def envDisplay = "<div style='font-size: 14px; margin-bottom: 5px;'><b>${currentLux}</b></div>"
-            def oLimit = overcastThreshold ?: 2000
-            envDisplay += "<div style='font-size: 11px; color: #555;'><b>Drop Target:</b> ${oLimit} lx</div>"
+            
+            // Smart Threshold Display Logic
+            def oLimit = getSmartOvercastThreshold()
+            def oReason = useSmartThresholds ? "Smart Scaled" : "Static"
+            envDisplay += "<div style='font-size: 11px; color: #555;'><b>Drop Target:</b> ${oLimit} lx <i>(${oReason})</i></div>"
             
             if (useDynamicClear) {
                 def cLimit = getDynamicClearThreshold()
                 envDisplay += "<div style='font-size: 11px; color: #2e8b57;'><b>Clear Target:</b> ${cLimit} lx (Auto-Curve)</div>"
             } else {
-                def cLimit = clearThreshold ?: 4000
-                envDisplay += "<div style='font-size: 11px; color: #2e8b57;'><b>Clear Target:</b> ${cLimit} lx (Static)</div>"
+                def cLimit = getSmartClearThreshold()
+                def cReason = useSmartThresholds ? "Smart Scaled" : "Static"
+                envDisplay += "<div style='font-size: 11px; color: #2e8b57;'><b>Clear Target:</b> ${cLimit} lx <i>(${cReason})</i></div>"
             }
+
+            // SMART LEARNING DISPLAY
+            def epcsb = getExpectedPeakLux()
+            def epcsbReason = ""
+            if (useSmartLearning) {
+                def learnedDays = state.peakLuxHistory ? state.peakLuxHistory.size() : 0
+                if (learnedDays >= 30) {
+                    epcsbReason = "Learning Active (30-day Avg)"
+                } else {
+                    epcsbReason = "Collecting Data (${learnedDays}/30)"
+                }
+            } else {
+                epcsbReason = "Manual User Setting"
+            }
+            def dailyMax = state.dailyMaxLux ?: 0
+            
+            envDisplay += "<div style='margin-top: 5px; font-size: 11px; color: #555;'><b>Daily Max Lux:</b> ${dailyMax} lx</div>"
+            envDisplay += "<div style='font-size: 11px; color: #b8860b;'><b>EPCSB Target:</b> ${epcsb} lx<br><i>(${epcsbReason})</i></div>"
             
             def sState = state.currentCondition ?: "Awaiting Sync..."
             
@@ -132,8 +156,11 @@ def mainPage() {
         }
         
         section("Graph Calibration (Solar Baseline)") {
+            input "useSmartLearning", "bool", title: "Enable Smart Learning Mode", defaultValue: true, submitOnChange: true,
+                description: "Logs the daily max lux for 30 days to automatically set your Expected Peak Clear-Sky Brightness. Automatically rejects bad weather days from the dataset."
+                
             input "peakClearLux", "number", title: "Expected Peak Clear-Sky Brightness (Lux)", defaultValue: 10000, required: true,
-                description: "Set this to whatever your sensor typically reads at Solar Noon on a perfectly clear day. This scales the theoretical sun curve on your graph."
+                description: "Manual fallback value. Set this to whatever your sensor typically reads at Solar Noon on a perfectly clear day. This scales the theoretical sun curve on your graph."
         }
         
         section("Application History (Last 20 Events)") {
@@ -171,11 +198,14 @@ def mainPage() {
         }
         
         section("Hysteresis & Thresholds (The Deadband)") {
-            input "overcastThreshold", "number", title: "Overcast Drop Threshold (Lux)", defaultValue: 2000, required: true,
-                description: "If lux drops below this, start the Overcast timer."
+            input "useSmartThresholds", "bool", title: "Enable Smart Threshold Scaling?", defaultValue: true, submitOnChange: true,
+                description: "Automatically scales your Overcast and Clear Sky limits proportionally as the Expected Peak Clear-Sky Brightness changes with the seasons."
                 
-            input "clearThreshold", "number", title: "Clear Sky Recovery Threshold (Lux)", defaultValue: 4000, required: true,
-                description: "If lux rises above this, start the Clear Sky timer. Keep this higher than the Overcast threshold to prevent yo-yoing."
+            input "overcastThreshold", "number", title: "Base Overcast Drop Threshold (Lux)", defaultValue: 2000, required: true,
+                description: "If lux drops below this, start the Overcast timer. (Acts as the baseline ratio if Smart Thresholds are enabled)."
+                
+            input "clearThreshold", "number", title: "Base Clear Sky Recovery Threshold (Lux)", defaultValue: 4000, required: true,
+                description: "If lux rises above this, start the Clear Sky timer. (Acts as the baseline ratio if Smart Thresholds are enabled)."
                 
             input "debounceTime", "number", title: "Anti-Yo-Yo Debounce Time (Minutes)", defaultValue: 10, required: true,
                 description: "How long the sky must stay below/above the threshold before flipping the virtual outputs."
@@ -213,6 +243,8 @@ def initialize() {
     state.historyLog = state.historyLog ?: []
     state.luxHistory = state.luxHistory ?: []
     state.cloudHistory = state.cloudHistory ?: []
+    state.peakLuxHistory = state.peakLuxHistory ?: [] // Initialize smart learning array
+    state.dailyMaxLux = state.dailyMaxLux ?: 0
     state.activeCloudEvent = null
     state.currentCondition = "Evaluating..."
     state.pendingOvercast = false
@@ -241,19 +273,60 @@ def initialize() {
     forceImmediateEvaluation()
 }
 
+// --- BUTTON HANDLER ---
+def appButtonHandler(btn) {
+    if (btn == "refreshBtn") {
+        log.info "Manual Data Refresh Requested."
+        // The UI will automatically redraw with the latest state values
+    }
+}
+
+// --- UTILITY: SMART LEARNING HELPER ---
+def getExpectedPeakLux() {
+    if (useSmartLearning && state.peakLuxHistory && state.peakLuxHistory.size() >= 30) {
+        return (state.peakLuxHistory.sum() / state.peakLuxHistory.size()).toInteger()
+    }
+    return peakClearLux ?: 10000
+}
+
+// --- UTILITY: SMART THRESHOLDS ---
+def getSmartOvercastThreshold() {
+    def baseOver = overcastThreshold ?: 2000
+    if (!useSmartThresholds) return baseOver
+    
+    def basePeak = peakClearLux ?: 10000
+    def currentPeak = getExpectedPeakLux()
+    
+    // Calculate the percentage ratio the user originally wanted, then apply to current peak
+    def ratio = baseOver / basePeak
+    return (currentPeak * ratio).toInteger()
+}
+
+def getSmartClearThreshold() {
+    def baseClear = clearThreshold ?: 4000
+    if (!useSmartThresholds) return baseClear
+    
+    def basePeak = peakClearLux ?: 10000
+    def currentPeak = getExpectedPeakLux()
+    
+    // Calculate the percentage ratio the user originally wanted, then apply to current peak
+    def ratio = baseClear / basePeak
+    return (currentPeak * ratio).toInteger()
+}
+
 // --- UTILITY: CLOUD EVENT LOGGER ---
 def closeActiveCloudEvent() {
     if (!state.activeCloudEvent) return
     
     def endTime = now()
-    def durationSecs = (endTime - state.activeCloudEvent.startTime) / 1000
+    def durationSecs = ((endTime - state.activeCloudEvent.startTime) / 1000).toInteger() 
     def durationStr = ""
     
     if (durationSecs < 60) {
-        durationStr = "${durationSecs.toInteger()} sec"
+        durationStr = "${durationSecs} sec"
     } else {
         def mins = (durationSecs / 60).toInteger()
-        def secs = (durationSecs % 60).toInteger()
+        def secs = durationSecs % 60
         durationStr = "${mins}m ${secs}s"
     }
     
@@ -304,8 +377,8 @@ def getAggregateLux() {
 
 // --- DYNAMIC CLEAR SKY CALCULATOR ---
 def getDynamicClearThreshold() {
-    def baseClear = clearThreshold ?: 4000
-    def baseOvercast = overcastThreshold ?: 2000
+    def baseClear = getSmartClearThreshold()
+    def baseOvercast = getSmartOvercastThreshold()
     
     if (!useDynamicClear) return baseClear
     
@@ -360,7 +433,7 @@ def logGraphData() {
         
         if (nowTime >= sr && nowTime <= ss) {
             def fraction = (nowTime - sr) / (ss - sr)
-            def peak = peakClearLux ?: 10000
+            def peak = getExpectedPeakLux()
             expectedLux = (peak * Math.sin(fraction * Math.PI)).toInteger()
         }
     }
@@ -423,7 +496,7 @@ def modeHandler(evt) {
 def updateDimmerLevel(currentLux) {
     if (!targetDimmer || isSystemPaused() || !isModeAllowed() || state.isNight) return
 
-    def overLimit = overcastThreshold ?: 2000
+    def overLimit = getSmartOvercastThreshold()
     def stormLimit = heavyStormLux ?: 500
     def maxLvl = maxDimLevel ?: 100
     def minLvl = minDimLevel ?: 20
@@ -464,7 +537,7 @@ def forceImmediateEvaluation() {
     if (!luxSensors || isSystemPaused() || !isModeAllowed() || (state.isNight && useAstro)) return
     
     def lux = getAggregateLux()
-    def overLimit = overcastThreshold ?: 2000
+    def overLimit = getSmartOvercastThreshold()
     def clearLimit = getDynamicClearThreshold()
     
     if (lux <= overLimit) {
@@ -491,7 +564,7 @@ def evaluateLuxCondition() {
     if (!luxSensors) return
     
     def lux = getAggregateLux()
-    def overLimit = overcastThreshold ?: 2000
+    def overLimit = getSmartOvercastThreshold()
     def clearLimit = getDynamicClearThreshold()
     def debounceSecs = (debounceTime ?: 10) * 60
     def intervalMins = sensorInterval ?: 15
@@ -499,6 +572,11 @@ def evaluateLuxCondition() {
     def timeNow = now()
     def timeDeltaMins = state.lastLuxCheckTime ? (timeNow - state.lastLuxCheckTime) / 60000 : 0
     def luxDrop = state.lastLuxValue ? (state.lastLuxValue - lux) : 0
+    
+    // --- SMART LEARNING: TRACK DAILY MAX ---
+    if (!state.dailyMaxLux || lux > state.dailyMaxLux) {
+        state.dailyMaxLux = lux
+    }
     
     // --- DYNAMIC TIMERS BASED ON SENSOR HARDWARE LIMITS ---
     // Hold the peak lux for 3 full update cycles before considering it stale
@@ -682,6 +760,33 @@ def executeSunset() {
     if (!useAstro) return
   
     if (state.activeCloudEvent) closeActiveCloudEvent()
+    
+    // --- SMART LEARNING: EVALUATE DAILY MAX ---
+    if (useSmartLearning && state.dailyMaxLux && state.dailyMaxLux > 100) {
+        def baseline = 0
+        if (state.peakLuxHistory && state.peakLuxHistory.size() > 0) {
+            baseline = state.peakLuxHistory.sum() / state.peakLuxHistory.size()
+        } else {
+            baseline = peakClearLux ?: 10000
+        }
+        
+        def lowerBound = baseline * 0.8 // 20% bad weather rejection threshold
+        
+        // If we have fewer than 3 days, trust the data more to build a foundation.
+        if (state.peakLuxHistory.size() < 3 || state.dailyMaxLux >= lowerBound) {
+            if (!state.peakLuxHistory) state.peakLuxHistory = []
+            state.peakLuxHistory.add(state.dailyMaxLux)
+            
+            if (state.peakLuxHistory.size() > 30) {
+                state.peakLuxHistory = state.peakLuxHistory.drop(1)
+            }
+            log.info "SMART LEARNING: Daily max of ${state.dailyMaxLux} lx added to dataset."
+        } else {
+            log.info "SMART LEARNING: Daily max of ${state.dailyMaxLux} lx rejected (20% bad weather rule)."
+        }
+    }
+    // Reset for tomorrow
+    state.dailyMaxLux = 0
     
     state.isNight = true
     state.currentCondition = "Nighttime"
