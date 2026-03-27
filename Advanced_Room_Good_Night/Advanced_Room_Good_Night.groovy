@@ -19,6 +19,7 @@ def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced Room Good Night</b>", install: true, uninstall: true) {
         
         section("<b>Global Sync & Override Status</b>") {
+            input "refreshDataBtn", "button", title: "Refresh Data"
             paragraph "<div style='font-size:12px; color:#555;'><b>House Sleep Status:</b> Live indicator of active blocking devices and lead room countdowns.</div>"
             
             if (settings.enableGlobalMode) {
@@ -215,15 +216,12 @@ def mainPage() {
         }
         
         for (int i = 1; i <= 4; i++) {
-            // Dynamically pull the custom room name, or default to "Room X"
             def rName = settings["roomName${i}"] ?: "Room ${i}"
             
-            // Use the dynamic rName in the section title
             section("<b>${rName} Configuration</b>", hideable: true, hidden: true) {
                 input "enableRoom${i}", "bool", title: "<b>Enable ${rName}</b>", submitOnChange: true
                 
                 if (settings["enableRoom${i}"]) {
-                    // Added submitOnChange: true here so the section title updates immediately
                     input "roomName${i}", "text", title: "Custom Room Name", defaultValue: "Room ${i}", submitOnChange: true
                     input "roomSwitch${i}", "capability.switch", title: "${rName} Good Night Virtual Switch", required: true
                     
@@ -251,6 +249,28 @@ def mainPage() {
                     input "roomShade${i}", "capability.windowShade", title: "Window Shade to Close", required: false
                     input "shadeHoldRelease${i}", "capability.switch", title: "Manual Hold Release Switch (Signals Shade Controller)", required: false
                     
+                    paragraph "<b>Reading Light 1</b>"
+                    input "enableReadingLight1_${i}", "bool", title: "Enable Reading Light 1?", submitOnChange: true
+                    if (settings["enableReadingLight1_${i}"]) {
+                        input "readingLight1_${i}", "capability.switchLevel", title: "Reading Light 1 (Dimmer)", required: false
+                        input "readingButton1_${i}", "capability.pushableButton", title: "Button for Light 1", required: false
+                        input "readingButtonNum1_${i}", "number", title: "Button Number", required: false, defaultValue: 1
+                        input "readingLevel1_${i}", "number", title: "Dim Level (%)", required: false, defaultValue: 30
+                        input "readingTimeout1_${i}", "number", title: "Timeout (Minutes)", required: false, defaultValue: 60
+                        input "readingModes1_${i}", "mode", title: "Only Allow in These Modes", multiple: true, required: false
+                    }
+
+                    paragraph "<b>Reading Light 2</b>"
+                    input "enableReadingLight2_${i}", "bool", title: "Enable Reading Light 2?", submitOnChange: true
+                    if (settings["enableReadingLight2_${i}"]) {
+                        input "readingLight2_${i}", "capability.switchLevel", title: "Reading Light 2 (Dimmer)", required: false
+                        input "readingButton2_${i}", "capability.pushableButton", title: "Button for Light 2", required: false
+                        input "readingButtonNum2_${i}", "number", title: "Button Number", required: false, defaultValue: 1
+                        input "readingLevel2_${i}", "number", title: "Dim Level (%)", required: false, defaultValue: 30
+                        input "readingTimeout2_${i}", "number", title: "Timeout (Minutes)", required: false, defaultValue: 60
+                        input "readingModes2_${i}", "mode", title: "Only Allow in These Modes", multiple: true, required: false
+                    }
+                    
                     paragraph "<b>3. Sonos Audio Polish</b>"
                     input "roomSpeaker${i}", "capability.audioNotification", title: "Sonos Speaker", required: false
                     input "audioVolume${i}", "number", title: "Fixed Nighttime Volume (1-100)", required: false, defaultValue: 15
@@ -270,6 +290,12 @@ def mainPage() {
 // ==============================================================================
 // INTERNAL LOGIC ENGINE
 // ==============================================================================
+
+def appButtonHandler(btn) {
+    if (btn == "refreshDataBtn") {
+        logInfo("Manual UI Data Refresh Triggered.")
+    }
+}
 
 def getSpeedLevels() { return ["off": 0, "low": 1, "medium-low": 2, "medium": 3, "medium-high": 4, "high": 5] }
 def getLevelSpeeds() { return [0: "off", 1: "low", 2: "medium-low", 3: "medium", 4: "medium-high", 5: "high"] }
@@ -341,6 +367,14 @@ def initialize() {
             if (settings["tempSensor${i}"]) {
                 subscribe(settings["tempSensor${i}"], "temperature", tempHandler)
             }
+            // Reading Buttons Subscription
+            if (settings["enableReadingLight1_${i}"] && settings["readingButton1_${i}"]) {
+                subscribe(settings["readingButton1_${i}"], "pushed", readingButtonHandler)
+            }
+            if (settings["enableReadingLight2_${i}"] && settings["readingButton2_${i}"]) {
+                subscribe(settings["readingButton2_${i}"], "pushed", readingButtonHandler)
+            }
+            
             if (!state."sleepHistory${i}") state."sleepHistory${i}" = []
             prepNextUri(i)
         }
@@ -354,6 +388,89 @@ def initialize() {
             subscribe(blockingSwitches, "switch", blockingSwitchHandler)
         }
     }
+}
+
+// --- READING LIGHT BUTTON ENGINE ---
+def readingButtonHandler(evt) {
+    def btnId = evt.device.id
+    def btnNum = evt.value
+
+    for (int i = 1; i <= 4; i++) {
+        if (!settings["enableRoom${i}"]) continue
+
+        for (int l = 1; l <= 2; l++) {
+            if (!settings["enableReadingLight${l}_${i}"]) continue
+            
+            def confBtn = settings["readingButton${l}_${i}"]
+            def confNum = settings["readingButtonNum${l}_${i}"]?.toString() ?: "1"
+
+            if (confBtn && confBtn.id == btnId && btnNum == confNum) {
+                toggleReadingMode(i, l)
+                return
+            }
+        }
+    }
+}
+
+def toggleReadingMode(roomNum, lightNum) {
+    if (!settings["enableReadingLight${lightNum}_${roomNum}"]) return
+
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    def rLight = settings["readingLight${lightNum}_${roomNum}"]
+    def rLevel = settings["readingLevel${lightNum}_${roomNum}"] ?: 30
+    def rTimeout = settings["readingTimeout${lightNum}_${roomNum}"] ?: 60
+    def rModes = settings["readingModes${lightNum}_${roomNum}"]
+
+    if (!rLight) return
+
+    if (rModes && !(rModes as List).contains(location.mode)) {
+        logInfo("${rName}: Reading button pushed, but not in an allowed mode.")
+        return
+    }
+
+    def isActive = state."readingModeActive_${roomNum}_${lightNum}"
+
+    if (isActive) {
+        logInfo("${rName}: Reading Light ${lightNum} OFF (Toggled manually).")
+        endReadingMode(roomNum, lightNum)
+    } else {
+        logInfo("${rName}: Reading Light ${lightNum} ON. Level: ${rLevel}%, Timer: ${rTimeout}m.")
+        state."readingModeActive_${roomNum}_${lightNum}" = true
+        rLight.setLevel(rLevel)
+        runIn(rTimeout * 60, "readingTimeoutRoom${roomNum}Light${lightNum}")
+    }
+}
+
+def readingTimeoutRoom1Light1() { endReadingMode(1, 1) }
+def readingTimeoutRoom1Light2() { endReadingMode(1, 2) }
+def readingTimeoutRoom2Light1() { endReadingMode(2, 1) }
+def readingTimeoutRoom2Light2() { endReadingMode(2, 2) }
+def readingTimeoutRoom3Light1() { endReadingMode(3, 1) }
+def readingTimeoutRoom3Light2() { endReadingMode(3, 2) }
+def readingTimeoutRoom4Light1() { endReadingMode(4, 1) }
+def readingTimeoutRoom4Light2() { endReadingMode(4, 2) }
+
+def endReadingMode(roomNum, lightNum) {
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    def rLight = settings["readingLight${lightNum}_${roomNum}"]
+    
+    logInfo("${rName}: Reading Mode for Light ${lightNum} ended. Turning off.")
+    state."readingModeActive_${roomNum}_${lightNum}" = false
+    unschedule("readingTimeoutRoom${roomNum}Light${lightNum}")
+    
+    if (rLight) rLight.off()
+}
+
+def isReadingLightActive(roomNum, lightDeviceId) {
+    for (int l = 1; l <= 2; l++) {
+        if (!settings["enableReadingLight${l}_${roomNum}"]) continue
+        
+        if (state."readingModeActive_${roomNum}_${l}") {
+            def rLight = settings["readingLight${l}_${roomNum}"]
+            if (rLight && rLight.id == lightDeviceId) return true
+        }
+    }
+    return false
 }
 
 // --- HOURLY FAN WIGGLE (SELF-HEALING) ---
@@ -378,7 +495,6 @@ def doHourlyWiggle() {
         }
     }
     
-    // Wait 10 seconds, then evaluate all sleeping rooms to bump speeds back
     runIn(10, "evaluateAllSleepingFans")
 }
 
@@ -392,7 +508,6 @@ def evaluateAllSleepingFans() {
 
 // --- PERIODIC STATE ENFORCEMENT ---
 def periodicEnforcementHandler() {
-    // FAST FAIL: Only log and evaluate if at least one room is asleep
     def anyoneAsleep = false
     for (int i = 1; i <= 4; i++) {
         if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on") {
@@ -404,10 +519,8 @@ def periodicEnforcementHandler() {
     if (anyoneAsleep) {
         if (txtLogEnable) log.debug "PERIODIC ENFORCEMENT: Waking up to verify system state..."
         
-        // 1. Re-evaluate Global Mode Requirements
         evaluateGlobalMode(null)
         
-        // 2. Loop through all rooms and enforce state
         for (int i = 1; i <= 4; i++) {
             if (settings["enableRoom${i}"]) {
                 def sw = settings["roomSwitch${i}"]
@@ -415,15 +528,25 @@ def periodicEnforcementHandler() {
                 
                 if (sw && sw.currentValue("switch") == "on") {
                     
+                    // --- UPDATED AND FORTIFIED PAUSE CHECK ---
                     def pauseEnforce = settings["pauseLightingEnforcement${i}"]
-                    def isPaused = pauseEnforce && pauseEnforce.currentValue("switch") == "on"
+                    def pauseState = pauseEnforce ? pauseEnforce.currentValue("switch") : "unconfigured"
+                    def isPaused = (pauseState == "on")
                     
                     if (!isPaused) {
-                        // Enforce Lights OFF with Flashbang Fix
+                        if (txtLogEnable) {
+                            def pName = pauseEnforce ? pauseEnforce.displayName : "No Switch Configured"
+                            log.debug "ENFORCEMENT: Pause switch [${pName}] is currently [${pauseState}]. Proceeding with forced light shutdown."
+                        }
+                        
                         def lights = settings["roomLights${i}"]
                         if (lights) {
                             lights.each { lgt -> 
                                 if (lgt.currentValue("switch") == "on") {
+                                    if (isReadingLightActive(i, lgt.id)) {
+                                        if (txtLogEnable) log.debug "ENFORCEMENT: Skipping [${lgt.displayName}] as Reading Mode is active."
+                                        return 
+                                    }
                                     if (lgt.hasCommand("setLevel")) {
                                         lgt.setLevel(1)
                                         pauseExecution(400)
@@ -434,10 +557,9 @@ def periodicEnforcementHandler() {
                             }
                         }
                     } else {
-                        if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks paused for ${rName} (Sunrise Active)."
+                        if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks successfully paused for ${rName} (Sunrise Active)."
                     }
                     
-                    // Enforce Shades CLOSED
                     def shadeContact = settings["shadeContact${i}"]
                     def shade = settings["roomShade${i}"]
                     if (shadeContact && shade && shadeContact.currentValue("contact") == "open") {
@@ -445,7 +567,6 @@ def periodicEnforcementHandler() {
                         logInfo("ENFORCEMENT: ${rName} is asleep but shade contact was OPEN. Forced CLOSE.")
                     }
 
-                    // Enforce Fans
                     evaluateFans(i)
                 }
             }
@@ -470,7 +591,6 @@ def hubRebootHandler(evt) {
     evaluateGlobalMode(null)
 }
 
-// --- HELPER: SLEEP SUITABILITY CALCULATOR ---
 def calculateSleepSuitability(cTemp, cHum) {
     if (cTemp == null) return "<span style='color:gray;'>Awaiting Sensor Data...</span>"
     
@@ -495,7 +615,6 @@ def calculateSleepSuitability(cTemp, cHum) {
     return "<span style='color:${color};'>${finalStatus}</span>"
 }
 
-// --- HELPER: ARE ALL REQUIRED ROOMS ASLEEP? ---
 def areRequiredRoomsAsleep() {
     if (!settings.syncRooms) return false
     def allAsleep = true
@@ -513,10 +632,8 @@ def areRequiredRoomsAsleep() {
     return (roomsChecked > 0 && allAsleep)
 }
 
-// --- GLOBAL MOTION RE-EVALUATION ---
 def globalMotionHandler(evt) {
     if (evt.value == "inactive") {
-        // FAST FAIL: Don't evaluate unless required rooms are asleep
         if (areRequiredRoomsAsleep()) {
             logInfo("GLOBAL SYNC: Motion stopped on ${evt.device.displayName}. Re-evaluating sleep criteria...")
             evaluateGlobalMode(evt)
@@ -524,10 +641,8 @@ def globalMotionHandler(evt) {
     }
 }
 
-// --- BLOCKING DEVICE RE-EVALUATION ---
 def blockingSwitchHandler(evt) {
     if (evt.value == "off") {
-        // FAST FAIL: Don't evaluate unless required rooms are asleep
         if (areRequiredRoomsAsleep()) {
             logInfo("GLOBAL SYNC: Blocking device [${evt.device.displayName}] turned OFF. Re-evaluating sleep criteria...")
             evaluateGlobalMode(evt)
@@ -551,7 +666,6 @@ def roomSwitchHandler(evt) {
         logInfo("${rName}: Good Night Switch ON. Engaging Routine.")
         executeRoomGoodNight(roomNum)
         
-        // --- LEAD ROOM OVERRIDE CHECK ---
         if (settings.enableLeadRoomOverride && settings.leadRoom == roomNum.toString()) {
             def delaySecs = (settings.leadRoomTimeout ?: 30) * 60
             state.overrideScheduledTime = now() + (delaySecs * 1000)
@@ -578,7 +692,6 @@ def roomSwitchHandler(evt) {
         }
         endRoomGoodNight(roomNum)
         
-        // --- LEAD ROOM OVERRIDE CANCEL ---
         if (settings.enableLeadRoomOverride && settings.leadRoom == roomNum.toString()) {
             unschedule("evaluateLeadRoomOverride")
             state.remove("overrideScheduledTime")
@@ -632,7 +745,6 @@ def evaluateGlobalMode(evt = null) {
     def now = new Date()
     def currentMode = location.mode
     
-    // --- NIGHT MODE LOGIC ---
     if (nightStartTime && nightEndTime && targetNightMode) {
         def nightStart = timeToday(nightStartTime, location.timeZone)
         def nightEnd = timeToday(nightEndTime, location.timeZone)
@@ -644,13 +756,11 @@ def evaluateGlobalMode(evt = null) {
             isNightWindow = (now.time >= nightStart.time || now.time <= nightEnd.time)
         }
         
-        // FAST FAIL: Only proceed if we are in the time window and not already in Target Night Mode
         if (isNightWindow && currentMode != targetNightMode) {
             def isAllowedMode = true
             if (allowedNightModes) isAllowedMode = (allowedNightModes as List).contains(currentMode)
             
             if (isAllowedMode) {
-                // FAST FAIL: Check if rooms are asleep FIRST before looping through motion and switches
                 def allAsleep = true
                 def roomsChecked = 0
                 for (int i = 1; i <= 4; i++) {
@@ -667,7 +777,6 @@ def evaluateGlobalMode(evt = null) {
                 }
                 if (roomsChecked == 0) allAsleep = false
                 
-                // If the rooms aren't asleep, silently exit this block. No log spam.
                 if (allAsleep) {
                     if (txtLogEnable) log.debug "EVALUATING NIGHT MODE: Required Rooms Asleep. Checking Motion & Blocking Devices..."
                     
@@ -704,7 +813,6 @@ def evaluateGlobalMode(evt = null) {
         }
     }
     
-    // --- WAKE MODE LOGIC ---
     if (wakeStartTime && wakeEndTime && requireNightMode && targetWakeMode) {
         def wakeStart = timeToday(wakeStartTime, location.timeZone)
         def wakeEnd = timeToday(wakeEndTime, location.timeZone)
@@ -751,6 +859,10 @@ def executeRoomGoodNight(roomNum) {
     def lights = settings["roomLights${roomNum}"]
     if (lights) { 
         lights.each { lgt ->
+            if (isReadingLightActive(roomNum, lgt.id)) {
+                logInfo("${rName}: Skipping light [${lgt.displayName}] during Good Night sweep (Reading Mode active).")
+                return // skip
+            }
             if (lgt.hasCommand("setLevel")) {
                 lgt.setLevel(1)
                 pauseExecution(400)
@@ -816,14 +928,14 @@ def endRoomGoodNight(roomNum) {
     def stdFans = settings["roomFans${roomNum}"]
     if (stdFans) stdFans.off()
     
-    // --- 3x REDUNDANT CEILING FAN SHUTDOWN ---
+    // --- 3x REDUNDANT CEILING FAN SHUTDOWN (W/ LOW-OFF WIGGLE FIX) ---
     def cFanSwitch = settings["ceilingFanSwitch${roomNum}"]
     def cFanSpeed = settings["ceilingFanSpeed${roomNum}"]
     def fType = settings["fanType${roomNum}"] ?: "3_speed"
     
     if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") {
-        cFanSpeed.setSpeed("off") // Pulse 1
-        logInfo("${rName}: Ceiling fan speed set to OFF. Initiating 3x redundant shutdown sequence before cutting power.")
+        cFanSpeed.setSpeed("low") // Pulse 1 (Wiggle trigger)
+        logInfo("${rName}: Applying Low-Off Wiggle fix. Initiating 3x redundant shutdown sequence before cutting power.")
         runIn(2, "fanOffTwoRoom${roomNum}") // Cascades to Pulse 2, Pulse 3, then Power OFF
     } else if (cFanSwitch) {
         cFanSwitch.off() // Fallback or direct control for On/Off fans
@@ -909,7 +1021,6 @@ def evaluateFans(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     def currentTemp = sensor ? sensor.currentValue("temperature") : null
     
-    // 1. Evaluate Standard ON/OFF Fans
     if (currentTemp != null) {
         def stdSetpoint = settings["fanSetpoint${roomNum}"]
         def stdFans = settings["roomFans${roomNum}"]
@@ -922,7 +1033,6 @@ def evaluateFans(roomNum) {
         }
     }
     
-    // 2. Evaluate Dynamic Ceiling Fan
     def cFanSwitch = settings["ceilingFanSwitch${roomNum}"]
     def cFanSpeed = settings["ceilingFanSpeed${roomNum}"]
     def cFanSetpoint = settings["ceilingFanSetpoint${roomNum}"]
@@ -970,7 +1080,6 @@ def executeDelayedFanSpeed(roomNum) {
     }
 }
 
-// --- HELPER: AUDIO RANDOMIZER ---
 def prepNextUri(roomNum) {
     def uris = []
     for(int u = 1; u <= 5; u++) {
