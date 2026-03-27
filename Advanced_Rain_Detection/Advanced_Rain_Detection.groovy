@@ -182,9 +182,9 @@ def configPage() {
         
         section("<b>Primary Environment Sensors (Required)</b>", hideable: true, hidden: true) {
             paragraph "<i>Select the core sensors required for basic weather state and thermodynamic calculations. Temperature, Humidity, and Pressure form the baseline of the prediction engine.</i>"
-            input "sensorTemp", "capability.temperatureMeasurement", title: "Outdoor Temperature Sensor", required: true
-            input "sensorHum", "capability.relativeHumidityMeasurement", title: "Outdoor Humidity Sensor", required: true
-            input "sensorPress", "capability.pressureMeasurement", title: "Barometric Pressure Sensor", required: true
+            input "sensorTemp", "capability.sensor", title: "Outdoor Temperature Sensor", required: true
+            input "sensorHum", "capability.sensor", title: "Outdoor Humidity Sensor", required: true
+            input "sensorPress", "capability.sensor", title: "Barometric Pressure Sensor", required: true
         }
         
         section("<b>Algorithm Tuning & Toggles</b>", hideable: true, hidden: true) {
