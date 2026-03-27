@@ -20,7 +20,7 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Main Configuration", install: true, uninstall: true) {
         
-        section("Live System Dashboard") {
+        section("Live System Dashboard", hideable: true, hidden: false) {
             if (numTVs > 0) {
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
                 statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Television</th><th style='padding: 8px;'>Power & App</th><th style='padding: 8px;'>Watch Time Today</th><th style='padding: 8px;'>Top App Today</th><th style='padding: 8px;'>Cost Today</th></tr>"
@@ -73,12 +73,14 @@ def mainPage() {
                 statusText += "</div>"
 
                 paragraph statusText
+                
+                input "btnRefreshData", "button", title: "Refresh Dashboard Data"
             } else {
                 paragraph "<i>Configure televisions below to see live system status.</i>"
             }
         }
         
-        section("Application History (Last 20 Events)") {
+        section("Application History (Last 20 Events)", hideable: true, hidden: true) {
             if (state.historyLog && state.historyLog.size() > 0) {
                 def logText = state.historyLog.join("<br>")
                 paragraph "<div style='font-size: 13px; font-family: monospace; background-color: #f4f4f4; padding: 10px; border-radius: 5px; border: 1px solid #ccc;'>${logText}</div>"
@@ -87,13 +89,13 @@ def mainPage() {
             }
         }
         
-        section("Global Settings & Modes") {
+        section("Global Settings & Modes", hideable: true, hidden: true) {
             input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false, description: "Select a virtual switch to act as a global pause. If the switch is OFF, the entire TV application will halt automation."
             input "numTVs", "number", title: "Number of Televisions to Configure (1-10)", required: true, defaultValue: 1, range: "1..10", submitOnChange: true, description: "Enter the number of TVs you want to manage. Save to refresh the page and reveal configuration sections for each."
             input "elecRate", "decimal", title: "Electricity Rate (per kWh)", defaultValue: 0.14, required: true, description: "Your local utility rate (e.g., 0.14 for 14 cents per kWh). Used to calculate daily entertainment costs on the dashboard."
         }
 
-        section("Safety & Security Interruption (Auto-Mute)") {
+        section("Safety & Security Interruption (Auto-Mute)", hideable: true, hidden: true) {
             input "enableSafetyMute", "bool", title: "Enable Security/Doorbell Auto-Mute", defaultValue: false, submitOnChange: true
             if (enableSafetyMute) {
                 input "muteContacts", "capability.contactSensor", title: "Safety Contacts", multiple: true, required: false, description: "If any of these doors/windows open while a TV is on, the TV will instantly mute. It unmutes when closed."
@@ -103,7 +105,7 @@ def mainPage() {
             }
         }
         
-        section("Severe Weather & Emergency Override") {
+        section("Severe Weather & Emergency Override", hideable: true, hidden: true) {
             input "enableWeatherAlert", "bool", title: "Enable Severe Weather Overrides", defaultValue: false, submitOnChange: true
             if (enableWeatherAlert) {
                 input "weatherSwitch", "capability.switch", title: "Virtual Storm / Weather Alert Switch", required: false, description: "When this switch turns ON (e.g., triggered by a NOAA alert app), it forces all configured TVs on."
@@ -133,18 +135,18 @@ def tvPage(params) {
     def currentName = settings["tvName_${tNum}"] ?: "TV ${tNum}"
     
     dynamicPage(name: "tvPage", title: "${currentName} Setup", install: false, uninstall: false, previousPage: "mainPage") {
-        section("Identification") {
+        section("Identification", hideable: true, hidden: true) {
             input "tvName_${tNum}", "text", title: "Custom TV Name", required: false, defaultValue: "TV ${tNum}", submitOnChange: true, description: "A friendly name for the dashboard and logs."
         }
         
-        section("Control Devices") {
+        section("Control Devices", hideable: true, hidden: true) {
             input "tv_${tNum}", "capability.switch", title: "Television Device", required: true, description: "The primary Smart TV device (e.g., Roku)."
             input "tvPlug_${tNum}", "capability.switch", title: "Smart Plug Powering TV (Optional)", required: false, description: "Select the smart plug that powers this TV. The app will turn it on for routines and restore its state when finished."
             input "tvAudio_${tNum}", "capability.audioVolume", title: "Dedicated Audio/Soundbar (Optional)", required: false, description: "Select this ONLY if your TV uses an external, smart-controlled soundbar (like Sonos or Denon) for volume instead of native speakers."
             input "isAudioOnkyo_${tNum}", "bool", title: "Is this Audio Device an Onkyo AVR?", defaultValue: false, description: "Check this if your soundbar/audio device is an Onkyo AVR so the app sends setLevel commands instead of click volume commands."
         }
         
-        section("TV Show Favorites (Auto-Tune & Turn Off)") {
+        section("TV Show Favorites (Auto-Tune & Turn Off)", hideable: true, hidden: true) {
             paragraph "Schedule up to 2 shows to automatically power on the TV, tune to the channel, and turn the TV off when the show ends."
             for (int s = 1; s <= 2; s++) {
                 input "enableShow_${tNum}_${s}", "bool", title: "Enable TV Show ${s}", defaultValue: false, submitOnChange: true
@@ -161,7 +163,7 @@ def tvPage(params) {
             }
         }
         
-        section("Morning Dashboard / Routine") {
+        section("Morning Dashboard / Routine", hideable: true, hidden: true) {
             input "enableMorningRoutine_${tNum}", "bool", title: "Enable Morning Routine", defaultValue: false, submitOnChange: true, description: "Automatically fires up the TV to a specific news/weather channel when you wake up."
             if (settings["enableMorningRoutine_${tNum}"]) {
                 input "morningMotion_${tNum}", "capability.motionSensor", title: "Morning Trigger Motion Sensor", required: false, description: "The first time this trips in the allowed window, the TV powers on."
@@ -177,7 +179,7 @@ def tvPage(params) {
             }
         }
 
-        section("Volume Normalization & Safety") {
+        section("Volume Normalization & Safety", hideable: true, hidden: true) {
             input "enableVolumeMgmt_${tNum}", "bool", title: "Enable Volume Management", defaultValue: false, submitOnChange: true, description: "Protects against loud wake-ups by adjusting volume on startup or shutdown."
             if (settings["enableVolumeMgmt_${tNum}"]) {
                 input "startupVolume_${tNum}", "number", title: "SOUNDBARS ONLY: Target Startup Volume (0-100)", required: false, description: "Requires a dedicated Soundbar. Forces this exact absolute volume number every time the TV turns on."
@@ -185,7 +187,7 @@ def tvPage(params) {
             }
         }
         
-        section("Acoustic Management (HVAC & Noise)") {
+        section("Acoustic Management (HVAC & Noise)", hideable: true, hidden: true) {
             input "enableAcousticMgmt_${tNum}", "bool", title: "Enable Acoustic Management", defaultValue: false, submitOnChange: true, description: "Mutes background appliances or boosts TV volume when HVAC runs."
             if (settings["enableAcousticMgmt_${tNum}"]) {
                 input "tvNoiseSwitches_${tNum}", "capability.switch", title: "Noisy Appliances (Air Purifiers, Fans)", multiple: true, required: false, description: "These appliances will automatically turn OFF while the TV is ON, and restore when the TV turns off."
@@ -196,7 +198,7 @@ def tvPage(params) {
             }
         }
         
-        section("Lighting & Environmental Sync (Cinema Mode)") {
+        section("Lighting & Environmental Sync (Cinema Mode)", hideable: true, hidden: true) {
             input "enableLightingSync_${tNum}", "bool", title: "Enable Environmental Sync", defaultValue: false, submitOnChange: true, description: "Controls lights and evaluates blinds based on TV power."
             if (settings["enableLightingSync_${tNum}"]) {
                 input "tvLights_${tNum}", "capability.switch", title: "Target Lights", multiple: true, required: false, description: "These lights will automatically turn OFF when the TV turns ON."
@@ -207,7 +209,7 @@ def tvPage(params) {
             }
         }
 
-        section("Accent & Fireplace Sync (Cozy Mode)") {
+        section("Accent & Fireplace Sync (Cozy Mode)", hideable: true, hidden: true) {
             input "enableCozyMode_${tNum}", "bool", title: "Enable Cozy Mode", defaultValue: false, submitOnChange: true, description: "Turns ON specific accent lights to a desired level and color temp when the TV turns on, if it's overcast or the blinds are closed."
             if (settings["enableCozyMode_${tNum}"]) {
                 input "cozyLights_${tNum}", "capability.colorTemperature", title: "Accent Lights (e.g., Fireplace)", multiple: true, required: false
@@ -219,7 +221,7 @@ def tvPage(params) {
             }
         }
 
-        section("Auto-Sweeper (Motion Bypass)") {
+        section("Auto-Sweeper (Motion Bypass)", hideable: true, hidden: true) {
             input "enableSweeper_${tNum}", "bool", title: "Enable Active Room Sweeper", defaultValue: false, submitOnChange: true, description: "Links specific lights to specific motion sensors. If a light is ON but the room is empty, it turns the light off while the TV is running."
             if (settings["enableSweeper_${tNum}"]) {
                 paragraph "Configure up to 5 individual lights and their corresponding bypass sensors. If the linked sensor is ACTIVE, the light will not be turned off."
@@ -230,7 +232,7 @@ def tvPage(params) {
             }
         }
         
-        section("Music & Audio Sync (Sonos)") {
+        section("Music & Audio Sync (Sonos)", hideable: true, hidden: true) {
             input "enableMusicSync_${tNum}", "bool", title: "Enable Music Sync", defaultValue: false, submitOnChange: true, description: "Automatically pauses background music when you start watching TV."
             if (settings["enableMusicSync_${tNum}"]) {
                 input "sonos_${tNum}", "capability.musicPlayer", title: "Room Music Player (Sonos)", required: false, description: "This player will pause when the TV turns on, and auto-resume when the TV turns off."
@@ -240,7 +242,7 @@ def tvPage(params) {
             }
         }
         
-        section("Power Management & Motion Timeout") {
+        section("Power Management & Motion Timeout", hideable: true, hidden: true) {
             input "enableMotionTimeout_${tNum}", "bool", title: "Enable Inactivity Timeout", defaultValue: false, submitOnChange: true, description: "Automatically shuts off the TV if the room is empty."
             if (settings["enableMotionTimeout_${tNum}"]) {
                 input "motionSensor_${tNum}", "capability.motionSensor", title: "Room Motion Sensor", required: false, description: "The primary sensor to determine if anyone is watching."
@@ -248,7 +250,7 @@ def tvPage(params) {
             }
         }
         
-        section("Energy & Telemetry") {
+        section("Energy & Telemetry", hideable: true, hidden: true) {
             input "tvWattage_${tNum}", "number", title: "Average Wattage of TV + Soundbar", defaultValue: 150, required: true, description: "Find the average active power draw of your screen. Used to calculate financial ROI and usage cost."
         }
     }
@@ -1076,7 +1078,9 @@ def getTvName(tNum) {
 }
 
 def appButtonHandler(btn) {
-    if (btn == "testStormBtn") {
+    if (btn == "btnRefreshData") {
+        log.info "Manual dashboard refresh triggered."
+    } else if (btn == "testStormBtn") {
         log.info "Test Storm Alert triggered via button"
         weatherSwitchHandler([value: "on"])
     } else if (btn == "testStormOffBtn") {
