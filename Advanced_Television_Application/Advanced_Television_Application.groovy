@@ -24,7 +24,7 @@ def mainPage() {
             if (numTVs > 0) {
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
                 statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Television</th><th style='padding: 8px;'>Power & App</th><th style='padding: 8px;'>Watch Time Today</th><th style='padding: 8px;'>Top App Today</th><th style='padding: 8px;'>Cost Today</th></tr>"
-         
+          
                 for (int i = 1; i <= (numTVs as Integer); i++) {
                     def tvName = settings["tvName_${i}"] ?: "TV ${i}"
                     def tv = settings["tv_${i}"]
@@ -108,6 +108,7 @@ def mainPage() {
             if (enableWeatherAlert) {
                 input "weatherSwitch", "capability.switch", title: "Virtual Storm / Weather Alert Switch", required: false, description: "When this switch turns ON (e.g., triggered by a NOAA alert app), it forces all configured TVs on."
                 input "weatherChannel", "text", title: "Emergency Broadcast Channel (OTA)", required: false, description: "The channel to force the TV to (e.g., 8.1 or 12) when a weather alert occurs."
+                input "weatherAppSwitch", "capability.switch", title: "OR Emergency App Switch", required: false, description: "Turns on this switch (e.g., a Roku App switch) instead of tuning a channel."
                 input "weatherTimeout", "number", title: "Auto-Restore Timeout (Minutes)", defaultValue: 0, description: "How long until the TV automatically shuts back off. If 0, it waits indefinitely until the weather switch turns off."
                 
                 input "testStormBtn", "button", title: "Test Storm TV Alert (ON)"
@@ -169,6 +170,7 @@ def tvPage(params) {
                 input "morningDays_${tNum}", "enum", title: "Allowed Days", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
                 input "morningModes_${tNum}", "mode", title: "Allowed Modes", multiple: true, required: false
                 input "morningChannel_${tNum}", "text", title: "Morning News/Weather Channel (OTA)", required: false, description: "Forces the TV to this channel (e.g., 8.1 or 12)."
+                input "morningAppSwitch_${tNum}", "capability.switch", title: "OR Morning App Switch", required: false, description: "Turns on this switch (e.g., a Roku App switch) instead of tuning a channel."
                 input "morningDuration_${tNum}", "number", title: "Routine Duration (Minutes)", required: false, description: "Automatically turns the TV off after this many minutes. Leave blank to stay on indefinitely."
                 input "testMorningBtn_${tNum}", "button", title: "Test Morning Routine Now"
                 input "testMorningOffBtn_${tNum}", "button", title: "Stop Morning Routine Test"
@@ -202,6 +204,18 @@ def tvPage(params) {
                 input "lightRestoreTimeStart_${tNum}", "time", title: "Light Restore Start Time", required: false, description: "Earliest time of day lights are allowed to automatically turn back on."
                 input "lightRestoreTimeEnd_${tNum}", "time", title: "Light Restore End Time", required: false, description: "Latest time of day lights are allowed to automatically turn back on."
                 input "evaluateRoomBtn_${tNum}", "button", title: "Evaluate Room (Force OFF Lights & Appliances if TV is ON)"
+            }
+        }
+
+        section("Accent & Fireplace Sync (Cozy Mode)") {
+            input "enableCozyMode_${tNum}", "bool", title: "Enable Cozy Mode", defaultValue: false, submitOnChange: true, description: "Turns ON specific accent lights to a desired level and color temp when the TV turns on, if it's overcast or the blinds are closed."
+            if (settings["enableCozyMode_${tNum}"]) {
+                input "cozyLights_${tNum}", "capability.colorTemperature", title: "Accent Lights (e.g., Fireplace)", multiple: true, required: false
+                input "cozyLevel_${tNum}", "number", title: "Target Dim Level (%)", defaultValue: 50, required: true, range: "1..100"
+                input "cozyCTVar_${tNum}", "string", title: "Hub Variable Name for Color Temp (Optional)", required: false, description: "Exact text of the Hub Variable holding your desired Color Temperature (e.g., 'FireplaceCT')."
+                input "cozyOvercast_${tNum}", "capability.switch", title: "Overcast Virtual Switch", required: false
+                input "cozyBlinds_${tNum}", "capability.contactSensor", title: "Room Blinds (Closed = Active)", multiple: true, required: false
+                input "cozyOffWithTv_${tNum}", "bool", title: "Turn OFF these lights when TV turns off?", defaultValue: true
             }
         }
 
@@ -264,6 +278,7 @@ def initialize() {
     state.lightsPausedByTv = state.lightsPausedByTv ?: [:]
     state.noiseSwitchesPaused = state.noiseSwitchesPaused ?: [:]
     state.hvacVolumeBoosted = state.hvacVolumeBoosted ?: [:]
+    state.cozyLightsActivatedByTv = state.cozyLightsActivatedByTv ?: [:]
     
     // Power State Trackers
     state.plugWasOffBeforeShow = state.plugWasOffBeforeShow ?: [:]
@@ -274,7 +289,6 @@ def initialize() {
     trackUsageStep()
     schedule("0 0/3 * * * ?", "refreshTVs") 
     schedule("0 0 0 * * ?", "midnightReset")
-    
     schedule("0 * * * * ?", "checkTvShows")
     
     if (settings["enableSafetyMute"]) {
@@ -326,13 +340,13 @@ def triggerRoutine(i, channel, source, showNum = null) {
         plug.on()
         
         // Wait 20 seconds for TV to boot before issuing commands
-        runIn(20, "executeTvPowerOn", [data: [tvNum: i, channel: channel], overwrite: false])
+        runIn(20, "executeTvPowerOn", [data: [tvNum: i, channel: channel, source: source], overwrite: false])
     } else {
         if (source == "weather") state.plugWasOffBeforeWeather["${i}"] = false
         else if (source == "morning") state.plugWasOffBeforeMorning["${i}"] = false
         else if (source == "show") state.plugWasOffBeforeShow["${i}_${showNum}"] = false
         
-        executeTvPowerOn([tvNum: i, channel: channel])
+        executeTvPowerOn([tvNum: i, channel: channel, source: source])
     }
 }
 
@@ -340,12 +354,30 @@ def executeTvPowerOn(data) {
     def i = data.tvNum as Integer
     def tv = settings["tv_${i}"]
     def channel = data.channel
+    def source = data.source
     
     if (!isTvActuallyOn(tv)) {
         tv.on()
-        if (channel) runIn(18, "executeSetChannel", [data: [tvNum: i, channel: channel], overwrite: false])
+        runIn(18, "executeMediaAction", [data: [tvNum: i, channel: channel, source: source], overwrite: false])
     } else {
-        if (channel) runIn(4, "executeSetChannel", [data: [tvNum: i, channel: channel], overwrite: false])
+        runIn(4, "executeMediaAction", [data: [tvNum: i, channel: channel, source: source], overwrite: false])
+    }
+}
+
+def executeMediaAction(data) {
+    def i = data.tvNum
+    def channel = data.channel
+    def source = data.source
+    def appSwitch = null
+    
+    if (source == "weather") appSwitch = settings["weatherAppSwitch"]
+    else if (source == "morning") appSwitch = settings["morningAppSwitch_${i}"]
+    
+    if (appSwitch) {
+        addToHistory("${getTvName(i)}: Launching application via switch [${appSwitch.displayName}].")
+        appSwitch.on()
+    } else if (channel) {
+        executeSetChannel(data)
     }
 }
 
@@ -381,7 +413,6 @@ def evaluatePlugShutdown(data) {
         else if (source == "show") state.plugWasOffBeforeShow["${i}_${showNum}"] = false
     }
 }
-
 
 // --- Scheduled TV Shows ---
 
@@ -434,7 +465,6 @@ def endTvShow(i, s) {
     endRoutine(i, "show", s)
 }
 
-
 // --- TV State & Power Evaluator ---
 
 def refreshTVs() {
@@ -468,7 +498,7 @@ def tvPowerEvaluator(evt) {
     
     for (int i = 1; i <= (numTVs as Integer); i++) {
         if (settings["tv_${i}"]?.id == deviceId) {
-             def tvName = getTvName(i)
+            def tvName = getTvName(i)
             def tv = settings["tv_${i}"]
             def isTrulyOn = isTvActuallyOn(tv)
             def lastEvaluatedState = state.evaluatedPowerState["${i}"] ?: false
@@ -519,7 +549,51 @@ def tvPowerEvaluator(evt) {
                         }
                     }
                 }
-                
+
+                if (settings["enableCozyMode_${i}"]) {
+                    def cozyLights = settings["cozyLights_${i}"]
+                    if (cozyLights) {
+                        def overcast = settings["cozyOvercast_${i}"]
+                        def blinds = settings["cozyBlinds_${i}"]
+                        def isOvercast = overcast && overcast.currentValue("switch") == "on"
+                        def blindsClosed = blinds && blinds.any { it.currentValue("contact") == "closed" }
+
+                        if (isOvercast || blindsClosed) {
+                            def targetLevel = settings["cozyLevel_${i}"] ?: 50
+                            def ctVarName = settings["cozyCTVar_${i}"]
+                            def targetCT = null
+
+                            // Retrieve the Hub Variable for Color Temp if specified
+                            if (ctVarName) {
+                                def hubVar = getGlobalVar(ctVarName)
+                                if (hubVar != null && hubVar.value != null) {
+                                    targetCT = hubVar.value.toInteger()
+                                } else {
+                                    log.warn "${tvName}: Hub Variable '${ctVarName}' not found or invalid. Skipping Color Temp."
+                                }
+                            }
+
+                            if (targetCT != null) {
+                                addToHistory("${tvName}: Cozy Mode conditions met. Setting accent lights to ${targetLevel}% and ${targetCT}K.")
+                                cozyLights.each { bulb ->
+                                    if (bulb.hasCommand("setColorTemperature")) {
+                                        bulb.setColorTemperature(targetCT, targetLevel)
+                                    } else {
+                                        bulb.setLevel(targetLevel)
+                                    }
+                                }
+                            } else {
+                                addToHistory("${tvName}: Cozy Mode conditions met. Setting accent lights to ${targetLevel}%.")
+                                cozyLights.each { it.setLevel(targetLevel) }
+                            }
+                            
+                            state.cozyLightsActivatedByTv["${i}"] = true
+                        } else {
+                            state.cozyLightsActivatedByTv["${i}"] = false
+                        }
+                    }
+                }
+               
                 if (settings["enableSweeper_${i}"]) {
                     runIn(4, "executeSweeperDelay", [data: [tvNum: i, isPeriodic: false], overwrite: false])
                 }
@@ -532,11 +606,11 @@ def tvPowerEvaluator(evt) {
                             addToHistory("${tvName}: Auto-pausing Sonos for TV audio.")
                             sonos.pause()
                             state.pausedSonos["${i}"] = true
-                         } else {
+                        } else {
                             state.pausedSonos["${i}"] = false
                         }
                     }
-                 }
+                }
                  
             } else if (!isTrulyOn && lastEvaluatedState) {
                 state.evaluatedPowerState["${i}"] = false
@@ -582,6 +656,15 @@ def tvPowerEvaluator(evt) {
                              lights.each { it.on() } 
                         }
                     }
+                }
+
+                if (settings["enableCozyMode_${i}"] && settings["cozyOffWithTv_${i}"] && state.cozyLightsActivatedByTv["${i}"]) {
+                    def cozyLights = settings["cozyLights_${i}"]
+                    if (cozyLights) {
+                        addToHistory("${tvName}: TV shutting down. Turning OFF Cozy Mode lights.")
+                        cozyLights.each { it.off() }
+                    }
+                    state.cozyLightsActivatedByTv["${i}"] = false
                 }
                 
                 if (settings["enableMusicSync_${i}"]) {
@@ -856,7 +939,7 @@ def morningMotionHandler(evt) {
             state.morningRoutineRunDate["${i}"] = today
             def channel = settings["morningChannel_${i}"]
             def duration = settings["morningDuration_${i}"]
-             
+            
             triggerRoutine(i, channel, "morning")
             
             if (duration) {
@@ -880,15 +963,16 @@ def weatherSwitchHandler(evt) {
         state.weatherAlertActive = true
         state.tvWasOffBeforeWeather = [:]
         def channel = settings["weatherChannel"]
+        def appSwitch = settings["weatherAppSwitch"]
         for (int i = 1; i <= (numTVs as Integer); i++) {
             def tv = settings["tv_${i}"]
             if (tv) {
-                 if (!isTvActuallyOn(tv)) {
+                if (!isTvActuallyOn(tv)) {
                     state.tvWasOffBeforeWeather["${i}"] = true
                     triggerRoutine(i, channel, "weather")
                 } else {
                     state.tvWasOffBeforeWeather["${i}"] = false
-                    if (channel) runIn(4, "executeSetChannel", [data: [tvNum: i, channel: channel], overwrite: false])
+                    if (channel || appSwitch) runIn(4, "executeMediaAction", [data: [tvNum: i, channel: channel, source: "weather"], overwrite: false])
                 }
              }
         }
@@ -1050,7 +1134,7 @@ def testHvacBoost(i, isRunning) {
         def audioDevice = settings["tvAudio_${i}"] ?: tv
         def boostAmount = settings["hvacVolumeBoost_${i}"] ?: 3
         def tvName = getTvName(i)
-        
+       
         if (isRunning && !state.hvacVolumeBoosted["${i}"]) {
             addToHistory("${tvName}: TEST HVAC started. Boosting volume by ${boostAmount} ticks.")
             state.hvacVolumeBoosted["${i}"] = true
