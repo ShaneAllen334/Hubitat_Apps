@@ -8,7 +8,7 @@ definition(
     name: "Advanced Meteorologist Report",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Generates a TV-anchor style meteorologist report combining live local weather station data with a free macro-forecast API. Features dual time-profiles, 7-day tracking, and granular mode triggers.",
+    description: "Generates a TV-anchor style meteorologist report combining live local weather station data with a free macro-forecast API. Features dual time-profiles, 7-day tracking, and granular time/mode triggers.",
     category: "Weather",
     iconUrl: "",
     iconX2Url: "",
@@ -132,24 +132,32 @@ def mainPage() {
         }
 
         section("<b>4. Broadcast Triggers</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'>When should the report be announced automatically? Set up to 3 specific mode triggers with allowable time windows.</div>"
+            paragraph "<div style='font-size:13px; color:#555;'>When should the report be announced automatically? Choose between scheduled times, mode changes, or a manual switch. All are optional.</div>"
             
-            paragraph "<b>Trigger 1</b>"
+            paragraph "<b>🕒 Scheduled Time Triggers</b>"
+            paragraph "<i>Broadcast the report at specific times of the day.</i>"
+            input "timeTrigger1", "time", title: "Time Trigger 1", required: false
+            input "timeTrigger2", "time", title: "Time Trigger 2", required: false
+            input "timeTrigger3", "time", title: "Time Trigger 3", required: false
+
+            paragraph "<hr>"
+            paragraph "<b>🏠 Mode-Based Triggers</b>"
+            paragraph "<i>Broadcast the report when your home changes modes (e.g., waking up, arriving home). You can restrict these with allowable time windows.</i>"
+            
             input "triggerMode1", "mode", title: "Mode Change To:", required: false, multiple: false
             input "t1StartTime", "time", title: "Allowable Start Time", required: false
             input "t1EndTime", "time", title: "Allowable End Time", required: false
             
-            paragraph "<b>Trigger 2</b>"
             input "triggerMode2", "mode", title: "Mode Change To:", required: false, multiple: false
             input "t2StartTime", "time", title: "Allowable Start Time", required: false
             input "t2EndTime", "time", title: "Allowable End Time", required: false
             
-            paragraph "<b>Trigger 3</b>"
             input "triggerMode3", "mode", title: "Mode Change To:", required: false, multiple: false
             input "t3StartTime", "time", title: "Allowable Start Time", required: false
             input "t3EndTime", "time", title: "Allowable End Time", required: false
             
-            paragraph "<b>Manual Trigger</b>"
+            paragraph "<hr>"
+            paragraph "<b>🔘 Manual Switch Trigger</b>"
             input "triggerSwitch", "capability.switch", title: "Trigger via Virtual Switch (Turns off automatically)", required: false, multiple: false
         }
 
@@ -171,6 +179,11 @@ def initialize() {
     subscribe(location, "mode", modeChangeHandler)
     if (triggerSwitch) subscribe(triggerSwitch, "switch.on", switchTriggerHandler)
     
+    // Scheduled Time Triggers
+    if (timeTrigger1) schedule(timeTrigger1, timeTrigger1Handler)
+    if (timeTrigger2) schedule(timeTrigger2, timeTrigger2Handler)
+    if (timeTrigger3) schedule(timeTrigger3, timeTrigger3Handler)
+
     // Background Polling & Device Sync Schedule
     def interval = pollingInterval ?: "30"
     if (interval == "15") runEvery15Minutes(routineSync)
@@ -221,6 +234,21 @@ def routineSync() {
 // ==============================================================================
 // TRIGGER HANDLERS
 // ==============================================================================
+
+def timeTrigger1Handler() {
+    logAction("Scheduled Time Trigger 1 activated. Broadcasting Meteorologist Report.")
+    executeBroadcast()
+}
+
+def timeTrigger2Handler() {
+    logAction("Scheduled Time Trigger 2 activated. Broadcasting Meteorologist Report.")
+    executeBroadcast()
+}
+
+def timeTrigger3Handler() {
+    logAction("Scheduled Time Trigger 3 activated. Broadcasting Meteorologist Report.")
+    executeBroadcast()
+}
 
 def modeChangeHandler(evt) {
     def newMode = evt.value
