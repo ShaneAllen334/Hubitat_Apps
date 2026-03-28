@@ -168,9 +168,14 @@ def mainPage() {
         section("<b>6. Hardware Protection, Efficiency & ROI</b>", hideable: true, hidden: true) {
             input "pauseGracePeriod", "number", title: "Occupancy Grace Period (Minutes)", defaultValue: 2, required: true
             input "kwRate", "decimal", title: "Electricity Rate (\$ per kWh)", defaultValue: 0.15, required: true
+            
+            paragraph "<b>Smart ROI Savings (Phantom Power Control):</b>"
+            input "smartROISavings", "bool", title: "<b>Enable Smart ROI Power Management</b>", defaultValue: true, submitOnChange: true
+            paragraph "<i>If enabled, the app automatically wakes the docks 90 seconds before dispatching, and cuts power once charged to 100%.</i>"
+            
             input "dockPlug1", "capability.switch", title: "Vacuum 1 Dock Smart Plug", required: false
             input "dockPlug2", "capability.switch", title: "Vacuum 2 Dock Smart Plug", required: false
-            input "wakeUpTime", "time", title: "Daily Time to Wake Docks (Prep for routines)", required: false
+            input "wakeUpTime", "time", title: "Daily Time to Wake Docks (Prep for schedules)", required: false
         }
 
         section("<b>7. Notifications & Maintenance Alerts</b>", hideable: true, hidden: true) {
@@ -424,8 +429,39 @@ void sendAlert(String alertType, String msg) {
 }
 
 // ==========================================
-// EVENT HANDLERS & SCHEDULED JOBS
+// EVENT HANDLERS & SMART DISPATCH WRAPPER
 // ==========================================
+
+void requestDispatch(List selectedRoomNames, Map options = [:]) {
+    if (isAppPaused()) return
+    
+    boolean needsWake = false
+    if (settings.smartROISavings) {
+        if (dockPlug1 && dockPlug1.currentValue("switch") == "off") needsWake = true
+        if (dockPlug2 && dockPlug2.currentValue("switch") == "off") needsWake = true
+    }
+
+    if (needsWake) {
+        wakeDocks()
+        addToHistory("<span style='color:teal;'><b>Smart ROI Active: Waking docks. Dispatch delayed by 90 seconds.</b></span>")
+        state.pendingDispatchRooms = selectedRoomNames
+        state.pendingDispatchOptions = options
+        runIn(90, "executePendingDispatch", [overwrite: true])
+    } else {
+        executeRoomClean(selectedRoomNames, options)
+    }
+}
+
+def executePendingDispatch() {
+    if (isAppPaused()) return
+    List rooms = state.pendingDispatchRooms ?: []
+    Map opts = state.pendingDispatchOptions ?: [:]
+    if (rooms) {
+        executeRoomClean(rooms, opts)
+    }
+    state.pendingDispatchRooms = []
+    state.pendingDispatchOptions = [:]
+}
 
 def appButtonHandler(btn) {
     if (isAppPaused()) {
@@ -496,9 +532,8 @@ def appButtonHandler(btn) {
     
     if (btn == "btnExecuteQuickClean") {
         if (settings.quickCleanRooms) {
-            wakeDocks()
-            addToHistory("<span style='color:purple;'><b>Command Center: Executing Quick Clean</b></span>")
-            executeRoomClean(settings.quickCleanRooms, [
+            List roomsToClean = [] + settings.quickCleanRooms
+            requestDispatch(roomsToClean, [
                 ignoreSkip: true, 
                 suction: settings.quickCleanSuction, 
                 water: settings.quickCleanWater
@@ -510,31 +545,26 @@ def appButtonHandler(btn) {
 
 def mopRoutineHandler() {
     if (!canRunAutomated()) return
-    
     if (mopDays) {
         def df = new java.text.SimpleDateFormat("EEEE")
         df.setTimeZone(location.timeZone)
         String day = df.format(new Date())
         if (!mopDays.contains(day)) return
     }
-    
     if (mopRooms) {
-        wakeDocks()
         addToHistory("<span style='color:teal;'><b>Triggered: Scheduled Mop-Only Routine</b></span>")
-        executeRoomClean(mopRooms, [ignoreSkip: false, suction: "Off", water: "High"])
+        requestDispatch(mopRooms, [ignoreSkip: false, suction: "Off", water: "High"])
     }
 }
 
 def overdueCheckHandler() {
     if (isAppPaused()) return
     if (!maxIdleDays || !state.lastCleanTime) return
-    
     long daysIdle = (now() - state.lastCleanTime) / 86400000
     if (daysIdle >= maxIdleDays) {
         if (canRunAutomated()) {
-            wakeDocks()
             addToHistory("<span style='color:purple;'><b>Overdue Catcher: ${daysIdle} days idle. Forcing Deep Clean!</b></span>")
-            executeRoomClean(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
+            requestDispatch(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
         }
     }
 }
@@ -570,14 +600,14 @@ def dockErrorHandler(evt) {
 
 def batteryHandler(evt) {
     if (isAppPaused()) return
-    if (evt.value == "100") {
+    if (evt.value == "100" && settings.smartROISavings) {
         if (evt.deviceId == vacuum1?.id && dockPlug1 && dockPlug1.currentValue("switch") != "off" && vacuum1.currentValue("state") in ["charging", "charged", "docked"]) {
             dockPlug1.off()
-            addToHistory("V1 Dock Powered OFF (Phantom Draw Assassin)")
+            addToHistory("V1 Dock Powered OFF (Smart ROI Assassin)")
         }
         if (evt.deviceId == vacuum2?.id && dockPlug2 && dockPlug2.currentValue("switch") != "off" && vacuum2.currentValue("state") in ["charging", "charged", "docked"]) {
             dockPlug2.off()
-            addToHistory("V2 Dock Powered OFF (Phantom Draw Assassin)")
+            addToHistory("V2 Dock Powered OFF (Smart ROI Assassin)")
         }
     }
 }
@@ -603,7 +633,6 @@ def wakeDocks() {
     if (isAppPaused()) return
     if (dockPlug1 && dockPlug1.currentValue("switch") != "on") dockPlug1.on()
     if (dockPlug2 && dockPlug2.currentValue("switch") != "on") dockPlug2.on()
-    addToHistory("Docks Powered ON (Scheduled Wake-Up)")
 }
 
 def vacuumStateHandler(evt) {
@@ -622,6 +651,17 @@ def vacuumStateHandler(evt) {
             state.v2_maskedRooms = []
             state.v2_intentAction = "Idle"
             state.v2_intentRooms = "--"
+        }
+    }
+    
+    if (vState in ["charged", "docked"] && settings.smartROISavings) {
+        if (evt.device.id == vacuum1?.id && vacuum1.currentValue("battery") == "100" && dockPlug1 && dockPlug1.currentValue("switch") != "off") {
+            dockPlug1.off()
+            addToHistory("V1 Dock Powered OFF (Smart ROI Assassin)")
+        }
+        if (evt.device.id == vacuum2?.id && vacuum2.currentValue("battery") == "100" && dockPlug2 && dockPlug2.currentValue("switch") != "off") {
+            dockPlug2.off()
+            addToHistory("V2 Dock Powered OFF (Smart ROI Assassin)")
         }
     }
 }
@@ -654,6 +694,7 @@ def masterSwitchHandler(evt) {
         if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) commandVacuum(vacuum2, settings.vac2Brand, "pause")
         unschedule("resumeVacuum1")
         unschedule("resumeVacuum2")
+        unschedule("executePendingDispatch")
     } else {
         addToHistory("<span style='color:green;'>Master Switch: ON (Resumed)</span>")
     }
@@ -679,12 +720,12 @@ def occupancyHandler(evt) {
                 triggeredRoom = settings["roomName_${i}"]
                 triggeredIndex = i
                 isAccumulator = true
-                break
-            } else if (bypasses.any { it.id?.toString() == evtDevId } || lights.any { it.id?.toString() == evtDevId } || tvs.any { it.id?.toString() == evtDevId }) {
+            }
+            if (bypasses.any { it.id?.toString() == evtDevId } || lights.any { it.id?.toString() == evtDevId } || tvs.any { it.id?.toString() == evtDevId }) {
                 triggeredRoom = settings["roomName_${i}"]
                 triggeredIndex = i
-                break
             }
+            if (triggeredRoom) break
         }
     }
     if (!triggeredRoom) return
@@ -693,7 +734,10 @@ def occupancyHandler(evt) {
     if (goodNightMode && location.mode in goodNightMode) isGoodNight = true
     if (goodNightSwitch && goodNightSwitch.currentValue("switch") == "on") isGoodNight = true
 
-    if (evt.name == "motion" && isAccumulator) {
+    boolean v1InRoom = state.v1_maskedRooms?.contains(triggeredRoom)
+    boolean v2InRoom = state.v2_maskedRooms?.contains(triggeredRoom)
+
+    if (evt.name == "motion" && isAccumulator && !v1InRoom && !v2InRoom) {
         if (!isGoodNight) {
             def motions = [settings["roomMotion_${triggeredIndex}"]].flatten().findAll { it }
             int activeSensors = 0
@@ -726,15 +770,13 @@ def occupancyHandler(evt) {
         }
     }
 
-    if (state.v1_maskedRooms?.contains(triggeredRoom) || state.v2_maskedRooms?.contains(triggeredRoom)) return 
-
     if (evt.value == "active" || evt.value == "on") {
-        if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
+        if (v1InRoom && vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
             addToHistory("<span style='color:orange;'>V1 Paused: Intrusion in ${triggeredRoom}</span>")
             commandVacuum(vacuum1, settings.vac1Brand, "pause")
             unschedule("resumeVacuum1")
         }
-        if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
+        if (v2InRoom && vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
             addToHistory("<span style='color:orange;'>V2 Paused: Intrusion in ${triggeredRoom}</span>")
             commandVacuum(vacuum2, settings.vac2Brand, "pause")
             unschedule("resumeVacuum2")
@@ -742,11 +784,11 @@ def occupancyHandler(evt) {
     } else if (evt.value == "inactive" || evt.value == "off") {
         if (!isRoomCurrentlyOccupied(triggeredIndex)) {
             int delaySeconds = (settings.pauseGracePeriod ?: 2) * 60
-            if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() == "paused") {
+            if (v1InRoom && vacuum1 && vacuum1.currentValue("state")?.toLowerCase() == "paused") {
                 addToHistory("V1 Timer: ${triggeredRoom} clear. Resuming in ${settings.pauseGracePeriod}m.")
                 runIn(delaySeconds, "resumeVacuum1", [overwrite: true])
             }
-            if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() == "paused") {
+            if (v2InRoom && vacuum2 && vacuum2.currentValue("state")?.toLowerCase() == "paused") {
                 addToHistory("V2 Timer: ${triggeredRoom} clear. Resuming in ${settings.pauseGracePeriod}m.")
                 runIn(delaySeconds, "resumeVacuum2", [overwrite: true])
             }
@@ -787,16 +829,14 @@ def modeHandler(evt) {
                 return
             }
         }
-        wakeDocks() 
         addToHistory("Triggered: Good Night Sweep")
-        executeRoomClean(goodNightRooms, [ignoreSkip: false])
+        requestDispatch(goodNightRooms, [ignoreSkip: false])
     }
     
     if (fullCleanMode && evt.value in fullCleanMode) {
         if (!canRunAutomated()) return
-        wakeDocks()
         addToHistory("Triggered: Configurable Full Clean Mode")
-        executeRoomClean(["All"], [
+        requestDispatch(["All"], [
             ignoreSkip: settings.fullCleanIgnoreSkip, 
             suction: settings.fullCleanSuction, 
             water: settings.fullCleanWater
@@ -807,19 +847,17 @@ def modeHandler(evt) {
 def fullCleanHandler(evt) {
     if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
-    wakeDocks()
     addToHistory("Triggered: Full Clean Switch (Manual Override)")
-    executeRoomClean(["All"], [ignoreSkip: true]) 
+    requestDispatch(["All"], [ignoreSkip: true]) 
 }
 
 def roomSwitchHandler(evt) {
     if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
-    wakeDocks()
     for (int i = 1; i <= 12; i++) {
         def sw = settings["roomSwitch_${i}"]
         if (settings["enableRoom_${i}"] && sw && sw.id == evt.deviceId) {
-            executeRoomClean([settings["roomName_${i}"]], [ignoreSkip: true])
+            requestDispatch([settings["roomName_${i}"]], [ignoreSkip: true])
             break
         }
     }
@@ -831,9 +869,8 @@ def schoolRunHandler(evt) {
         addToHistory("School Run Blocked: Global Constraints Active")
         return
     }
-    wakeDocks()
     addToHistory("Triggered: School Run Routine")
-    executeRoomClean(schoolRunRooms, [ignoreSkip: false])
+    requestDispatch(schoolRunRooms, [ignoreSkip: false])
 }
 
 def errorHandler(evt) {
