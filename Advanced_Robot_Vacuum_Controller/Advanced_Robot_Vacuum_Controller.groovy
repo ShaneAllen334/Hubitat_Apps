@@ -20,64 +20,10 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Advanced Vacuum Controller", install: true, uninstall: true) {
         
-        if (vacuum1 || vacuum2) {
-            section("<b>Live System Dashboard</b>") {
-                paragraph buildDashboardHTML()
-            }
-            section("<b>Event History (Last 25 Events)</b>") {
-                paragraph buildHistoryHTML()
-            }
-        }
-        
-        section("<b>1. Device Selection & Overrides</b>") {
-            input "vacuum1", "capability.actuator", title: "Select Vacuum 1 (Primary)", required: true, multiple: false, submitOnChange: true
-            if (vacuum1) {
-                input "vac1Model", "enum", title: "↳ Vacuum 1 Model", options: ["Roborock S8 Series (3W Standby)", "Roborock QRevo Curve (4W Standby)", "Custom"], defaultValue: "Roborock S8 Series (3W Standby)", submitOnChange: true
-                if (vac1Model == "Custom") input "vac1Watts", "decimal", title: "↳ Custom Standby Watts (V1)", defaultValue: 3.0
-            }
-            
-            input "vacuum2", "capability.actuator", title: "Select Vacuum 2 (Secondary)", required: false, multiple: false, submitOnChange: true
-            if (vacuum2) {
-                input "vac2Model", "enum", title: "↳ Vacuum 2 Model", options: ["Roborock S8 Series (3W Standby)", "Roborock QRevo Curve (4W Standby)", "Custom"], defaultValue: "Roborock QRevo Curve (4W Standby)", submitOnChange: true
-                if (vac2Model == "Custom") input "vac2Watts", "decimal", title: "↳ Custom Standby Watts (V2)", defaultValue: 4.0
-            }
-            
-            input "masterSwitch", "capability.switch", title: "Master Suspend/Resume Switch", required: false, description: "If OFF, all automated routines are ignored and active cleans are paused."
-            input "fullCleanSwitch", "capability.switch", title: "Full House Clean Switch (Manual Override)", required: false, description: "Trigger full house clean. Bypasses Time/Mode constraints."
-        }
-
-        section("<b>2. Smart Room Configuration</b>") {
-            paragraph "<i>Configure up to 12 rooms. Define parameters, sequencing, and Pre-Evaluation occupancy sensors. Expand each room below to set it up.</i>"
-        }
-
-        for (int i = 1; i <= 12; i++) {
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
-            def isHidden = settings["enableRoom_${i}"] ? false : true
-            
-            section("<b>${rName} Setup</b>", hideable: true, hidden: isHidden) {
-                input "enableRoom_${i}", "bool", title: "<b>Enable ${rName}</b>", defaultValue: false, submitOnChange: true
-                
-                if (settings["enableRoom_${i}"]) {
-                    input "vacuumAssign_${i}", "enum", title: "↳ Assign to Vacuum", options: ["Vacuum 1", "Vacuum 2"], defaultValue: "Vacuum 1", required: true
-                    input "roomName_${i}", "text", title: "↳ Room Name (e.g., Kitchen)", required: true 
-                    input "roomId_${i}", "text", title: "↳ Room ID (from vacuum state)", required: false
-                    input "roomZone_${i}", "text", title: "↳ Optional: Zone Coordinates (Overrides Room ID)", required: false
-                    
-                    input "roomWater_${i}", "enum", title: "↳ Mop Water Level", options: ["Off", "Low", "Medium", "High"], defaultValue: "Medium"
-                    input "roomSuction_${i}", "enum", title: "↳ Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max"], defaultValue: "Balanced"
-                    input "roomSeq_${i}", "number", title: "↳ Cleaning Sequence Order (1 = First)", defaultValue: i
-                    
-                    paragraph "<b>Utilization & Air Quality:</b>"
-                    input "roomOccupancyThreshold_${i}", "number", title: "↳ Min. Active Minutes to Require Cleaning", defaultValue: 15
-                    input "roomHeavyTraffic_${i}", "number", title: "↳ Active Minutes for Adaptive Turbo Suction", defaultValue: 120
-                    input "roomFan_${i}", "capability.switch", title: "↳ Post-Clean Fan/Purifier", required: false
-                    input "roomFanTimer_${i}", "number", title: "↳ Fan Run Time After Vacuum Leaves (Mins)", defaultValue: 15
-                    
-                    paragraph "<b>Occupancy & Safety Triggers:</b>"
-                    input "roomMotion_${i}", "capability.motionSensor", title: "↳ Pre-Check Motion Sensor", required: false
-                    input "roomLight_${i}", "capability.switch", title: "↳ Pre-Check Lighting (ON = Occupied)", required: false
-                    input "roomSwitch_${i}", "capability.switch", title: "↳ Individual Room Trigger Switch", required: false
-                }
+        section() {
+            input "appEnableSwitch", "capability.switch", title: "<b>Master Application Kill Switch (Virtual Switch)</b>", required: false, multiple: false, description: "ON = App Runs normally. OFF = App goes completely dormant.", submitOnChange: true
+            if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") {
+                paragraph "<div style='color:red; font-weight:bold; border: 2px solid red; padding: 10px; background-color: #ffebee;'>APPLICATION PAUSED: All automated routines, schedules, and event handlers are currently suspended via the virtual kill switch.</div>"
             }
         }
 
@@ -88,59 +34,134 @@ def mainPage() {
             }
         }
 
-        section("<b>3. Automated Triggers & Modes</b>") {
-            paragraph "<b>Good Night Routine:</b>"
+        if (vacuum1 || vacuum2) {
+            section("<b>Live System Dashboard</b>", hideable: true, hidden: false) {
+                paragraph buildDashboardHTML()
+            }
+            
+            section("<b>Instant Command Center (Clean Now)</b>", hideable: true, hidden: false) {
+                String cmdCenterHTML = """
+                <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; border: 1px solid #ccc; background-color: #fcfcfc;'>
+                    <tr style='background-color: #333; color: white; text-align: center;'>
+                        <th style='padding: 8px;'>AD-HOC DISPATCH TERMINAL</th>
+                    </tr>
+                    <tr>
+                        <td style='padding: 10px; text-align: center; color: #555;'><i>Select targets and parameters below to immediately override schedules and forcefully dispatch the fleet.</i></td>
+                    </tr>
+                </table>
+                """
+                paragraph cmdCenterHTML
+                input "quickCleanRooms", "enum", title: "Target Rooms", options: availableRooms, multiple: true, submitOnChange: true
+                input "quickCleanSuction", "enum", title: "Suction Level", options: ["Quiet", "Balanced", "Turbo", "Max"], defaultValue: "Balanced"
+                input "quickCleanWater", "enum", title: "Mop Water Level", options: ["Off", "Low", "Medium", "High"], defaultValue: "Medium"
+                if (quickCleanRooms) {
+                    input name: "btnExecuteQuickClean", type: "button", title: "🚀 Execute Clean Now"
+                }
+            }
+
+            section("<b>Event History (Last 25 Events)</b>", hideable: true, hidden: false) {
+                paragraph buildHistoryHTML()
+            }
+        }
+        
+        section("<b>1. Device Selection & Profiles</b>", hideable: true, hidden: true) {
+            input "vacuum1", "capability.actuator", title: "Select Vacuum 1 (Primary)", required: true, multiple: false, submitOnChange: true
+            if (vacuum1) {
+                input "vac1Brand", "enum", title: "↳ Vacuum 1 Brand Profile (Driver Abstraction)", options: ["Roborock (Community)", "iRobot Roomba (Native)", "Ecovacs/Deebot", "Dreame", "Generic/Switch"], defaultValue: "Roborock (Community)", submitOnChange: true
+                input "vac1Model", "enum", title: "↳ Vacuum 1 Phantom Draw Model", options: ["Roborock S8 Series (3W Standby)", "Roborock QRevo Curve (4W Standby)", "Generic Roomba (7W Standby)", "Custom"], defaultValue: "Roborock QRevo Curve (4W Standby)", submitOnChange: true
+                if (vac1Model == "Custom") input "vac1Watts", "decimal", title: "↳ Custom Standby Watts (V1)", defaultValue: 3.0
+            }
+            
+            input "vacuum2", "capability.actuator", title: "Select Vacuum 2 (Secondary)", required: false, multiple: false, submitOnChange: true
+            if (vacuum2) {
+                input "vac2Brand", "enum", title: "↳ Vacuum 2 Brand Profile (Driver Abstraction)", options: ["Roborock (Community)", "iRobot Roomba (Native)", "Ecovacs/Deebot", "Dreame", "Generic/Switch"], defaultValue: "Roborock (Community)", submitOnChange: true
+                input "vac2Model", "enum", title: "↳ Vacuum 2 Phantom Draw Model", options: ["Roborock S8 Series (3W Standby)", "Roborock QRevo Curve (4W Standby)", "Generic Roomba (7W Standby)", "Custom"], defaultValue: "Roborock QRevo Curve (4W Standby)", submitOnChange: true
+                if (vac2Model == "Custom") input "vac2Watts", "decimal", title: "↳ Custom Standby Watts (V2)", defaultValue: 4.0
+            }
+            
+            input "masterSwitch", "capability.switch", title: "Physical Master Suspend/Resume Switch", required: false, description: "If OFF, all automated routines are ignored and active cleans are paused."
+            input "fullCleanSwitch", "capability.switch", title: "Physical Full House Clean Switch", required: false, description: "Trigger full house clean. Bypasses Time/Mode constraints."
+        }
+
+        section("<b>2. Smart Room Configuration</b>", hideable: true, hidden: true) {
+            paragraph "<i>Configure up to 12 rooms. Define parameters, sequencing, and environmental awareness.</i>"
+            
+            for (int i = 1; i <= 12; i++) {
+                def rName = settings["roomName_${i}"] ?: "Room ${i}"
+                def isHidden = settings["enableRoom_${i}"] ? false : true
+                
+                input "enableRoom_${i}", "bool", title: "<b>Enable ${rName}</b>", defaultValue: false, submitOnChange: true
+                if (settings["enableRoom_${i}"]) {
+                    input "vacuumAssign_${i}", "enum", title: "  ↳ Assign to Vacuum", options: ["Vacuum 1", "Vacuum 2"], defaultValue: "Vacuum 1", required: true
+                    input "roomName_${i}", "text", title: "  ↳ Room Name (e.g., Kitchen)", required: true 
+                    input "roomId_${i}", "text", title: "  ↳ Room ID (from vacuum state)", required: false
+                    input "roomZone_${i}", "text", title: "  ↳ Optional: Zone Coordinates (Overrides Room ID)", required: false
+                    
+                    input "roomWater_${i}", "enum", title: "  ↳ Mop Water Level", options: ["Off", "Low", "Medium", "High"], defaultValue: "Medium"
+                    input "roomSuction_${i}", "enum", title: "  ↳ Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max"], defaultValue: "Balanced"
+                    input "roomSeq_${i}", "number", title: "  ↳ Cleaning Sequence Order (1 = First)", defaultValue: i
+                    
+                    input "roomOccupancyThreshold_${i}", "number", title: "  ↳ Min. Active Minutes to Require Cleaning", defaultValue: 15
+                    input "roomHeavyTraffic_${i}", "number", title: "  ↳ Active Mins for Adaptive Turbo Suction", defaultValue: 120
+                    input "roomFan_${i}", "capability.switch", title: "  ↳ Post-Clean Fan/Purifier", required: false
+                    input "roomFanTimer_${i}", "number", title: "  ↳ Fan Run Time After Vacuum Leaves (Mins)", defaultValue: 15
+                    
+                    input "roomHumidity_${i}", "capability.relativeHumidityMeasurement", title: "  ↳ Micro-Climate Block (Humidity Sensor)", required: false
+                    input "roomHumidityThreshold_${i}", "number", title: "    ↳ Block if Humidity > (%)", defaultValue: 75
+                    input "roomMedia_${i}", "capability.musicPlayer", title: "  ↳ Acoustic Adjust (Media Player)", required: false
+                    input "roomContact_${i}", "capability.contactSensor", title: "  ↳ Perimeter Halt (Skip if Door Open)", required: false
+                    
+                    input "roomMotion_${i}", "capability.motionSensor", title: "  ↳ Pre-Check Motion Sensor", required: false
+                    input "roomLight_${i}", "capability.switch", title: "  ↳ Pre-Check Lighting (ON = Occupied)", required: false
+                    input "roomSwitch_${i}", "capability.switch", title: "  ↳ Individual Room Trigger Switch", required: false
+                    paragraph "<hr style='border: 1px solid #eee;'>"
+                }
+            }
+        }
+
+        section("<b>3. Automated Triggers & Modes</b>", hideable: true, hidden: true) {
             input "goodNightMode", "mode", title: "Trigger Sweep on 'Good Night' Mode", required: false, multiple: true
             input "goodNightRooms", "enum", title: "Rooms to clean during Good Night routine", options: availableRooms, required: false, multiple: true
             input "goodNightConflicts", "capability.switch", title: "Device Conflict Block", required: false, multiple: true, description: "Do not start Good Night sweep if these devices are actively ON."
             
-            paragraph "<b>Configurable Full House Clean Mode:</b>"
             input "fullCleanMode", "mode", title: "Trigger Configured Full Clean on Mode", required: false, multiple: true
             input "fullCleanIgnoreSkip", "bool", title: "Ignore Occupancy Skip Logic (Force Clean All)", defaultValue: false
             input "fullCleanSuction", "enum", title: "Override Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max"], required: false
             input "fullCleanWater", "enum", title: "Override Base Mop Water", options: ["Off", "Low", "Medium", "High"], required: false
             
-            paragraph "<b>Other Triggers:</b>"
             input "schoolRunSwitch", "capability.switch", title: "School Drop-Off/Pickup Switch", required: false
             input "schoolRunRooms", "enum", title: "Rooms to clean during School Run", options: availableRooms, required: false, multiple: true
         }
 
-        section("<b>4. Global Constraints & Overdue Logic</b>") {
-            paragraph "<i>These rules apply to automated routines (Good Night, School Run, Overdue, Mop). Manual switches bypass these constraints.</i>"
+        section("<b>4. Global Constraints & Overdue Logic</b>", hideable: true, hidden: true) {
             input "allowedModes", "mode", title: "Allowed Operating Modes (Leave blank for any)", required: false, multiple: true
             input "allowedStartTime", "time", title: "Quiet Hours: Do NOT run BEFORE", required: false
             input "allowedEndTime", "time", title: "Quiet Hours: Do NOT run AFTER", required: false
-            
-            paragraph "<b>Overdue Deep Clean Catcher:</b>"
             input "maxIdleDays", "number", title: "Max days without a clean before forcing a Deep Clean", defaultValue: 3, required: false
         }
 
-        section("<b>5. Scheduled Mop-Only Routines</b>") {
-            paragraph "<i>Dedicated routines that automatically force Suction: Off and Water: High.</i>"
+        section("<b>5. Scheduled Mop-Only Routines</b>", hideable: true, hidden: true) {
             input "mopDays", "enum", title: "Days to Run Mop-Only", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], required: false, multiple: true
             input "mopTime", "time", title: "Time to Run Mop-Only", required: false
             input "mopRooms", "enum", title: "Rooms to Mop", options: availableRooms, required: false, multiple: true
         }
 
-        section("<b>6. Hardware Protection, Efficiency & ROI</b>") {
-            input "pauseGracePeriod", "number", title: "Occupancy Grace Period (Minutes)", defaultValue: 2, required: true, description: "Prevents motor wear by waiting this long after a room clears before resuming."
-            
-            paragraph "<b>Phantom Draw Assassin:</b>"
+        section("<b>6. Hardware Protection, Efficiency & ROI</b>", hideable: true, hidden: true) {
+            input "pauseGracePeriod", "number", title: "Occupancy Grace Period (Minutes)", defaultValue: 2, required: true
             input "kwRate", "decimal", title: "Electricity Rate (\$ per kWh)", defaultValue: 0.15, required: true
             input "dockPlug1", "capability.switch", title: "Vacuum 1 Dock Smart Plug", required: false
             input "dockPlug2", "capability.switch", title: "Vacuum 2 Dock Smart Plug", required: false
             input "wakeUpTime", "time", title: "Daily Time to Wake Docks (Prep for routines)", required: false
         }
 
-        section("<b>7. Notifications & Maintenance Alerts</b>") {
+        section("<b>7. Notifications & Maintenance Alerts</b>", hideable: true, hidden: true) {
             input "notifyDevice", "capability.notification", title: "Send Push Notifications To", required: false, multiple: true
             input "notifyTypes", "enum", title: "Select Alert Types to Receive", options: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"], multiple: true, required: false, defaultValue: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"]
-            
             input "alertThreshold", "number", title: "Alert when consumables drop below (%)", defaultValue: 5, required: true
             input "autoPauseOnError", "bool", title: "Auto-Pause Vacuum on Error", defaultValue: true
         }
         
-        section("<b>8. Logging & Maintenance</b>") {
+        section("<b>8. Logging & Maintenance</b>", hideable: true, hidden: true) {
             input "logEnable", "bool", title: "Enable Informational Logging", defaultValue: true
             input "clearHistory", "bool", title: "Clear Dashboard History", defaultValue: false
             input "clearOccupancy", "bool", title: "Reset All Room Occupancy Counters", defaultValue: false
@@ -152,7 +173,7 @@ def mainPage() {
 def installed() {
     logInfo "Installed with settings: ${settings}"
     state.history = []
-    state.lastCleanTime = now() // Initialize the timer
+    state.lastCleanTime = now() 
     initialize()
 }
 
@@ -177,12 +198,24 @@ def updated() {
         app.updateSetting("clearROI", [value: "false", type: "bool"])
     }
 
-    unsubscribe()
-    unschedule()
     initialize()
 }
 
+boolean isAppPaused() {
+    return (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off")
+}
+
 def initialize() {
+    unsubscribe()
+    unschedule()
+    
+    if (appEnableSwitch) subscribe(appEnableSwitch, "switch", appEnableHandler)
+
+    if (isAppPaused()) {
+        logInfo "App Initialized in PAUSED state via Master Virtual Switch."
+        return
+    }
+
     addToHistory("App Initialized and Subscriptions Updated.")
     
     state.v1_intentAction = "Idle"
@@ -213,22 +246,89 @@ def initialize() {
         }
     }
     
+    // Subscribing to specific Roborock Telemetry
     if (vacuum1) {
         subscribe(vacuum1, "state", vacuumStateHandler)
         subscribe(vacuum1, "battery", batteryHandler)
         subscribe(vacuum1, "error", errorHandler)
-        subscribe(vacuum1, "water", waterHandler)
-        subscribe(vacuum1, "bin", binHandler)
-        subscribe(vacuum1, "consumable", consumableHandler)
+        subscribe(vacuum1, "dockError", dockErrorHandler)
+        subscribe(vacuum1, "remainingFilter", consumableHandler)
+        subscribe(vacuum1, "remainingMainBrush", consumableHandler)
+        subscribe(vacuum1, "remainingSideBrush", consumableHandler)
+        subscribe(vacuum1, "remainingSensors", consumableHandler)
     }
     if (vacuum2) {
         subscribe(vacuum2, "state", vacuumStateHandler)
         subscribe(vacuum2, "battery", batteryHandler)
         subscribe(vacuum2, "error", errorHandler)
-        subscribe(vacuum2, "water", waterHandler)
-        subscribe(vacuum2, "bin", binHandler)
-        subscribe(vacuum2, "consumable", consumableHandler)
+        subscribe(vacuum2, "dockError", dockErrorHandler)
+        subscribe(vacuum2, "remainingFilter", consumableHandler)
+        subscribe(vacuum2, "remainingMainBrush", consumableHandler)
+        subscribe(vacuum2, "remainingSideBrush", consumableHandler)
+        subscribe(vacuum2, "remainingSensors", consumableHandler)
     }
+}
+
+// ==========================================
+// VIRTUAL KILL SWITCH HANDLER
+// ==========================================
+
+def appEnableHandler(evt) {
+    if (evt.value == "off") {
+        addToHistory("<span style='color:red;'><b>SYSTEM PAUSED via Master Virtual Switch</b></span>")
+        initialize() 
+    } else {
+        addToHistory("<span style='color:green;'><b>SYSTEM RESUMED via Master Virtual Switch</b></span>")
+        initialize() 
+    }
+}
+
+// ==========================================
+// HARDWARE ABSTRACTION LAYER (HAL)
+// ==========================================
+
+void commandVacuum(vacDevice, String brand, String cmd) {
+    if (!vacDevice) return
+    try {
+        switch(brand) {
+            case "Roborock (Community)":
+                if (cmd == "pause") vacDevice.appPause()
+                if (cmd == "resume") vacDevice.appRoomResume()
+                break
+            case "iRobot Roomba (Native)":
+            case "Ecovacs/Deebot":
+            case "Dreame":
+                if (cmd == "pause") vacDevice.pause()
+                if (cmd == "resume") vacDevice.resume()
+                break
+            default:
+                if (cmd == "pause") vacDevice.off()
+                if (cmd == "resume") vacDevice.on()
+                break
+        }
+    } catch (e) { logInfo("HAL Error sending ${cmd} to ${brand}: ${e}") }
+}
+
+void dispatchVacuum(vacDevice, String brand, String type, String target, String water, String suction) {
+    if (!vacDevice) return
+    try {
+        switch(brand) {
+            case "Roborock (Community)":
+                if (type == "room") vacDevice.appRoomClean(target, water, suction)
+                else if (type == "zone") vacDevice.appZoneClean(target)
+                break
+            case "Dreame":
+                if (type == "room") vacDevice.appRoomClean(target, water, suction)
+                break
+            case "iRobot Roomba (Native)":
+            case "Ecovacs/Deebot":
+                if (type == "room") vacDevice.cleanRoom(target)
+                break
+            default:
+                vacDevice.on()
+                break
+        }
+    } catch (e) { logInfo("HAL Error dispatching ${type} to ${brand}: ${e}") }
 }
 
 // ==========================================
@@ -236,14 +336,11 @@ def initialize() {
 // ==========================================
 
 boolean canRunAutomated() {
+    if (isAppPaused()) return false
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return false
 
-    // Check Modes
-    if (allowedModes && !allowedModes.contains(location.mode)) {
-        return false
-    }
+    if (allowedModes && !allowedModes.contains(location.mode)) return false
 
-    // Check Time Window
     if (allowedStartTime && allowedEndTime) {
         Date start = timeToday(allowedStartTime, location.timeZone)
         Date end = timeToday(allowedEndTime, location.timeZone)
@@ -252,7 +349,6 @@ boolean canRunAutomated() {
         if (start.before(end)) {
             if (!(now.after(start) && now.before(end))) return false
         } else {
-            // Spans midnight
             if (!(now.after(start) || now.before(end))) return false
         }
     }
@@ -274,11 +370,27 @@ void sendAlert(String alertType, String msg) {
 // EVENT HANDLERS & SCHEDULED JOBS
 // ==========================================
 
-def mopRoutineHandler() {
-    if (!canRunAutomated()) {
-        addToHistory("Mop Schedule Skipped: Blocked by Global Constraints")
+def appButtonHandler(btn) {
+    if (isAppPaused()) {
+        logInfo "Command Center ignored: Master Virtual Switch is OFF."
         return
     }
+    if (btn == "btnExecuteQuickClean") {
+        if (settings.quickCleanRooms) {
+            wakeDocks()
+            addToHistory("<span style='color:purple;'><b>Command Center: Executing Quick Clean</b></span>")
+            executeRoomClean(settings.quickCleanRooms, [
+                ignoreSkip: true, 
+                suction: settings.quickCleanSuction, 
+                water: settings.quickCleanWater
+            ])
+            app.updateSetting("quickCleanRooms", [type: "enum", value: []])
+        }
+    }
+}
+
+def mopRoutineHandler() {
+    if (!canRunAutomated()) return
     
     if (mopDays) {
         def df = new java.text.SimpleDateFormat("EEEE")
@@ -295,6 +407,7 @@ def mopRoutineHandler() {
 }
 
 def overdueCheckHandler() {
+    if (isAppPaused()) return
     if (!maxIdleDays || !state.lastCleanTime) return
     
     long daysIdle = (now() - state.lastCleanTime) / 86400000
@@ -303,12 +416,12 @@ def overdueCheckHandler() {
             wakeDocks()
             addToHistory("<span style='color:purple;'><b>Overdue Catcher: ${daysIdle} days idle. Forcing Deep Clean!</b></span>")
             executeRoomClean(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
-            // State is updated within executeRoomClean so it won't loop
         }
     }
 }
 
 def consumableHandler(evt) {
+    if (isAppPaused()) return
     String part = evt.name?.toLowerCase()
     int value = (evt.value ?: "100") as Integer
     int threshold = settings.alertThreshold ?: 5
@@ -321,25 +434,29 @@ def consumableHandler(evt) {
     }
 }
 
-def waterHandler(evt) {
-    if (evt.value?.toString()?.toLowerCase() in ["low", "empty", "0"]) {
-        sendAlert("Water Low", "${evt.device.displayName}: Mop water tank is low or empty.")
+def dockErrorHandler(evt) {
+    if (isAppPaused()) return
+    String err = evt.value?.toString()?.toLowerCase()
+    if (err == "no error" || err == "ok" || err == "0") return
+    
+    if (err.contains("water empty") || err.contains("water low")) {
+        sendAlert("Water Low", "${evt.device.displayName} Dock: Water Empty. Refill required.")
+    } else if (err.contains("dust") || err.contains("bag")) {
+        sendAlert("Replace Bag", "${evt.device.displayName} Dock: ${evt.value.capitalize()}")
+    } else {
+        sendAlert("Errors", "${evt.device.displayName} Dock Alert: ${evt.value.capitalize()}")
     }
-}
-
-def binHandler(evt) {
-    if (evt.value?.toString()?.toLowerCase() in ["full", "100"]) {
-        sendAlert("Bin Full", "${evt.device.displayName}: Dust bin requires emptying.")
-    }
+    addToHistory("<span style='color:red;'><b>Dock Error: ${evt.value}</b></span>")
 }
 
 def batteryHandler(evt) {
+    if (isAppPaused()) return
     if (evt.value == "100") {
-        if (evt.deviceId == vacuum1?.id && dockPlug1 && dockPlug1.currentValue("switch") != "off" && vacuum1.currentValue("state") in ["charging", "docked"]) {
+        if (evt.deviceId == vacuum1?.id && dockPlug1 && dockPlug1.currentValue("switch") != "off" && vacuum1.currentValue("state") in ["charging", "charged", "docked"]) {
             dockPlug1.off()
             addToHistory("V1 Dock Powered OFF (Phantom Draw Assassin)")
         }
-        if (evt.deviceId == vacuum2?.id && dockPlug2 && dockPlug2.currentValue("switch") != "off" && vacuum2.currentValue("state") in ["charging", "docked"]) {
+        if (evt.deviceId == vacuum2?.id && dockPlug2 && dockPlug2.currentValue("switch") != "off" && vacuum2.currentValue("state") in ["charging", "charged", "docked"]) {
             dockPlug2.off()
             addToHistory("V2 Dock Powered OFF (Phantom Draw Assassin)")
         }
@@ -347,6 +464,7 @@ def batteryHandler(evt) {
 }
 
 def dockPlugHandler(evt) {
+    if (isAppPaused()) return
     if (evt.value == "off") {
         if (evt.deviceId == dockPlug1?.id && !state.dock1OffTime) state.dock1OffTime = now()
         if (evt.deviceId == dockPlug2?.id && !state.dock2OffTime) state.dock2OffTime = now()
@@ -363,15 +481,17 @@ def dockPlugHandler(evt) {
 }
 
 def wakeDocks() {
+    if (isAppPaused()) return
     if (dockPlug1 && dockPlug1.currentValue("switch") != "on") dockPlug1.on()
     if (dockPlug2 && dockPlug2.currentValue("switch") != "on") dockPlug2.on()
     addToHistory("Docks Powered ON (Scheduled Wake-Up)")
 }
 
 def vacuumStateHandler(evt) {
+    if (isAppPaused()) return
     String vState = evt.value?.toString()?.toLowerCase()
     
-    if (vState in ["charging", "docked", "returning to dock", "idle"]) {
+    if (vState in ["charging", "charged", "docked", "returning to dock", "idle"]) {
         if (evt.device.id == vacuum1?.id && state.v1_maskedRooms?.size() > 0) {
             state.v1_maskedRooms.each { rName -> triggerFanCountdown(rName) }
             state.v1_maskedRooms = []
@@ -388,6 +508,7 @@ def vacuumStateHandler(evt) {
 }
 
 def triggerFanCountdown(String roomName) {
+    if (isAppPaused()) return
     for (int i = 1; i <= 12; i++) {
         if (settings["enableRoom_${i}"] && settings["roomName_${i}"] == roomName && settings["roomFan_${i}"]) {
             int delayMins = settings["roomFanTimer_${i}"] ?: 15
@@ -398,6 +519,7 @@ def triggerFanCountdown(String roomName) {
 }
 
 def turnOffFan(data) {
+    if (isAppPaused()) return
     def fan = settings["roomFan_${data.roomId}"]
     if (fan) {
         fan.off()
@@ -406,10 +528,11 @@ def turnOffFan(data) {
 }
 
 def masterSwitchHandler(evt) {
+    if (isAppPaused()) return
     if (evt.value == "off") {
         addToHistory("<span style='color:orange;'>Master Switch: OFF (Suspended)</span>")
-        if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) vacuum1.appPause()
-        if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) vacuum2.appPause()
+        if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) commandVacuum(vacuum1, settings.vac1Brand, "pause")
+        if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) commandVacuum(vacuum2, settings.vac2Brand, "pause")
         unschedule("resumeVacuum1")
         unschedule("resumeVacuum2")
     } else {
@@ -418,6 +541,7 @@ def masterSwitchHandler(evt) {
 }
 
 def occupancyHandler(evt) {
+    if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     
     String triggeredRoom = ""
@@ -431,7 +555,6 @@ def occupancyHandler(evt) {
     }
     if (!triggeredRoom) return
 
-    // Tally Cumulative Occupancy
     if (evt.name == "motion") {
         if (evt.value == "active") {
             state["motionStart_${triggeredRoom}"] = now()
@@ -449,12 +572,12 @@ def occupancyHandler(evt) {
     if (evt.value == "active" || evt.value == "on") {
         if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
             addToHistory("<span style='color:orange;'>V1 Paused: Intrusion in ${triggeredRoom}</span>")
-            vacuum1.appPause()
+            commandVacuum(vacuum1, settings.vac1Brand, "pause")
             unschedule("resumeVacuum1")
         }
         if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
             addToHistory("<span style='color:orange;'>V2 Paused: Intrusion in ${triggeredRoom}</span>")
-            vacuum2.appPause()
+            commandVacuum(vacuum2, settings.vac2Brand, "pause")
             unschedule("resumeVacuum2")
         }
     } else if (evt.value == "inactive" || evt.value == "off") {
@@ -471,22 +594,25 @@ def occupancyHandler(evt) {
 }
 
 def resumeVacuum1() {
+    if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() == "paused") {
         addToHistory("<span style='color:green;'>V1 Resumed: Grace Period Complete</span>")
-        vacuum1.appRoomResume() 
+        commandVacuum(vacuum1, settings.vac1Brand, "resume")
     }
 }
 
 def resumeVacuum2() {
+    if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() == "paused") {
         addToHistory("<span style='color:green;'>V2 Resumed: Grace Period Complete</span>")
-        vacuum2.appRoomResume() 
+        commandVacuum(vacuum2, settings.vac2Brand, "resume")
     }
 }
 
 def modeHandler(evt) {
+    if (isAppPaused()) return
     if (goodNightMode && evt.value in goodNightMode) {
         if (!canRunAutomated()) {
             addToHistory("Good Night Blocked: Global Constraints Active")
@@ -518,7 +644,7 @@ def modeHandler(evt) {
 }
 
 def fullCleanHandler(evt) {
-    // Manual Trigger: Bypasses canRunAutomated() gatekeeper.
+    if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     wakeDocks()
     addToHistory("Triggered: Full Clean Switch (Manual Override)")
@@ -526,7 +652,7 @@ def fullCleanHandler(evt) {
 }
 
 def roomSwitchHandler(evt) {
-    // Manual Trigger: Bypasses canRunAutomated() gatekeeper.
+    if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     wakeDocks()
     for (int i = 1; i <= 12; i++) {
@@ -539,6 +665,7 @@ def roomSwitchHandler(evt) {
 }
 
 def schoolRunHandler(evt) {
+    if (isAppPaused()) return
     if (!canRunAutomated()) {
         addToHistory("School Run Blocked: Global Constraints Active")
         return
@@ -549,6 +676,7 @@ def schoolRunHandler(evt) {
 }
 
 def errorHandler(evt) {
+    if (isAppPaused()) return
     String errorMsg = evt.value?.toString()?.toLowerCase()
     if (errorMsg == "no error" || errorMsg == "0") return
     
@@ -557,7 +685,10 @@ def errorHandler(evt) {
     
     sendAlert("Errors", msg)
     
-    if (autoPauseOnError) evt.device.appPause()
+    if (autoPauseOnError) {
+        def brand = (evt.device.id == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
+        commandVacuum(evt.device, brand, "pause")
+    }
 }
 
 // ==========================================
@@ -565,6 +696,7 @@ def errorHandler(evt) {
 // ==========================================
 
 void executeRoomClean(List selectedRoomNames, Map options = [:]) {
+    if (isAppPaused()) return
     boolean ignoreSkip = options.ignoreSkip ?: false
     String overrideSuction = options.suction
     String overrideWater = options.water
@@ -588,6 +720,20 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         for (int i = 1; i <= 12; i++) {
             if (settings["enableRoom_${i}"] && settings["roomName_${i}"] == targetName) {
                 
+                if (settings["roomContact_${i}"] && settings["roomContact_${i}"].currentValue("contact") == "open") {
+                    skippedClean << "${targetName} (Perimeter Open)"
+                    continue
+                }
+
+                if (settings["roomHumidity_${i}"]) {
+                    def currentHum = settings["roomHumidity_${i}"].currentValue("humidity") ?: 0
+                    def limitHum = settings["roomHumidityThreshold_${i}"] ?: 75
+                    if (currentHum > limitHum) {
+                        skippedClean << "${targetName} (High Humidity: ${currentHum}%)"
+                        continue
+                    }
+                }
+                
                 int occMins = state["occMins_${targetName}"] ?: 0
                 int minThreshold = settings["roomOccupancyThreshold_${i}"] ?: 15
                 int heavyThreshold = settings["roomHeavyTraffic_${i}"] ?: 120
@@ -607,7 +753,14 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 }
 
                 String finalSuction = overrideSuction ?: settings["roomSuction_${i}"] ?: "Balanced"
-                if (!overrideSuction && occMins >= heavyThreshold) {
+                
+                if (settings["roomMedia_${i}"]) {
+                    def pState = settings["roomMedia_${i}"].currentValue("status") ?: settings["roomMedia_${i}"].currentValue("state")
+                    if (pState?.toString()?.toLowerCase() == "playing") {
+                        finalSuction = "Quiet"
+                        addToHistory("Acoustic Override: ${targetName} set to Quiet (Media Playing)")
+                    }
+                } else if (!overrideSuction && occMins >= heavyThreshold) {
                     finalSuction = "Turbo"
                     addToHistory("Adaptive Suction: ${targetName} set to Turbo (${occMins}m traffic)")
                 }
@@ -628,9 +781,8 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
     }
 
     if (skippedOccupied.size() > 0) addToHistory("<span style='color:orange;'>Skipped (Occupied): ${skippedOccupied.join(', ')}</span>")
-    if (skippedClean.size() > 0) addToHistory("<span style='color:gray;'>Skipped (Clean): ${skippedClean.join(', ')}</span>")
+    if (skippedClean.size() > 0) addToHistory("<span style='color:gray;'>Skipped (Condition/Clean): ${skippedClean.join(', ')}</span>")
 
-    // Record the timestamp of a successful dispatch to reset the "Overdue Catcher"
     if (v1Queue.size() > 0 || v2Queue.size() > 0) {
         state.lastCleanTime = now()
     }
@@ -646,8 +798,9 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 settings["roomFan_${room.index}"].on()
                 addToHistory("${room.name} Dust Settler: Fan ON")
             }
-            if (room.zone) vacuum1.appZoneClean(room.zone)
-            else if (room.id) vacuum1.appRoomClean(room.id, room.water, room.suction) 
+            if (room.zone) dispatchVacuum(vacuum1, settings.vac1Brand, "zone", room.zone, "", "")
+            else if (room.id) dispatchVacuum(vacuum1, settings.vac1Brand, "room", room.id, room.water, room.suction)
+            
             state["occMins_${room.name}"] = 0 
             pauseExecution(2500)
         }
@@ -664,8 +817,9 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 settings["roomFan_${room.index}"].on()
                 addToHistory("${room.name} Dust Settler: Fan ON")
             }
-            if (room.zone) vacuum2.appZoneClean(room.zone)
-            else if (room.id) vacuum2.appRoomClean(room.id, room.water, room.suction) 
+            if (room.zone) dispatchVacuum(vacuum2, settings.vac2Brand, "zone", room.zone, "", "")
+            else if (room.id) dispatchVacuum(vacuum2, settings.vac2Brand, "room", room.id, room.water, room.suction)
+            
             state["occMins_${room.name}"] = 0 
             pauseExecution(2500)
         }
@@ -699,7 +853,13 @@ String buildHistoryHTML() {
 double getVacWatts(String modelStr, Double customWatts) {
     if (modelStr?.contains("S8")) return 3.0
     if (modelStr?.contains("QRevo")) return 4.0
+    if (modelStr?.contains("Roomba")) return 7.0
     return customWatts ?: 3.0
+}
+
+String getConsumableVal(vacDevice, String attr) {
+    def val = vacDevice.currentValue(attr)
+    return val != null ? "${val}%" : "--"
 }
 
 String generateVacuumTable(vacDevice, String vacTitle, String intentAction, String intentRooms) {
@@ -707,27 +867,61 @@ String generateVacuumTable(vacDevice, String vacTitle, String intentAction, Stri
     String vState = vacDevice.currentValue("state") ?: "Unknown"
     String vBat = vacDevice.currentValue("battery") ?: "--"
     String vErr = vacDevice.currentValue("error") ?: "No error"
+    String dockErr = vacDevice.currentValue("dockError") ?: "No error"
+    
+    String cleanArea = vacDevice.currentValue("cleanArea") ?: "--"
+    String cleanTime = vacDevice.currentValue("cleanTime") ?: "--"
 
     String stateColor = "black"
     if (vState.toLowerCase() in ["cleaning", "room clean", "zone clean"]) stateColor = "green"
-    if (vState.toLowerCase() == "charging") stateColor = "blue"
+    if (vState.toLowerCase() in ["charging", "charged"]) stateColor = "blue"
     if (vState.toLowerCase() in ["paused", "returning to dock"]) stateColor = "orange"
 
-    String html = "<div style='margin-bottom: 15px;'><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
-    html += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th colspan='2' style='padding: 8px;'>${vacTitle}</th></tr>"
-    html += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px; width: 40%;'><b>App Intent (Action)</b></td><td style='padding: 8px; color: #0066cc;'><b>${intentAction}</b></td></tr>"
-    html += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>App Intent (Target)</b></td><td style='padding: 8px;'>${intentRooms}</td></tr>"
-    html += "<tr style='border-bottom: 1px solid #ddd; background-color: #f9f9f9;'><td style='padding: 8px;'><b>Actual Device State</b></td><td style='padding: 8px; color: ${stateColor}; font-weight: bold;'>${vState.capitalize()}</td></tr>"
-    html += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Battery Level</b></td><td style='padding: 8px;'>${vBat}%</td></tr>"
+    // Map to specific Qrevo Curv attributes
+    String filter = getConsumableVal(vacDevice, "remainingFilter") ?: getConsumableVal(vacDevice, "filter")
+    String mBrush = getConsumableVal(vacDevice, "remainingMainBrush") ?: getConsumableVal(vacDevice, "mainBrush")
+    String sBrush = getConsumableVal(vacDevice, "remainingSideBrush") ?: getConsumableVal(vacDevice, "sideBrush")
+    String sensor = getConsumableVal(vacDevice, "remainingSensors") ?: getConsumableVal(vacDevice, "sensor")
     
-    String errColor = (vErr.toLowerCase() == 'no error') ? "green" : "red"
-    html += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Hardware Error</b></td><td style='padding: 8px; color: ${errColor};'>${vErr.capitalize()}</td></tr>"
+    String html = "<div style='margin-bottom: 15px;'><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
+    html += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th colspan='4' style='padding: 8px;'>${vacTitle}</th></tr>"
+    
+    html += "<tr style='border-bottom: 1px solid #ddd;'>"
+    html += "<td style='padding: 8px; width: 25%;'><b>State</b></td><td style='padding: 8px; width: 25%; color: ${stateColor}; font-weight: bold;'>${vState.capitalize()}</td>"
+    html += "<td style='padding: 8px; width: 25%;'><b>Battery</b></td><td style='padding: 8px; width: 25%; font-weight: bold;'>${vBat}%</td>"
+    html += "</tr>"
+    
+    html += "<tr style='border-bottom: 1px solid #ddd;'>"
+    html += "<td style='padding: 8px;'><b>App Action</b></td><td style='padding: 8px; color: #0066cc;'><b>${intentAction}</b></td>"
+    html += "<td style='padding: 8px;'><b>App Target</b></td><td style='padding: 8px;'>${intentRooms}</td>"
+    html += "</tr>"
+
+    html += "<tr style='border-bottom: 1px solid #ddd; background-color: #f9f9f9;'>"
+    html += "<td style='padding: 8px;'><b>Last Clean Area</b></td><td style='padding: 8px;'>${cleanArea} m²</td>"
+    html += "<td style='padding: 8px;'><b>Last Clean Time</b></td><td style='padding: 8px;'>${cleanTime} mins</td>"
+    html += "</tr>"
+
+    String errColor = (vErr.toLowerCase() in ['no error', 'ok', '0']) ? "green" : "red"
+    String dockErrColor = (dockErr.toLowerCase() in ['no error', 'ok', '0']) ? "green" : "red"
+    
+    html += "<tr style='border-bottom: 2px solid #ddd;'>"
+    html += "<td style='padding: 8px;'><b>Hardware Error</b></td><td style='padding: 8px; color: ${errColor}; font-weight:bold;'>${vErr.capitalize()}</td>"
+    html += "<td style='padding: 8px;'><b>Dock Status</b></td><td style='padding: 8px; color: ${dockErrColor}; font-weight:bold;'>${dockErr.capitalize()}</td>"
+    html += "</tr>"
+
+    html += "<tr style='background-color: #f0f0f0; text-align: center; font-size: 11px;'><th style='padding: 4px;'>Filter</th><th style='padding: 4px;'>Main Brush</th><th style='padding: 4px;'>Side Brush</th><th style='padding: 4px;'>Sensors</th></tr>"
+    html += "<tr style='text-align: center; font-size: 12px; border-bottom: 1px solid #ccc;'><td style='padding: 4px;'>${filter}</td><td style='padding: 4px;'>${mBrush}</td><td style='padding: 4px;'>${sBrush}</td><td style='padding: 4px;'>${sensor}</td></tr>"
+
     html += "</table></div>"
     return html
 }
 
 String buildDashboardHTML() {
     String html = ""
+    if (isAppPaused()) {
+        html += "<div style='margin-bottom: 15px; padding: 10px; background: #ffebee; border: 2px solid red; border-radius: 4px; text-align: center; font-weight: bold; color: red;'>SYSTEM PAUSED VIA MASTER VIRTUAL SWITCH</div>"
+    }
+
     if (vacuum1) html += generateVacuumTable(vacuum1, "Vacuum 1 (Primary)", state.v1_intentAction ?: "Idle", state.v1_intentRooms ?: "--")
     if (vacuum2) html += generateVacuumTable(vacuum2, "Vacuum 2 (Secondary)", state.v2_intentAction ?: "Idle", state.v2_intentRooms ?: "--")
     
@@ -740,9 +934,9 @@ String buildDashboardHTML() {
     }
     
     boolean isPaused = masterSwitch ? (masterSwitch.currentValue("switch") == "off") : false
-    String globalStatus = isPaused ? "<span style='color: red; font-weight: bold;'>PAUSED (Master Switch Off)</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
+    String globalStatus = isPaused ? "<span style='color: red; font-weight: bold;'>PAUSED (Physical Master Switch Off)</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
         
-    html += "<div style='margin-top: 10px; padding: 8px; background: #e9e9e9; border-radius: 4px; font-size: 13px;'><b>Global System Mode:</b> ${globalStatus}</div>"
+    html += "<div style='margin-top: 10px; padding: 8px; background: #e9e9e9; border-radius: 4px; font-size: 13px;'><b>Hardware Interlock:</b> ${globalStatus}</div>"
     
     long daysIdle = state.lastCleanTime ? ((now() - state.lastCleanTime) / 86400000) : 0
     html += "<div style='margin-top: 10px; padding: 8px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 4px; font-size: 13px; color: #e65100;'><b>Time Since Last Dispatch:</b> ${daysIdle} Days</div>"
@@ -751,7 +945,6 @@ String buildDashboardHTML() {
         html += "<div style='margin-top: 10px; padding: 8px; background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; color: #555;'><b>Current Room Utilization:</b> ${utilList.join(' | ')}</div>"
     }
 
-    // ROI Calculation
     double v1Watts = getVacWatts(settings.vac1Model, settings.vac1Watts)
     double v2Watts = getVacWatts(settings.vac2Model, settings.vac2Watts)
     
