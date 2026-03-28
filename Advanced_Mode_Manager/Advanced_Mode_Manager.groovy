@@ -84,6 +84,17 @@ def mainPage() {
                     input "dcSwitchesOn${i}", "capability.switch", title: "Turn ON these switches", required: false, multiple: true
                     input "dcLocksLock${i}", "capability.lock", title: "Lock these doors", required: false, multiple: true
                     input "dcGarageClose${i}", "capability.garageDoorControl", title: "Close these garages", required: false, multiple: true
+                    
+                    // --- INOVELLI LED CONTROL ---
+                    input "dcInovelli${i}", "capability.configuration", title: "Set Inovelli LED Color for these switches", required: false, multiple: true, submitOnChange: true
+                    if (settings["dcInovelli${i}"]) {
+                        input "dcInovelliColor${i}", "enum", title: "LED Color", required: true, options: [
+                            "0":"Red", "14":"Orange", "35":"Lemon", "64":"Lime", 
+                            "85":"Green", "106":"Teal", "127":"Cyan", "149":"Aqua", 
+                            "170":"Blue", "191":"Violet", "212":"Magenta", "234":"Pink", "255":"White"
+                        ]
+                        input "dcInovelliBlocker${i}", "capability.switch", title: "Block LED color changes if this switch is ON (e.g., Mail Arrived Virtual Switch)", required: false, multiple: false
+                    }
                 }
             }
         }
@@ -141,8 +152,14 @@ def initialize() {
     subscribe(location, "mode", modeChangeHandler)
     
     for (int i = 1; i <= 8; i++) {
+        // Subscribe to Presence Tethers
         if (settings["transEnable${i}"] && settings["transUseTether${i}"] && settings["transTetherPresence${i}"]) {
             subscribe(settings["transTetherPresence${i}"], "presence", presenceTetherHandler)
+        }
+        
+        // Subscribe to LED Blocker Switches
+        if (settings["dcEnable${i}"] && settings["dcInovelliBlocker${i}"]) {
+            subscribe(settings["dcInovelliBlocker${i}"], "switch.off", blockerSwitchHandler)
         }
     }
     
@@ -169,6 +186,10 @@ def appButtonHandler(btn) {
     }
 }
 
+// ------------------------------------------------------------------------------
+// HANDLERS
+// ------------------------------------------------------------------------------
+
 def presenceTetherHandler(evt) {
     if (state.pendingRuleNumber == null || evt.value != "not present") return
     def ruleIdx = state.pendingRuleNumber
@@ -180,18 +201,30 @@ def presenceTetherHandler(evt) {
     }
 }
 
-def executeSweep() {
-    def currentMode = location.mode
-    def matchFound = false
-    
-    for (int i = 1; i <= 8; i++) {
-        if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
-            logAction("Sweep Match (Device Control ${i}): Executing enforcement for '${currentMode}'.")
-            enforceDevices(i)
-            matchFound = true
+// This runs when a blocking switch (like Mail Arrived) turns off
+def blockerSwitchHandler(evt) {
+    if (evt.value == "off") {
+        logAction("LED Blocker Switch '${evt.device.displayName}' turned off. Re-evaluating LED colors for current mode...")
+        def currentMode = location.mode
+        
+        // Loop through all rules to find the one matching the CURRENT mode
+        for (int i = 1; i <= 8; i++) {
+            if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
+                if (settings["dcInovelli${i}"] && settings["dcInovelliColor${i}"] != null) {
+                    
+                    // Verify the rule's blocker is indeed off before applying
+                    def ruleBlocker = settings["dcInovelliBlocker${i}"]
+                    if (!ruleBlocker || ruleBlocker.currentValue("switch") != "on") {
+                        enforceInovelliLEDs(i)
+                        
+                        def colorMap = ["0":"Red", "14":"Orange", "35":"Lemon", "64":"Lime", "85":"Green", "106":"Teal", "127":"Cyan", "149":"Aqua", "170":"Blue", "191":"Violet", "212":"Magenta", "234":"Pink", "255":"White"]
+                        def colorName = colorMap[settings["dcInovelliColor${i}"]] ?: settings["dcInovelliColor${i}"]
+                        logAction("Deferred LED Update -> [Inovelli LEDs caught up: ${colorName}]")
+                    }
+                }
+            }
         }
     }
-    if (!matchFound) logAction("Sweep: No Device Control rules found for mode '${currentMode}'.")
 }
 
 def modeChangeHandler(evt) {
@@ -229,6 +262,24 @@ def modeChangeHandler(evt) {
     }
 }
 
+// ------------------------------------------------------------------------------
+// EXECUTION LOGIC
+// ------------------------------------------------------------------------------
+
+def executeSweep() {
+    def currentMode = location.mode
+    def matchFound = false
+    
+    for (int i = 1; i <= 8; i++) {
+        if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
+            logAction("Sweep Match (Device Control ${i}): Executing enforcement for '${currentMode}'.")
+            enforceDevices(i)
+            matchFound = true
+        }
+    }
+    if (!matchFound) logAction("Sweep: No Device Control rules found for mode '${currentMode}'.")
+}
+
 def executeTransition() {
     def ruleIdx = state.pendingRuleNumber
     if (location.mode == state.pendingTriggerMode && ruleIdx != null) {
@@ -261,12 +312,45 @@ def executeTransition() {
 
 def enforceDevices(ruleIdx) {
     def logMsg = "State Sweep -> "
+    
     if (settings["dcSwitchesOff${ruleIdx}"]) { settings["dcSwitchesOff${ruleIdx}"].off(); logMsg += "[OFF] " }
     if (settings["dcSwitchesOn${ruleIdx}"]) { settings["dcSwitchesOn${ruleIdx}"].on(); logMsg += "[ON] " }
     if (settings["dcLocksLock${ruleIdx}"]) { settings["dcLocksLock${ruleIdx}"].lock(); logMsg += "[Locked] " }
     if (settings["dcGarageClose${ruleIdx}"]) { settings["dcGarageClose${ruleIdx}"].close(); logMsg += "[Closed] " }
+    
+    // Process Inovelli LED color changes
+    if (settings["dcInovelli${ruleIdx}"] && settings["dcInovelliColor${ruleIdx}"] != null) {
+        def blocker = settings["dcInovelliBlocker${ruleIdx}"]
+        
+        // Check if the user defined a blocker switch and if it is currently ON
+        if (blocker && blocker.currentValue("switch") == "on") {
+            logMsg += "[Inovelli LEDs: Blocked by '${blocker.displayName}'] "
+        } else {
+            // Safe to change colors
+            enforceInovelliLEDs(ruleIdx)
+            
+            def colorMap = ["0":"Red", "14":"Orange", "35":"Lemon", "64":"Lime", "85":"Green", "106":"Teal", "127":"Cyan", "149":"Aqua", "170":"Blue", "191":"Violet", "212":"Magenta", "234":"Pink", "255":"White"]
+            def colorName = colorMap[settings["dcInovelliColor${ruleIdx}"]] ?: settings["dcInovelliColor${ruleIdx}"]
+            logMsg += "[Inovelli LEDs: ${colorName}] "
+        }
+    }
+    
     if (logMsg != "State Sweep -> ") logAction(logMsg)
 }
+
+// Helper function just for firing the LED parameters
+def enforceInovelliLEDs(ruleIdx) {
+    def colorVal = settings["dcInovelliColor${ruleIdx}"].toInteger()
+    settings["dcInovelli${ruleIdx}"].each { dev ->
+        // Parameter 95 = LED Color (When On), Parameter 96 = LED Color (When Off)
+        dev.setParameter(95, colorVal)
+        dev.setParameter(96, colorVal)
+    }
+}
+
+// ------------------------------------------------------------------------------
+// UTILITY FUNCTIONS
+// ------------------------------------------------------------------------------
 
 def clearPendingTransition() {
     unschedule(executeTransition)
