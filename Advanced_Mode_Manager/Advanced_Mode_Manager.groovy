@@ -85,7 +85,13 @@ def mainPage() {
                     input "dcLocksLock${i}", "capability.lock", title: "Lock these doors", required: false, multiple: true
                     input "dcGarageClose${i}", "capability.garageDoorControl", title: "Close these garages", required: false, multiple: true
                     
+                    // --- AUDIO NOTIFICATIONS ---
+                    paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #f39c12; margin-top:10px;'><b>Audio Announcements</b></div>"
+                    input "dcTtsMessage${i}", "text", title: "TTS Announcement Message", required: false
+                    input "dcZoozSound${i}", "number", title: "Zooz Chime Sound File #", required: false
+
                     // --- INOVELLI LED CONTROL ---
+                    paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #9b59b6; margin-top:10px;'><b>Inovelli LED Notifications</b></div>"
                     input "dcInovelli${i}", "capability.configuration", title: "Set Inovelli LED Notifications for these switches", required: false, multiple: true, submitOnChange: true
                     if (settings["dcInovelli${i}"]) {
                         input "dcInovelliTarget${i}", "enum", title: "Target LEDs", required: true, defaultValue: "All", options: [
@@ -142,6 +148,15 @@ def mainPage() {
                     }
                 }
             }
+        }
+
+        // ==============================================================================
+        // SECTION 3: GLOBAL AUDIO DEVICES
+        // ==============================================================================
+        section("<b>Audio Announcements & Notifications</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>Global Audio Devices:</b> Select the devices to use for mode-based audio announcements. You will define the actual message and sound number inside each Device Control rule above.</div>"
+            input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers (TTS)", multiple: true, required: false
+            input "zoozChimes", "capability.chime", title: "Zooz Chime Devices", multiple: true, required: false
         }
     }
 }
@@ -329,6 +344,19 @@ def enforceDevices(ruleIdx) {
     if (settings["dcLocksLock${ruleIdx}"]) { settings["dcLocksLock${ruleIdx}"].lock(); logMsg += "[Locked] " }
     if (settings["dcGarageClose${ruleIdx}"]) { settings["dcGarageClose${ruleIdx}"].close(); logMsg += "[Closed] " }
     
+    // --- Audio Announcements ---
+    def ttsMsg = settings["dcTtsMessage${ruleIdx}"]
+    def chimeSound = settings["dcZoozSound${ruleIdx}"]
+    
+    if (ttsMsg && ttsSpeakers) {
+        ttsSpeakers.speak(ttsMsg)
+        logMsg += "[TTS: ${ttsMsg}] "
+    }
+    if (chimeSound != null && zoozChimes) {
+        zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(chimeSound as Integer) }
+        logMsg += "[Zooz Chime: File ${chimeSound}] "
+    }
+
     // Process Inovelli LED color changes
     if (settings["dcInovelli${ruleIdx}"] && settings["dcInovelliColor${ruleIdx}"] != null) {
         def blocker = settings["dcInovelliBlocker${ruleIdx}"]
