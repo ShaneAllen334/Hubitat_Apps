@@ -1,7 +1,7 @@
 /**
  * Advanced Robot Vacuum Controller
  * Orchestration app for the Roborock Robot Vacuum driver with Live Dashboard, Master Override, and Dynamic 12-Room Setup.
-*/
+ */
 
 definition(
     name: "Advanced Robot Vacuum Controller",
@@ -18,7 +18,7 @@ preferences {
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Advanced Vacuum Controller", install: true, uninstall: true, refreshInterval: 10) {
+    dynamicPage(name: "mainPage", title: "Advanced Vacuum Controller", install: true, uninstall: true) {
         
         if (vacuum1 || vacuum2) {
             section("<b>Live System Dashboard</b>") {
@@ -43,24 +43,23 @@ def mainPage() {
             }
             
             input "masterSwitch", "capability.switch", title: "Master Suspend/Resume Switch", required: false, description: "If OFF, all automated routines are ignored and active cleans are paused."
-            input "fullCleanSwitch", "capability.switch", title: "Full House Clean Switch", required: false, description: "Trigger full house clean when this turns ON"
-            input "notifyDevice", "capability.notification", title: "Send Push Notifications To", required: false, multiple: true
+            input "fullCleanSwitch", "capability.switch", title: "Full House Clean Switch (Manual Override)", required: false, description: "Trigger full house clean. Bypasses Time/Mode constraints."
         }
 
         section("<b>2. Smart Room Configuration</b>") {
             paragraph "<i>Configure up to 12 rooms. Define parameters, sequencing, and Pre-Evaluation occupancy sensors. Expand each room below to set it up.</i>"
         }
 
-        // Generate individual collapsible sections for each room
         for (int i = 1; i <= 12; i++) {
             def rName = settings["roomName_${i}"] ?: "Room ${i}"
+            def isHidden = settings["enableRoom_${i}"] ? false : true
             
-            section("<b>${rName} Setup</b>", hideable: true, hidden: true) {
+            section("<b>${rName} Setup</b>", hideable: true, hidden: isHidden) {
                 input "enableRoom_${i}", "bool", title: "<b>Enable ${rName}</b>", defaultValue: false, submitOnChange: true
                 
                 if (settings["enableRoom_${i}"]) {
                     input "vacuumAssign_${i}", "enum", title: "↳ Assign to Vacuum", options: ["Vacuum 1", "Vacuum 2"], defaultValue: "Vacuum 1", required: true
-                    input "roomName_${i}", "text", title: "↳ Room Name (e.g., Kitchen)", required: true, submitOnChange: true
+                    input "roomName_${i}", "text", title: "↳ Room Name (e.g., Kitchen)", required: true 
                     input "roomId_${i}", "text", title: "↳ Room ID (from vacuum state)", required: false
                     input "roomZone_${i}", "text", title: "↳ Optional: Zone Coordinates (Overrides Room ID)", required: false
                     
@@ -106,7 +105,24 @@ def mainPage() {
             input "schoolRunRooms", "enum", title: "Rooms to clean during School Run", options: availableRooms, required: false, multiple: true
         }
 
-        section("<b>4. Hardware Protection, Efficiency & ROI</b>") {
+        section("<b>4. Global Constraints & Overdue Logic</b>") {
+            paragraph "<i>These rules apply to automated routines (Good Night, School Run, Overdue, Mop). Manual switches bypass these constraints.</i>"
+            input "allowedModes", "mode", title: "Allowed Operating Modes (Leave blank for any)", required: false, multiple: true
+            input "allowedStartTime", "time", title: "Quiet Hours: Do NOT run BEFORE", required: false
+            input "allowedEndTime", "time", title: "Quiet Hours: Do NOT run AFTER", required: false
+            
+            paragraph "<b>Overdue Deep Clean Catcher:</b>"
+            input "maxIdleDays", "number", title: "Max days without a clean before forcing a Deep Clean", defaultValue: 3, required: false
+        }
+
+        section("<b>5. Scheduled Mop-Only Routines</b>") {
+            paragraph "<i>Dedicated routines that automatically force Suction: Off and Water: High.</i>"
+            input "mopDays", "enum", title: "Days to Run Mop-Only", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], required: false, multiple: true
+            input "mopTime", "time", title: "Time to Run Mop-Only", required: false
+            input "mopRooms", "enum", title: "Rooms to Mop", options: availableRooms, required: false, multiple: true
+        }
+
+        section("<b>6. Hardware Protection, Efficiency & ROI</b>") {
             input "pauseGracePeriod", "number", title: "Occupancy Grace Period (Minutes)", defaultValue: 2, required: true, description: "Prevents motor wear by waiting this long after a room clears before resuming."
             
             paragraph "<b>Phantom Draw Assassin:</b>"
@@ -116,32 +132,19 @@ def mainPage() {
             input "wakeUpTime", "time", title: "Daily Time to Wake Docks (Prep for routines)", required: false
         }
 
-        section("<b>5. Consumable & Error Alerts</b>") {
+        section("<b>7. Notifications & Maintenance Alerts</b>") {
+            input "notifyDevice", "capability.notification", title: "Send Push Notifications To", required: false, multiple: true
+            input "notifyTypes", "enum", title: "Select Alert Types to Receive", options: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"], multiple: true, required: false, defaultValue: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"]
+            
             input "alertThreshold", "number", title: "Alert when consumables drop below (%)", defaultValue: 5, required: true
             input "autoPauseOnError", "bool", title: "Auto-Pause Vacuum on Error", defaultValue: true
         }
         
-        section("<b>6. Logging & Maintenance</b>") {
+        section("<b>8. Logging & Maintenance</b>") {
             input "logEnable", "bool", title: "Enable Informational Logging", defaultValue: true
-            input "clearHistory", "bool", title: "Clear Dashboard History", defaultValue: false, submitOnChange: true
-            input "clearOccupancy", "bool", title: "Reset All Room Occupancy Counters", defaultValue: false, submitOnChange: true
-            input "clearROI", "bool", title: "Reset Financial Savings Counter", defaultValue: false, submitOnChange: true
-        }
-        
-        if (clearHistory) {
-            state.history = []
-            app.updateSetting("clearHistory", [value: "false", type: "bool"])
-        }
-        if (clearOccupancy) {
-            for (int i = 1; i <= 12; i++) {
-                if (settings["enableRoom_${i}"]) state["occMins_${settings["roomName_${i}"]}"] = 0
-            }
-            app.updateSetting("clearOccupancy", [value: "false", type: "bool"])
-        }
-        if (clearROI) {
-            state.dock1OfflineHours = 0.0
-            state.dock2OfflineHours = 0.0
-            app.updateSetting("clearROI", [value: "false", type: "bool"])
+            input "clearHistory", "bool", title: "Clear Dashboard History", defaultValue: false
+            input "clearOccupancy", "bool", title: "Reset All Room Occupancy Counters", defaultValue: false
+            input "clearROI", "bool", title: "Reset Financial Savings Counter", defaultValue: false
         }
     }
 }
@@ -149,12 +152,31 @@ def mainPage() {
 def installed() {
     logInfo "Installed with settings: ${settings}"
     state.history = []
+    state.lastCleanTime = now() // Initialize the timer
     initialize()
 }
 
 def updated() {
     logInfo "Updated with settings: ${settings}"
     if (!state.history) state.history = []
+    if (!state.lastCleanTime) state.lastCleanTime = now()
+    
+    if (settings.clearHistory) {
+        state.history = []
+        app.updateSetting("clearHistory", [value: "false", type: "bool"])
+    }
+    if (settings.clearOccupancy) {
+        for (int i = 1; i <= 12; i++) {
+            if (settings["enableRoom_${i}"]) state["occMins_${settings["roomName_${i}"]}"] = 0
+        }
+        app.updateSetting("clearOccupancy", [value: "false", type: "bool"])
+    }
+    if (settings.clearROI) {
+        state.dock1OfflineHours = 0.0
+        state.dock2OfflineHours = 0.0
+        app.updateSetting("clearROI", [value: "false", type: "bool"])
+    }
+
     unsubscribe()
     unschedule()
     initialize()
@@ -172,6 +194,8 @@ def initialize() {
     state.v2_maskedRooms = []
     
     if (wakeUpTime) schedule(wakeUpTime, "wakeDocks")
+    if (mopTime) schedule(mopTime, "mopRoutineHandler")
+    if (maxIdleDays) runEvery1Hour("overdueCheckHandler")
     
     if (masterSwitch) subscribe(masterSwitch, "switch", masterSwitchHandler)
     if (fullCleanSwitch) subscribe(fullCleanSwitch, "switch.on", fullCleanHandler)
@@ -193,17 +217,121 @@ def initialize() {
         subscribe(vacuum1, "state", vacuumStateHandler)
         subscribe(vacuum1, "battery", batteryHandler)
         subscribe(vacuum1, "error", errorHandler)
+        subscribe(vacuum1, "water", waterHandler)
+        subscribe(vacuum1, "bin", binHandler)
+        subscribe(vacuum1, "consumable", consumableHandler)
     }
     if (vacuum2) {
         subscribe(vacuum2, "state", vacuumStateHandler)
         subscribe(vacuum2, "battery", batteryHandler)
         subscribe(vacuum2, "error", errorHandler)
+        subscribe(vacuum2, "water", waterHandler)
+        subscribe(vacuum2, "bin", binHandler)
+        subscribe(vacuum2, "consumable", consumableHandler)
     }
 }
 
 // ==========================================
-// EVENT HANDLERS
+// GATEKEEPER LOGIC (TIME & MODE)
 // ==========================================
+
+boolean canRunAutomated() {
+    if (masterSwitch && masterSwitch.currentValue("switch") == "off") return false
+
+    // Check Modes
+    if (allowedModes && !allowedModes.contains(location.mode)) {
+        return false
+    }
+
+    // Check Time Window
+    if (allowedStartTime && allowedEndTime) {
+        Date start = timeToday(allowedStartTime, location.timeZone)
+        Date end = timeToday(allowedEndTime, location.timeZone)
+        Date now = new Date()
+        
+        if (start.before(end)) {
+            if (!(now.after(start) && now.before(end))) return false
+        } else {
+            // Spans midnight
+            if (!(now.after(start) || now.before(end))) return false
+        }
+    }
+    return true
+}
+
+// ==========================================
+// NOTIFICATION ROUTER
+// ==========================================
+
+void sendAlert(String alertType, String msg) {
+    if (settings.notifyTypes?.contains(alertType)) {
+        if (notifyDevice) notifyDevice.deviceNotification(msg)
+        addToHistory("<span style='color:blue;'><b>Push Sent (${alertType}):</b> ${msg}</span>")
+    }
+}
+
+// ==========================================
+// EVENT HANDLERS & SCHEDULED JOBS
+// ==========================================
+
+def mopRoutineHandler() {
+    if (!canRunAutomated()) {
+        addToHistory("Mop Schedule Skipped: Blocked by Global Constraints")
+        return
+    }
+    
+    if (mopDays) {
+        def df = new java.text.SimpleDateFormat("EEEE")
+        df.setTimeZone(location.timeZone)
+        String day = df.format(new Date())
+        if (!mopDays.contains(day)) return
+    }
+    
+    if (mopRooms) {
+        wakeDocks()
+        addToHistory("<span style='color:teal;'><b>Triggered: Scheduled Mop-Only Routine</b></span>")
+        executeRoomClean(mopRooms, [ignoreSkip: false, suction: "Off", water: "High"])
+    }
+}
+
+def overdueCheckHandler() {
+    if (!maxIdleDays || !state.lastCleanTime) return
+    
+    long daysIdle = (now() - state.lastCleanTime) / 86400000
+    if (daysIdle >= maxIdleDays) {
+        if (canRunAutomated()) {
+            wakeDocks()
+            addToHistory("<span style='color:purple;'><b>Overdue Catcher: ${daysIdle} days idle. Forcing Deep Clean!</b></span>")
+            executeRoomClean(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
+            // State is updated within executeRoomClean so it won't loop
+        }
+    }
+}
+
+def consumableHandler(evt) {
+    String part = evt.name?.toLowerCase()
+    int value = (evt.value ?: "100") as Integer
+    int threshold = settings.alertThreshold ?: 5
+    
+    if (value <= threshold) {
+        String msg = "${evt.device.displayName} Maintenance: ${part.capitalize()} life is at ${value}%."
+        if (part.contains("filter")) sendAlert("Filter Dirty", msg)
+        else if (part.contains("sensor")) sendAlert("Clean Sensors", msg)
+        else if (part.contains("bag") || part.contains("dust")) sendAlert("Replace Bag", msg)
+    }
+}
+
+def waterHandler(evt) {
+    if (evt.value?.toString()?.toLowerCase() in ["low", "empty", "0"]) {
+        sendAlert("Water Low", "${evt.device.displayName}: Mop water tank is low or empty.")
+    }
+}
+
+def binHandler(evt) {
+    if (evt.value?.toString()?.toLowerCase() in ["full", "100"]) {
+        sendAlert("Bin Full", "${evt.device.displayName}: Dust bin requires emptying.")
+    }
+}
 
 def batteryHandler(evt) {
     if (evt.value == "100") {
@@ -360,7 +488,10 @@ def resumeVacuum2() {
 
 def modeHandler(evt) {
     if (goodNightMode && evt.value in goodNightMode) {
-        if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
+        if (!canRunAutomated()) {
+            addToHistory("Good Night Blocked: Global Constraints Active")
+            return
+        }
         if (goodNightConflicts) {
             def activeConflicts = goodNightConflicts.findAll { it.currentValue("switch") == "on" }
             if (activeConflicts.size() > 0) {
@@ -375,7 +506,7 @@ def modeHandler(evt) {
     }
     
     if (fullCleanMode && evt.value in fullCleanMode) {
-        if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
+        if (!canRunAutomated()) return
         wakeDocks()
         addToHistory("Triggered: Configurable Full Clean Mode")
         executeRoomClean(["All"], [
@@ -387,13 +518,15 @@ def modeHandler(evt) {
 }
 
 def fullCleanHandler(evt) {
+    // Manual Trigger: Bypasses canRunAutomated() gatekeeper.
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     wakeDocks()
-    addToHistory("Triggered: Full Clean Switch")
+    addToHistory("Triggered: Full Clean Switch (Manual Override)")
     executeRoomClean(["All"], [ignoreSkip: true]) 
 }
 
 def roomSwitchHandler(evt) {
+    // Manual Trigger: Bypasses canRunAutomated() gatekeeper.
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
     wakeDocks()
     for (int i = 1; i <= 12; i++) {
@@ -406,7 +539,10 @@ def roomSwitchHandler(evt) {
 }
 
 def schoolRunHandler(evt) {
-    if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
+    if (!canRunAutomated()) {
+        addToHistory("School Run Blocked: Global Constraints Active")
+        return
+    }
     wakeDocks()
     addToHistory("Triggered: School Run Routine")
     executeRoomClean(schoolRunRooms, [ignoreSkip: false])
@@ -418,7 +554,9 @@ def errorHandler(evt) {
     
     String msg = "${evt.device.displayName} Error: ${evt.value}"
     addToHistory("<span style='color:red;'><b>${msg}</b></span>")
-    if (notifyDevice) notifyDevice.deviceNotification(msg)
+    
+    sendAlert("Errors", msg)
+    
     if (autoPauseOnError) evt.device.appPause()
 }
 
@@ -491,6 +629,11 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
 
     if (skippedOccupied.size() > 0) addToHistory("<span style='color:orange;'>Skipped (Occupied): ${skippedOccupied.join(', ')}</span>")
     if (skippedClean.size() > 0) addToHistory("<span style='color:gray;'>Skipped (Clean): ${skippedClean.join(', ')}</span>")
+
+    // Record the timestamp of a successful dispatch to reset the "Overdue Catcher"
+    if (v1Queue.size() > 0 || v2Queue.size() > 0) {
+        state.lastCleanTime = now()
+    }
 
     if (v1Queue.size() > 0 && vacuum1) {
         v1Queue.sort { it.seq }
@@ -600,6 +743,9 @@ String buildDashboardHTML() {
     String globalStatus = isPaused ? "<span style='color: red; font-weight: bold;'>PAUSED (Master Switch Off)</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
         
     html += "<div style='margin-top: 10px; padding: 8px; background: #e9e9e9; border-radius: 4px; font-size: 13px;'><b>Global System Mode:</b> ${globalStatus}</div>"
+    
+    long daysIdle = state.lastCleanTime ? ((now() - state.lastCleanTime) / 86400000) : 0
+    html += "<div style='margin-top: 10px; padding: 8px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 4px; font-size: 13px; color: #e65100;'><b>Time Since Last Dispatch:</b> ${daysIdle} Days</div>"
     
     if (utilList.size() > 0) {
         html += "<div style='margin-top: 10px; padding: 8px; background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; color: #555;'><b>Current Room Utilization:</b> ${utilList.join(' | ')}</div>"
