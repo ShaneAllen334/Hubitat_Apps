@@ -120,7 +120,14 @@ def mainPage() {
 
         section("Visual Indicators (Colored Lights)") {
             input "indicatorLight", "capability.colorControl", title: "Standard RGB Lights", required: false, multiple: true
-            input "inovelliSwitches", "capability.pushableButton", title: "Inovelli Red Series Switches", required: false, multiple: true
+            
+            input "inovelliSwitches", "capability.pushableButton", title: "Inovelli Red Series Switches", required: false, multiple: true, submitOnChange: true
+            if (inovelliSwitches) {
+                input "inovelliTarget", "enum", title: "Inovelli Target LEDs", required: true, defaultValue: "All", options: [
+                    "All":"All LEDs", "7":"LED 7 (Top)", "6":"LED 6", "5":"LED 5", "4":"LED 4 (Middle)", "3":"LED 3", "2":"LED 2", "1":"LED 1 (Bottom)"
+                ]
+            }
+
             input "deliveryColor", "enum", title: "Color when Mail is Delivered", required: false, defaultValue: "Green", options: ["Red", "Green", "Blue", "Yellow", "Orange", "Purple", "Pink", "White"]
             input "lightLevel", "number", title: "Indicator Light Level (%)", defaultValue: 100, required: false, range: "1..100"
             input "retrievalLightAction", "enum", title: "Action when Mail is Retrieved", required: false, defaultValue: "Turn Off", options: ["Turn Off", "Leave On"]
@@ -135,9 +142,20 @@ def mainPage() {
         }
 
         section("Audio Announcements & Notifications") {
+            paragraph "<b>Smart Speakers (TTS)</b>"
             input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers", multiple: true, required: false
             input "ttsDeliveryText", "text", title: "Delivery Announcement Text", defaultValue: "The mail has arrived"
             input "ttsRetrievalText", "text", title: "Retrieval Announcement Text", defaultValue: "The mail has been retrieved"
+            
+            paragraph "<b>Zooz Siren & Chime</b>"
+            input "zoozChimes", "capability.chime", title: "Zooz Chime Devices", multiple: true, required: false, submitOnChange: true
+            if (zoozChimes) {
+                input "zoozSoundDelivery", "number", title: "Sound File #: Mail Arrived", required: false
+                input "zoozSoundMore", "number", title: "Sound File #: More Mail Arrived", required: false
+                input "zoozSoundRetrieval", "number", title: "Sound File #: Mail Retrieved", required: false
+            }
+
+            paragraph "<b>Push Notifications</b>"
             input "pushDevices", "capability.notification", title: "Push Notification Devices", multiple: true, required: false
             input "sendPushDelivery", "bool", title: "Push on Delivery?", defaultValue: false
             input "sendPushRetrieval", "bool", title: "Push on Retrieval?", defaultValue: false
@@ -146,10 +164,25 @@ def mainPage() {
         section("Security & Nags") {
             input "securityStartTime", "time", title: "Security Start", required: false
             input "securityEndTime", "time", title: "Security End", required: false
-            input "enableNag", "bool", title: "Enable Unretrieved Mail Reminder?", defaultValue: false, submitOnChange: true
+            
+            // Single-time Daily Nag
+            input "enableNag", "bool", title: "Enable Single Daily Reminder?", defaultValue: false, submitOnChange: true
             if (enableNag) {
                 input "nagTime", "time", title: "Time to check", required: true
                 input "nagMessage", "text", title: "Nag Message", defaultValue: "Don't forget the mail!", required: true
+            }
+            
+            paragraph "<hr>"
+            
+            // Hourly Mode-Restricted Nag
+            input "enableHourlyNag", "bool", title: "Enable Hourly Mode-Restricted Reminder?", defaultValue: false, submitOnChange: true
+            if (enableHourlyNag) {
+                paragraph "If the mail is active and the hub is in one of the selected modes, this will run every hour with its own dedicated sound/TTS instead of repeating the 'Mail Arrived' alerts."
+                input "hourlyNagModes", "mode", title: "Only run in these Modes:", multiple: true, required: true
+                input "ttsHourlyText", "text", title: "Hourly Nag TTS Announcement Text", defaultValue: "The mail is still waiting to be retrieved", required: false
+                if (zoozChimes) {
+                    input "zoozSoundHourly", "number", title: "Sound File #: Hourly Nag Reminder", required: false
+                }
             }
         }
 
@@ -180,6 +213,8 @@ def initialize() {
     schedule("0 0 0 * * ?", "midnightReset")
  
     if (enableNag && nagTime) schedule(nagTime, "nagHandler")
+    
+    if (enableHourlyNag) runEvery1Hour("hourlyNagHandler")
 }
 
 def priorityYieldHandler(evt) {
@@ -197,8 +232,8 @@ def priorityYieldHandler(evt) {
                 overrideSwitch.on()
             }
             
-            if (indicatorLight) setLightColor(indicatorLight, deliveryColor, lightLevel ?: 100)
-            if (inovelliSwitches) setLightColor(inovelliSwitches, deliveryColor, lightLevel ?: 100)
+            if (indicatorLight) setLightColor(indicatorLight, deliveryColor, lightLevel ?: 100, "All")
+            if (inovelliSwitches) setLightColor(inovelliSwitches, deliveryColor, lightLevel ?: 100, inovelliTarget ?: "All")
         }
     }
 }
@@ -213,15 +248,18 @@ def appButtonHandler(btn) {
         }
         if (inovelliSwitches) {
             inovelliSwitches.each { device -> 
-                if (device.hasCommand("ledEffectAll")) {
-                    device.ledEffectAll(255, 0, 0, 0) 
+                def target = inovelliTarget ?: "All"
+                if (target == "All") {
+                    if (device.hasCommand("ledEffectAll")) device.ledEffectAll(255, 0, 0, 0)
+                } else {
+                    if (device.hasCommand("ledEffectOne")) device.ledEffectOne(target, 255, 0, 0, 0)
                 }
             }
         }
         if (overrideSwitch) overrideSwitch.off()
         state.lastValidStateChange = new Date().time 
         addToHistory("MANUAL CLEAR: System reset via app dashboard.")
-        
+       
     } else if (btn == "btnForceReset") {
         log.info "Resetting historical data..."
         state.historyLog = []
@@ -249,6 +287,7 @@ def sensorOpenHandler(evt) {
     def switchState = mailSwitch.currentValue("switch")
     def tz = location.timeZone ?: TimeZone.getDefault()
     def currentTimeStr = new Date().format("h:mm a", tz)
+   
     def currentMinutes = getMinutesSinceMidnight(new Date(), tz)
     
     def lastStateChange = state.lastValidStateChange ?: 0
@@ -264,7 +303,12 @@ def sensorOpenHandler(evt) {
            
             if ((now - lastActivity) > window) {
                 state.lastValidStateChange = now
+                
                 if (sendPushDelivery) sendMessage("📫 More mail was delivered!")
+                if (zoozChimes && zoozSoundMore != null) {
+                    zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(zoozSoundMore as Integer) }
+                }
+                
                 addToHistory("SECONDARY DELIVERY: No home activity detected.")
                 return
             }
@@ -288,7 +332,16 @@ def sensorOpenHandler(evt) {
     
         if (retrievalLightAction == "Turn Off") {
             if (indicatorLight) restoreLightState(indicatorLight)
-            if (inovelliSwitches) inovelliSwitches.each { it.ledEffectAll(255, 0, 0, 0) }
+            if (inovelliSwitches) {
+                inovelliSwitches.each { device -> 
+                    def target = inovelliTarget ?: "All"
+                    if (target == "All") {
+                        if (device.hasCommand("ledEffectAll")) device.ledEffectAll(255, 0, 0, 0)
+                    } else {
+                        if (device.hasCommand("ledEffectOne")) device.ledEffectOne(target, 255, 0, 0, 0)
+                    }
+                }
+            }
         }
         
         // UNFREEZE Motion App
@@ -296,6 +349,9 @@ def sensorOpenHandler(evt) {
   
         if (sendPushRetrieval) sendMessage("📬 Mail retrieved!")
         if (ttsSpeakers && ttsRetrievalText) ttsSpeakers.speak(ttsRetrievalText)
+        if (zoozChimes && zoozSoundRetrieval != null) {
+            zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(zoozSoundRetrieval as Integer) }
+        }
  
     } else {
         // --- MAIL DELIVERY LOGIC ---
@@ -308,6 +364,9 @@ def sensorOpenHandler(evt) {
         
         if (sendPushDelivery) sendMessage("📫 Mail delivered!")
         if (ttsSpeakers && ttsDeliveryText) ttsSpeakers.speak(ttsDeliveryText)
+        if (zoozChimes && zoozSoundDelivery != null) {
+            zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(zoozSoundDelivery as Integer) }
+        }
 
         // PRIORITY YIELD CHECK
         if (priorityYieldSwitch && priorityYieldSwitch.currentValue("switch") == "on") {
@@ -323,8 +382,8 @@ def sensorOpenHandler(evt) {
             overrideSwitch.on()
         }
         
-        if (indicatorLight) setLightColor(indicatorLight, deliveryColor, lightLevel ?: 100)
-        if (inovelliSwitches) setLightColor(inovelliSwitches, deliveryColor, lightLevel ?: 100)
+        if (indicatorLight) setLightColor(indicatorLight, deliveryColor, lightLevel ?: 100, "All")
+        if (inovelliSwitches) setLightColor(inovelliSwitches, deliveryColor, lightLevel ?: 100, inovelliTarget ?: "All")
     }
 }
 
@@ -371,7 +430,7 @@ def restoreLightState(devices) {
     state.savedLightStates = [:] // Clear saved states
 }
 
-def setLightColor(devices, colorName, level) {
+def setLightColor(devices, colorName, level, target = "All") {
     def inovelliHue = 0 
     def standardHue = 0
     def standardSat = 100
@@ -388,8 +447,12 @@ def setLightColor(devices, colorName, level) {
     }
     
     devices.each { device -> 
-        if (device.hasCommand("ledEffectAll")) {
-            device.ledEffectAll(1, inovelliHue, level as Integer, 255) 
+        if (device.hasCommand("ledEffectAll") || device.hasCommand("ledEffectOne")) {
+            if (target == "All") {
+                if (device.hasCommand("ledEffectAll")) device.ledEffectAll(1, inovelliHue, level as Integer, 255) 
+            } else {
+                if (device.hasCommand("ledEffectOne")) device.ledEffectOne(target, 1, inovelliHue, level as Integer, 255)
+            }
         } else {
             device.on() 
             device.setColor([hue: standardHue, saturation: standardSat, level: level as Integer])
@@ -410,7 +473,7 @@ def tempHandler(evt) {
     }
 }
 
-// --- NEW NAG HANDLER ---
+// --- SINGLE DAILY NAG HANDLER ---
 def nagHandler() {
     if (enableNag && mailSwitch?.currentValue("switch") == "on") {
         log.info "Nag scheduled task running: Mail has not been retrieved."
@@ -418,6 +481,29 @@ def nagHandler() {
         sendMessage(msg)
         if (ttsSpeakers) ttsSpeakers.speak(msg)
         addToHistory("NAG ALERT: Reminder sent.")
+    }
+}
+
+// --- HOURLY MODE-RESTRICTED NAG HANDLER ---
+def hourlyNagHandler() {
+    if (enableHourlyNag && mailSwitch?.currentValue("switch") == "on") {
+        def currentMode = location.mode
+        def allowedModes = hourlyNagModes ?: []
+        
+        if (allowedModes.contains(currentMode)) {
+            log.info "Hourly Mode-Restricted Nag executing in mode: ${currentMode}"
+            
+            if (ttsSpeakers && ttsHourlyText) {
+                ttsSpeakers.speak(ttsHourlyText)
+            }
+            if (zoozChimes && zoozSoundHourly != null) {
+                zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(zoozSoundHourly as Integer) }
+            }
+            
+            addToHistory("HOURLY NAG ALERT: Announcement triggered.")
+        } else {
+            log.info "Skipping hourly nag because current mode '${currentMode}' is not selected."
+        }
     }
 }
 
