@@ -36,7 +36,7 @@ def mainPage() {
         // ========================================================
         // REPORTING & CONTROL DASHBOARDS
         // ========================================================
-        
+ 
         if (appIsDisabled) {
             paragraph "<div style='padding: 12px; background-color: #f8d7da; border-left: 5px solid #dc3545; border-radius: 5px; color: #721c24; margin-bottom: 15px;'><b>⚠️ SYSTEM DISABLED:</b> The Master Application Switch is currently OFF. All background automations and overrides are suspended.</div>"
         }
@@ -56,20 +56,24 @@ def mainPage() {
                 <tbody>
             """
 
-            for (int i = 1; i <= 6; i++) {
+            for (int i = 1; i <= 10; i++) {
                 if (settings["enableZ${i}"] && settings["z${i}Speaker"]) {
                     hasZones = true
                     def spk = settings["z${i}Speaker"]
                     def sw = settings["z${i}Switch"]
+          
                     def gnLock = settings["z${i}GoodNightSwitch"]
+                    def customName = settings["z${i}Name"]
                     
-                    activeZoneOptions["${i}"] = spk.label ?: "Zone ${i}"
+                    def resolvedName = customName ?: (spk.label ?: "Zone ${i}")
+                    activeZoneOptions["${i}"] = resolvedName
                     
                     // Zone State & Locks
                     def isLocked = gnLock && (gnLock.currentValue("switch") == "on")
                     def isEventMuted = (state.doorbellMutedSpks?.contains(spk.id)) || (state.doorOpenMutedSpks?.contains(spk.id))
                     
-                    def zoneNameStr = spk.label
+                    def zoneNameStr = resolvedName
+   
                     if (isLocked) {
                         zoneNameStr += "<br><span style='color:purple; font-size:10px; text-transform:uppercase;'>🌙 GN Override Active</span>"
                     }
@@ -109,7 +113,8 @@ def mainPage() {
                     }
                     
                     def vol = spk.currentValue("volume") ?: "--"
-                    def trackTitle = spk.currentValue("trackDescription") ?: "Idle / Unknown"
+                    def trackTitle = spk.currentValue("trackDescription")
+                    if (!trackTitle || trackTitle.trim() == "") trackTitle = "Idle / Streaming"
                     
                     dashHTML += "<tr><td class='dash-hl'>${zoneNameStr}</td><td><b>${pwrStatus}</b></td><td style='color:${statusColor}; font-weight:bold;'>${statusIcon} ${statusText}</td><td>${vol}%</td><td style='text-align:left; font-weight:bold; font-size:13px;'>${trackTitle}</td></tr>"
                 }
@@ -136,6 +141,7 @@ def mainPage() {
                 if (activeZoneControl) {
                     def targetSpk = settings["z${activeZoneControl}Speaker"]
                     def targetSw = settings["z${activeZoneControl}Switch"]
+                    def targetName = settings["z${activeZoneControl}Name"] ?: (targetSpk ? targetSpk.label : "Zone ${activeZoneControl}")
                     
                     if (targetSpk) {
                         def cpPwr = targetSw ? (targetSw.currentValue("switch") == "on" ? "ON" : "OFF") : "N/A"
@@ -152,7 +158,7 @@ def mainPage() {
                             .cp-val { font-weight: bold; font-size: 16px; color: #333; }
                         </style>
                         <table class="cp-table">
-                            <thead><tr><th colspan="4">🎯 Active Target: ${targetSpk.label}</th></tr></thead>
+                            <thead><tr><th colspan="4">🎯 Active Target: ${targetName}</th></tr></thead>
                             <tbody>
                                 <tr>
                                     <td width="20%"><div class="cp-lbl">Main Power</div><div class="cp-val" style="color:${cpPwr=='ON'?'green':'red'};">${cpPwr}</div></td>
@@ -181,12 +187,14 @@ def mainPage() {
                     input "btnSpeechEnhance", "button", title: "🗣️ Toggle Speech Enhance", width: 3
                     
                     paragraph "<div style='background-color:#343a40; color:white; padding:8px 10px; font-weight:bold; margin-top:10px; border-radius:3px 3px 0 0; text-transform: uppercase; letter-spacing: 1px;'>📢 Intercom Broadcast (TTS)</div>"
-                    input "ttsMessage", "text", title: "Message to Broadcast", required: false, width: 6
-                    input "ttsVolume", "number", title: "TTS Volume (%)", required: false, defaultValue: 40, width: 3
+                    input "ttsMessage", "text", title: "Message to Broadcast", required: false, width: 4
+                    input "ttsVolume", "number", title: "Vol (%)", required: false, defaultValue: 40, width: 2
+                    input "ttsPriority", "bool", title: "Emergency Override", defaultValue: false, width: 3
                     input "btnTTS", "button", title: "📢 Send TTS", width: 3
                     
                     paragraph "<div style='background-color:#343a40; color:white; padding:8px 10px; font-weight:bold; margin-top:10px; border-radius:3px 3px 0 0; text-transform: uppercase; letter-spacing: 1px;'>⏳ Sleep Timer</div>"
-                    input "sleepTimerMins", "number", title: "Minutes until Pause", required: false, width: 9
+                    input "sleepTimerMins", "number", title: "Minutes until Pause", required: false, width: 6
+                    input "sleepTimerFade", "number", title: "Fade-Out Duration (Sec)", required: false, width: 3
                     input "btnSleep", "button", title: "⏳ Start Timer", width: 3
                     if (state.sleepTimers && state.sleepTimers[activeZoneControl]) {
                         paragraph "<span style='color:orange;'><i>Sleep Timer currently active for this zone.</i></span>"
@@ -237,7 +245,7 @@ def mainPage() {
         }
 
         // ========================================================
-        // GLOBAL CONTROLS & TOGGLES
+        // GLOBAL CONTROLS & MODULE TOGGLES
         // ========================================================
         section("<b>Global Controls & Module Toggles</b>") {
             paragraph "<div style='font-size:13px; color:#555;'>Manage global permissions and enable or disable major app features. Disabling a feature removes its configuration options and halts its background processing.</div>"
@@ -257,10 +265,12 @@ def mainPage() {
         // SYSTEM CONFIGURATION
         // ========================================================
 
-        for (int i = 1; i <= 6; i++) {
-            section("<b>Zone ${i} Configuration</b>", hideable: true, hidden: true) {
-                input "enableZ${i}", "bool", title: "<b>Enable Zone ${i}</b>", submitOnChange: true
+        for (int i = 1; i <= 10; i++) {
+            def secTitle = settings["z${i}Name"] ? "<b>${settings["z${i}Name"]} Configuration</b>" : "<b>Zone ${i} Configuration</b>"
+            section(secTitle, hideable: true, hidden: true) {
+                input "enableZ${i}", "bool", title: "<b>Enable Zone</b>", submitOnChange: true
                 if (settings["enableZ${i}"]) {
+                    input "z${i}Name", "text", title: "Custom Zone Name", required: false, submitOnChange: true
                     input "z${i}Speaker", "capability.musicPlayer", title: "Select Sonos Speaker", required: true
                     
                     if (optPowerManagement || optCostTracker) {
@@ -283,8 +293,41 @@ def mainPage() {
                         input "z${i}TurnOnModes", "mode", title: "Modes to Power ON this Zone", multiple: true, required: false
                         input "z${i}TurnOffModes", "mode", title: "Modes to Power OFF this Zone", multiple: true, required: false
                         
-                        input "z${i}StartVol", "number", title: "Default Startup Volume (%) - Leave blank to ignore", required: false, range: "1..100"
+                        input "z${i}StartVol", "number", title: "Default Target Startup Volume (%)", required: false, range: "1..100"
+                        input "z${i}FadeIn", "number", title: "Fade-In Duration (Seconds) - Ramps volume slowly", required: false
                         input "z${i}AutoResume", "bool", title: "Auto-Resume Playback on Boot", defaultValue: false
+                        
+                        paragraph "<b>Mode-Based Music Routine</b>"
+                        input "z${i}ModeRoutineEnabled", "bool", title: "Enable Mode-Based Routine", defaultValue: false, submitOnChange: true
+                        if (settings["z${i}ModeRoutineEnabled"]) {
+                            input "z${i}RoutineMode", "mode", title: "Select Mode to Trigger Routine", required: false
+                            input "z${i}RoutineDelay", "number", title: "Delay before playing (seconds)", defaultValue: 10, required: false
+                            
+                            def favList = [:]
+                            if (state.savedFavorites) {
+                                state.savedFavorites.each { dni, data -> favList[dni] = data.name }
+                            }
+                            if (favList) {
+                                input "z${i}RoutineFavorite", "enum", title: "Select Favorite to Play", options: favList, required: false
+                            } else {
+                                paragraph "<i>No Virtual Favorites saved yet. Use the Control Panel to save a favorite first.</i>"
+                            }
+                        }
+                    }
+
+                    paragraph "<b>Follow-Me Audio Automation</b>"
+                    input "z${i}FollowMeEnabled", "bool", title: "Enable Follow-Me for this Zone", defaultValue: false, submitOnChange: true
+                    if (settings["z${i}FollowMeEnabled"]) {
+                        input "z${i}FollowMeMotion", "capability.motionSensor", title: "When Motion is Active Here...", required: false, multiple: true
+                        
+                        def followMeOpts = [:]
+                        for (int j = 1; j <= 10; j++) {
+                            if (j != i && settings["enableZ${j}"] && settings["z${j}Speaker"]) {
+                                def optName = settings["z${j}Name"] ?: (settings["z${j}Speaker"].label ?: "Zone ${j}")
+                                followMeOpts["${j}"] = optName
+                            }
+                        }
+                        input "z${i}FollowMeSource", "enum", title: "...Pull Music FROM this Zone", options: followMeOpts, required: false
                     }
                 }
             }
@@ -344,6 +387,12 @@ def initialize() {
     if (!state.sleepTimers) state.sleepTimers = [:]
     if (!state.doorbellMutedSpks) state.doorbellMutedSpks = []
     if (!state.doorOpenMutedSpks) state.doorOpenMutedSpks = []
+    if (!state.ttsQueue) state.ttsQueue = []
+    
+    // Default last follow me time
+    if (!state.lastFollowMeTime) state.lastFollowMeTime = 0
+    
+    state.isSpeaking = false
     
     if (settings.enablePowerManagement != false) {
         subscribe(location, "mode", modeChangeHandler)
@@ -369,10 +418,15 @@ def initialize() {
         schedule(settings.nightSweepTime, executeNightSweep)
     }
 
-    // Hardware Volume Protection Subscription
-    for (int i = 1; i <= 6; i++) {
-        if (settings["enableZ${i}"] && settings["z${i}Speaker"] && settings["z${i}MaxVol"]) {
-            subscribe(settings["z${i}Speaker"], "volume", volumeHandler)
+    // Hardware Volume Protection & Follow-Me Subscriptions
+    for (int i = 1; i <= 10; i++) {
+        if (settings["enableZ${i}"]) {
+            if (settings["z${i}Speaker"] && settings["z${i}MaxVol"]) {
+                subscribe(settings["z${i}Speaker"], "volume", volumeHandler)
+            }
+            if (settings["z${i}FollowMeEnabled"] && settings["z${i}FollowMeMotion"]) {
+                subscribe(settings["z${i}FollowMeMotion"], "motion", followMeMotionHandler)
+            }
         }
     }
 
@@ -389,10 +443,9 @@ def appButtonHandler(btn) {
         return
     }
 
-    // Global Panic Button bypasses the master app disabled switch for safety
     if (btn == "btnPauseAll") {
         logAction("🚨 EMERGENCY PAUSE ALL TRIGGERED 🚨")
-        for (int i = 1; i <= 6; i++) {
+        for (int i = 1; i <= 10; i++) {
             if (settings["enableZ${i}"] && settings["z${i}Speaker"]) settings["z${i}Speaker"].pause()
         }
         return
@@ -410,7 +463,6 @@ def appButtonHandler(btn) {
         def spk = settings["z${zNum}Speaker"]
         if (!spk) return
 
-        // Basic Transport
         if (btn == "btnPlay") { spk.play(); logAction("Command -> Sent PLAY to ${spk.label}") }
         if (btn == "btnPause") { spk.pause(); logAction("Command -> Sent PAUSE to ${spk.label}") }
         if (btn == "btnNext") { spk.nextTrack(); logAction("Command -> Sent NEXT TRACK to ${spk.label}") }
@@ -418,7 +470,6 @@ def appButtonHandler(btn) {
         if (btn == "btnVolUp") { def v = (spk.currentValue("volume") ?: 0) + 5; spk.setLevel(v > 100 ? 100 : v); logAction("Command -> Vol UP on ${spk.label}") }
         if (btn == "btnVolDown") { def v = (spk.currentValue("volume") ?: 0) - 5; spk.setLevel(v < 0 ? 0 : v); logAction("Command -> Vol DOWN on ${spk.label}") }
         
-        // Advanced Transport & Home Theater
         if (btn == "btnShuffle") { 
             if (spk.hasCommand("setShuffle")) { spk.setShuffle(true); logAction("Command -> Shuffle toggled on ${spk.label}") } 
             else logAction("Warning: ${spk.label} driver does not support setShuffle.")
@@ -436,40 +487,210 @@ def appButtonHandler(btn) {
             else logAction("Warning: ${spk.label} driver does not support native setSpeechEnhancement.")
         }
 
-        // TTS & Sleep Timer
         if (btn == "btnTTS" && ttsMessage) {
             def curVol = spk.currentValue("volume") ?: 20
             def targetVol = ttsVolume ?: 40
-            spk.setLevel(targetVol)
-            spk.speak(ttsMessage)
-            logAction("Command -> Broadcasted TTS to ${spk.label}: '${ttsMessage}' at ${targetVol}%. Auto-restoring volume in 10s.")
-            
-            runIn(10, restoreVolume, [data: [spkId: spk.id, vol: curVol]])
+            def priority = ttsPriority ?: false
+            queueTTS(spk.id, ttsMessage, targetVol, curVol, priority)
         }
+        
         if (btn == "btnSleep" && sleepTimerMins) {
             state.sleepTimers[zNum] = true
-            runIn((sleepTimerMins * 60).toInteger(), executeSleepTimer, [data: [spkId: spk.id, zNum: zNum]])
-            logAction("Command -> Sleep Timer started for ${spk.label} (${sleepTimerMins} mins).")
+            def fadeDur = sleepTimerFade ?: 0
+            runIn((sleepTimerMins * 60).toInteger(), executeSleepTimer, [data: [spkId: spk.id, zNum: zNum, fade: fadeDur]])
+            logAction("Command -> Sleep Timer started for ${spk.label} (${sleepTimerMins} mins, ${fadeDur}s fade).")
         }
+        
         if (btn == "btnCancelSleep") {
             state.sleepTimers[zNum] = false
             logAction("Command -> Sleep Timer cancelled for ${spk.label}.")
         }
 
-        // Favorites
         if (settings.enableFavorites != false) {
             if (btn == "btnSaveFav") createFavoriteVirtualSwitch(spk)
             if (btn == "btnDeleteFav" && settings.favToDelete) {
                 def dni = settings.favToDelete
                 def favName = state.savedFavorites[dni]?.name ?: "Unknown"
-                try {
-                    deleteChildDevice(dni)
-                } catch (e) {
-                    logAction("Warning: Could not delete device (may already be removed from device list).")
-                }
+                try { deleteChildDevice(dni) } catch (e) { }
                 state.savedFavorites.remove(dni)
                 app.removeSetting("favToDelete")
                 logAction("Command -> Deleted Favorite Virtual Switch: [${favName}]")
+            }
+        }
+    }
+}
+
+// --- QUEUED TTS ENGINE ---
+
+def queueTTS(spkId, message, vol, origVol, priority) {
+    if (!state.ttsQueue) state.ttsQueue = []
+    def payload = [spkId: spkId, msg: message, vol: vol, origVol: origVol, id: now()]
+    
+    if (priority) {
+        state.ttsQueue.add(0, payload) 
+        logAction("Emergency TTS Override placed at front of queue.")
+        processTTSQueue(true) 
+    } else {
+        state.ttsQueue << payload
+        if (!state.isSpeaking) {
+            processTTSQueue(false)
+        }
+    }
+}
+
+def processTTSQueue(force = false) {
+    if (!state.ttsQueue || state.ttsQueue.size() == 0) {
+        state.isSpeaking = false
+        return
+    }
+    if (state.isSpeaking && !force) return 
+    
+    state.isSpeaking = true
+    def payload = state.ttsQueue.remove(0)
+    def spk = getSpeakerById(payload.spkId)
+    
+    if (spk) {
+        spk.setLevel(payload.vol)
+        spk.speak(payload.msg)
+        logAction("TTS Broadcast: '${payload.msg}' on ${spk.label}")
+        
+        def waitTime = Math.max((payload.msg.length() / 15).toInteger(), 6)
+        runIn(waitTime, restoreVolumeAndContinueTTS, [data: [spkId: spk.id, origVol: payload.origVol]])
+    } else {
+        processTTSQueue(false)
+    }
+}
+
+def restoreVolumeAndContinueTTS(data) {
+    def spk = getSpeakerById(data.spkId)
+    if (spk) spk.setLevel(data.origVol)
+    state.isSpeaking = false
+    runIn(1, processTTSQueue)
+}
+
+// --- VOLUME FADING ENGINE ---
+
+def startVolumeFade(spkId, targetVol, durationSec, isFadeOut = false) {
+    def spk = getSpeakerById(spkId)
+    if (!spk) return
+    def curVol = spk.currentValue("volume") ?: 0
+    if (curVol == targetVol) return
+    
+    // Check for native hardware fade support first (Fix #2)
+    def hasNativeFade = false
+    if (spk.hasCommand("setLevel")) {
+        def setLevelCmd = spk.getSupportedCommands().find { it.name == "setLevel" }
+        if (setLevelCmd && setLevelCmd.arguments?.size() > 1) {
+            hasNativeFade = true
+        }
+    }
+    
+    if (hasNativeFade) {
+        logAction("Using native hardware volume fade for ${spk.label}")
+        spk.setLevel(targetVol, durationSec)
+        if (isFadeOut) {
+            runIn(durationSec + 1, finalizeNativeFadeOut, [data: [spkId: spk.id, origVol: curVol]])
+        }
+        return
+    }
+    
+    // Software fallback logic adjusted to prevent queue flooding (Fix #2)
+    def stepDelay = 3 // Minimum delay between steps to protect hub scheduler
+    def steps = Math.max((durationSec / stepDelay).toInteger(), 1)
+    
+    // Cap steps to a maximum of 5 executions per fade process
+    if (steps > 5) {
+        steps = 5
+        stepDelay = (durationSec / steps).toInteger()
+    }
+    
+    def volDiff = targetVol - curVol
+    def stepAmount = volDiff / steps
+
+    state["fade_${spkId}"] = [
+        current: curVol, target: targetVol, stepAmt: stepAmount, 
+        stepsLeft: steps, isFadeOut: isFadeOut, origVol: curVol
+    ]
+    
+    runIn(stepDelay, processVolumeFade, [data: [spkId: spkId, delay: stepDelay]])
+}
+
+def finalizeNativeFadeOut(data) {
+    def spk = getSpeakerById(data.spkId)
+    if (spk) {
+        spk.pause()
+        logAction("Fade-out complete for ${spk.label}. Paused.")
+        runIn(2, restoreVolume, [data: [spkId: data.spkId, vol: data.origVol]])
+    }
+}
+
+def processVolumeFade(data) {
+    def spkId = data.spkId
+    def spk = getSpeakerById(spkId)
+    def fadeData = state["fade_${spkId}"]
+    if (!spk || !fadeData) return
+    
+    fadeData.stepsLeft = fadeData.stepsLeft - 1
+    fadeData.current = fadeData.current + fadeData.stepAmt
+    
+    def newVol = fadeData.current.toInteger()
+    if (newVol < 0) newVol = 0
+    if (newVol > 100) newVol = 100
+    
+    spk.setLevel(newVol)
+    
+    if (fadeData.stepsLeft > 0) {
+        state["fade_${spkId}"] = fadeData
+        runIn(data.delay, processVolumeFade, [data: [spkId: spkId, delay: data.delay]])
+    } else {
+        spk.setLevel(fadeData.target)
+        if (fadeData.isFadeOut) {
+            spk.pause()
+            logAction("Software Fade-out complete for ${spk.label}. Paused.")
+            runIn(2, restoreVolume, [data: [spkId: spkId, vol: fadeData.origVol]]) 
+        } else {
+            logAction("Software Fade-in complete for ${spk.label}.")
+        }
+        state.remove("fade_${spkId}")
+    }
+}
+
+// --- FOLLOW ME AUDIO ENGINE ---
+
+def followMeMotionHandler(evt) {
+    if (!isAppEnabled() || evt.value != "active") return
+    
+    // Follow-Me Debouncing Logic (Fix #4)
+    def nowTime = now()
+    if (state.lastFollowMeTime && (nowTime - state.lastFollowMeTime) < 5000) {
+        logAction("Follow-Me Audio: Ignored concurrent motion trigger (debounced).")
+        return
+    }
+    state.lastFollowMeTime = nowTime
+
+    def motionId = evt.device.id
+    
+    for (int i = 1; i <= 10; i++) {
+        def motions = settings["z${i}FollowMeMotion"]
+        if (motions && motions.find { it.id == motionId }) {
+            def sourceZoneNum = settings["z${i}FollowMeSource"]
+            if (!sourceZoneNum || isZoneLocked(i)) continue
+            
+            def srcSpk = settings["z${sourceZoneNum}Speaker"]
+            def targetSpk = settings["z${i}Speaker"]
+            
+            if (srcSpk && targetSpk && srcSpk.currentValue("status") == "playing") {
+                logAction("Follow-Me Triggered: Moving audio from ${srcSpk.label} to ${targetSpk.label}")
+                
+                def trackUri = srcSpk.currentValue("trackUri") ?: srcSpk.currentValue("uri")
+                def curVol = srcSpk.currentValue("volume") ?: 15
+                
+                if (trackUri) {
+                    targetSpk.setLevel(curVol)
+                    targetSpk.setTrack(trackUri)
+                    runIn(1, triggerPlayOnFav, [data: [spkId: targetSpk.id]])
+                    srcSpk.pause()
+                }
             }
         }
     }
@@ -482,7 +703,7 @@ def volumeHandler(evt) {
     def spk = evt.device
     def vol = evt.value.toInteger()
     
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
         if (settings["z${i}Speaker"]?.id == spk.id) {
             def maxVol = settings["z${i}MaxVol"]
             if (maxVol && vol > maxVol) {
@@ -503,7 +724,7 @@ def doorbellHandler(evt) {
     if (evt.value == btnNum.toString()) {
         logAction("Doorbell rang! Muting applicable playing speakers.")
         def mutedSpks = []
-        for(int i = 1; i <= 6; i++) {
+        for(int i = 1; i <= 10; i++) {
             def spk = settings["z${i}Speaker"]
             if (spk && !isZoneLocked(i)) {
                 if (spk.currentValue("status") == "playing" && spk.currentValue("mute") != "muted") {
@@ -531,7 +752,7 @@ def doorHandler(evt) {
         if (!state.doorOpenMuted) {
             logAction("Monitored door opened! Muting applicable speakers.")
             def mutedSpks = []
-            for(int i = 1; i <= 6; i++) {
+            for(int i = 1; i <= 10; i++) {
                 def spk = settings["z${i}Speaker"]
                 if (spk && !isZoneLocked(i)) {
                     if (spk.currentValue("status") == "playing" && spk.currentValue("mute") != "muted") {
@@ -559,12 +780,9 @@ def executeNightSweep() {
     if (!isAppEnabled() || !settings.enableNightSweep) return
     logAction("Executing Automated Night-Time Volume Sweep.")
     
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
         if (settings["enableZ${i}"] && settings["z${i}Speaker"]) {
-            if (isZoneLocked(i)) {
-                logAction("Sweep logic skipping ${settings["z${i}Speaker"].label} (Good Night Override Active).")
-                continue
-            }
+            if (isZoneLocked(i)) continue
             def spk = settings["z${i}Speaker"]
             def targetVol = settings.nightSweepVol ?: 15
             spk.setLevel(targetVol)
@@ -574,17 +792,21 @@ def executeNightSweep() {
 
 def restoreVolume(data) {
     def spk = getSpeakerById(data.spkId)
-    if (spk) {
-        spk.setLevel(data.vol)
-        logAction("TTS Complete -> Restored ${spk.label} volume to ${data.vol}%.")
-    }
+    if (spk) spk.setLevel(data.vol)
 }
 
 def executeSleepTimer(data) {
+    if (!state.sleepTimers[data.zNum]) return
+    
     def spk = getSpeakerById(data.spkId)
-    if (spk && state.sleepTimers[data.zNum]) {
-        spk.pause()
-        logAction("Sleep Timer Executed: Paused ${spk.label}.")
+    if (spk) {
+        if (data.fade && data.fade > 0) {
+            logAction("Sleep Timer Executed: Initiating Fade-Out for ${spk.label}.")
+            startVolumeFade(spk.id, 0, data.fade, true)
+        } else {
+            spk.pause()
+            logAction("Sleep Timer Executed: Paused ${spk.label}.")
+        }
     }
     state.sleepTimers[data.zNum] = false
 }
@@ -601,19 +823,28 @@ def createFavoriteVirtualSwitch(speaker) {
         try {
             def json = new groovy.json.JsonSlurper().parseText(trackDataStr)
             trackUri = json?.trackUri ?: json?.enqueuedUri ?: json?.uri
-        } catch (e) {
-            logAction("Warning: Could not parse trackData JSON for ${speaker.label}.")
-        }
+        } catch (e) { }
     }
     
     if (!trackUri) trackUri = speaker.currentValue("uri")
     if (!trackUri) trackUri = speaker.currentValue("enqueuedUri")
 
-    def trackName = speaker.currentValue("trackDescription") ?: "Unknown Track"
+    def trackName = speaker.currentValue("trackDescription")
+    if (!trackName || trackName.trim() == "") trackName = speaker.currentValue("name")
+    if (!trackName || trackName.trim() == "") {
+        if (trackDataStr) {
+            try {
+                def json = new groovy.json.JsonSlurper().parseText(trackDataStr)
+                trackName = json?.station ?: json?.title ?: ""
+            } catch (e) { }
+        }
+    }
+    if (!trackName || trackName.trim() == "") trackName = "Custom Stream (${now().toString().substring(8)})"
+    
     def curVol = speaker.currentValue("volume") ?: 20
     
     if (!trackUri) {
-        logAction("ERROR: Cannot create favorite. No track URI detected on ${speaker.label}. Raw Data: ${trackDataStr}")
+        logAction("ERROR: Cannot create favorite. No track URI detected on ${speaker.label}.")
         return
     }
 
@@ -644,9 +875,7 @@ def childSwitchHandler(evt) {
             def speaker = getSpeakerById(favData.speakerId)
             if (speaker) {
                 logAction("Triggered Favorite via Switch. Setting volume to ${favData.vol}% and playing [${favData.name}] on ${speaker.label}")
-                if (favData.vol != null) {
-                    speaker.setLevel(favData.vol)
-                }
+                if (favData.vol != null) speaker.setLevel(favData.vol)
                 speaker.setTrack(favData.uri)
                 runIn(2, triggerPlayOnFav, [data: [spkId: speaker.id]])
             }
@@ -657,7 +886,7 @@ def childSwitchHandler(evt) {
 
 def triggerPlayOnFav(data) { getSpeakerById(data.spkId)?.play() }
 def turnOffChild(data) { getChildDevice(data.dni)?.off() }
-def getSpeakerById(id) { for (int i = 1; i <= 6; i++) { if (settings["z${i}Speaker"]?.id == id) return settings["z${i}Speaker"] }; return null }
+def getSpeakerById(id) { for (int i = 1; i <= 10; i++) { if (settings["z${i}Speaker"]?.id == id) return settings["z${i}Speaker"] }; return null }
 
 // --- HOUSEKEEPING ---
 
@@ -687,8 +916,9 @@ def modeChangeHandler(evt) {
     def currentMode = evt.value
     def zonesToTurnOn = []
     def zonesToTurnOff = []
+    def zonesToRunRoutine = []
 
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
         if (settings["enableZ${i}"]) {
             if (isZoneLocked(i)) {
                 logAction("Mode Engine skipping Zone ${i} (Good Night Override Active).")
@@ -698,41 +928,82 @@ def modeChangeHandler(evt) {
             def onModes = settings["z${i}TurnOnModes"] as List
             def offModes = settings["z${i}TurnOffModes"] as List
             
-            if (onModes && onModes.contains(currentMode)) {
-                zonesToTurnOn << i
-            } else if (offModes && offModes.contains(currentMode)) {
-                zonesToTurnOff << i
+            if (onModes && onModes.contains(currentMode)) zonesToTurnOn << i
+            else if (offModes && offModes.contains(currentMode)) zonesToTurnOff << i
+            
+            if (settings["z${i}ModeRoutineEnabled"] && settings["z${i}RoutineMode"] == currentMode) {
+                zonesToRunRoutine << i
             }
         }
     }
 
     if (zonesToTurnOn) {
         logAction("Mode changed to ${currentMode}. Initiating Startup sequence for active zones.")
-        powerUpSpecificZones(zonesToTurnOn)
+        powerUpSpecificZones(zonesToTurnOn, zonesToRunRoutine)
     } 
     
     if (zonesToTurnOff) {
         logAction("Mode changed to ${currentMode}. Initiating Failsafe Pause & Shutdown for active zones.")
         gracefulShutdownSpecificZones(zonesToTurnOff)
     }
+    
+    if (zonesToRunRoutine) {
+        logAction("Mode changed to ${currentMode}. Initiating Music Routines.")
+        zonesToRunRoutine.each { zNum -> runIn(1, executeModeRoutine, [data: [zNum: zNum]]) }
+    }
 }
 
-def powerUpSpecificZones(zones) {
+def powerUpSpecificZones(zones, routineZones = []) {
     zones.each { i ->
         if (settings["z${i}Switch"]) {
             settings["z${i}Switch"].on()
             
             if (settings["z${i}StartVol"] && settings["z${i}Speaker"]) {
                 def targetVol = settings["z${i}StartVol"]
-                runIn(5, setStartupVolume, [data: [spkId: settings["z${i}Speaker"].id, vol: targetVol]])
+                def fadeDur = settings["z${i}FadeIn"]
+                
+                if (fadeDur && fadeDur > 0) {
+                    settings["z${i}Speaker"].setLevel(0) 
+                    runIn(5, startVolumeFade, [spkId: settings["z${i}Speaker"].id, targetVol: targetVol, durationSec: fadeDur, isFadeOut: false])
+                } else {
+                    runIn(5, setStartupVolume, [data: [spkId: settings["z${i}Speaker"].id, vol: targetVol]])
+                }
             }
             
-            if (settings["z${i}AutoResume"] && settings["z${i}Speaker"]) {
+            if (settings["z${i}AutoResume"] && settings["z${i}Speaker"] && !routineZones.contains(i)) {
                 runIn(60, triggerAutoResume, [data: [spkId: settings["z${i}Speaker"].id]])
             }
         }
     }
     logAction("Master power switches turned ON for active zones.")
+}
+
+def executeModeRoutine(data) {
+    def i = data.zNum
+    def spk = settings["z${i}Speaker"]
+    def sw = settings["z${i}Switch"]
+    def delay = settings["z${i}RoutineDelay"] ?: 10
+    def favDni = settings["z${i}RoutineFavorite"]
+    
+    if (sw && sw.currentValue("switch") != "on") sw.on()
+    
+    if (favDni && state.savedFavorites && state.savedFavorites[favDni]) {
+        runIn(delay, playRoutineFavorite, [data: [spkId: spk.id, favDni: favDni]])
+        logAction("Routine scheduled for ${spk.label} in ${delay} seconds.")
+    } else {
+        logAction("Routine skipped for ${spk.label}: No valid favorite selected.")
+    }
+}
+
+def playRoutineFavorite(data) {
+    def spk = getSpeakerById(data.spkId)
+    def favData = state.savedFavorites[data.favDni]
+    if (spk && favData) {
+        if (favData.vol != null) spk.setLevel(favData.vol)
+        spk.setTrack(favData.uri)
+        runIn(2, triggerPlayOnFav, [data: [spkId: spk.id]])
+        logAction("Routine Triggered: Playing favorite [${favData.name}] on ${spk.label}")
+    }
 }
 
 def gracefulShutdownSpecificZones(zones) {
@@ -805,7 +1076,7 @@ def calculateEnergy() {
 
     def fractionOfHour = 0.25 
 
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
         if (settings["enableZ${i}"] && settings["z${i}Speaker"] && settings["z${i}Type"]) {
             def sw = settings["z${i}Switch"]
             def profile = getPowerProfiles(settings["z${i}Type"])
@@ -819,8 +1090,12 @@ def calculateEnergy() {
         }
     }
     
+    // Strict Pruning to prevent State Bloat (Fix #3)
     def keys = state.runHistory.keySet().sort().reverse()
-    if (keys.size() > 7) state.runHistory = state.runHistory.subMap(keys[0..6])
+    if (keys.size() > 7) {
+        def keysToKeep = keys[0..6]
+        state.runHistory = state.runHistory.findAll { it.key in keysToKeep }
+    }
 }
 
 def renderCostDashboard() {
