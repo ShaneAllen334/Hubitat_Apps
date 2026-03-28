@@ -28,7 +28,7 @@ def mainPage() {
             
             def statusExplanation = getHumanReadableStatus()
    
-         paragraph "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff;'>" +
+            paragraph "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff;'>" +
                       "<b>System Status:</b> ${statusExplanation}</div>"
 
             if (thermostat) {
@@ -449,7 +449,7 @@ def mainPage() {
                     paragraph "<b>Last Filter Change:</b> ${state.lastFilterDate ?: 'Not Recorded'}"
                     input "resetFilter", "button", title: "Record Filter Change (Resets Life to 100%)"
                 }
-                 
+                  
                 paragraph "<hr>"
                 paragraph "<b>HVAC System Service Tracking</b>"
                 input "hvacCompanyName", "text", title: "HVAC Company Name", required: false
@@ -476,6 +476,7 @@ def mainPage() {
             input "enableMinRuntime", "bool", title: "<b>Enable Min Run Time Protection</b>", defaultValue: true, submitOnChange: true
             if (enableMinRuntime) {
                 input "minRunTime", "number", title: "Minimum Run Time (minutes)", required: false, defaultValue: 10
+                input "delayModeChangeForMinRun", "bool", title: "Delay Mode Changes until Min Run Time completes", defaultValue: false
                 input "tempDropThreshold", "decimal", title: "Max Temp Drop per Min", required: false, defaultValue: 0.5
                 input "setpointBuffer", "decimal", title: "Temporary Setpoint Buffer (°F)", required: false, defaultValue: 2.0
                 input "shortCycleThreshold", "decimal", title: "Short-Cycle Degree Threshold (°F)", required: false, defaultValue: 1.0
@@ -552,7 +553,7 @@ def initialize() {
     if (!state.lastFilterDate) state.lastFilterDate = "Not Recorded"
     if (!state.lastServiceDate) state.lastServiceDate = "Not Recorded"
     
-    state.isBuffering = false; state.cycleStartTime = null; state.currentAction = "idle"
+    state.isBuffering = false; state.cycleStartTime = null; state.currentAction = "idle"; state.cycleStartMode = null; state.modeDelayLogged = false
     state.manualHold = false; state.windowOpenHold = false; state.dehumidifyingStage = 0 
     state.isPeakHours = false; state.isPreConditioning = false; state.isAdaptiveRecovering = false
     
@@ -618,7 +619,7 @@ def hubRestartHandler(evt) {
     logAction("CRITICAL: Hub reboot detected. Executing BMS Failsafe Recovery.")
     state.isBuffering = false; state.windowOpenHold = false; state.dehumidifyingStage = 0
     state.isPreConditioning = false; state.isAdaptiveRecovering = false; state.freeCoolState = "idle"
-    state.cycleStartTime = null; state.currentAction = "idle"
+    state.cycleStartTime = null; state.currentAction = "idle"; state.cycleStartMode = null; state.modeDelayLogged = false
     state.alignmentLockout = null; state.alignmentLockoutTarget = null
     state.activeHysteresis = "idle"
     if (state.savedPlugStates) restorePlugs() 
@@ -650,6 +651,7 @@ String getHumanReadableStatus() {
     }
     
     if (state.windowOpenHold) return "<span style='color:red;'><b>HVAC is OFF</b></span> because a monitored perimeter window or door is open."
+    
     if (state.manualHold) return "<span style='color:orange;'><b>Automation Paused</b></span> because someone manually adjusted the physical thermostat."
     if (moneySavingSwitch && moneySavingSwitch.currentValue("switch") == "on") return "<span style='color:green;'><b>Money Saving Mode Active:</b></span> Targets shifted to maximize energy savings based on external switch."
     
@@ -780,10 +782,10 @@ def setpointHandler(evt) {
 
 def outdoorSensorHandler(evt) { evaluateSystem() }
 
-def checkFreeCooling(currentCoolTarget) {
+def checkFreeCooling(currentCoolTarget, evalMode = location.mode) {
     if (!enableFreeCooling || !outdoorSensor) return currentCoolTarget
     
-    if (freeCoolModes && !(freeCoolModes as List).contains(location.mode)) {
+    if (freeCoolModes && !(freeCoolModes as List).contains(evalMode)) {
         if (state.freeCoolState != "idle") {
             state.freeCoolState = "idle"
             disengageFreeCooling()
@@ -879,12 +881,30 @@ def trackFreeCoolingSavings() {
 def evaluateSystem() {
     if (!thermostat) return
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return
-    if (allowedModes && !(allowedModes as List).contains(location.mode)) return
+    
+    def evalMode = location.mode
+    def modeHoldMsg = ""
+    
+    if (enableMinRuntime && delayModeChangeForMinRun && state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
+        def runMins = (now() - state.cycleStartTime) / 60000.0
+        if (runMins < (minRunTime ?: 10)) {
+            if (state.cycleStartMode && state.cycleStartMode != location.mode) {
+                evalMode = state.cycleStartMode
+                modeHoldMsg = " [Mode Change Delayed: Finishing Compressor Protection]"
+                if (!state.modeDelayLogged) {
+                    logAction("Mode changed to ${location.mode}, but Compressor Protection is active. Simulating ${state.cycleStartMode} for the remaining run time.")
+                    state.modeDelayLogged = true
+                }
+            }
+        }
+    }
+
+    if (allowedModes && !(allowedModes as List).contains(evalMode)) return
     if (state.windowOpenHold || state.manualHold || state.isBuffering) return 
     
-    def isAway = awayModes ? (awayModes as List).contains(location.mode) : false
-    def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
-    def isAlignmentModeAllowed = !alignmentModes || (alignmentModes as List).contains(location.mode)
+    def isAway = awayModes ? (awayModes as List).contains(evalMode) : false
+    def isNight = nightModes ? (nightModes as List).contains(evalMode) : false
+    def isAlignmentModeAllowed = !alignmentModes || (alignmentModes as List).contains(evalMode)
     
     def targetCool = homeCoolingSetpoint ?: 74.0; def targetHeat = homeHeatingSetpoint ?: 68.0
     def isMoneySaving = moneySavingSwitch && moneySavingSwitch.currentValue("switch") == "on"
@@ -920,7 +940,7 @@ def evaluateSystem() {
     }
     
     if (!isNight) {
-        targetCool = checkFreeCooling(targetCool)
+        targetCool = checkFreeCooling(targetCool, evalMode)
     } else {
         if (state.freeCoolState != "idle") {
             state.freeCoolState = "idle"
@@ -1073,7 +1093,7 @@ def evaluateSystem() {
             def buffer = setpointBuffer ?: 2.0
             
             if (state.currentAction == "cooling") {
-                 if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
+                if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
                     targetCool = thermostat.currentValue("coolingSetpoint").toBigDecimal()
                     syncMessage += " [Compressor Protection: Lockout Prevented Setpoint Rise]"
                 }
@@ -1156,7 +1176,7 @@ def evaluateSystem() {
         state.lastCommandTime = now() // Track execution time to prevent network echo
         thermostat.setCoolingSetpoint(targetCool)
         thermostat.setHeatingSetpoint(targetHeat)
-        logAction("BMS Command -> Pushing Setpoints to Thermostat: COOL ${targetCool}° | HEAT ${targetHeat}°${syncMessage}")
+        logAction("BMS Command -> Pushing Setpoints to Thermostat: COOL ${targetCool}° | HEAT ${targetHeat}°${syncMessage}${modeHoldMsg}")
     }
     
     if (enableAutoSwap && !(state.freeCoolState in ["pending", "active"])) {
@@ -1179,10 +1199,11 @@ def evaluateSystem() {
 def compressorWatchdog() {
     if (state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
         def runMins = (now() - state.cycleStartTime) / 60000.0
-    
         if (runMins < (minRunTime ?: 10)) {
             evaluateSystem() 
             runIn(60, compressorWatchdog)
+        } else {
+            evaluateSystem() // Ensure final evaluation to push pending mode change targets
         }
     }
 }
@@ -1237,6 +1258,8 @@ def hvacStateHandler(evt) {
     def stateVal = evt.value?.toLowerCase() ?: ""
     if (stateVal == "cooling" || stateVal == "heating" || stateVal.contains("aux") || stateVal.contains("emergency")) {
         state.cycleStartTime = now()
+        state.cycleStartMode = location.mode
+        state.modeDelayLogged = false
         state.startTemp = thermostat.currentValue("temperature")
         if (stateVal.contains("aux") || stateVal.contains("emergency")) { 
             state.currentAction = "auxHeating" 
@@ -1293,7 +1316,7 @@ def hvacStateHandler(evt) {
                 }
             }
         }
-        state.cycleStartTime = null; state.currentAction = "idle"
+        state.cycleStartTime = null; state.currentAction = "idle"; state.cycleStartMode = null; state.modeDelayLogged = false
         
         evaluateSystem()
     }
@@ -1485,7 +1508,7 @@ def trackRecentCycle(action, runMinutes) {
     
     state.recentCycles.add(0, cycleLog)
     if (state.recentCycles.size() > 10) {
-         state.recentCycles = state.recentCycles[0..9]
+          state.recentCycles = state.recentCycles[0..9]
     }
 }
 
