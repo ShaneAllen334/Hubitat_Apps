@@ -106,7 +106,7 @@ def mainPage() {
                 // --- Rainfall History, Graph & Record Banner ---
                 def recordInfo = state.recordRain ?: [date: "None", amount: 0.0]
                 def sevenDayList = state.sevenDayRain ?: []
-                
+               
                 def historyDisplay = "<div><b>🏆 All-Time Record:</b> <span style='color:blue; font-weight:bold; font-size: 15px;'>${recordInfo.amount}</span> <i style='color:#555;'>(${recordInfo.date})</i></div>"
                 historyDisplay += "<div style='margin-top:5px;'><b>Current Week:</b> ${rainWeek} | <b>Today's Total:</b> ${state.currentDayRain ?: 0.0}</div>"
                 
@@ -157,6 +157,14 @@ def mainPage() {
 
         section("<b>System Configuration</b>") {
             href(name: "configPageLink", page: "configPage", title: "▶ Configure Sensors, Logic & Switches", description: "Set up Weather Station sensors, tune predictive logic algorithms, and map outputs.")
+        }
+        
+        section("<b>Child Device Integration</b>") {
+            paragraph "<i>Create a single virtual device that exposes all advanced meteorological data and states calculated by this app to your dashboards or rules.</i>"
+            input "createDeviceBtn", "button", title: "➕ Create Rain Detector Information Device"
+            if (getChildDevice("RainDet-${app.id}")) {
+                paragraph "<span style='color:green; font-weight:bold;'>✅ Child Device is Active.</span> Data is syncing."
+            }
         }
         
         section("<b>Global Actions & Overrides</b>", hideable: true, hidden: true) {
@@ -212,7 +220,7 @@ def configPage() {
                 input "pollInterval", "number", title: "Polling Interval (Minutes: 1-59)", required: true, defaultValue: 1
             }
         }
-        
+      
         section("<b>Advanced Prediction Sensors (Optional)</b>", hideable: true, hidden: true) {
             paragraph "<i>Add Solar Radiation and Wind Speed sensors to unlock advanced storm front and cloud cover detection, increasing prediction accuracy. Note: Wind speed should provide the 'windSpeed' or 'windspeedmph' attribute.</i>"
             input "sensorLux", "capability.illuminanceMeasurement", title: "Solar Radiation / Lux Sensor (Detects incoming cloud fronts)", required: false
@@ -229,8 +237,8 @@ def configPage() {
         section("<b>Virtual Output Switches</b>", hideable: true, hidden: true) {
             paragraph "<i>Map the virtual switches the application will turn on/off based on the current weather state. 'Debounce' prevents the switches from rapid-cycling during variable weather.</i>"
             input "switchProbable", "capability.switch", title: "Rain Probable Switch (Turns ON when probability reaches setpoint)", required: false
-            input "switchSprinkling", "capability.switch", title: "Sprinkling / Light Rain Switch (Mutually Exclusive)", required: true
-            input "switchRaining", "capability.switch", title: "Heavy Rain Switch (Mutually Exclusive)", required: true
+            input "switchSprinkling", "capability.switch", title: "Sprinkling / Light Rain Switch (Mutually Exclusive)", required: false
+            input "switchRaining", "capability.switch", title: "Heavy Rain Switch (Mutually Exclusive)", required: false
             
             input "debounceMins", "number", title: "State Debounce Time (Minutes)", required: true, defaultValue: 5, description: "Prevents rapidly flipping back and forth between states. Upgrading to worse weather is instant; downgrading or clearing will wait this long."
             input "heavyRainThreshold", "decimal", title: "Heavy Rain Rate Threshold (in/hr or mm/hr)", required: true, defaultValue: 0.1
@@ -267,7 +275,7 @@ def initialize() {
     if (!state.tempHistory) state.tempHistory = []
     if (!state.luxHistory) state.luxHistory = []
     if (!state.windHistory) state.windHistory = []
-    
+   
     // Initialize Accumulation Tracking
     if (!state.sevenDayRain) state.sevenDayRain = []
     if (!state.recordRain) state.recordRain = [date: "None", amount: 0.0]
@@ -339,6 +347,10 @@ def appButtonHandler(btn) {
         logDebug("Dashboard manually refreshed.")
         return
     }
+    if (btn == "createDeviceBtn") {
+        createChildDevice()
+        return
+    }
     if (btn == "forceEvalBtn") {
         logAction("MANUAL OVERRIDE: Forcing logic evaluation.")
         evaluateWeather()
@@ -367,6 +379,21 @@ def appButtonHandler(btn) {
     }
 }
 
+def createChildDevice() {
+    def deviceId = "RainDet-${app.id}"
+    def existing = getChildDevice(deviceId)
+    if (!existing) {
+        try {
+            addChildDevice("ShaneAllen", "Advanced Rain Detector Information Device", deviceId, null, [name: "Advanced Rain Detector Information Device", label: "Advanced Rain Detector Information Device", isComponent: false])
+            logAction("Child device successfully created.")
+        } catch (e) {
+            log.error "Failed to create child device. Please ensure the 'Advanced Rain Detector Information Device' driver is installed under 'Drivers Code'. Error: ${e}"
+        }
+    } else {
+        logAction("Child device already exists.")
+    }
+}
+
 // === HISTORY & HEARTBEAT WRAPPERS ===
 def markActive() { state.lastHeartbeat = now() }
 
@@ -391,7 +418,6 @@ def updateHistory(historyName, val, maxAgeMs) {
     state."${historyName}" = hist
 }
 
-// Legacy Catch for Ghost Subscriptions
 def sensorHandler(evt) { stdHandler(evt) }
 
 def stdHandler(evt) { markActive(); runIn(2, "evaluateWeather") }
@@ -527,7 +553,6 @@ def evaluateWeather() {
     def dewRejectionActive = false
     
     if (leakWet && settings.enableDewRejection != false) {
-        // If lux is low, wind is calm, and DP spread is tight, it's likely Morning Dew.
         def checkLux = sensorLux ? (luxVal < 100) : true
         def checkWind = sensorWind ? (windVal < 3.0) : true
         if (checkLux && checkWind && dpSpread <= 3.0) {
@@ -538,11 +563,8 @@ def evaluateWeather() {
     state.dewRejectionActive = dewRejectionActive
     
     // --- Calculate Evapotranspiration / Drying Potential ---
-    // Start with VPD (base moisture capacity of the air)
     def evapIndex = vpd
-    // Wind significantly increases evaporation by moving saturated air away
     if (sensorWind) evapIndex += (windVal * 0.03) 
-    // Solar radiation provides the latent heat needed for evaporation
     if (sensorLux) evapIndex += (luxVal / 80000.0)
     
     if (r > 0 || leakWet) {
@@ -562,50 +584,42 @@ def evaluateWeather() {
     def reasoning = []
     
     if (!isStale) {
-        // 1. Dew Point Spread (Heavy Weight)
         if (settings.enableDPLogic != false) {
             if (dpSpread <= 2.0) { probability += 40; reasoning << "Critical: Dew Point spread near 0° (Air saturated)" }
             else if (dpSpread <= 5.0) { probability += 20; reasoning << "Dew Point spread tightening (<5°)" }
         }
         
-        // 2. VPD Factor
         if (settings.enableVPDLogic != false) {
             if (vpd < 0.2) { probability += 20; reasoning << "VPD extremely low" }
             else if (vpd > 1.0) { probability -= 20; reasoning << "VPD High (Dry air)" }
         }
         
-        // 3. Pressure Drops
         if (settings.enablePressureLogic != false) {
             if (pTrendData.rate <= -0.04) { probability += 30; reasoning << "Pressure dropping rapidly" }
             else if (pTrendData.rate <= -0.02) { probability += 15; reasoning << "Pressure falling" }
             else if (pTrendData.rate > 0.03) { probability -= 30; reasoning << "Pressure rising strongly (Clearing)" }
         }
         
-        // 4. Rapid Cooling (Thunderstorm indicator)
         if (settings.enableCoolingLogic != false) {
             if (tTrendData.rate <= -6.0) { probability += 25; reasoning << "Rapid temperature drop detected (Storm front)" }
         }
         
-        // 5. Cloud Fronts / Solar Drops
         if (settings.enableCloudLogic != false && sensorLux && lTrendData.diff < 0) {
             def oldestLux = state.luxHistory.first()?.value ?: 0.0
-            if (oldestLux > 2000) { // Only track if it was actually daytime
+            if (oldestLux > 2000) { 
                 def dropPercentage = Math.abs(lTrendData.diff) / oldestLux
                 if (dropPercentage >= 0.60) { probability += 20; reasoning << "Solar radiation plummeted >60% (Heavy cloud cover)" }
                 else if (dropPercentage >= 0.40) { probability += 10; reasoning << "Significant solar drop" }
             }
         }
         
-        // 6. Wind Gust Fronts
         if (settings.enableWindLogic != false && sensorWind && wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
             probability += 15; reasoning << "Sudden wind gust/speed increase detected"
         }
         
-        // Cap limits
         if (probability < 0) probability = 0
         if (probability > 100) probability = 100
         
-        // Absolute Override
         if (r > 0 || leakWet) {
             probability = 100
             if (leakWet) reasoning << "Instant 'First Drop' detected via Leak Sensor"
@@ -622,7 +636,6 @@ def evaluateWeather() {
     
     state.rainProbability = probability
     
-    // --- Probability Setpoint Switch & Notification ---
     def probThreshold = notifyProbThreshold ?: 75
     if (probability >= probThreshold && !isStale) {
         safeOn(switchProbable)
@@ -638,7 +651,6 @@ def evaluateWeather() {
         }
     }
     
-    // --- Determine Active Weather State ---
     def targetState = "Clear"
     def threshold = heavyRainThreshold ?: 0.1
     
@@ -656,7 +668,6 @@ def evaluateWeather() {
         }
     }
     
-    // --- Expected Clear Time Logic ---
     if (isStale) {
         state.expectedClearTime = "Unknown (Sensors Offline)"
     } else if (targetState != "Clear") {
@@ -673,7 +684,6 @@ def evaluateWeather() {
 
     state.logicReasoning = reasoning.join(" | ")
 
-    // --- State Transition & Debounce Logic ---
     def currentState = state.weatherState
     def debounceMs = (debounceMins ?: 5) * 60000
     def timeSinceChange = now() - (state.lastStateChange ?: 0)
@@ -681,14 +691,11 @@ def evaluateWeather() {
     def allowTransition = false
     
     if (isStale && currentState != "Clear") {
-        // If data goes stale, force downgrade to Clear immediately to protect automations
         targetState = "Clear"
         allowTransition = true
     } else if (currentState != targetState) {
-        // Upgrade logic (Instant)
         if (currentState == "Clear" && (targetState == "Sprinkling" || targetState == "Raining")) { allowTransition = true }
         else if (currentState == "Sprinkling" && targetState == "Raining") { allowTransition = true }
-        // Downgrade logic (Debounced)
         else if (timeSinceChange >= debounceMs) { allowTransition = true }
         else {
             state.logicReasoning += " [Downgrade to ${targetState} delayed by Debounce timer: ${Math.ceil((debounceMs - timeSinceChange)/60000)}m remaining]"
@@ -715,6 +722,40 @@ def evaluateWeather() {
             safeOff(switchSprinkling)
             if (notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.")
         }
+    }
+    
+    // Send final evaluation data to the child device
+    updateChildDevice()
+}
+
+// === CHILD DEVICE SYNCHRONIZATION ===
+def updateChildDevice() {
+    def child = getChildDevice("RainDet-${app.id}")
+    if (child) {
+        child.sendEvent(name: "weatherState", value: state.weatherState)
+        child.sendEvent(name: "rainProbability", value: state.rainProbability, unit: "%")
+        child.sendEvent(name: "expectedClearTime", value: state.expectedClearTime)
+        
+        // Pushing the "on"/"off" strings dynamically based on current weather state
+        child.sendEvent(name: "sprinkling", value: state.weatherState == "Sprinkling" ? "on" : "off")
+        child.sendEvent(name: "raining", value: state.weatherState == "Raining" ? "on" : "off")
+        
+        def rawDrying = state.dryingPotential?.replaceAll("<[^>]*>", "") ?: "N/A"
+        child.sendEvent(name: "dryingPotential", value: rawDrying)
+        
+        child.sendEvent(name: "vpd", value: String.format("%.2f", state.currentVPD ?: 0.0), unit: "kPa")
+        child.sendEvent(name: "dewPoint", value: String.format("%.1f", state.currentDewPoint ?: 0.0), unit: "°")
+        child.sendEvent(name: "dewPointSpread", value: String.format("%.1f", state.dewPointSpread ?: 0.0), unit: "°")
+        
+        child.sendEvent(name: "pressureTrend", value: state.pressureTrendStr ?: "Stable")
+        child.sendEvent(name: "tempTrend", value: state.tempTrendStr ?: "Stable")
+        child.sendEvent(name: "luxTrend", value: state.luxTrendStr ?: "N/A")
+        child.sendEvent(name: "windTrend", value: state.windTrendStr ?: "N/A")
+        
+        child.sendEvent(name: "currentDayRain", value: state.currentDayRain ?: 0.0)
+        def record = state.recordRain ?: [date: "None", amount: 0.0]
+        child.sendEvent(name: "recordRainAmount", value: record.amount)
+        child.sendEvent(name: "recordRainDate", value: record.date)
     }
 }
 
