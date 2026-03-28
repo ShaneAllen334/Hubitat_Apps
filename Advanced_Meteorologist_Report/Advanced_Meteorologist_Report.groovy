@@ -8,7 +8,7 @@ definition(
     name: "Advanced Meteorologist Report",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Generates a TV-anchor style meteorologist report combining live local weather station data with a free macro-forecast API. Features dual time-profiles and 7-day tracking.",
+    description: "Generates a TV-anchor style meteorologist report combining live local weather station data with a free macro-forecast API. Features dual time-profiles, 7-day tracking, and granular mode triggers.",
     category: "Weather",
     iconUrl: "",
     iconX2Url: "",
@@ -88,16 +88,27 @@ def mainPage() {
                 paragraph "<i>Please select your personal weather station below to populate the dashboard.</i>"
             }
         }
+
+        section("<b>Recent Action History</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a rolling log of API fetches, trigger events, and script generation.</div>"
+            input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
+            if (state.actionHistory) {
+                def historyStr = state.actionHistory.join("<br>")
+                paragraph "<span style='font-size: 13px; font-family: monospace;'>${historyStr}</span>"
+            }
+            input "btnClearHistory", "button", title: "Clear History"
+        }
         
-        section("<b>Test Outputs</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'>Manually force the generation and broadcast of the script to test your devices.</div>"
+        section("<b>Test Outputs & Device Management</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'>Manually force broadcasts, or recreate your dashboard device if it was accidentally deleted.</div>"
             input "btnTestTTS", "button", title: "🔊 Test TTS Broadcast"
             input "btnTestNotify", "button", title: "📱 Test Push Notification"
+            input "btnCreateDevice", "button", title: "⚙️ Create & Sync Child Device"
         }
 
         section("<b>1. Data Sources</b>") {
             input "localStation", "capability.temperatureMeasurement", title: "Select Personal Weather Station", required: true, multiple: false
-            input "pollingInterval", "enum", title: "API Refresh Interval", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
+            input "pollingInterval", "enum", title: "Background Sync Interval (Updates Device)", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
         }
 
         section("<b>2. Morning Report Profile</b>") {
@@ -121,9 +132,24 @@ def mainPage() {
         }
 
         section("<b>4. Broadcast Triggers</b>") {
-            paragraph "<div style='font-size:13px; color:#555;'>When should the report be announced automatically?</div>"
-            input "triggerModes", "mode", title: "Trigger on Mode Change To:", multiple: true, required: false
-            input "triggerMotion", "capability.motionSensor", title: "Trigger on First Motion (Requires reset switch or daily reset)", required: false, multiple: false
+            paragraph "<div style='font-size:13px; color:#555;'>When should the report be announced automatically? Set up to 3 specific mode triggers with allowable time windows.</div>"
+            
+            paragraph "<b>Trigger 1</b>"
+            input "triggerMode1", "mode", title: "Mode Change To:", required: false, multiple: false
+            input "t1StartTime", "time", title: "Allowable Start Time", required: false
+            input "t1EndTime", "time", title: "Allowable End Time", required: false
+            
+            paragraph "<b>Trigger 2</b>"
+            input "triggerMode2", "mode", title: "Mode Change To:", required: false, multiple: false
+            input "t2StartTime", "time", title: "Allowable Start Time", required: false
+            input "t2EndTime", "time", title: "Allowable End Time", required: false
+            
+            paragraph "<b>Trigger 3</b>"
+            input "triggerMode3", "mode", title: "Mode Change To:", required: false, multiple: false
+            input "t3StartTime", "time", title: "Allowable Start Time", required: false
+            input "t3EndTime", "time", title: "Allowable End Time", required: false
+            
+            paragraph "<b>Manual Trigger</b>"
             input "triggerSwitch", "capability.switch", title: "Trigger via Virtual Switch (Turns off automatically)", required: false, multiple: false
         }
 
@@ -139,46 +165,57 @@ def updated() { unsubscribe(); unschedule(); initialize() }
 
 def initialize() {
     createChildDevice()
-    state.hasTriggeredMotionToday = false
+    if (!state.actionHistory) state.actionHistory = []
     
     // Subscriptions
-    if (triggerModes) subscribe(location, "mode", modeChangeHandler)
+    subscribe(location, "mode", modeChangeHandler)
     if (triggerSwitch) subscribe(triggerSwitch, "switch.on", switchTriggerHandler)
-    if (triggerMotion) subscribe(triggerMotion, "motion.active", motionTriggerHandler)
     
-    // Daily Reset for Motion Trigger
-    schedule("0 0 0 * * ?", resetDailyMotion)
-    
-    // API Polling Schedule
+    // Background Polling & Device Sync Schedule
     def interval = pollingInterval ?: "30"
-    if (interval == "15") runEvery15Minutes(fetchApiData)
-    else if (interval == "30") runEvery30Minutes(fetchApiData)
-    else if (interval == "60") runEvery1Hour(fetchApiData)
+    if (interval == "15") runEvery15Minutes(routineSync)
+    else if (interval == "30") runEvery30Minutes(routineSync)
+    else if (interval == "60") runEvery1Hour(routineSync)
 
-    fetchApiData() // Initial pull
+    routineSync() // Initial pull and sync on setup
+    logAction("App Initialized. Advanced Meteorologist Report Ready.")
 }
 
 def appButtonHandler(btn) {
     if (btn == "btnRefresh") {
-        fetchApiData()
-        generateScript()
-        updateChildDevice()
-        log.info "Advanced Meteorologist Report: Data manually refreshed."
+        routineSync()
+        logAction("Data manually refreshed via dashboard.")
+    }
+    else if (btn == "btnClearHistory") {
+        state.actionHistory = []
+        log.info "Advanced Meteorologist Report: Action history cleared."
     }
     else if (btn == "btnTestTTS") {
-        fetchApiData()
-        def script = generateScript()
-        if (ttsSpeakers) ttsSpeakers.speak(script)
-        log.info "Test TTS Triggered: ${script}"
-        updateChildDevice()
+        routineSync()
+        if (ttsSpeakers) ttsSpeakers.speak(state.latestScript)
+        logAction("Test TTS Triggered: ${state.latestScript}")
     }
     else if (btn == "btnTestNotify") {
-        fetchApiData()
-        def script = generateScript()
-        if (notifyDevices) notifyDevices.deviceNotification(script)
-        log.info "Test Notification Triggered: ${script}"
-        updateChildDevice()
+        routineSync()
+        if (notifyDevices) notifyDevices.deviceNotification(state.latestScript)
+        logAction("Test Notification Triggered: ${state.latestScript}")
     }
+    else if (btn == "btnCreateDevice") {
+        createChildDevice()
+        routineSync()
+        logAction("Child device manually created and synced.")
+    }
+}
+
+// ==============================================================================
+// BACKGROUND ROUTINE
+// ==============================================================================
+
+def routineSync() {
+    fetchApiData()
+    generateScript()
+    updateChildDevice()
+    logAction("Routine Background Sync: Data fetched and device updated.")
 }
 
 // ==============================================================================
@@ -186,38 +223,55 @@ def appButtonHandler(btn) {
 // ==============================================================================
 
 def modeChangeHandler(evt) {
-    if ((triggerModes as List)?.contains(evt.value)) {
-        log.info "Mode changed to ${evt.value}. Triggering Meteorologist Report."
+    def newMode = evt.value
+    def nowTime = new Date()
+    
+    def shouldTrigger = false
+    def triggeredBy = ""
+    
+    if (triggerMode1 && newMode == triggerMode1) {
+        if (!t1StartTime || !t1EndTime || timeOfDayIsBetween(t1StartTime, t1EndTime, nowTime, location.timeZone)) {
+            shouldTrigger = true
+            triggeredBy = "Trigger 1 (${newMode})"
+        } else {
+            logAction("Mode changed to ${newMode} (Trigger 1), but outside allowable time frame. Ignored.")
+        }
+    }
+    else if (triggerMode2 && newMode == triggerMode2) {
+        if (!t2StartTime || !t2EndTime || timeOfDayIsBetween(t2StartTime, t2EndTime, nowTime, location.timeZone)) {
+            shouldTrigger = true
+            triggeredBy = "Trigger 2 (${newMode})"
+        } else {
+            logAction("Mode changed to ${newMode} (Trigger 2), but outside allowable time frame. Ignored.")
+        }
+    }
+    else if (triggerMode3 && newMode == triggerMode3) {
+        if (!t3StartTime || !t3EndTime || timeOfDayIsBetween(t3StartTime, t3EndTime, nowTime, location.timeZone)) {
+            shouldTrigger = true
+            triggeredBy = "Trigger 3 (${newMode})"
+        } else {
+            logAction("Mode changed to ${newMode} (Trigger 3), but outside allowable time frame. Ignored.")
+        }
+    }
+    
+    if (shouldTrigger) {
+        logAction("Valid mode change detected. Broadcasting Meteorologist Report via ${triggeredBy}.")
         executeBroadcast()
     }
 }
 
 def switchTriggerHandler(evt) {
-    log.info "Virtual Switch triggered. Executing Meteorologist Report."
+    logAction("Virtual Switch triggered. Executing Meteorologist Report.")
     executeBroadcast()
     runIn(2, turnOffSwitch) // Auto-reset switch
 }
 
 def turnOffSwitch() { if (triggerSwitch) triggerSwitch.off() }
 
-def motionTriggerHandler(evt) {
-    if (!state.hasTriggeredMotionToday) {
-        state.hasTriggeredMotionToday = true
-        log.info "First motion detected. Triggering Meteorologist Report."
-        executeBroadcast()
-    }
-}
-
-def resetDailyMotion() { state.hasTriggeredMotionToday = false }
-
 def executeBroadcast() {
-    fetchApiData() 
-    def script = generateScript()
-    
-    if (ttsSpeakers) ttsSpeakers.speak(script)
-    if (notifyDevices) notifyDevices.deviceNotification(script)
-    
-    updateChildDevice()
+    routineSync() // Ensure we have the absolute freshest data before speaking
+    if (ttsSpeakers) ttsSpeakers.speak(state.latestScript)
+    if (notifyDevices) notifyDevices.deviceNotification(state.latestScript)
 }
 
 // ==============================================================================
@@ -229,7 +283,7 @@ def fetchApiData() {
     def lon = location.longitude
     
     if (!lat || !lon) {
-        log.error "Hub latitude/longitude not set. Cannot fetch API data."
+        logAction("ERROR: Hub latitude/longitude not set. Cannot fetch API data.")
         return
     }
 
@@ -248,12 +302,10 @@ def fetchApiData() {
                 state.apiDailyHighs = data.daily?.temperature_2m_max?.collect { it.toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP) } ?: []
                 state.apiDailyLows = data.daily?.temperature_2m_min?.collect { it.toBigDecimal().setScale(0, BigDecimal.ROUND_HALF_UP) } ?: []
                 state.apiDailyConditions = data.daily?.weather_code?.collect { getWeatherDescription(it) } ?: []
-                
-                log.info "Weather API Fetch Successful. 7-Day data stored."
             }
         }
     } catch (e) {
-        log.error "Error fetching weather API: ${e.message}"
+        logAction("ERROR fetching weather API: ${e.message}")
     }
 }
 
@@ -343,6 +395,15 @@ def getDayOfWeek(dateString) {
     }
 }
 
+// Custom Logging function to populate Action History array
+def logAction(msg) { 
+    if(txtEnable) log.info "${app.label}: ${msg}"
+    def h = state.actionHistory ?: []
+    h.add(0, "[${new Date().format("MM/dd hh:mm a", location.timeZone)}] ${msg}")
+    if(h.size() > 30) h = h[0..29]
+    state.actionHistory = h 
+}
+
 // ==============================================================================
 // CHILD DEVICE MANAGEMENT
 // ==============================================================================
@@ -355,7 +416,7 @@ def createChildDevice() {
         try {
             addChildDevice("ShaneAllen", "Advanced Meteorologist Report Device", childNetworkId, [name: "Advanced Meteorologist Report", isComponent: true])
         } catch (e) {
-            log.error "Failed to create child device. Ensure the Driver is installed. Error: ${e}"
+            logAction("ERROR: Failed to create child device. Ensure the Driver is installed. Error: ${e}")
         }
     }
 }
@@ -364,8 +425,14 @@ def updateChildDevice() {
     def childNetworkId = "MeteorologistReport_${app.id}"
     def child = getChildDevice(childNetworkId)
     if (child) {
-        def high = state.apiDailyHighs ? state.apiDailyHighs[0] : null
-        def low = state.apiDailyLows ? state.apiDailyLows[0] : null
-        child.updateTile(state.latestScript, high, low, state.apiConditionDesc)
+        child.updateTile(
+            state.latestScript, 
+            state.apiCurrentTemp, 
+            state.apiConditionDesc, 
+            state.apiDailyDates, 
+            state.apiDailyHighs, 
+            state.apiDailyLows, 
+            state.apiDailyConditions
+        )
     }
 }
