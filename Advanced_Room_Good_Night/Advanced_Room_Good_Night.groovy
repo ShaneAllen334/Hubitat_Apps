@@ -18,14 +18,25 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced Room Good Night</b>", install: true, uninstall: true) {
         
-        section("<b>Global Sync & Override Status</b>") {
-            input "refreshDataBtn", "button", title: "Refresh Data"
-            paragraph "<div style='font-size:12px; color:#555;'><b>House Sleep Status:</b> Live indicator of active blocking devices and lead room countdowns.</div>"
+        section("<b>Live System Dashboard</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a real-time, top-down view of your home's sleep status, blocking devices, and individual room environments.</div>"
+            input "refreshDataBtn", "button", title: "🔄 Refresh Data"
             
+            // --- INJECT CLIMATE APP CSS STYLING ---
+            def cssHTML = """
+            <style>
+                .dash-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 15px; }
+                .dash-table th, .dash-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+                .dash-table th { background-color: #343a40; color: white; }
+                .dash-hl { background-color: #f8f9fa; font-weight:bold; text-align: left !important; padding-left: 15px !important; width: 35%; }
+                .dash-subhead { background-color: #e9ecef; font-weight: bold; text-align: left !important; padding-left: 15px !important; text-transform: uppercase; font-size: 12px; color: #495057; }
+                .dash-val { text-align: left !important; padding-left: 15px !important; }
+            </style>
+            """
+            
+            // --- GLOBAL SYNC STATUS PANEL ---
+            def syncExplanation = "Global Mode Sync is currently <b>Disabled</b>."
             if (settings.enableGlobalMode) {
-                def syncHtml = "<div style='background-color:#fdfdfd; border: 1px solid #ccc; border-radius: 5px; padding: 6px; margin-bottom: 6px; font-size:12px;'>"
-                
-                // Check blocking devices
                 def activeBlockers = []
                 if (settings.blockingSwitches) {
                     settings.blockingSwitches.each { bSw ->
@@ -36,51 +47,55 @@ def mainPage() {
                 }
                 
                 if (activeBlockers.size() > 0) {
-                    syncHtml += "<div style='color:#d9534f; font-weight:bold; margin-bottom:2px;'>⚠️ Night Mode Blocked By:</div>"
-                    syncHtml += "<ul style='margin-top:0; padding-left:20px; color:#d9534f; margin-bottom:4px;'>"
-                    activeBlockers.each { syncHtml += "<li>${it}</li>" }
-                    syncHtml += "</ul>"
+                    def bList = activeBlockers.join(", ")
+                    syncExplanation = "<span style='color:#d9534f;'><b>⚠️ Night Mode Blocked By:</b> ${bList}</span>"
                 } else {
-                    syncHtml += "<div style='color:#28a745; font-weight:bold; margin-bottom:4px;'>✅ No Blocking Devices Active</div>"
+                    syncExplanation = "<span style='color:#28a745;'><b>✅ No Blocking Devices Active</b></span>"
                 }
                 
-                // Check Lead Room Countdown
                 if (settings.enableLeadRoomOverride && state.overrideScheduledTime) {
                     def timeLeft = Math.round((state.overrideScheduledTime - now()) / 60000.0)
                     if (timeLeft > 0) {
-                        syncHtml += "<div style='color:#f39c12; font-weight:bold; border-top: 1px solid #eee; padding-top:4px;'>⏳ Lead Room Timer Active: ~${timeLeft} min(s) until forced Good Night evaluation.</div>"
+                        syncExplanation += "<br><span style='color:#f39c12; margin-top:4px; display:inline-block;'><b>⏳ Lead Room Timer Active:</b> ~${timeLeft} min(s) until forced Good Night evaluation.</span>"
                     } else {
-                        syncHtml += "<div style='color:#f39c12; font-weight:bold; border-top: 1px solid #eee; padding-top:4px;'>⏳ Lead Room Timer: Evaluation Pending...</div>"
+                        syncExplanation += "<br><span style='color:#f39c12; margin-top:4px; display:inline-block;'><b>⏳ Lead Room Timer:</b> Evaluation Pending...</span>"
                     }
                 } else if (settings.enableLeadRoomOverride) {
-                    syncHtml += "<div style='color:#6c757d; border-top: 1px solid #eee; padding-top:4px;'>⏳ Lead Room Timer: Not Active</div>"
+                    syncExplanation += "<br><span style='color:#6c757d; margin-top:4px; display:inline-block;'><b>⏳ Lead Room Timer:</b> Not Active</span>"
                 }
-                
-                syncHtml += "</div>"
-                paragraph syncHtml
-            } else {
-                paragraph "<i>Global Mode Sync is currently disabled. Enable it below to use these features.</i>"
             }
-        }
-
-        section("<b>Live Room Status & Diagnostics</b>") {
+            
+            def dashHTML = cssHTML + "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff; margin-bottom: 15px; font-size: 13px;'><b>Global Sleep Sync:</b><br>${syncExplanation}</div>"
+            
+            // --- INDIVIDUAL ROOM PANELS ---
             def hasConfiguredRooms = false
             for (int i = 1; i <= 4; i++) {
                 if (settings["enableRoom${i}"]) {
                     hasConfiguredRooms = true
                     def rName = settings["roomName${i}"] ?: "Room ${i}"
                     
-                    // --- LIVE SENSOR DATA ---
                     def tSensor = settings["tempSensor${i}"]
                     def hSensor = settings["humSensor${i}"]
                     def cTemp = tSensor ? tSensor.currentValue("temperature") : null
                     def cHum = hSensor ? hSensor.currentValue("humidity") : null
                     def sleepQuality = calculateSleepSuitability(cTemp, cHum)
-                    def tonightTrack = state."nextUri${i}" ?: "Not Generated Yet"
                     
-                    // --- EXPECTED STATES MATH ---
+                    // TONIGHT'S TRACK LOGIC
+                    def tonightTrack = "Not Generated Yet"
+                    def aType = settings["audioSourceType${i}"] ?: "uri"
+                    if (aType == "uri" && state."nextUri${i}") {
+                        tonightTrack = state."nextUri${i}"
+                    } else if (aType == "switch" && state."nextSwitchId${i}") {
+                        def nId = state."nextSwitchId${i}"
+                        for(int u = 1; u <= 5; u++) {
+                            def s = settings["audioSwitch${i}_${u}"]
+                            if (s?.id == nId) tonightTrack = s.displayName
+                        }
+                    }
+                    
                     def sw = settings["roomSwitch${i}"]
                     def isAsleep = sw?.currentValue("switch") == "on"
+                    def titleColor = isAsleep ? "#2e154f" : "#007bff"
                     
                     def expCeiling = "App Released"
                     def expStdFan = "App Released"
@@ -93,11 +108,7 @@ def mainPage() {
                         
                         if (cTemp != null) {
                             def stdSet = settings["fanSetpoint${i}"]
-                            if (stdSet) {
-                                expStdFan = cTemp >= stdSet ? "ON" : "OFF"
-                            } else {
-                                expStdFan = "Not Configured"
-                            }
+                            expStdFan = stdSet ? (cTemp >= stdSet ? "ON" : "OFF") : "Not Configured"
                             
                             def cSet = settings["ceilingFanSetpoint${i}"]
                             def delta = settings["fanSpeedDelta${i}"] ?: 1.0
@@ -119,72 +130,67 @@ def mainPage() {
                         }
                     }
                     
-                    // --- 7-DAY HISTORY TABLE ---
-                    def histList = state."sleepHistory${i}" ?: []
-                    def histHtml = ""
-                    if (histList.size() > 0) {
-                        histHtml = "<table style='width:100%; font-size: 11px; border-collapse: collapse; border: 1px solid #ccc; margin-top:2px;'>"
-                        histHtml += "<tr style='background-color: #eee; border-bottom: 1px solid #ccc; text-align: left;'><th style='padding: 2px 4px;'>Date</th><th style='padding: 2px 4px;'>Duration</th></tr>"
-                        histList.each { entry ->
-                            histHtml += "<tr style='border-bottom: 1px solid #eee;'><td style='padding: 2px 4px;'>${entry.date}</td><td style='padding: 2px 4px;'><b>${entry.duration}</b></td></tr>"
-                        }
-                        histHtml += "</table>"
-                    } else {
-                        histHtml = "<div style='font-size:11px; color:#888;'><i>No history recorded yet.</i></div>"
-                    }
-
-                    // --- COMBINED HTML CARD ---
-                    def dashHTML = """
-                    <div style='background-color:#fdfdfd; border: 1px solid #ccc; border-radius: 5px; padding: 6px; margin-bottom: 6px;'>
-                        <div style='font-size:14px; font-weight:bold; border-bottom: 2px solid #007bff; margin-bottom:4px; padding-bottom:2px;'>
-                            ${rName} - ${isAsleep ? '🌙 ASLEEP' : '☀️ AWAKE'}
-                        </div>
-                        
-                        <table style='width:100%; border-collapse: collapse; font-size: 11px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom:6px; line-height: 1.2;'>
-                            <tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th colspan='2' style='padding: 3px 4px;'>Live Environment</th></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='width:35%; padding: 2px 4px; white-space: nowrap;'><b>Current Temp:</b></td><td style='padding: 2px 4px;'>${cTemp != null ? cTemp + '°F' : '--'}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Humidity:</b></td><td style='padding: 2px 4px;'>${cHum != null ? cHum + '%' : '--'}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Environment:</b></td><td style='padding: 2px 4px;'>${sleepQuality}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Tonight's Audio:</b></td><td style='padding: 2px 4px;'><span style='font-size:10px; font-family:monospace; word-break:break-all;'>${tonightTrack}</span></td></tr>
-                            
-                            <tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th colspan='2' style='padding: 3px 4px;'>Expected States</th></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Ceiling Fan:</b></td><td style='padding: 2px 4px;'>${expCeiling}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Standard Fans:</b></td><td style='padding: 2px 4px;'>${expStdFan}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Lights/Shades:</b></td><td style='padding: 2px 4px;'>${expLights}</td></tr>
-                            <tr style='border-bottom: 1px solid #ddd;'><td style='padding: 2px 4px; white-space: nowrap;'><b>Audio Track:</b></td><td style='padding: 2px 4px;'>${expAudio}</td></tr>
-                        </table>
-                        
-                        <div style='font-weight:bold; font-size:12px; border-bottom:1px solid #eee; margin-bottom:2px;'>7-Day Sleep History:</div>
-                        ${histHtml}
+                    dashHTML += """
+                    <div style='background-color:${titleColor}; color:white; padding: 8px; font-weight:bold; font-size: 14px; border-radius: 4px 4px 0 0;'>
+                        ${rName} - ${isAsleep ? '🌙 ASLEEP' : '☀️ AWAKE'}
                     </div>
+                    <table class="dash-table" style="margin-top: 0; margin-bottom: 5px;">
+                        <tr><td colspan='2' class="dash-subhead">Live Environment</td></tr>
+                        <tr><td class="dash-hl">Current Temp</td><td class="dash-val">${cTemp != null ? cTemp + '°F' : '--'}</td></tr>
+                        <tr><td class="dash-hl">Humidity</td><td class="dash-val">${cHum != null ? cHum + '%' : '--'}</td></tr>
+                        <tr><td class="dash-hl">Environment</td><td class="dash-val">${sleepQuality}</td></tr>
+                        <tr><td class="dash-hl">Tonight's Audio</td><td class="dash-val"><span style='font-size:10px; font-family:monospace; word-break:break-all;'>${tonightTrack}</span></td></tr>
+                        
+                        <tr><td colspan='2' class="dash-subhead">Expected States</td></tr>
+                        <tr><td class="dash-hl">Ceiling Fan</td><td class="dash-val">${expCeiling}</td></tr>
+                        <tr><td class="dash-hl">Standard Fans</td><td class="dash-val">${expStdFan}</td></tr>
+                        <tr><td class="dash-hl">Lights/Shades</td><td class="dash-val">${expLights}</td></tr>
+                        <tr><td class="dash-hl">Audio Track</td><td class="dash-val">${expAudio}</td></tr>
+                    </table>
+                    
+                    <table class="dash-table" style="margin-top: 0;">
+                        <thead><tr><th>Date</th><th>Recorded Sleep Duration</th></tr></thead>
+                        <tbody>
                     """
-                    paragraph dashHTML
+                    
+                    def histList = state."sleepHistory${i}" ?: []
+                    if (histList.size() > 0) {
+                        histList.each { entry ->
+                            dashHTML += "<tr><td>${entry.date}</td><td><b>${entry.duration}</b></td></tr>"
+                        }
+                    } else {
+                        dashHTML += "<tr><td colspan='2' style='color:#888;'><i>No history recorded yet.</i></td></tr>"
+                    }
+                    dashHTML += "</tbody></table>"
                 }
             }
-            if (!hasConfiguredRooms) paragraph "<i>Please enable and configure a room below to populate the dashboard.</i>"
+            
+            if (hasConfiguredRooms) {
+                paragraph dashHTML
+            } else {
+                paragraph dashHTML + "<i>Please enable and configure a room below to populate the dashboard.</i>"
+            }
         }
         
         section("<b>Command History (Last 20)</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a transparent, rolling log of every command the system evaluates and sends.</div>"
             def logList = state.eventLog ?: []
             if (logList.size() > 0) {
-                def logHtml = "<div style='background-color:#fdfdfd; color:#333; border: 1px solid #ccc; padding:6px; border-radius:5px; font-family:monospace; font-size:11px; overflow-y:auto; max-height:200px; line-height:1.2;'>"
-                logList.each { entry ->
-                    logHtml += "${entry}<br><div style='border-bottom:1px solid #eee; margin:2px 0;'></div>"
-                }
-                logHtml += "</div>"
-                paragraph logHtml
+                def logHtml = logList.join("<br>")
+                paragraph "<span style='font-size: 13px; font-family: monospace;'>${logHtml}</span>"
             } else {
                 paragraph "<i>No commands logged yet. Turn a Good Night switch on to begin tracking.</i>"
             }
+            input "clearLogBtn", "button", title: "Clear Command History"
         }
 
-        section("<b>Global Settings & Logs</b>") {
+        section("<b>Global Settings & Logs</b>", hideable: true, hidden: true) {
             input "enablePeriodicEnforcement", "bool", title: "<b>Enable Periodic State Enforcement</b><br><i>(Checks every 10 mins to ensure lights are off, fans are correct, and mode is synced)</i>", defaultValue: true
             input "enableWiggle", "bool", title: "<b>Enable Hourly Fan Wiggle (Self-Healing)</b><br><i>(Hourly routine to drop active RF fan speeds by one tier and bump them back to verify sync)</i>", defaultValue: true
             input "txtLogEnable", "bool", title: "Enable Action Logging", defaultValue: true
         }
         
-        section("<b>Global Handshake: Mode Synchronization</b>") {
+        section("<b>Global Handshake: Mode Synchronization</b>", hideable: true, hidden: true) {
             input "enableGlobalMode", "bool", title: "<b>Enable Global Mode Sync</b>", submitOnChange: true
             if (enableGlobalMode) {
                 paragraph "<b>Entering Night Mode</b>"
@@ -272,15 +278,25 @@ def mainPage() {
                     }
                     
                     paragraph "<b>3. Sonos Audio Polish</b>"
-                    input "roomSpeaker${i}", "capability.audioNotification", title: "Sonos Speaker", required: false
+                    input "roomSpeaker${i}", "capability.musicPlayer", title: "Sonos Speaker", required: false
                     input "audioVolume${i}", "number", title: "Fixed Nighttime Volume (1-100)", required: false, defaultValue: 15
                     input "audioTimer${i}", "number", title: "Sleep Timer: Stop audio after X minutes (Leave blank for continuous)", required: false
                     
-                    input "audioUri${i}_1", "text", title: "Audio URI 1", required: false
-                    input "audioUri${i}_2", "text", title: "Audio URI 2", required: false
-                    input "audioUri${i}_3", "text", title: "Audio URI 3", required: false
-                    input "audioUri${i}_4", "text", title: "Audio URI 4", required: false
-                    input "audioUri${i}_5", "text", title: "Audio URI 5", required: false
+                    input "audioSourceType${i}", "enum", title: "Audio Source Type", options: ["uri":"Direct Audio URIs", "switch":"Sonos Favorite Virtual Switches"], defaultValue: "uri", submitOnChange: true
+                    
+                    if ((settings["audioSourceType${i}"] ?: "uri") == "uri") {
+                        input "audioUri${i}_1", "text", title: "Audio URI 1", required: false
+                        input "audioUri${i}_2", "text", title: "Audio URI 2", required: false
+                        input "audioUri${i}_3", "text", title: "Audio URI 3", required: false
+                        input "audioUri${i}_4", "text", title: "Audio URI 4", required: false
+                        input "audioUri${i}_5", "text", title: "Audio URI 5", required: false
+                    } else {
+                        input "audioSwitch${i}_1", "capability.switch", title: "Favorite Switch 1", required: false
+                        input "audioSwitch${i}_2", "capability.switch", title: "Favorite Switch 2", required: false
+                        input "audioSwitch${i}_3", "capability.switch", title: "Favorite Switch 3", required: false
+                        input "audioSwitch${i}_4", "capability.switch", title: "Favorite Switch 4", required: false
+                        input "audioSwitch${i}_5", "capability.switch", title: "Favorite Switch 5", required: false
+                    }
                 }
             }
         }
@@ -294,6 +310,9 @@ def mainPage() {
 def appButtonHandler(btn) {
     if (btn == "refreshDataBtn") {
         logInfo("Manual UI Data Refresh Triggered.")
+    } else if (btn == "clearLogBtn") {
+        state.eventLog = []
+        logInfo("User manually cleared the command history log.")
     }
 }
 
@@ -376,7 +395,7 @@ def initialize() {
             }
             
             if (!state."sleepHistory${i}") state."sleepHistory${i}" = []
-            prepNextUri(i)
+            prepNextAudio(i)
         }
     }
     
@@ -879,19 +898,43 @@ def executeRoomGoodNight(roomNum) {
         logInfo("${rName}: Shade contact is open. Closing shade.")
     }
     
+    // --- UPDATED AUDIO EXECUTION LOGIC ---
     def speaker = settings["roomSpeaker${roomNum}"]
-    def trackToPlay = state."nextUri${roomNum}"
+    def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
     
-    if (speaker && trackToPlay) {
+    if (speaker) {
         def setVol = settings["audioVolume${roomNum}"]
         if (setVol != null) {
             speaker.setVolume(setVol)
             logInfo("${rName}: Speaker volume forced to ${setVol}%.")
         }
         
-        speaker.playTrack(trackToPlay)
-        logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
-        state."lastUri${roomNum}" = trackToPlay 
+        if (audioType == "uri") {
+            def trackToPlay = state."nextUri${roomNum}"
+            if (trackToPlay) {
+                speaker.playTrack(trackToPlay)
+                logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
+                state."lastUri${roomNum}" = trackToPlay
+            }
+        } else if (audioType == "switch") {
+            def switchToTurnOnId = state."nextSwitchId${roomNum}"
+            if (switchToTurnOnId) {
+                def targetSw = null
+                for(int u = 1; u <= 5; u++) {
+                    def sw = settings["audioSwitch${roomNum}_${u}"]
+                    if (sw?.id == switchToTurnOnId) {
+                        targetSw = sw
+                        break
+                    }
+                }
+                
+                if (targetSw) {
+                    targetSw.on()
+                    logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
+                    state."lastSwitchId${roomNum}" = switchToTurnOnId
+                }
+            }
+        }
         
         def sTimer = settings["audioTimer${roomNum}"]
         if (sTimer) {
@@ -951,7 +994,7 @@ def endRoomGoodNight(roomNum) {
         runIn(30, "turnOffHoldReleaseRoom${roomNum}")
     }
     
-    prepNextUri(roomNum) 
+    prepNextAudio(roomNum) 
 }
 
 def turnOffHoldReleaseRoom1() { executeHoldReleaseOff(1) }
@@ -1080,25 +1123,55 @@ def executeDelayedFanSpeed(roomNum) {
     }
 }
 
-def prepNextUri(roomNum) {
-    def uris = []
-    for(int u = 1; u <= 5; u++) {
-        def uri = settings["audioUri${roomNum}_${u}"]
-        if (uri) uris << uri
-    }
+// --- UPDATED AUDIO ROTATION ENGINE ---
+def prepNextAudio(roomNum) {
+    def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
     
-    if (uris.size() > 0) {
-        if (uris.size() == 1) {
-            state."nextUri${roomNum}" = uris[0]
-        } else {
-            def lastPlayed = state."lastUri${roomNum}"
-            def availableUris = uris.findAll { it != lastPlayed }
-            if (availableUris.size() == 0) availableUris = uris 
-            def chosen = availableUris[new Random().nextInt(availableUris.size())]
-            state."nextUri${roomNum}" = chosen
+    if (audioType == "uri") {
+        state.remove("nextSwitchId${roomNum}")
+        
+        def uris = []
+        for(int u = 1; u <= 5; u++) {
+            def uri = settings["audioUri${roomNum}_${u}"]
+            if (uri) uris << uri
         }
-    } else {
+        
+        if (uris.size() > 0) {
+            if (uris.size() == 1) {
+                state."nextUri${roomNum}" = uris[0]
+            } else {
+                def lastPlayed = state."lastUri${roomNum}"
+                def availableUris = uris.findAll { it != lastPlayed }
+                if (availableUris.size() == 0) availableUris = uris 
+                def chosen = availableUris[new Random().nextInt(availableUris.size())]
+                state."nextUri${roomNum}" = chosen
+            }
+        } else {
+            state.remove("nextUri${roomNum}")
+        }
+        
+    } else if (audioType == "switch") {
         state.remove("nextUri${roomNum}")
+        
+        def switches = []
+        for(int u = 1; u <= 5; u++) {
+            def sw = settings["audioSwitch${roomNum}_${u}"]
+            if (sw) switches << sw.id
+        }
+        
+        if (switches.size() > 0) {
+            if (switches.size() == 1) {
+                state."nextSwitchId${roomNum}" = switches[0]
+            } else {
+                def lastPlayed = state."lastSwitchId${roomNum}"
+                def availableSwitches = switches.findAll { it != lastPlayed }
+                if (availableSwitches.size() == 0) availableSwitches = switches 
+                def chosen = availableSwitches[new Random().nextInt(availableSwitches.size())]
+                state."nextSwitchId${roomNum}" = chosen
+            }
+        } else {
+            state.remove("nextSwitchId${roomNum}")
+        }
     }
 }
 
