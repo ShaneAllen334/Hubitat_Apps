@@ -728,9 +728,7 @@ def verifyTurnOff() {
     if (isSmartBulbOnRelay && turnOffRelay) {
         anyOn = (relaySwitch?.currentValue("switch") == "on")
     } else {
-        anyOn = (switches?.any { it.currentValue("switch") == "on" } || 
-                 dimmers?.any { it.currentValue("switch") == "on" } || 
-                 colorBulbs?.any { it.currentValue("switch") == "on" })
+        anyOn = (switches?.any { it.currentValue("switch") == "on" } || dimmers?.any { it.currentValue("switch") == "on" } || colorBulbs?.any { it.currentValue("switch") == "on" })
     }
     
     if (isPrimaryActive() || isKeepAliveActive()) {
@@ -861,8 +859,7 @@ def clearManualOverride() {
 
 def getZoneStatus() {
     def isLightOn = (switches?.any { it.currentValue("switch") == "on" } || 
-                     dimmers?.any { it.currentValue("switch") == "on" } || 
-                     colorBulbs?.any { it.currentValue("switch") == "on" })
+                     dimmers?.any { it.currentValue("switch") == "on" } || colorBulbs?.any { it.currentValue("switch") == "on" })
     
     def primaryActive = isPrimaryActive()
     def keepAliveActive = isKeepAliveActive()
@@ -958,7 +955,8 @@ def getZoneStatus() {
         status: statusText,
         lastTrigger: enableTriggerTracking ? state.lastTriggerSource : null,
         timer: timerText,
-        health: healthData
+        health: healthData,
+        roi: enableTelemetry ? calculateLiveSavings() : null
     ]
 }
 
@@ -977,5 +975,13 @@ def dynamicCTUpdate(newCT) {
         if (refreshNeeded) {
             runIn(2, "executeRefresh")
         }
+    }
+}
+
+def resetROI() {
+    state.lifetimeSavings = 0.0
+    state.todayOnMillis = 0
+    if (state.onTimeStart) {
+        state.onTimeStart = now() 
     }
 }
