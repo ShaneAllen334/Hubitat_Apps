@@ -449,7 +449,7 @@ def mainPage() {
                     paragraph "<b>Last Filter Change:</b> ${state.lastFilterDate ?: 'Not Recorded'}"
                     input "resetFilter", "button", title: "Record Filter Change (Resets Life to 100%)"
                 }
-                  
+                   
                 paragraph "<hr>"
                 paragraph "<b>HVAC System Service Tracking</b>"
                 input "hvacCompanyName", "text", title: "HVAC Company Name", required: false
@@ -1093,7 +1093,7 @@ def evaluateSystem() {
             def buffer = setpointBuffer ?: 2.0
             
             if (state.currentAction == "cooling") {
-                if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
+                 if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
                     targetCool = thermostat.currentValue("coolingSetpoint").toBigDecimal()
                     syncMessage += " [Compressor Protection: Lockout Prevented Setpoint Rise]"
                 }
@@ -1199,6 +1199,7 @@ def evaluateSystem() {
 def compressorWatchdog() {
     if (state.currentAction in ["cooling", "heating"] && state.cycleStartTime) {
         def runMins = (now() - state.cycleStartTime) / 60000.0
+    
         if (runMins < (minRunTime ?: 10)) {
             evaluateSystem() 
             runIn(60, compressorWatchdog)
@@ -1210,7 +1211,7 @@ def compressorWatchdog() {
 
 def contactHandler(evt) { 
     def anyOpen = contactSensors ? contactSensors.any { it.currentValue("contact") == "open" } : false
-    
+ 
     if (anyOpen && state.freeCoolState == "pending") {
         logAction("Windows opened by user. Fully engaging Free Cooling.")
         unschedule(freeCoolTimeoutHandler)
@@ -1361,9 +1362,9 @@ def renderCostDashboard() {
         def auxStyle = aMins > 0 ? "color:red; font-weight:bold;" : ""
         def saveStyle = fcSavingsCost > 0 ? "color:green; font-weight:bold;" : "color:gray;"
         
-        html += "<tr><td>${date}</td><td>${String.format('%.1f', cMins/60.0)}h</td><td>${String.format('%.1f', hMins/60.0)}h</td><td style='${auxStyle}'>${String.format('%.1f', aMins/60.0)}h</td><td>&#36;${String.format('%.2f', dayCost)}</td><td style='${saveStyle}'>+&#36;${String.format('%.2f', fcSavingsCost)}</td></tr>"
+        html += "<tr><td>${date}</td><td>${String.format('%.1f', cMins/60.0)}h</td><td>${String.format('%.1f', hMins/60.0)}h</td><td style='${auxStyle}'>${String.format('%.1f', aMins/60.0)}h</td><td style='color:red;'>&#36;${String.format('%.2f', dayCost)}</td><td style='${saveStyle}'>+&#36;${String.format('%.2f', fcSavingsCost)}</td></tr>"
     }
-    html += "<tr><td colspan='4' style='text-align:right;'><b>7-Day Totals:</b></td><td><b>&#36;${String.format('%.2f', totalCost)}</b></td><td style='color:green;'><b>+&#36;${String.format('%.2f', totalSavings)}</b></td></tr>"
+    html += "<tr><td colspan='4' style='text-align:right;'><b>7-Day Totals:</b></td><td style='color:red;'><b>&#36;${String.format('%.2f', totalCost)}</b></td><td style='color:green;'><b>+&#36;${String.format('%.2f', totalSavings)}</b></td></tr>"
     html += "</tbody></table>"
     return html
 }
@@ -1508,7 +1509,7 @@ def trackRecentCycle(action, runMinutes) {
     
     state.recentCycles.add(0, cycleLog)
     if (state.recentCycles.size() > 10) {
-          state.recentCycles = state.recentCycles[0..9]
+           state.recentCycles = state.recentCycles[0..9]
     }
 }
 
