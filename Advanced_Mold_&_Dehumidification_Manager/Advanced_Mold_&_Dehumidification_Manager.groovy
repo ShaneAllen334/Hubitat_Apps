@@ -676,6 +676,10 @@ def evaluateZones() {
             } else {
                 calculateFinancials(i, false)
                 state["z${i}LogicNote"] = "Idle"
+                
+                // --- THE FIX: Ensure cycle memory is wiped even if an external app turned it off ---
+                state["z${i}CycleStart"] = null 
+                state["z${i}AppControlled"] = false 
             }
         }
         
