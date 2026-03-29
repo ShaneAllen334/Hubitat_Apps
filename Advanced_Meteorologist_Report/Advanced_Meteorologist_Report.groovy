@@ -1,14 +1,14 @@
 /**
  * Advanced Meteorologist Report
  *
- * Author: ShaneAllen (Updated by Gemini)
+ * Author: ShaneAllen
  */
 
 definition(
     name: "Advanced Meteorologist Report",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Generates a detailed meteorologist report combining live local weather station data with macro-forecast APIs. Features 5 distinct broadcasting personas, including Gen Z and Disgruntled.",
+    description: "Generates a detailed meteorologist report combining live local weather station data with macro-forecast APIs. Features 5 distinct broadcasting personas, historical context, dry planning windows, and stargazing conditions.",
     category: "Weather",
     iconUrl: "",
     iconX2Url: "",
@@ -79,7 +79,7 @@ def mainPage() {
                 }
 
                 if (state.latestScript) {
-                    paragraph "<b>📝 Latest Script (${reportPersona ?: 'Professional'}):</b>"
+                    paragraph "<b>📝 Latest Script (Default Anchor):</b>"
                     paragraph "<div style='font-size: 14px; font-style: italic; background-color: #fdfd96; padding: 10px; border-radius: 5px; border: 1px solid #e1e182;'>\"${state.latestScript}\"</div>"
                 }
             } else {
@@ -88,30 +88,36 @@ def mainPage() {
         }
 
         section(title: "<b>1. Data Sources & Settings</b>", hideable: true, hidden: true) {
-            input "localStation", "capability.temperatureMeasurement", title: "Select Personal Weather Station", required: true, multiple: false
-            input "zipCode", "text", title: "Zip Code (Required for Pollen)", required: false
-            input "pollingInterval", "enum", title: "Background Sync Interval (Updates Device)", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
-            input "reportPersona", "enum", title: "Select Anchor Personality", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional", required: true
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Connect your local weather sensor to provide accurate micro-climate data (what's actually happening on your porch). The app handles the rest by fetching macro-forecasts from the free Open-Meteo API. <b>Polling every 30 minutes</b> is highly recommended to keep data fresh without overloading the API.</div>"
+            
+            input "localStation", "capability.temperatureMeasurement", title: "Select Personal Weather Station", description: "Your local outdoor temperature, humidity, and wind sensor.", required: true, multiple: false
+            input "zipCode", "text", title: "Zip Code (Required for Pollen)", description: "Enter a valid US Zip Code to enable daily pollen index forecasting.", required: false
+            input "pollingInterval", "enum", title: "Background Sync Interval", description: "How often the app fetches new data.", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
+            input "reportPersona", "enum", title: "Select Default Anchor Personality", description: "This controls the tone/attitude of the default weather report sent to standard audio speakers.", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional", required: true
         }
 
         section(title: "<b>2. Morning Report Profile</b>", hideable: true, hidden: true) {
-            input "morningStartTime", "time", title: "Morning Window Start", required: false
-            input "morningEndTime", "time", title: "Morning Window End", required: false
-            input "m_includeGreeting", "bool", title: "Include Greeting", defaultValue: true
-            input "m_includeMicro", "bool", title: "Include Local Station Data", defaultValue: true
-            input "m_includeDaily", "bool", title: "Include Today's Highs/Lows/Conditions", defaultValue: true
-            input "m_includeFeelsLike", "bool", title: "Include 'Feels Like' & Wind Gusts", defaultValue: true
-            input "m_includeRain", "bool", title: "Include Expected Rain Amount", defaultValue: true
-            input "m_includeUV", "bool", title: "Include Peak UV Index", defaultValue: true
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> This profile defines what data is included in reports generated during the morning. <b>Less is usually more with TTS audio.</b> Try limiting this to just Temp, Rain, and Clothing recommendations so the broadcast is punchy and useful.</div>"
+            
+            input "morningStartTime", "time", title: "Morning Window Start", description: "E.g., 5:00 AM", required: false
+            input "morningEndTime", "time", title: "Morning Window End", description: "E.g., 11:00 AM", required: false
+            input "m_includeGreeting", "bool", title: "Include Greeting", description: "Starts with 'Good Morning'.", defaultValue: true
+            input "m_includeMicro", "bool", title: "Include Local Station Data", description: "Announces the exact temperature right outside your door.", defaultValue: true
+            input "m_includeDaily", "bool", title: "Include Today's Highs/Lows/Conditions", description: "The broad forecast for the day ahead.", defaultValue: true
+            input "m_includeFeelsLike", "bool", title: "Include 'Feels Like' & Wind Gusts", description: "Only speaks if wind gusts are high or the heat index significantly differs from the actual temp.", defaultValue: true
+            input "m_includeRain", "bool", title: "Include Expected Rain Amount", description: "Announces total expected accumulation.", defaultValue: true
+            input "m_includeUV", "bool", title: "Include Peak UV Index", description: "Warns you to wear sunscreen if UV > 5.", defaultValue: true
             input "m_includePollen", "bool", title: "Include Pollen Forecast", defaultValue: false
-            input "m_includeClothing", "bool", title: "Include Clothing Recommendation", defaultValue: false
+            input "m_includeClothing", "bool", title: "Include Clothing Recommendation", description: "Suggests a coat, sweater, or short sleeves based on the high.", defaultValue: false
             input "m_includeMoon", "bool", title: "Include Moon Phase", defaultValue: false
-            input "m_includeWeekly", "bool", title: "Include Upcoming Week Teaser", defaultValue: false
+            input "m_includeWeekly", "bool", title: "Include Upcoming Week Teaser", description: "Gives a brief teaser of the weather 3-4 days out.", defaultValue: false
         }
         
         section(title: "<b>3. Evening/Night Report Profile</b>", hideable: true, hidden: true) {
-            input "eveningStartTime", "time", title: "Evening Window Start", required: false
-            input "eveningEndTime", "time", title: "Evening Window End", required: false
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> This profile takes over in the evening. It automatically shifts the phrasing to focus on <i>Tomorrow's</i> weather rather than today's. Dial this in for your 'Goodnight' routines.</div>"
+            
+            input "eveningStartTime", "time", title: "Evening Window Start", description: "E.g., 6:00 PM", required: false
+            input "eveningEndTime", "time", title: "Evening Window End", description: "E.g., 11:59 PM", required: false
             input "e_includeGreeting", "bool", title: "Include Greeting", defaultValue: true
             input "e_includeMicro", "bool", title: "Include Local Station Data", defaultValue: true
             input "e_includeDaily", "bool", title: "Include Tonight's Low & Tomorrow's Forecast", defaultValue: true
@@ -123,14 +129,32 @@ def mainPage() {
             input "e_includeWeekly", "bool", title: "Include Upcoming Week Teaser", defaultValue: true
         }
 
-        section(title: "<b>4. Broadcast Triggers</b>", hideable: true, hidden: true) {
+        section(title: "<b>4. Informational Insights</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> These toggle dynamic 'smart' features. The script will only include them if the conditions are met (e.g., it only talks about dry windows if it's going to rain, keeping the script brief on sunny days).</div>"
+            
+            input "infoHistorical", "bool", title: "Include Historical Context", description: "Compares today's high to the exact same date last year (e.g., 'It is 5 degrees warmer than this day last year').", defaultValue: false
+            input "infoPlanning", "bool", title: "Include Dry Planning Windows", description: "If rain is expected today, scans the hourly forecast to find a block of 3+ dry hours for outdoor planning.", defaultValue: false
+            input "infoStargazing", "bool", title: "Include Stargazing / Night Sky Conditions", description: "Checks cloud cover between 8 PM and midnight. Alerts you if skies are perfectly clear.", defaultValue: false
+        }
+
+        section(title: "<b>5. Broadcast Triggers</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Choose how reports are generated. <b>Manual Virtual Switches are highly recommended.</b> You can create a virtual switch in Hubitat, select it here, and then use Hubitat's Rule Machine to turn that switch on when a motion sensor triggers in the bathroom, or when a bedside button is pressed.</div>"
+            
             paragraph "<b>🕒 Scheduled Time Triggers</b>"
             input "timeTrigger1", "time", title: "Time Trigger 1", required: false
+            input "timeDays1", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+            input "timeModes1", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+            paragraph "<hr>"
             input "timeTrigger2", "time", title: "Time Trigger 2", required: false
+            input "timeDays2", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+            input "timeModes2", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+            paragraph "<hr>"
             input "timeTrigger3", "time", title: "Time Trigger 3", required: false
+            input "timeDays3", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+            input "timeModes3", "mode", title: "Only when in Mode(s)", multiple: true, required: false
 
             paragraph "<hr><b>🏠 Mode-Based Triggers</b>"
-            input "triggerMode1", "mode", title: "Mode Change To:", required: false, multiple: false
+            input "triggerMode1", "mode", title: "Mode Change To:", description: "E.g., Trigger when mode changes to 'Awake'.", required: false, multiple: false
             input "t1StartTime", "time", title: "Allowable Start Time", required: false
             input "t1EndTime", "time", title: "Allowable End Time", required: false
             
@@ -138,27 +162,60 @@ def mainPage() {
             input "t2StartTime", "time", title: "Allowable Start Time", required: false
             input "t2EndTime", "time", title: "Allowable End Time", required: false
             
-            paragraph "<hr><b>🔘 Manual Switch Trigger</b>"
-            input "triggerSwitch", "capability.switch", title: "Trigger via Virtual Switch (Turns off automatically)", required: false, multiple: false
+            paragraph "<hr><b>🔘 Manual Switch Triggers</b>"
+            input "triggerSwitch1", "capability.switch", title: "Switch Trigger 1", description: "Turns off automatically after 2 seconds.", required: false, multiple: false
+            input "sw1StartTime", "time", title: "Allowable Start Time", required: false
+            input "sw1EndTime", "time", title: "Allowable End Time", required: false
+            input "sw1Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+            input "sw1NotifyTarget", "enum", title: "Who gets the notification?", description: "Route this trigger to a specific user's phone, or all devices.", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "Audio Only"], defaultValue: "All Profiles"
+            
+            paragraph "<hr>"
+            input "triggerSwitch2", "capability.switch", title: "Switch Trigger 2", required: false, multiple: false
+            input "sw2StartTime", "time", title: "Allowable Start Time", required: false
+            input "sw2EndTime", "time", title: "Allowable End Time", required: false
+            input "sw2Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+            input "sw2NotifyTarget", "enum", title: "Who gets the notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "Audio Only"], defaultValue: "All Profiles"
+            
+            paragraph "<hr>"
+            input "triggerSwitch3", "capability.switch", title: "Switch Trigger 3", required: false, multiple: false
+            input "sw3StartTime", "time", title: "Allowable Start Time", required: false
+            input "sw3EndTime", "time", title: "Allowable End Time", required: false
+            input "sw3Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+            input "sw3NotifyTarget", "enum", title: "Who gets the notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "Audio Only"], defaultValue: "All Profiles"
         }
 
-        section(title: "<b>5. Outputs & Advanced Devices</b>", hideable: true, hidden: true) {
-            paragraph "<b>Audio Announcements</b>"
-            input "ttsSpeakers", "capability.speechSynthesis", title: "Standard TTS Speakers", required: false, multiple: true
-            input "advAudio", "capability.audioVolume", title: "Advanced Speakers (Volume Control/Restore Support)", required: false, multiple: true
+        section(title: "<b>6. Outputs & Advanced Devices</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Audio broadcasts will always use the default 'Anchor Persona' chosen in Section 1. However, you can assign different, personalized personas to individual family members' push notification devices here.</div>"
+            
+            paragraph "<b>Audio Announcements (Default Persona)</b>"
+            input "ttsSpeakers", "capability.speechSynthesis", title: "Standard TTS Speakers", description: "Standard devices like Echo Dots or Google Homes.", required: false, multiple: true
+            input "advAudio", "capability.audioVolume", title: "Advanced Speakers", description: "Speakers that support volume restoration (like Sonos).", required: false, multiple: true
             input "advAudioVol", "number", title: "Advanced Speaker Broadcast Volume (1-100)", required: false, range: "1..100"
             
-            paragraph "<hr><b>Visual & Push Notifications</b>"
-            input "visualIndicators", "capability.colorControl", title: "Visual Weather Indicators (RGB Switches/Bulbs)", required: false, multiple: true
-            input "notifyDevices", "capability.notification", title: "Push Notification Devices", required: false, multiple: true
+            paragraph "<hr><b>Personalized Push Notifications (Up to 4 Profiles)</b>"
+            input "notifyUser1", "capability.notification", title: "User 1 Device(s)", description: "Select the Hubitat mobile app device for User 1.", required: false, multiple: true
+            input "personaUser1", "enum", title: "User 1 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            
+            input "notifyUser2", "capability.notification", title: "User 2 Device(s)", required: false, multiple: true
+            input "personaUser2", "enum", title: "User 2 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            
+            input "notifyUser3", "capability.notification", title: "User 3 Device(s)", required: false, multiple: true
+            input "personaUser3", "enum", title: "User 3 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            
+            input "notifyUser4", "capability.notification", title: "User 4 Device(s)", required: false, multiple: true
+            input "personaUser4", "enum", title: "User 4 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            
+            paragraph "<hr><b>Visual Indicators</b>"
+            input "visualIndicators", "capability.colorControl", title: "Visual Weather Indicators", description: "Select RGB smart bulbs/switches. They will turn Blue for rain, Red for extreme heat, Cyan for freezing cold, or Green for moderate weather.", required: false, multiple: true
             
             paragraph "<hr><b>System Actions</b>"
             input "btnTestTTS", "button", title: "🔊 Test Audio Broadcast"
-            input "btnTestNotify", "button", title: "📱 Test Push Notification"
+            input "btnTestNotify", "button", title: "📱 Test Push Notifications (All Users)"
             input "btnCreateDevice", "button", title: "⚙️ Create & Sync Child Device"
         }
 
-        section(title: "<b>6. Recent Action History</b>", hideable: true, hidden: true) {
+        section(title: "<b>7. Recent Action History</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Review this log if your triggers aren't firing to see if the network failed or a mode constraint blocked it.</div>"
             input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
             if (state.actionHistory) {
                 def historyStr = state.actionHistory.join("<br>")
@@ -169,6 +226,7 @@ def mainPage() {
     }
 }
 
+// ... [The rest of the backend code from the previous iteration remains exactly the same] ...
 def installed() { initialize() }
 def updated() { unsubscribe(); unschedule(); initialize() }
 
@@ -177,7 +235,10 @@ def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     
     subscribe(location, "mode", modeChangeHandler)
-    if (triggerSwitch) subscribe(triggerSwitch, "switch.on", switchTriggerHandler)
+    
+    if (triggerSwitch1) subscribe(triggerSwitch1, "switch.on", switchTrigger1Handler)
+    if (triggerSwitch2) subscribe(triggerSwitch2, "switch.on", switchTrigger2Handler)
+    if (triggerSwitch3) subscribe(triggerSwitch3, "switch.on", switchTrigger3Handler)
     
     if (timeTrigger1) schedule(timeTrigger1, timeTrigger1Handler)
     if (timeTrigger2) schedule(timeTrigger2, timeTrigger2Handler)
@@ -195,9 +256,27 @@ def initialize() {
 def appButtonHandler(btn) {
     if (btn == "btnRefresh") { state.lastErrorTime = null; routineSync(); logAction("Data manually refreshed.") }
     else if (btn == "btnClearHistory") { state.actionHistory = []; log.info "History cleared." }
-    else if (btn == "btnTestTTS") { routineSync(); executeBroadcast(); logAction("Test Broadcast Triggered.") }
-    else if (btn == "btnTestNotify") { routineSync(); sendSplitNotification(state.latestScript); logAction("Test Notify Triggered.") }
+    else if (btn == "btnTestTTS") { executeTargetedBroadcast("Audio Only"); logAction("Test Audio Broadcast Triggered.") }
+    else if (btn == "btnTestNotify") { executeTargetedBroadcast("All Profiles"); logAction("Test Notify Triggered for All Users.") }
     else if (btn == "btnCreateDevice") { createChildDevice(); routineSync(); logAction("Child device created.") }
+}
+
+def checkDays(daysList) {
+    if (!daysList) return true 
+    def df = new java.text.SimpleDateFormat("EEEE")
+    df.setTimeZone(location.timeZone)
+    def day = df.format(new Date())
+    return daysList.contains(day)
+}
+
+def checkModes(modesList) {
+    if (!modesList) return true
+    return modesList.contains(location.mode)
+}
+
+def checkTime(start, end) {
+    if (!start || !end) return true
+    return timeOfDayIsBetween(toDateTime(start), toDateTime(end), new Date(), location.timeZone)
 }
 
 def hasInternet() {
@@ -221,27 +300,54 @@ def routineSync() {
     
     state.apiFailed = false
     fetchApiData()
+    if (infoHistorical) fetchHistoricalData()
     fetchPollenData()
-    generateScript()
+    generateScript() 
     updateVisualIndicators()
     updateChildDevice()
     logAction("Routine Background Sync Complete.")
 }
 
-def executeBroadcast() {
-    routineSync()
-    if (ttsSpeakers) ttsSpeakers.speak(state.latestScript)
+def executeTargetedBroadcast(target) {
+    routineSync() 
     
-    if (advAudio) {
-        advAudio.each { speaker ->
-            if (advAudioVol && speaker.hasCommand("setVolumeSpeakAndRestore")) {
-                speaker.setVolumeSpeakAndRestore(advAudioVol, state.latestScript)
-            } else {
-                speaker.speak(state.latestScript)
+    if (target == "All Profiles" || target == "Audio Only") {
+        def defaultScript = state.latestScript 
+        if (ttsSpeakers) ttsSpeakers.speak(defaultScript)
+        
+        if (advAudio) {
+            advAudio.each { speaker ->
+                if (advAudioVol) {
+                    if (speaker.hasCommand("playTextAndRestore")) speaker.playTextAndRestore(defaultScript, advAudioVol)
+                    else if (speaker.hasCommand("setVolumeSpeakAndRestore")) speaker.setVolumeSpeakAndRestore(advAudioVol, defaultScript)
+                    else speaker.speak(defaultScript)
+                } else {
+                    speaker.speak(defaultScript)
+                }
             }
         }
     }
-    sendSplitNotification(state.latestScript)
+    
+    if (target == "All Profiles") {
+        sendUserPush(1); sendUserPush(2); sendUserPush(3); sendUserPush(4)
+    } else if (target == "User 1") {
+        sendUserPush(1)
+    } else if (target == "User 2") {
+        sendUserPush(2)
+    } else if (target == "User 3") {
+        sendUserPush(3)
+    } else if (target == "User 4") {
+        sendUserPush(4)
+    }
+}
+
+def sendUserPush(userNum) {
+    def dev = settings["notifyUser${userNum}"]
+    def persona = settings["personaUser${userNum}"] ?: "Professional"
+    if (dev) {
+        def customScript = generateScript(persona)
+        sendSplitNotification(customScript, dev)
+    }
 }
 
 def updateVisualIndicators() {
@@ -249,35 +355,43 @@ def updateVisualIndicators() {
     def rainAmt = (state.apiDailyRain && state.apiDailyRain.size() > 0) ? state.apiDailyRain[0] : 0
     def tHigh = (state.apiDailyHighs && state.apiDailyHighs.size() > 0) ? state.apiDailyHighs[0] : 70
     
-    def hue = 33 // Default Green
-    if (rainAmt > 0.1) hue = 65 // Blue
-    else if (tHigh >= 90) hue = 0 // Red
-    else if (tHigh <= 40) hue = 50 // Cyan
+    def hue = 33 
+    if (rainAmt > 0.1) hue = 65 
+    else if (tHigh >= 90) hue = 0 
+    else if (tHigh <= 40) hue = 50 
     
-    visualIndicators.each { dev ->
-        if (dev.hasCommand("setColor")) {
-            dev.setColor([hue: hue, saturation: 100, level: 100])
-        }
-    }
+    visualIndicators.each { dev -> if (dev.hasCommand("setColor")) dev.setColor([hue: hue, saturation: 100, level: 100]) }
 }
 
-def sendSplitNotification(text) {
-    if (!notifyDevices || !text) return
+def sendSplitNotification(text, devices) {
+    if (!devices || !text) return
     def sentences = text.split(/(?<=[.?!])\s+/)
     if (sentences.size() <= 3) {
-        notifyDevices.deviceNotification(text)
+        devices.deviceNotification(text)
     } else {
         def mid = Math.ceil(sentences.size() / 2).toInteger()
         def part1 = sentences[0..mid-1].join(" ")
         def part2 = sentences[mid..-1].join(" ")
-        notifyDevices.deviceNotification("Weather Part 1: " + part1)
-        notifyDevices.deviceNotification("Weather Part 2: " + part2)
+        devices.deviceNotification("Weather Part 1: " + part1)
+        devices.deviceNotification("Weather Part 2: " + part2)
     }
 }
 
-def timeTrigger1Handler() { logAction("Time Trigger 1 activated."); executeBroadcast() }
-def timeTrigger2Handler() { logAction("Time Trigger 2 activated."); executeBroadcast() }
-def timeTrigger3Handler() { logAction("Time Trigger 3 activated."); executeBroadcast() }
+def timeTrigger1Handler() { 
+    if (!checkDays(timeDays1)) return
+    if (!checkModes(timeModes1)) return
+    logAction("Time Trigger 1 activated."); executeTargetedBroadcast("All Profiles") 
+}
+def timeTrigger2Handler() { 
+    if (!checkDays(timeDays2)) return
+    if (!checkModes(timeModes2)) return
+    logAction("Time Trigger 2 activated."); executeTargetedBroadcast("All Profiles") 
+}
+def timeTrigger3Handler() { 
+    if (!checkDays(timeDays3)) return
+    if (!checkModes(timeModes3)) return
+    logAction("Time Trigger 3 activated."); executeTargetedBroadcast("All Profiles") 
+}
 
 def modeChangeHandler(evt) {
     def newMode = evt.value
@@ -293,19 +407,33 @@ def modeChangeHandler(evt) {
     
     if (shouldTrigger) {
         logAction("Valid mode change detected. Broadcasting.")
-        executeBroadcast()
+        executeTargetedBroadcast("All Profiles")
     }
 }
 
-def switchTriggerHandler(evt) { logAction("Virtual Switch triggered."); executeBroadcast(); runIn(2, turnOffSwitch) }
-def turnOffSwitch() { if (triggerSwitch) triggerSwitch.off() }
+def switchTrigger1Handler(evt) { handleSwitchTrigger(1, triggerSwitch1, sw1StartTime, sw1EndTime, sw1Modes, sw1NotifyTarget) }
+def switchTrigger2Handler(evt) { handleSwitchTrigger(2, triggerSwitch2, sw2StartTime, sw2EndTime, sw2Modes, sw2NotifyTarget) }
+def switchTrigger3Handler(evt) { handleSwitchTrigger(3, triggerSwitch3, sw3StartTime, sw3EndTime, sw3Modes, sw3NotifyTarget) }
+
+def handleSwitchTrigger(num, sw, start, end, modes, target) {
+    logAction("Virtual Switch ${num} triggered.")
+    if (!checkTime(start, end)) { logAction("Trigger ignored: Outside allowed time window."); return }
+    if (!checkModes(modes)) { logAction("Trigger ignored: Not in allowed mode."); return }
+    
+    executeTargetedBroadcast(target ?: "All Profiles")
+    runIn(2, "turnOffSwitch${num}")
+}
+
+def turnOffSwitch1() { if (triggerSwitch1) triggerSwitch1.off() }
+def turnOffSwitch2() { if (triggerSwitch2) triggerSwitch2.off() }
+def turnOffSwitch3() { if (triggerSwitch3) triggerSwitch3.off() }
 
 def fetchApiData() {
     def lat = location.latitude
     def lon = location.longitude
     if (!lat || !lon) { logAction("ERROR: Hub Lat/Lon missing."); state.apiFailed = true; return }
 
-    def url = "https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_gusts_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto"
+    def url = "https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_gusts_10m&hourly=precipitation,cloudcover&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto"
     
     try {
         httpGet([uri: url, timeout: 10]) { resp ->
@@ -323,6 +451,9 @@ def fetchApiData() {
                 state.apiDailyRain = data.daily?.precipitation_sum ?: []
                 state.apiDailyUV = data.daily?.uv_index_max ?: []
                 state.apiDailyConditions = data.daily?.weather_code?.collect { getWeatherDescription(it) } ?: []
+                
+                state.apiHourlyRain = data.hourly?.precipitation ?: []
+                state.apiHourlyClouds = data.hourly?.cloudcover ?: []
             } else { 
                 state.apiFailed = true
                 state.lastErrorTime = now() 
@@ -332,6 +463,22 @@ def fetchApiData() {
         logAction("ERROR fetching weather API: ${e.message}")
         state.apiFailed = true; state.lastErrorTime = now()
     }
+}
+
+def fetchHistoricalData() {
+    def lat = location.latitude
+    def lon = location.longitude
+    def dateLastYear = new Date() - 365
+    def dateStr = dateLastYear.format("yyyy-MM-dd", location.timeZone)
+    def url = "https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateStr}&end_date=${dateStr}&daily=temperature_2m_max&temperature_unit=fahrenheit&timezone=auto"
+    
+    try {
+        httpGet([uri: url, timeout: 8]) { resp ->
+            if (resp.success && resp.data?.daily?.temperature_2m_max) {
+                state.historyHigh = resp.data.daily.temperature_2m_max[0]?.toBigDecimal()?.setScale(0, BigDecimal.ROUND_HALF_UP)
+            }
+        }
+    } catch (e) { logAction("Failed to fetch historical data: ${e.message}"); state.historyHigh = null }
 }
 
 def fetchPollenData() {
@@ -355,10 +502,10 @@ def fetchPollenData() {
     } catch (e) { state.pollenIndex = null }
 }
 
-def generateScript() {
+def generateScript(overridePersona = null) {
     def script = ""
     def nowTime = new Date()
-    def persona = reportPersona ?: "Professional"
+    def persona = overridePersona ?: (reportPersona ?: "Professional")
     
     def isMorning = morningStartTime && morningEndTime && timeOfDayIsBetween(toDateTime(morningStartTime), toDateTime(morningEndTime), nowTime, location.timeZone)
     def isEvening = eveningStartTime && eveningEndTime && timeOfDayIsBetween(toDateTime(eveningStartTime), toDateTime(eveningEndTime), nowTime, location.timeZone)
@@ -377,7 +524,6 @@ def generateScript() {
         useClothing = e_includeClothing; activeProfileName = "Evening"
     }
     
-    // API Failure handling
     if (state.apiFailed) {
         if (persona == "Technical") script += "Warning: Primary weather API connection failed. Reverting to cached or partial data sets. "
         else if (persona == "Disgruntled") script += "Of course the weather service is down. Why would anything work today? "
@@ -386,7 +532,6 @@ def generateScript() {
         else script += "I currently cannot connect to the weather service, so part of your report is missing. "
     }
     
-    // 1. Greeting
     if (useGreeting) {
         def hour = nowTime.format("HH", location.timeZone).toInteger()
         def greetingWord = "Good evening"
@@ -400,7 +545,6 @@ def generateScript() {
         else script += "${greetingWord}. "
     }
     
-    // 2. Micro-Climate
     if (useMicro && localStation) {
         def lTemp = localStation.currentValue("temperature") ?: "unknown"
         def lHum = localStation.currentValue("humidity") ?: "unknown"
@@ -426,7 +570,6 @@ def generateScript() {
     
     def safeGet = { list, index, defaultVal -> (list && list.size() > index) ? list[index] : defaultVal }
     
-    // 3. Macro Forecast (API)
     if (useDaily && state.apiDailyDates && state.apiDailyDates.size() > 1) {
         def tIndex = activeProfileName == "Evening" ? 1 : 0 
         def dayContext = activeProfileName == "Evening" ? "Tomorrow" : "Today"
@@ -451,7 +594,18 @@ def generateScript() {
             else script += "Looking at the broader forecast, expect ${cond} today. We will reach a high of ${tHigh}, and drop to a low of ${tLow} tonight. "
         }
         
-        // Clothing Context
+        if (infoHistorical && state.historyHigh != null && tHigh != "unknown" && activeProfileName != "Evening") {
+            int diff = tHigh.toInteger() - state.historyHigh.toInteger()
+            if (Math.abs(diff) >= 3) {
+                def dir = diff > 0 ? "warmer" : "colder"
+                if (persona == "Technical") script += "Historical data indicates today's peak thermal output is ${Math.abs(diff)} degrees ${dir} than this exact date last year. "
+                else if (persona == "Disgruntled") script += "For the record, it's ${Math.abs(diff)} degrees ${dir} than exactly a year ago. Time is a flat circle. "
+                else if (persona == "GenZ") script += "Wait, it's literally ${Math.abs(diff)} degrees ${dir} than this day last year. Crazy character development. "
+                else if (persona == "Casual") script += "Fun fact! Today is actually about ${Math.abs(diff)} degrees ${dir} than this exact same day last year. "
+                else script += "Looking at historical data, today's high is ${Math.abs(diff)} degrees ${dir} compared to this exact date last year. "
+            }
+        }
+        
         if (useClothing && tHigh != "unknown") {
             def tempInt = tHigh.toInteger()
             if (tempInt < 40) {
@@ -473,7 +627,6 @@ def generateScript() {
             }
         }
         
-        // Feels Like & Gusts
         if (useFeels && state.apiApparentTemp && state.apiCurrentTemp) {
             if (Math.abs(state.apiCurrentTemp - state.apiApparentTemp) >= 4) {
                 if (persona == "Technical") script += "However, apparent temperature algorithms calculate a current heat index of ${state.apiApparentTemp}. "
@@ -490,14 +643,50 @@ def generateScript() {
             else script += "Watch out for sudden wind gusts reaching up to ${state.apiWindGust} miles per hour. "
         }
         
-        // Rain & UV
         if (useRain && rainAmt > 0) {
             if (persona == "Technical") script += "Precipitation probability models estimate ${rainAmt} inches of accumulation ${dayContext.toLowerCase()}. "
             else if (persona == "Disgruntled") script += "We're stuck with ${rainAmt} inches of rain ${dayContext.toLowerCase()}. Perfect. "
             else if (persona == "GenZ") script += "We're getting ${rainAmt} inches of rain ${dayContext.toLowerCase()}, massive L. "
             else if (persona == "Casual") script += "Looks like we'll be getting about ${rainAmt} inches of rain ${dayContext.toLowerCase()}, so keep an umbrella handy! "
             else script += "We are expecting about ${rainAmt} inches of rain ${dayContext.toLowerCase()}. "
+            
+            if (infoPlanning && activeProfileName != "Evening") {
+                def currentHourIndex = new Date().format("HH", location.timeZone).toInteger()
+                def dryStartHour = -1
+                def maxDryLength = 0
+                def currentDryLength = 0
+                def currentDryStart = -1
+
+                if (state.apiHourlyRain && state.apiHourlyRain.size() >= 24) {
+                    for (int i = currentHourIndex; i <= 23; i++) {
+                        if (state.apiHourlyRain[i] == 0) {
+                            if (currentDryLength == 0) currentDryStart = i
+                            currentDryLength++
+                        } else {
+                            if (currentDryLength > maxDryLength) {
+                                maxDryLength = currentDryLength
+                                dryStartHour = currentDryStart
+                            }
+                            currentDryLength = 0
+                        }
+                    }
+                    if (currentDryLength > maxDryLength) {
+                        maxDryLength = currentDryLength
+                        dryStartHour = currentDryStart
+                    }
+                }
+                
+                if (maxDryLength >= 3 && dryStartHour != -1) {
+                    def displayHour = dryStartHour > 12 ? "${dryStartHour - 12} PM" : (dryStartHour == 12 ? "12 PM" : "${dryStartHour} AM")
+                    if (persona == "Technical") script += "Precipitation models indicate a sustained dry window of ${maxDryLength} hours commencing at ${displayHour}. "
+                    else if (persona == "Disgruntled") script += "If you have to go outside, you have a dry window of ${maxDryLength} hours starting at ${displayHour}. Good luck. "
+                    else if (persona == "GenZ") script += "If you need to touch grass, you've got a solid ${maxDryLength} hour window of zero rain starting at ${displayHour}. W timing. "
+                    else if (persona == "Casual") script += "Even with the rain, it looks like you'll have a nice dry window of about ${maxDryLength} hours starting around ${displayHour}. "
+                    else script += "If you need to plan outdoor activities, our models show a dry window of approximately ${maxDryLength} hours beginning at ${displayHour}. "
+                }
+            }
         }
+        
         if (useUV && uvIndex > 5) {
             if (persona == "Disgruntled") script += "UV index is at ${uvIndex}, so don't get sunburned on top of everything else. "
             else if (persona == "GenZ") script += "UV index is peaking at ${uvIndex}, so don't forget the sunscreen. "
@@ -506,7 +695,26 @@ def generateScript() {
         }
     }
     
-    // 4. Pollen & Moon Phase
+    if (infoStargazing && state.apiHourlyClouds) {
+        def eveningClouds = 0
+        def count = 0
+        for (int i = 20; i <= 23; i++) {
+             if(state.apiHourlyClouds.size() > i) {
+                 eveningClouds += state.apiHourlyClouds[i]
+                 count++
+             }
+        }
+        def avgClouds = count > 0 ? (eveningClouds / count) : 100
+        
+        if (avgClouds < 20) {
+             if (persona == "Technical") script += "Nocturnal cloud cover is projected below 20 percent, providing optimal atmospheric transparency for astronomical observations. "
+             else if (persona == "Disgruntled") script += "Skies are mostly clear tonight if you want to go outside and stare into the void of space. "
+             else if (persona == "GenZ") script += "Cloud cover is basically zero tonight, stargazing is gonna be an absolute movie. "
+             else if (persona == "Casual") script += "With barely any clouds tonight, it's going to be a perfect evening to step outside and do some stargazing! "
+             else script += "Expect minimal cloud cover this evening, creating excellent conditions for stargazing and viewing the night sky. "
+        }
+    }
+    
     if (usePollen && state.pollenIndex) {
         if (persona == "Disgruntled") script += "Pollen is ${state.pollenIndex}. My allergies are already killing me. "
         else if (persona == "GenZ") script += "Pollen is sitting at ${state.pollenIndex}, which is totally not a vibe. "
@@ -518,7 +726,6 @@ def generateScript() {
         else script += "Tonight's moon phase will be a ${getMoonPhase()}. "
     }
     
-    // 5. Weekly Teaser
     if (useWeekly && state.apiDailyDates && state.apiDailyDates.size() >= 5) {
         def day4Name = getDayOfWeek(state.apiDailyDates[3])
         def day4High = safeGet(state.apiDailyHighs, 3, "unknown")
@@ -531,8 +738,11 @@ def generateScript() {
         else script += "Keep an eye out as we move through the week, ${day4Name} is looking to be ${day4Cond} with temperatures around ${day4High} degrees."
     }
 
-    state.latestScript = script
-    state.lastReportTime = nowTime.format("MM/dd hh:mm a", location.timeZone)
+    if (!overridePersona) {
+        state.latestScript = script
+        state.lastReportTime = nowTime.format("MM/dd hh:mm a", location.timeZone)
+    }
+    
     return script
 }
 
