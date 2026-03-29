@@ -268,8 +268,14 @@ def initialize() {
     if (schoolRunSwitch) subscribe(schoolRunSwitch, "switch.on", schoolRunHandler)
     subscribe(location, "mode", modeHandler)
     
-    if (dockPlug1) subscribe(dockPlug1, "switch", dockPlugHandler)
-    if (dockPlug2) subscribe(dockPlug2, "switch", dockPlugHandler)
+    if (dockPlug1) {
+        subscribe(dockPlug1, "switch", dockPlugHandler)
+        if (dockPlug1.currentValue("switch") == "off" && !state.dock1OffTime) state.dock1OffTime = now()
+    }
+    if (dockPlug2) {
+        subscribe(dockPlug2, "switch", dockPlugHandler)
+        if (dockPlug2.currentValue("switch") == "off" && !state.dock2OffTime) state.dock2OffTime = now()
+    }
     
     for (int i = 1; i <= 12; i++) {
         if (settings["enableRoom_${i}"]) {
@@ -682,15 +688,19 @@ def batteryHandler(evt) {
 
 def dockPlugHandler(evt) {
     if (isAppPaused()) return
+    
+    // Safely grab the device ID regardless of driver quirks
+    String eId = evt.device?.id?.toString() ?: evt.deviceId?.toString()
+    
     if (evt.value == "off") {
-        if (evt.deviceId == dockPlug1?.id && !state.dock1OffTime) state.dock1OffTime = now()
-        if (evt.deviceId == dockPlug2?.id && !state.dock2OffTime) state.dock2OffTime = now()
+        if (eId == dockPlug1?.id && !state.dock1OffTime) state.dock1OffTime = now()
+        if (eId == dockPlug2?.id && !state.dock2OffTime) state.dock2OffTime = now()
     } else if (evt.value == "on") {
-        if (evt.deviceId == dockPlug1?.id && state.dock1OffTime) {
+        if (eId == dockPlug1?.id && state.dock1OffTime) {
             state.dock1OfflineHours = (state.dock1OfflineHours ?: 0.0) + ((now() - state.dock1OffTime) / 3600000.0)
             state.dock1OffTime = null
         }
-        if (evt.deviceId == dockPlug2?.id && state.dock2OffTime) {
+        if (eId == dockPlug2?.id && state.dock2OffTime) {
             state.dock2OfflineHours = (state.dock2OfflineHours ?: 0.0) + ((now() - state.dock2OffTime) / 3600000.0)
             state.dock2OffTime = null
         }
@@ -1218,6 +1228,7 @@ String buildDashboardHTML() {
             roomHtml += "</tr>"
         }
     }
+    
     roomHtml += "</table></div>"
     
     if (roomsExist) html += roomHtml
