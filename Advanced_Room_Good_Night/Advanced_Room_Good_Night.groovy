@@ -101,6 +101,7 @@ def mainPage() {
                     def expStdFan = "App Released"
                     def expLights = "App Released"
                     def expAudio = "App Released"
+                    def targetSpeedDisp = "N/A"
                     
                     if (isAsleep) {
                         expLights = "OFF"
@@ -117,8 +118,10 @@ def mainPage() {
                             if (cSet && settings["ceilingFanSwitch${i}"]) {
                                 if (fType == "on_off") {
                                     expCeiling = "Power: ON | Speed: N/A"
+                                    targetSpeedDisp = "N/A (On/Off)"
                                 } else {
                                     def tSpeed = calculateTargetSpeed(cTemp, cSet, delta, fType).toUpperCase()
+                                    targetSpeedDisp = tSpeed
                                     expCeiling = "Power: ON | Speed: ${tSpeed}"
                                 }
                             } else {
@@ -142,7 +145,8 @@ def mainPage() {
                         <tr><td class="dash-hl">Tonight's Audio</td><td class="dash-val"><span style='font-size:10px; font-family:monospace; word-break:break-all;'>${tonightTrack}</span></td></tr>
                         
                         <tr><td colspan='2' class="dash-subhead">Expected States</td></tr>
-                        <tr><td class="dash-hl">Ceiling Fan</td><td class="dash-val">${expCeiling}</td></tr>
+                        <tr><td class="dash-hl">Calculated Target Speed</td><td class="dash-val" style="color:#007bff; font-weight:bold;">${targetSpeedDisp}</td></tr>
+                        <tr><td class="dash-hl">Ceiling Fan Hardware</td><td class="dash-val">${expCeiling}</td></tr>
                         <tr><td class="dash-hl">Standard Fans</td><td class="dash-val">${expStdFan}</td></tr>
                         <tr><td class="dash-hl">Lights/Shades</td><td class="dash-val">${expLights}</td></tr>
                         <tr><td class="dash-hl">Audio Track</td><td class="dash-val">${expAudio}</td></tr>
@@ -186,7 +190,7 @@ def mainPage() {
 
         section("<b>Global Settings & Logs</b>", hideable: true, hidden: true) {
             input "enablePeriodicEnforcement", "bool", title: "<b>Enable Periodic State Enforcement</b><br><i>(Checks every 10 mins to ensure lights are off, fans are correct, and mode is synced)</i>", defaultValue: true
-            input "enableWiggle", "bool", title: "<b>Enable Hourly Fan Wiggle (Self-Healing)</b><br><i>(Hourly routine to drop active RF fan speeds by one tier and bump them back to verify sync)</i>", defaultValue: true
+            input "enableWiggle", "bool", title: "<b>Master Enable: Hourly Fan Wiggle (Self-Healing)</b><br><i>(Global toggle to allow room fans to run their configured Wiggle routines)</i>", defaultValue: true
             input "txtLogEnable", "bool", title: "Enable Action Logging", defaultValue: true
         }
         
@@ -247,6 +251,7 @@ def mainPage() {
                     input "ceilingFanSpeed${i}", "capability.fanControl", title: "Ceiling Fan Speed Control", required: false
                     input "ceilingFanSetpoint${i}", "decimal", title: "Ceiling Fan Base Setpoint (°F)", required: false
                     input "fanSpeedDelta${i}", "decimal", title: "Degrees above setpoint to step up speed (Default: 1.0)", required: false, defaultValue: 1.0
+                    input "enableWiggle${i}", "bool", title: "Enable Hourly Wiggle for this specific fan (Requires Master Wiggle enabled globally)", defaultValue: true
                     
                     paragraph "<b>2. Lighting & Shades</b>"
                     input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF", multiple: true, required: false
@@ -374,7 +379,7 @@ def initialize() {
     }
 
     // Schedule Hourly Wiggle
-    if (enableWiggle) {
+    if (settings.enableWiggle) {
         runEvery1Hour("doHourlyWiggle")
     }
     
@@ -492,28 +497,46 @@ def isReadingLightActive(roomNum, lightDeviceId) {
     return false
 }
 
-// --- HOURLY FAN WIGGLE (SELF-HEALING) ---
+// --- UPDATED HOURLY FAN WIGGLE (TARGET ENFORCEMENT) ---
 def doHourlyWiggle() {
-    logInfo("Executing Hourly RF Fan Wiggle to verify speeds...")
+    if (!settings.enableWiggle) return 
+    
+    logInfo("Executing Hourly RF Fan Wiggle to actively enforce target speeds...")
     
     for (int i = 1; i <= 4; i++) {
-        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on") {
+        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on" && settings["enableWiggle${i}"]) {
             def cFanSpeed = settings["ceilingFanSpeed${i}"]
             def rName = settings["roomName${i}"] ?: "Room ${i}"
             def fType = settings["fanType${i}"] ?: "3_speed"
             
             if (cFanSpeed && fType != "on_off") {
-                def current = cFanSpeed.currentValue("speed") ?: "off"
-                def dropSpeed = getDropSpeed(current, fType)
+                // Determine what the fan SHOULD be at based on current temperature
+                def sensor = settings["tempSensor${i}"]
+                def currentTemp = sensor ? sensor.currentValue("temperature") : null
+                def cFanSetpoint = settings["ceilingFanSetpoint${i}"]
+                def delta = settings["fanSpeedDelta${i}"] ?: 1.0
                 
-                if (dropSpeed && dropSpeed != "off") {
-                    logInfo("${rName}: Wiggle - Dropping ceiling fan to ${dropSpeed.toUpperCase()} temporarily.")
-                    cFanSpeed.setSpeed(dropSpeed)
+                def targetSpeed = "off"
+                if (cFanSetpoint && currentTemp != null) {
+                    targetSpeed = calculateTargetSpeed(currentTemp, cFanSetpoint, delta, fType)
+                }
+                
+                if (targetSpeed != "off") {
+                    def dropSpeed = getDropSpeed(targetSpeed, fType)
+                    if (dropSpeed) {
+                        logInfo("${rName}: Wiggle - Target speed is ${targetSpeed.toUpperCase()}. Dropping to ${dropSpeed.toUpperCase()} temporarily to force resync.")
+                        cFanSpeed.setSpeed(dropSpeed)
+                    }
+                } else {
+                    // NEW LOW-OFF WIGGLE LOGIC FOR BOND BRIDGES
+                    logInfo("${rName}: Wiggle - Target speed is OFF. Bumping to LOW to force Bond Bridge reset.")
+                    cFanSpeed.setSpeed("low")
                 }
             }
         }
     }
     
+    // Evaluate runs 10 seconds later, notices the fan is now below its calculated target, and securely bumps it back to what it should be.
     runIn(10, "evaluateAllSleepingFans")
 }
 
@@ -932,6 +955,10 @@ def executeRoomGoodNight(roomNum) {
                     targetSw.on()
                     logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
                     state."lastSwitchId${roomNum}" = switchToTurnOnId
+                    
+                    if (setVol != null) {
+                        runIn(30, "applyDelayedVolumeRoom${roomNum}")
+                    }
                 }
             }
         }
@@ -960,12 +987,29 @@ def executeAudioStop(roomNum) {
     }
 }
 
+def applyDelayedVolumeRoom1() { executeDelayedVolume(1) }
+def applyDelayedVolumeRoom2() { executeDelayedVolume(2) }
+def applyDelayedVolumeRoom3() { executeDelayedVolume(3) }
+def applyDelayedVolumeRoom4() { executeDelayedVolume(4) }
+
+def executeDelayedVolume(roomNum) {
+    def speaker = settings["roomSpeaker${roomNum}"]
+    def setVol = settings["audioVolume${roomNum}"]
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    if (speaker && setVol != null) {
+        speaker.setVolume(setVol)
+        logInfo("${rName}: Applied delayed volume enforcement (${setVol}%) 30 seconds after Sonos Favorite start.")
+    }
+}
+
 def endRoomGoodNight(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     logInfo("${rName}: Executing Wake-Up routine (shutting down fans and audio).")
     
     unschedule("stopAudioRoom${roomNum}")
     unschedule("applyDelayedFanSpeedRoom${roomNum}")
+    unschedule("applyDelayedVolumeRoom${roomNum}")
     state.remove("pendingFanSpeed${roomNum}")
     
     def stdFans = settings["roomFans${roomNum}"]
