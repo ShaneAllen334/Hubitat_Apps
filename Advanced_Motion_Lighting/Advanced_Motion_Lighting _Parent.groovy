@@ -30,6 +30,16 @@ def mainPage() {
                 def healthData = []
                 def renderedCount = 0
                 
+                // Variables for ROI Table
+                def roiRenderedCount = 0
+                def totalToday = 0.0
+                def totalLifetime = 0.0
+                def hasROI = false
+                
+                def roiHTML = "<div style='margin-top:20px; font-weight:bold; font-size:14px;'>Global Energy Savings & ROI</div>"
+                roiHTML += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
+                roiHTML += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Zone Name</th><th style='padding: 8px;'>Today's Savings</th><th style='padding: 8px;'>Lifetime Savings</th></tr>"
+
                 children.each { child ->
                     try {
                         def z = child.getZoneStatus()
@@ -47,9 +57,25 @@ def mainPage() {
                             tableHTML += "<td style='padding: 8px;'>${z.timer}</td>"
                             tableHTML += "</tr>"
                             renderedCount++
+                            
+                            // Process ROI Data
+                            if (z.roi) {
+                                hasROI = true
+                                def roiRowBg = (roiRenderedCount % 2 == 0) ? "#ffffff" : "#f9f9f9"
+                                roiHTML += "<tr style='border-bottom: 1px solid #ddd; background-color: ${roiRowBg};'>"
+                                roiHTML += "<td style='padding: 8px;'>${z.name}</td>"
+                                roiHTML += "<td style='padding: 8px;'>\$${z.roi.today}</td>"
+                                roiHTML += "<td style='padding: 8px;'>\$${z.roi.lifetime}</td>"
+                                roiHTML += "</tr>"
+                                
+                                totalToday += z.roi.today.toBigDecimal()
+                                totalLifetime += z.roi.lifetime.toBigDecimal()
+                                roiRenderedCount++
+                            }
                         }
                     } catch (e) { log.debug "Dashboard error: ${e.message}" }
                 }
+  
                 tableHTML += "</table>"
                 paragraph tableHTML
                 
@@ -64,6 +90,17 @@ def mainPage() {
                     hTable += "</table>"
                     paragraph hTable
                 }
+                
+                if (hasROI) {
+                    roiHTML += "<tr style='background-color: #dff0d8; border-top: 2px solid #ccc; font-weight: bold;'>"
+                    roiHTML += "<td style='padding: 8px; text-align: right;'>SYSTEM TOTALS:</td>"
+                    roiHTML += "<td style='padding: 8px; color: green;'>\$${totalToday.setScale(2, BigDecimal.ROUND_HALF_UP)}</td>"
+                    roiHTML += "<td style='padding: 8px; color: green;'>\$${totalLifetime.setScale(2, BigDecimal.ROUND_HALF_UP)}</td>"
+                    roiHTML += "</tr>"
+                    roiHTML += "</table>"
+                    paragraph roiHTML
+                }
+                
             } else { paragraph "<i>No lighting zones created yet.</i>" }
         }
         
@@ -84,10 +121,11 @@ def mainPage() {
             input "arrivalDuration", "number", title: "Keep Arrival Lights On Duration (Minutes)", defaultValue: 10
             input "staggerDelay", "number", title: "Stagger Delay Between Zones (ms)", defaultValue: 500
         }
-        
+       
         section("System Maintenance & Recovery") {
             input "btnGlobalSweep", "button", title: "Execute Global Sweep Now"
             input "btnClearOverrides", "button", title: "Clear All Manual Overrides"
+            input "btnResetROI", "button", title: "Reset All ROI Telemetry"
         }
         
         section("Lighting Rules") {
@@ -153,5 +191,7 @@ def appButtonHandler(btn) {
         getChildApps().each { it.executeParentSweep(new Random().nextInt(4500) + 500) }
     } else if (btn == "btnClearOverrides") {
         getChildApps().each { it.clearManualOverride() }
+    } else if (btn == "btnResetROI") {
+        getChildApps().each { it.resetROI() }
     }
 }
