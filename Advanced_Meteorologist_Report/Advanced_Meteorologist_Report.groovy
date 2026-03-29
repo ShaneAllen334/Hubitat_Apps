@@ -79,7 +79,7 @@ def mainPage() {
                 }
 
                 if (state.latestScript) {
-                    paragraph "<b>📝 Latest Script (Default Anchor):</b>"
+                    paragraph "<b>📝 Latest Script (Dashboard Anchor):</b>"
                     paragraph "<div style='font-size: 14px; font-style: italic; background-color: #fdfd96; padding: 10px; border-radius: 5px; border: 1px solid #e1e182;'>\"${state.latestScript}\"</div>"
                 }
             } else {
@@ -93,7 +93,7 @@ def mainPage() {
             input "localStation", "capability.temperatureMeasurement", title: "Select Personal Weather Station", description: "Your local outdoor temperature, humidity, and wind sensor.", required: true, multiple: false
             input "zipCode", "text", title: "Zip Code (Required for Pollen)", description: "Enter a valid US Zip Code to enable daily pollen index forecasting.", required: false
             input "pollingInterval", "enum", title: "Background Sync Interval", description: "How often the app fetches new data.", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
-            input "reportPersona", "enum", title: "Select Default Anchor Personality", description: "This controls the tone/attitude of the default weather report sent to standard audio speakers.", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional", required: true
+            input "reportPersona", "enum", title: "Select Default Dashboard Personality", description: "This controls the tone/attitude of the weather script shown on the Dashboard tile.", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional", required: true
         }
 
         section(title: "<b>2. Morning Report Profile</b>", hideable: true, hidden: true) {
@@ -138,67 +138,99 @@ def mainPage() {
         }
 
         section(title: "<b>5. Broadcast Triggers</b>", hideable: true, hidden: true) {
-            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Choose how reports are generated. <b>Manual Virtual Switches are highly recommended.</b> You can create a virtual switch in Hubitat, select it here, and then use Hubitat's Rule Machine to turn that switch on when a motion sensor triggers in the bathroom, or when a bedside button is pressed.</div>"
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Toggle on the specific triggers you want to configure. Unused triggers remain hidden to keep your settings clean.</div>"
             
             paragraph "<b>🕒 Scheduled Time Triggers</b>"
-            input "timeTrigger1", "time", title: "Time Trigger 1", required: false
-            input "timeDays1", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
-            input "timeModes1", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "timeNotifyTarget1", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "timeAudio1", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
-            
+            input "enableTime1", "bool", title: "Enable Time Trigger 1", submitOnChange: true, defaultValue: false
+            if (enableTime1) {
+                input "timeTrigger1", "time", title: "Time Trigger 1", required: true
+                input "timeDays1", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+                input "timeModes1", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "timeNotifyTarget1", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "timeAudio1", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+            }
             paragraph "<hr>"
-            input "timeTrigger2", "time", title: "Time Trigger 2", required: false
-            input "timeDays2", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
-            input "timeModes2", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "timeNotifyTarget2", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "timeAudio2", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
             
+            input "enableTime2", "bool", title: "Enable Time Trigger 2", submitOnChange: true, defaultValue: false
+            if (enableTime2) {
+                input "timeTrigger2", "time", title: "Time Trigger 2", required: true
+                input "timeDays2", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+                input "timeModes2", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "timeNotifyTarget2", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "timeAudio2", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+            }
             paragraph "<hr>"
-            input "timeTrigger3", "time", title: "Time Trigger 3", required: false
-            input "timeDays3", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
-            input "timeModes3", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "timeNotifyTarget3", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "timeAudio3", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+            
+            input "enableTime3", "bool", title: "Enable Time Trigger 3", submitOnChange: true, defaultValue: false
+            if (enableTime3) {
+                input "timeTrigger3", "time", title: "Time Trigger 3", required: true
+                input "timeDays3", "enum", title: "Days to run", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false
+                input "timeModes3", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "timeNotifyTarget3", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "timeAudio3", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+            }
 
             paragraph "<hr><b>🏠 Mode-Based Triggers</b>"
-            input "triggerMode1", "mode", title: "Mode Change To:", description: "E.g., Trigger when mode changes to 'Awake'.", required: false, multiple: false
-            input "t1StartTime", "time", title: "Allowable Start Time", required: false
-            input "t1EndTime", "time", title: "Allowable End Time", required: false
+            input "enableMode1", "bool", title: "Enable Mode Trigger 1", submitOnChange: true, defaultValue: false
+            if (enableMode1) {
+                input "triggerMode1", "mode", title: "Mode Change To:", description: "E.g., Trigger when mode changes to 'Awake'.", required: true, multiple: false
+                input "t1StartTime", "time", title: "Allowable Start Time", required: false
+                input "t1EndTime", "time", title: "Allowable End Time", required: false
+                input "modeNotifyTarget1", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "modeAudio1", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+                input "modeDelay1", "number", title: "Delay Audio Broadcast (Seconds)", description: "Useful if smart speakers need time to power on and connect to Wi-Fi.", required: false, defaultValue: 0
+            }
+            paragraph "<hr>"
             
-            input "triggerMode2", "mode", title: "Mode Change To:", required: false, multiple: false
-            input "t2StartTime", "time", title: "Allowable Start Time", required: false
-            input "t2EndTime", "time", title: "Allowable End Time", required: false
+            input "enableMode2", "bool", title: "Enable Mode Trigger 2", submitOnChange: true, defaultValue: false
+            if (enableMode2) {
+                input "triggerMode2", "mode", title: "Mode Change To:", required: true, multiple: false
+                input "t2StartTime", "time", title: "Allowable Start Time", required: false
+                input "t2EndTime", "time", title: "Allowable End Time", required: false
+                input "modeNotifyTarget2", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "modeAudio2", "bool", title: "Play Audio Broadcast (TTS)?", defaultValue: true
+                input "modeDelay2", "number", title: "Delay Audio Broadcast (Seconds)", description: "Useful if smart speakers need time to power on and connect to Wi-Fi.", required: false, defaultValue: 0
+            }
             
             paragraph "<hr><b>🔘 Manual Switch Triggers</b>"
-            input "triggerSwitch1", "capability.switch", title: "Switch Trigger 1", description: "Turns off automatically after 2 seconds.", required: false, multiple: false
-            input "sw1StartTime", "time", title: "Allowable Start Time", required: false
-            input "sw1EndTime", "time", title: "Allowable End Time", required: false
-            input "sw1Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "sw1NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "sw1Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
-            
+            input "enableSwitch1", "bool", title: "Enable Switch Trigger 1", submitOnChange: true, defaultValue: false
+            if (enableSwitch1) {
+                input "triggerSwitch1", "capability.switch", title: "Switch Trigger 1", description: "Turns off automatically after 2 seconds.", required: true, multiple: false
+                input "sw1StartTime", "time", title: "Allowable Start Time", required: false
+                input "sw1EndTime", "time", title: "Allowable End Time", required: false
+                input "sw1Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "sw1NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "sw1Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
+            }
             paragraph "<hr>"
-            input "triggerSwitch2", "capability.switch", title: "Switch Trigger 2", required: false, multiple: false
-            input "sw2StartTime", "time", title: "Allowable Start Time", required: false
-            input "sw2EndTime", "time", title: "Allowable End Time", required: false
-            input "sw2Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "sw2NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "sw2Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
             
+            input "enableSwitch2", "bool", title: "Enable Switch Trigger 2", submitOnChange: true, defaultValue: false
+            if (enableSwitch2) {
+                input "triggerSwitch2", "capability.switch", title: "Switch Trigger 2", required: true, multiple: false
+                input "sw2StartTime", "time", title: "Allowable Start Time", required: false
+                input "sw2EndTime", "time", title: "Allowable End Time", required: false
+                input "sw2Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "sw2NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "sw2Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
+            }
             paragraph "<hr>"
-            input "triggerSwitch3", "capability.switch", title: "Switch Trigger 3", required: false, multiple: false
-            input "sw3StartTime", "time", title: "Allowable Start Time", required: false
-            input "sw3EndTime", "time", title: "Allowable End Time", required: false
-            input "sw3Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
-            input "sw3NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
-            input "sw3Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
+            
+            input "enableSwitch3", "bool", title: "Enable Switch Trigger 3", submitOnChange: true, defaultValue: false
+            if (enableSwitch3) {
+                input "triggerSwitch3", "capability.switch", title: "Switch Trigger 3", required: true, multiple: false
+                input "sw3StartTime", "time", title: "Allowable Start Time", required: false
+                input "sw3EndTime", "time", title: "Allowable End Time", required: false
+                input "sw3Modes", "mode", title: "Only when in Mode(s)", multiple: true, required: false
+                input "sw3NotifyTarget", "enum", title: "Who gets the Push Notification?", options: ["User 1", "User 2", "User 3", "User 4", "All Profiles", "No Push Notification"], defaultValue: "All Profiles"
+                input "sw3Audio", "bool", title: "Play Audio Broadcast (TTS)?", description: "Turn this OFF if you want a silent push notification so you don't wake the house.", defaultValue: false
+            }
         }
 
         section(title: "<b>6. Outputs & Advanced Devices</b>", hideable: true, hidden: true) {
-            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Audio broadcasts will always use the default 'Anchor Persona' chosen in Section 1. However, you can assign different, personalized personas to individual family members' push notification devices here.</div>"
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> You can assign different, personalized personas to your audio speakers and individual family members' push notification devices here.</div>"
             
-            paragraph "<b>Audio Announcements (Default Persona)</b>"
+            paragraph "<b>Audio Announcements</b>"
+            input "ttsPersona", "enum", title: "TTS Audio Persona", description: "The personality used when playing audio out loud over your speakers.", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
             input "ttsSpeakers", "capability.speechSynthesis", title: "Standard TTS Speakers", description: "Standard devices like Echo Dots or Google Homes.", required: false, multiple: true
             input "advAudio", "capability.audioVolume", title: "Advanced Speakers", description: "Speakers that support volume restoration (like Sonos).", required: false, multiple: true
             input "advAudioVol", "number", title: "Advanced Speaker Broadcast Volume (1-100)", required: false, range: "1..100"
@@ -246,13 +278,13 @@ def initialize() {
     
     subscribe(location, "mode", modeChangeHandler)
     
-    if (triggerSwitch1) subscribe(triggerSwitch1, "switch.on", switchTrigger1Handler)
-    if (triggerSwitch2) subscribe(triggerSwitch2, "switch.on", switchTrigger2Handler)
-    if (triggerSwitch3) subscribe(triggerSwitch3, "switch.on", switchTrigger3Handler)
+    if (enableSwitch1 && triggerSwitch1) subscribe(triggerSwitch1, "switch.on", switchTrigger1Handler)
+    if (enableSwitch2 && triggerSwitch2) subscribe(triggerSwitch2, "switch.on", switchTrigger2Handler)
+    if (enableSwitch3 && triggerSwitch3) subscribe(triggerSwitch3, "switch.on", switchTrigger3Handler)
     
-    if (timeTrigger1) schedule(timeTrigger1, timeTrigger1Handler)
-    if (timeTrigger2) schedule(timeTrigger2, timeTrigger2Handler)
-    if (timeTrigger3) schedule(timeTrigger3, timeTrigger3Handler)
+    if (enableTime1 && timeTrigger1) schedule(timeTrigger1, timeTrigger1Handler)
+    if (enableTime2 && timeTrigger2) schedule(timeTrigger2, timeTrigger2Handler)
+    if (enableTime3 && timeTrigger3) schedule(timeTrigger3, timeTrigger3Handler)
 
     def interval = pollingInterval ?: "30"
     if (interval == "15") runEvery15Minutes(routineSync)
@@ -322,17 +354,19 @@ def executeTargetedBroadcast(target, playAudio = true) {
     routineSync() 
     
     if (playAudio) {
-        def defaultScript = state.latestScript 
-        if (ttsSpeakers) ttsSpeakers.speak(defaultScript)
+        def audioPersona = settings["ttsPersona"] ?: "Professional"
+        def audioScript = generateScript(audioPersona)
+        
+        if (ttsSpeakers) ttsSpeakers.speak(audioScript)
         
         if (advAudio) {
             advAudio.each { speaker ->
                 if (advAudioVol) {
-                    if (speaker.hasCommand("playTextAndRestore")) speaker.playTextAndRestore(defaultScript, advAudioVol)
-                    else if (speaker.hasCommand("setVolumeSpeakAndRestore")) speaker.setVolumeSpeakAndRestore(advAudioVol, defaultScript)
-                    else speaker.speak(defaultScript)
+                    if (speaker.hasCommand("playTextAndRestore")) speaker.playTextAndRestore(audioScript, advAudioVol)
+                    else if (speaker.hasCommand("setVolumeSpeakAndRestore")) speaker.setVolumeSpeakAndRestore(advAudioVol, audioScript)
+                    else speaker.speak(audioScript)
                 } else {
-                    speaker.speak(defaultScript)
+                    speaker.speak(audioScript)
                 }
             }
         }
@@ -349,6 +383,11 @@ def executeTargetedBroadcast(target, playAudio = true) {
     } else if (target == "User 4") {
         sendUserPush(4)
     }
+}
+
+def delayedAudioOnlyBroadcast() {
+    logAction("Executing delayed audio broadcast.")
+    executeTargetedBroadcast("No Push Notification", true)
 }
 
 def sendUserPush(userNum) {
@@ -376,14 +415,19 @@ def updateVisualIndicators() {
 def sendSplitNotification(text, devices) {
     if (!devices || !text) return
     def sentences = text.split(/(?<=[.?!])\s+/)
-    if (sentences.size() <= 3) {
+    def maxSentences = 3
+    
+    if (sentences.size() <= maxSentences) {
         devices.deviceNotification(text)
     } else {
-        def mid = Math.ceil(sentences.size() / 2).toInteger()
-        def part1 = sentences[0..mid-1].join(" ")
-        def part2 = sentences[mid..-1].join(" ")
-        devices.deviceNotification("Weather Part 1: " + part1)
-        devices.deviceNotification("Weather Part 2: " + part2)
+        def parts = []
+        for (int i = 0; i < sentences.size(); i += maxSentences) {
+            int end = Math.min(i + maxSentences - 1, sentences.size() - 1)
+            parts << sentences[i..end].join(" ")
+        }
+        parts.eachWithIndex { part, index ->
+            devices.deviceNotification("Part ${index + 1}/${parts.size()}: ${part}")
+        }
     }
 }
 
@@ -414,18 +458,37 @@ def timeTrigger3Handler() {
 def modeChangeHandler(evt) {
     def newMode = evt.value
     def nowTime = new Date()
-    def shouldTrigger = false
-    
-    if (triggerMode1 && newMode == triggerMode1) {
-        if (!t1StartTime || !t1EndTime || timeOfDayIsBetween(toDateTime(t1StartTime), toDateTime(t1EndTime), nowTime, location.timeZone)) shouldTrigger = true
+
+    if (enableMode1 && triggerMode1 && newMode == triggerMode1) {
+        if (!t1StartTime || !t1EndTime || timeOfDayIsBetween(toDateTime(t1StartTime), toDateTime(t1EndTime), nowTime, location.timeZone)) {
+            logAction("Mode Trigger 1 activated (${newMode}).")
+            boolean doAudio = (modeAudio1 != null) ? modeAudio1 : true
+            int delay = modeDelay1 ?: 0
+            def target = modeNotifyTarget1 ?: "All Profiles"
+            
+            if (delay > 0) {
+                if (target != "No Push Notification") executeTargetedBroadcast(target, false)
+                if (doAudio) runIn(delay, "delayedAudioOnlyBroadcast")
+            } else {
+                executeTargetedBroadcast(target, doAudio)
+            }
+        }
     }
-    else if (triggerMode2 && newMode == triggerMode2) {
-        if (!t2StartTime || !t2EndTime || timeOfDayIsBetween(toDateTime(t2StartTime), toDateTime(t2EndTime), nowTime, location.timeZone)) shouldTrigger = true
-    }
     
-    if (shouldTrigger) {
-        logAction("Valid mode change detected. Broadcasting.")
-        executeTargetedBroadcast("All Profiles", true)
+    if (enableMode2 && triggerMode2 && newMode == triggerMode2) {
+        if (!t2StartTime || !t2EndTime || timeOfDayIsBetween(toDateTime(t2StartTime), toDateTime(t2EndTime), nowTime, location.timeZone)) {
+            logAction("Mode Trigger 2 activated (${newMode}).")
+            boolean doAudio = (modeAudio2 != null) ? modeAudio2 : true
+            int delay = modeDelay2 ?: 0
+            def target = modeNotifyTarget2 ?: "All Profiles"
+            
+            if (delay > 0) {
+                if (target != "No Push Notification") executeTargetedBroadcast(target, false)
+                if (doAudio) runIn(delay, "delayedAudioOnlyBroadcast")
+            } else {
+                executeTargetedBroadcast(target, doAudio)
+            }
+        }
     }
 }
 
