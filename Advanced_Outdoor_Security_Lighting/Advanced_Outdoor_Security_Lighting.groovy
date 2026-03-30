@@ -62,6 +62,55 @@ def mainPage() {
 
             paragraph statusText
         }
+
+        section("💰 Financial ROI & Energy Savings") {
+            def roiText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
+            roiText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Zone</th><th style='padding: 8px;'>Actual On Cost</th><th style='padding: 8px;'>Off Savings</th></tr>"
+
+            def costRate = settings["kwhCost"] != null ? settings["kwhCost"].toBigDecimal() : 0.15
+            def installTime = state.installTime ?: new Date().time
+            def daysInstalled = Math.max(1.0, (new Date().time - installTime) / 86400000.0)
+            def sysTotalSavings = 0.0
+
+            def zoneCount = settings["numZones"] ?: 1
+            if (zoneCount > 0) {
+                for (int i = 1; i <= (zoneCount as Integer); i++) {
+                    def zName = settings["zoneName_${i}"] ?: "Zone ${i}"
+                    def zWatts = settings["zoneWatts_${i}"] ?: 0
+                    
+                    if (zWatts == 0) {
+                        roiText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${zName}</b></td><td colspan='2' style='padding: 8px; color: #888; font-style: italic;'>Enter total zone wattage below to enable ROI tracking.</td></tr>"
+                        continue
+                    }
+
+                    def kw = zWatts / 1000.0
+                    def baselineHours = daysInstalled * 12.0 // Assuming standard 12 hour dusk-to-dawn runtime
+
+                    def switches = settings["zoneLights_${i}"]
+                    def anyOn = switches ? switches.any { it.currentValue("switch") == "on" } : false
+                    def currentRunMs = (anyOn && state."trackOnTime_${i}") ? (new Date().time - state."trackOnTime_${i}") : 0
+                    def totalRuntimeMs = (state."lifetimeRuntimeMs_${i}" ?: 0) + currentRunMs
+                    def actualHours = totalRuntimeMs / 3600000.0
+                    
+                    // Safely calculate off hours (preventing negatives if someone manually left lights on for 24+ hours)
+                    def offHours = Math.max(0.0, baselineHours - actualHours)
+
+                    def actualCost = kw * actualHours * costRate
+                    def saved = kw * offHours * costRate
+                    sysTotalSavings += saved
+
+                    def fmtAct = String.format('$%.2f', actualCost)
+                    def fmtSave = String.format('$%.2f', saved)
+
+                    roiText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${zName}</b></td><td style='padding: 8px; color: #d9534f;'>${fmtAct}</td><td style='padding: 8px; color: #5cb85c; font-weight: bold;'>+ ${fmtSave}</td></tr>"
+                }
+            }
+            roiText += "</table>"
+            def fmtTotal = String.format('$%.2f', sysTotalSavings)
+            roiText += "<div style='margin-top: 10px; padding: 8px; background: #e9e9e9; border-radius: 4px; font-size: 14px;'><b>Total System ROI (Money Saved):</b> <span style='color: #5cb85c; font-weight: bold;'>+ ${fmtTotal}</span></div>"
+            
+            paragraph roiText
+        }
         
         section("Application History (Last 20 Events)") {
             if (state.historyLog && state.historyLog.size() > 0) {
@@ -73,6 +122,7 @@ def mainPage() {
         section("Global Core Settings") {
             input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false
             input "numZones", "number", title: "Number of Lighting Zones to Configure (1-10)", required: true, defaultValue: 1, range: "1..10", submitOnChange: true
+            input "kwhCost", "decimal", title: 'Electricity Rate ($ per kWh) for ROI Tracking', defaultValue: 0.15, required: true
             
             paragraph "<b>Location Fallback:</b> If your hub's GPS coordinates are missing, select your state to auto-configure solar geometry settings."
             input "userState", "enum", title: "Select your US State", required: false, options: [
@@ -96,11 +146,21 @@ def mainPage() {
                 section("<b>⚙️ ${zName} Configuration</b>", hideable: true, hidden: true) {
                     input "zoneName_${i}", "text", title: "Custom Zone Name", required: false, defaultValue: "Zone ${i}", submitOnChange: true
                     input "zoneLights_${i}", "capability.switch", title: "Select Lights for this Zone", multiple: true, required: true
+                    input "zoneWatts_${i}", "number", title: "Total Wattage of Lights in this Zone (For ROI Tracking)", required: false, defaultValue: 0
                     
-                    paragraph "<b>Motion Triggers</b>"
-                    input "motionSensor_${i}", "capability.motionSensor", title: "Motion Sensor(s) for this Zone", multiple: true, required: false
+                    paragraph "<b>Outdoor Motion Triggers</b>"
+                    input "motionSensor_${i}", "capability.motionSensor", title: "Outdoor Motion Sensor(s)", multiple: true, required: false
                     input "motionTimeout_${i}", "number", title: "Turn OFF after X minutes of no motion", defaultValue: 5, required: false
-                    input "motionOverridesMode_${i}", "bool", title: "SECURITY OVERRIDE: Allow Motion to turn ON lights even if Mode is Blacklisted (e.g., 'Good Night')?", defaultValue: true
+                    input "motionOverridesMode_${i}", "bool", title: "SECURITY OVERRIDE: Allow Motion/Exit to turn ON lights even if Mode is Blacklisted (e.g., 'Night')?", defaultValue: true
+
+                    paragraph "<b>Exit Lighting (Door Open Override)</b>"
+                    input "enableExitLighting_${i}", "bool", title: "Enable Exit Lighting (Predictive turn-on when exiting)?", defaultValue: false, submitOnChange: true
+                    if (settings["enableExitLighting_${i}"]) {
+                        input "doorContact_${i}", "capability.contactSensor", title: "Door Contact Sensor(s)", multiple: true, required: true
+                        input "insideMotion_${i}", "capability.motionSensor", title: "Inside Motion Sensor(s) (Next to door)", multiple: true, required: true
+                        input "insideMotionWindow_${i}", "number", title: "Require inside motion within last X minutes", defaultValue: 2, required: true
+                        input "exitModes_${i}", "mode", title: "Exit Lighting Whitelist: ONLY enable in these Modes (Leave blank for all modes)", multiple: true, required: false
+                    }
 
                     paragraph "<b>Primary ON Triggers (Select any combination)</b>"
                     input "triggerSunset_${i}", "bool", title: "Turn ON continuously at Official Sunset?", defaultValue: false
@@ -138,6 +198,7 @@ def updated() {
 def initialize() {
     state.historyLog = state.historyLog ?: []
     state.zoneReason = state.zoneReason ?: [:]
+    state.installTime = state.installTime ?: new Date().time
     
     // Evaluate solar position and rules every 5 minutes
     schedule("0 0/5 * * * ?", evaluateSystem)
@@ -151,8 +212,14 @@ def initialize() {
         }
 
         def mSensors = settings["motionSensor_${i}"]
-        if (mSensors) {
-            subscribe(mSensors, "motion", motionHandler)
+        if (mSensors) subscribe(mSensors, "motion", motionHandler)
+        
+        if (settings["enableExitLighting_${i}"]) {
+            def contacts = settings["doorContact_${i}"]
+            if (contacts) subscribe(contacts, "contact", doorContactHandler)
+
+            def insideSensors = settings["insideMotion_${i}"]
+            if (insideSensors) subscribe(insideSensors, "motion", insideMotionHandler)
         }
     }
     
@@ -189,25 +256,59 @@ def overcastHandler(evt) {
     evaluateSystem()
 }
 
+def insideMotionHandler(evt) {
+    if (isSystemPaused()) return
+    
+    if (evt.value == "active") {
+        def zoneCount = settings["numZones"] ?: 1
+        for (int i = 1; i <= (zoneCount as Integer); i++) {
+            def mSensors = settings["insideMotion_${i}"]
+            if (mSensors && mSensors.any { it.id.toString() == evt.device.id.toString() }) {
+                state."lastInsideMotion_${i}" = new Date().time
+            }
+        }
+    }
+}
+
+def doorContactHandler(evt) {
+    if (isSystemPaused()) return
+    
+    def zoneCount = settings["numZones"] ?: 1
+    for (int i = 1; i <= (zoneCount as Integer); i++) {
+        def contacts = settings["doorContact_${i}"]
+        if (contacts && contacts.any { it.id.toString() == evt.device.id.toString() }) {
+            def zName = settings["zoneName_${i}"] ?: "Zone ${i}"
+            if (evt.value == "open") {
+                addToHistory("EXIT LIGHTING: Door opened for ${zName}. Evaluating predictive exit conditions.")
+            } else {
+                addToHistory("EXIT LIGHTING: Door closed for ${zName}. Re-evaluating system.")
+            }
+            evaluateSystem()
+        }
+    }
+}
+
 def motionHandler(evt) {
     if (isSystemPaused()) return
     
     def zoneCount = settings["numZones"] ?: 1
     for (int i = 1; i <= (zoneCount as Integer); i++) {
         def mSensors = settings["motionSensor_${i}"]
-        if (mSensors && mSensors.find { it.id == evt.deviceId }) {
+        
+        if (mSensors && mSensors.any { it.id.toString() == evt.device.id.toString() }) {
             
             if (evt.value == "active") {
                 state."motionActive_${i}" = true
-                state.remove("motionOffTime_${i}") // Clear any pending timeouts
+                state.remove("motionOffTime_${i}") 
             } else {
                 def anyActive = mSensors.any { it.currentValue("motion") == "active" }
                 if (!anyActive) {
+                    state."motionActive_${i}" = false 
                     def timeout = settings["motionTimeout_${i}"] ?: 5
                     state."motionOffTime_${i}" = new Date().time + (timeout * 60000)
                 }
             }
-            evaluateSystem() // Immediately process changes
+            evaluateSystem() 
         }
     }
 }
@@ -231,16 +332,9 @@ def evaluateSystem() {
     calculateSolarPosition()
     
     def zoneCount = settings["numZones"] ?: 1
-    def sunInfo = getSunriseAndSunset()
     def now = new Date()
     
-    def isNight = false
-    if (sunInfo && sunInfo.sunset && sunInfo.sunrise) {
-        if (now.after(sunInfo.sunset) || now.before(sunInfo.sunrise)) {
-            isNight = true
-        }
-    }
-    
+    def isNight = (state.solarElevation != null && state.solarElevation < 0)
     def currentMode = location.mode
     
     for (int i = 1; i <= (zoneCount as Integer); i++) {
@@ -251,10 +345,11 @@ def evaluateSystem() {
         def shouldBeOn = false
         def triggerReason = ""
 
-        // --- 1. MOTION LOGIC (Highest Priority) ---
+        // --- 1. OUTDOOR MOTION & EXIT LIGHTING (Highest Priority) ---
         def isDark = isNight || (settings["triggerOvercast_${i}"] && overcastSwitch && overcastSwitch.currentValue("switch") == "on")
         def motionWantsOn = false
         
+        // A. Outdoor Motion Evaluation
         if (settings["motionSensor_${i}"] && isDark) {
             if (state."motionActive_${i}") {
                 motionWantsOn = true
@@ -265,11 +360,33 @@ def evaluateSystem() {
                     if (now.time < offTime) {
                         motionWantsOn = true
                         triggerReason = "Motion Timeout Pending"
-                        // Schedule exactly when this should shut off
                         def remainingSecs = Math.ceil((offTime - now.time) / 1000.0).toInteger()
                         if (remainingSecs > 0) runIn(remainingSecs + 2, "evaluateSystem")
                     } else {
-                        state.remove("motionOffTime_${i}") // Timeout expired
+                        state.remove("motionOffTime_${i}") 
+                    }
+                }
+            }
+        }
+
+        // B. Predictive Exit Lighting Evaluation
+        if (settings["enableExitLighting_${i}"] && isDark) {
+            def exitAllowedModes = settings["exitModes_${i}"]
+            def isExitModeAllowed = (!exitAllowedModes || exitAllowedModes.contains(currentMode))
+
+            if (isExitModeAllowed) {
+                def contacts = settings["doorContact_${i}"]
+                def doorOpen = contacts ? contacts.any { it.currentValue("contact") == "open" } : false
+
+                if (doorOpen) {
+                    def insideTime = state."lastInsideMotion_${i}" ?: 0
+                    def windowMs = (settings["insideMotionWindow_${i}"] ?: 2) * 60000
+                    def recentInsideMotion = (now.time - insideTime) <= windowMs
+                    def outsideMotionActive = state."motionActive_${i}" ?: false
+
+                    if (state.zoneReason["${i}"] == "Exit Lighting (Door Open)" || (recentInsideMotion && !outsideMotionActive)) {
+                        motionWantsOn = true
+                        triggerReason = "Exit Lighting (Door Open)"
                     }
                 }
             }
@@ -283,39 +400,42 @@ def evaluateSystem() {
         if (allowedModes && !allowedModes.contains(currentMode)) isRestricted = true
         if (disabledModes && disabledModes.contains(currentMode)) isRestricted = true
         
-        // If mode is restricted, ONLY bypass it if Motion Wants On AND the Security Override is checked
         if (isRestricted) {
-            def overrideAllowed = settings["motionOverridesMode_${i}"] != false // Defaults to true
+            def overrideAllowed = settings["motionOverridesMode_${i}"] != false
             if (motionWantsOn && overrideAllowed) {
-                shouldBeOn = true // Motion punches through the restriction
+                shouldBeOn = true 
             } else {
-                // Enforce restriction
-                if (switches.any { it.currentValue("switch") == "on" }) {
+                def restReason = "Mode Restriction (Forced OFF)"
+                if (switches.any { it.currentValue("switch") == "on" } || state.zoneReason["${i}"] != restReason) {
                     addToHistory("MODE RESTRICTION: Turning off ${zName} (Hub in restricted mode).")
-                    state.zoneReason["${i}"] = "Mode Restriction (Forced OFF)"
+                    state.zoneReason["${i}"] = restReason
                     switches.each { it.off() }
                 }
-                continue // Skip all further evaluation, leave lights off
+                
+                // Ensure tracker captures the turn off event if it was on
+                if (state."trackOnTime_${i}") {
+                    state."lifetimeRuntimeMs_${i}" = (state."lifetimeRuntimeMs_${i}" ?: 0) + (now.time - state."trackOnTime_${i}")
+                    state.remove("trackOnTime_${i}")
+                }
+                
+                continue 
             }
         }
 
-        // --- 3. Normal Environmental Logic (Only runs if not restricted, or if motion already bypassed it) ---
+        // --- 3. Normal Environmental Logic ---
         if (!shouldBeOn && motionWantsOn) {
             shouldBeOn = true
         } else if (!shouldBeOn) {
-            // Trigger 1: Official Sunset
             if (settings["triggerSunset_${i}"] && isNight) {
                 shouldBeOn = true
                 triggerReason = "Official Astro Nighttime"
             }
             
-            // Trigger 2: Overcast Override
             if (!shouldBeOn && settings["triggerOvercast_${i}"] && overcastSwitch && overcastSwitch.currentValue("switch") == "on") {
                 shouldBeOn = true
                 triggerReason = "Weather/Overcast Override"
             }
             
-            // Trigger 3: Solar Geometry (Elevation & Azimuth)
             if (!shouldBeOn && settings["triggerElevation_${i}"] != null) {
                 def targetElev = settings["triggerElevation_${i}"].toBigDecimal()
                 def currElev = state.solarElevation
@@ -340,7 +460,7 @@ def evaluateSystem() {
         
         // --- 4. Safety Check: Hard OFF Time Override ---
         def hardOff = settings["hardOffTime_${i}"]
-        if (shouldBeOn && hardOff && !motionWantsOn) { // Motion also punches through Hard OFF time
+        if (shouldBeOn && hardOff && !motionWantsOn) { 
             def offDate = timeToday(hardOff, location.timeZone)
             if (now.after(offDate) && isNight) {
                 shouldBeOn = false
@@ -348,19 +468,34 @@ def evaluateSystem() {
             }
         }
         
-        // --- 5. Execution ---
+        // --- 5. Execution & ROI Tracking ---
         def currentlyOn = switches.any { it.currentValue("switch") == "on" }
+        def reasonChanged = (state.zoneReason["${i}"] != triggerReason)
         
-        if (shouldBeOn && !currentlyOn) {
+        if (shouldBeOn && (!currentlyOn || reasonChanged)) {
+            if (!currentlyOn) {
+                state."trackOnTime_${i}" = now.time // Start the ROI timer
+            }
+            
             addToHistory("LIGHTING: Activating ${zName}. Reason: ${triggerReason}")
             state.zoneReason["${i}"] = triggerReason
             switches.each { it.on() }
         } 
-        else if (!shouldBeOn && currentlyOn) {
+        else if (!shouldBeOn) {
             def offReason = isNight ? "Hard OFF / Timeout Enforced" : "Daylight / Clear Requirements Met"
-            addToHistory("LIGHTING: Deactivating ${zName}. Reason: ${offReason}")
-            state.zoneReason["${i}"] = offReason
-            switches.each { it.off() }
+            def offReasonChanged = (state.zoneReason["${i}"] != offReason)
+            
+            if (currentlyOn || offReasonChanged) {
+                if (currentlyOn && state."trackOnTime_${i}") {
+                    // Calculate exact runtime and add to lifetime ROI tracker before turning off
+                    state."lifetimeRuntimeMs_${i}" = (state."lifetimeRuntimeMs_${i}" ?: 0) + (now.time - state."trackOnTime_${i}")
+                    state.remove("trackOnTime_${i}")
+                }
+                
+                addToHistory("LIGHTING: Deactivating ${zName}. Reason: ${offReason}")
+                state.zoneReason["${i}"] = offReason
+                switches.each { it.off() }
+            }
         }
     }
 }
