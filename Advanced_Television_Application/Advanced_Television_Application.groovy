@@ -20,11 +20,11 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Main Configuration", install: true, uninstall: true) {
         
+      
         section("Live System Dashboard", hideable: true, hidden: false) {
             if (numTVs > 0) {
                 
                 input "btnRefreshData", "button", title: "<i class='fa fa-refresh fa-spin' style='color: #007bff;'></i> Refresh Dashboard Data", description: "Click here to immediately fetch the latest states and metrics for the data table below."
-                
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-top: 10px;'>"
                 statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px; width: 20%;'>Television</th><th style='padding: 8px; width: 35%;'>State & Acoustics</th><th style='padding: 8px;'>Watch Time</th><th style='padding: 8px;'>Top Media</th><th style='padding: 8px;'>Cost Today</th></tr>"
           
@@ -38,6 +38,7 @@ def mainPage() {
                     }
                
                     def isTrulyOn = isTvActuallyOn(tv, i)
+                
                     def powerState = isTrulyOn ? "ON" : "STANDBY / OFF"
                     def pwrColor = isTrulyOn ? "green" : "red"
                     
@@ -59,6 +60,7 @@ def mainPage() {
                         def activeAcoustics = []
                         
                         def thermo = settings["mainThermostat_${i}"]
+                       
                         if (thermo) {
                             def tState = thermo.currentValue("thermostatOperatingState")
                             if (tState in ["heating", "cooling", "fan only"]) activeAcoustics << "HVAC (${tState.capitalize()}): +${settings["hvacVolumeBoost_${i}"] ?: 3}"
@@ -126,6 +128,7 @@ def mainPage() {
                         statusText += "</td></tr>"
                     }
                 }
+            
                 statusText += "</table>"
                 
                 def globalStatus = (masterEnableSwitch && masterEnableSwitch.currentValue("switch") == "off") ? "<span style='color: red; font-weight: bold;'>PAUSED</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
@@ -157,6 +160,7 @@ def mainPage() {
         
         section("BMS Integrity & System Robustness", hideable: true, hidden: true) {
             paragraph "These features elevate the application from simple convenience to a robust Building Management Engine, ensuring commands land safely and preventing apps from fighting each other."
+           
             input "bmsPriorityLock", "capability.switch", title: "Global Priority Lock Switch", required: false, description: "Turns ON automatically when Movie, Gaming, or Weather modes are active. Use this switch as a 'Restriction' in your other apps to prevent them from turning off the lights or TV while you are watching."
             input "bmsMeshJitter", "bool", title: "Enable Mesh Optimization (Surge Staggering)", defaultValue: false, description: "Adds a random 500ms-2000ms delay between device commands during global events (like weather alerts) to prevent Zigbee/Z-Wave network flooding and electrical power surges."
             input "bmsHeartbeat", "bool", title: "Enable Device Heartbeat & Retries", defaultValue: false, description: "Actively verifies if TV/AVR power commands actually executed. It will retry the command up to 3 times if the device dropped off the network, and log a Comms Failure if it completely fails."
@@ -337,7 +341,6 @@ def tvPage(params) {
                 input "enableShow_${tNum}_${s}", "bool", title: "Enable TV Show ${s}", defaultValue: false, submitOnChange: true, description: "Enable a schedule to auto-launch a specific show or channel."
                 if (settings["enableShow_${tNum}_${s}"]) {
                     input "showName_${tNum}_${s}", "text", title: "Show Name (For Logging)", required: false, description: "Enter a friendly name for this show to appear in the history logs."
-                    
                     if (settings["isAvrOnly_${tNum}"]) {
                         input "showHdmi_${tNum}_${s}", "text", title: "AVR Input (e.g., HDMI 1)", required: true, description: "The exact AVR input to switch to when this show schedule starts."
                     } else {
@@ -348,7 +351,6 @@ def tvPage(params) {
                     input "showTimeEnd_${tNum}_${s}", "time", title: "Show End Time", required: true, description: "The time the TV should automatically turn off when the show concludes."
                     input "showModes_${tNum}_${s}", "mode", title: "Only Run in These Modes", multiple: true, required: false, description: "Optional: Only execute this schedule if the hub is in one of these modes."
                     input "showDays_${tNum}_${s}", "enum", title: "Days of the Week", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false, description: "Optional: Only execute this schedule on these specific days."
-                    
                     input "testShowBtn_${tNum}_${s}", "button", title: "Test Start Show ${s} Now", description: "Force starts the show routine right now to verify power and tuning sequence."
                 }
             }
@@ -362,7 +364,6 @@ def tvPage(params) {
                 input "morningTimeEnd_${tNum}", "time", title: "Routine Allowed End Time", required: false, description: "The latest time the morning routine is allowed to trigger."
                 input "morningDays_${tNum}", "enum", title: "Allowed Days", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: false, description: "Optional: Only allow the morning routine to trigger on these days."
                 input "morningModes_${tNum}", "mode", title: "Allowed Modes", multiple: true, required: false, description: "Optional: Only allow the morning routine to trigger if the hub is in one of these modes."
-                
                 if (settings["isAvrOnly_${tNum}"]) {
                     input "morningHdmi_${tNum}", "text", title: "Morning AVR Input Source (e.g., HDMI 1)", required: false, description: "The exact AVR input to switch to for the morning routine."
                 } else {
@@ -388,24 +389,18 @@ def tvPage(params) {
             input "enableAcousticMgmt_${tNum}", "bool", title: "Enable Smart Acoustic Management", defaultValue: false, submitOnChange: true, description: "Mutes background appliances or dynamically boosts the TV volume when noisy appliances run."
             if (settings["enableAcousticMgmt_${tNum}"]) {
                 input "tvNoiseSwitches_${tNum}", "capability.switch", title: "FORCE OFF: Appliances to disable when TV runs", multiple: true, required: false, description: "Select noisy appliances (like air purifiers or fans) that should automatically turn OFF when the TV turns ON, and restore when the TV turns off."
-                
                 paragraph "<b>Dynamic Volume Boost Engine</b><br>Intelligently calculates the maximum needed volume boost based on active appliances, ensuring clear audio without stacking volumes blindly."
-                
                 input "mainThermostat_${tNum}", "capability.thermostat", title: "Room Thermostat", required: false, description: "Select the thermostat to monitor for HVAC acoustic boosts."
-                
                 input "pollThermostat_${tNum}", "bool", title: "Enable Thermostat Polling (Optional)", defaultValue: false, submitOnChange: true, description: "Enable this if your thermostat is slow to report state changes to Hubitat and needs to be actively polled to catch heating/cooling cycles."
                 if (settings["pollThermostat_${tNum}"]) {
                     input "pollInterval_${tNum}", "number", title: "Polling Interval (Minutes)", defaultValue: 5, range: "1..10", required: true, description: "How often (in minutes) the app will forcefully ask the thermostat for its current state."
                 }
                 
                 input "hvacVolumeBoost_${tNum}", "number", title: "HVAC Volume Boost (Units)", defaultValue: 3, description: "How many volume units to increase when the HVAC starts running."
-                
                 input "dishwasher_${tNum}", "capability.switch", title: "Dishwasher Switch / Power State", required: false, description: "Select the smart plug or switch monitoring the dishwasher."
                 input "dishwasherBoost_${tNum}", "number", title: "Dishwasher Volume Boost (Units)", defaultValue: 4, description: "How many volume units to increase when the dishwasher is running."
-                
                 input "vacuum_${tNum}", "capability.switch", title: "Robot Vacuum Switch / Power State", required: false, description: "Select the robot vacuum switch to monitor."
                 input "vacuumBoost_${tNum}", "number", title: "Vacuum Volume Boost (Units)", defaultValue: 10, description: "How many volume units to increase when the vacuum is running."
-                
                 input "airPurifier_${tNum}", "capability.switch", title: "Air Purifier Switch / Power State", required: false, description: "Select the air purifier switch to monitor."
                 input "airPurifierBoost_${tNum}", "number", title: "Air Purifier Volume Boost (Units)", defaultValue: 2, description: "How many volume units to increase when the air purifier is running."
             }
@@ -562,6 +557,10 @@ def initialize() {
             if (settings["dishwasher_${i}"]) subscribe(settings["dishwasher_${i}"], "switch", acousticDeviceHandler)
             if (settings["vacuum_${i}"]) subscribe(settings["vacuum_${i}"], "switch", acousticDeviceHandler)
             if (settings["airPurifier_${i}"]) subscribe(settings["airPurifier_${i}"], "switch", acousticDeviceHandler)
+        }
+        
+        if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]) {
+            subscribe(settings["cozyOvercast_${i}"], "switch", cozyOvercastHandler)
         }
     }
 }
@@ -1143,7 +1142,7 @@ def tvPowerEvaluator(evt) {
                     }
                     evaluateAcoustics(i) 
                 }
-               
+                
                 if (settings["enableLightingSync_${i}"]) {
                     def lights = settings["tvLights_${i}"]
                     if (lights) {
@@ -1238,10 +1237,10 @@ def tvPowerEvaluator(evt) {
                         def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
                         if (toRestore) {
                              addToHistory("${tvName}: Restoring background appliances: ${toRestore.join(', ')}")
-                            toRestore.each { 
+                             toRestore.each { 
                                 it.on()
                                 pauseExecution(300)
-                            } 
+                             } 
                         }
                          state.noiseSwitchesPaused["${i}"] = []
                     }
@@ -1260,7 +1259,7 @@ def tvPowerEvaluator(evt) {
                         if (startTime && endTime) timeOk = timeOfDayIsBetween(timeToday(startTime, location.timeZone), timeToday(endTime, location.timeZone), new Date(), location.timeZone)
                         
                         if (isBlindClosed && timeOk) {
-                             addToHistory("${tvName}: Conditions met. Restoring lights.")
+                              addToHistory("${tvName}: Conditions met. Restoring lights.")
                              lights.each { 
                                  it.on()
                                  pauseExecution(300)
@@ -1846,5 +1845,60 @@ def testHvacBoost(i, isRunning) {
         }
     } else {
         addToHistory("${getTvName(i)}: TEST HVAC ignored (TV is not ON).")
+    }
+}
+
+// --- Cozy Mode Dynamic Weather Sync ---
+
+def cozyOvercastHandler(evt) {
+    if (isSystemPaused()) return
+    def deviceId = evt.device.id
+    def isOvercast = evt.value == "on"
+    
+    for (int i = 1; i <= (numTVs as Integer); i++) {
+        if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]?.id == deviceId) {
+            def tvName = getTvName(i)
+            def tv = getPrimaryDevice(i)
+            
+            // Only adjust lights if the TV is actively running
+            if (isTvActuallyOn(tv, i)) {
+                def blinds = settings["cozyBlinds_${i}"]
+                def blindsClosed = blinds && blinds.any { it.currentValue("contact") == "closed" }
+                def cozyLights = settings["cozyLights_${i}"]
+                
+                // Turn OFF if Overcast clears AND blinds are open
+                if (!isOvercast && !blindsClosed && state.cozyLightsActivatedByTv["${i}"]) {
+                    addToHistory("${tvName}: Overcast cleared. Turning OFF Cozy Mode lights.")
+                    if (cozyLights) {
+                        cozyLights.each { 
+                            it.off()
+                            pauseExecution(300)
+                        }
+                    }
+                    state.cozyLightsActivatedByTv["${i}"] = false
+                } 
+                // Turn ON if it becomes Overcast while already watching TV
+                else if (isOvercast && !state.cozyLightsActivatedByTv["${i}"]) {
+                    def targetLevel = settings["cozyLevel_${i}"] ?: 50
+                    def ctVarName = settings["cozyCTVar_${i}"]
+                    def targetCT = null
+                    
+                    if (ctVarName) {
+                        def hubVar = getGlobalVar(ctVarName)
+                        if (hubVar != null && hubVar.value != null) targetCT = hubVar.value.toInteger()
+                    }
+                    
+                    addToHistory("${tvName}: Weather became overcast. Activating Cozy Mode lights.")
+                    if (cozyLights) {
+                        cozyLights.each { bulb ->
+                            if (targetCT != null && bulb.hasCommand("setColorTemperature")) bulb.setColorTemperature(targetCT, targetLevel)
+                            else bulb.setLevel(targetLevel)
+                            pauseExecution(300)
+                        }
+                    }
+                    state.cozyLightsActivatedByTv["${i}"] = true
+                }
+            }
+        }
     }
 }
