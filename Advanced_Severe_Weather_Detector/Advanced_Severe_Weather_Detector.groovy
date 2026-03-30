@@ -6,7 +6,7 @@ definition(
     name: "Advanced Severe Weather Detector",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "BMS-Grade multi-dimensional predictive hazard detection engine featuring DEFCON Watchdog overdrive polling, Official NOAA/NWS API Integration, Daily Text Forecasts, MSLP calibration, glitch filtering, and granular hardware routing.",
+    description: "BMS-Grade multi-dimensional predictive hazard detection engine featuring Event Forensics, Overall NOAA Alert Reports, DEFCON Watchdog polling, Daily Forecasts, and MSLP calibration.",
     category: "Safety & Security",
     iconUrl: "",
     iconX2Url: "",
@@ -39,7 +39,7 @@ def mainPage() {
                 }
             }
             
-            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Runs predictive thermodynamic models for six severe weather profiles and cross-references them with official US Government NWS API alerts. ${wdHtml}${cloudHtml}</div>"
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Runs predictive thermodynamic models for six severe weather profiles. Features DNA event forensics and cross-references data with official US Government NWS API alerts. ${wdHtml}${cloudHtml}</div>"
             
             if (sensorTemp && sensorHum && sensorPress) {
                 def matrix = state.threatMatrix ?: [:]
@@ -56,7 +56,7 @@ def mainPage() {
                 hazards.each { hazMap ->
                     def haz = hazMap.id
                     def icon = hazMap.icon
-                    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Gathering sensor data...", mathEx: "Awaiting math cycle...", lastTrig: 0]
+                    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Gathering sensor data...", mathEx: "Awaiting math cycle...", lastTrig: 0, history: []]
                     
                     def noaaStatus = noaaMap[haz] ?: "Clear"
                     def noaaRaw = noaaMap["Raw_${haz}"] ?: "No official alerts for this sector."
@@ -69,6 +69,18 @@ def mainPage() {
                     def tColor = data.threat > 75 ? "#d9534f" : (data.threat > 40 ? "#f0ad4e" : "#5bc0de")
                     def pColor = data.prob > 75 ? "#d9534f" : (data.prob > 40 ? "#f0ad4e" : "#5bc0de")
                     def cColor = data.conf > 75 ? "#5cb85c" : (data.conf > 40 ? "#f0ad4e" : "#d9534f")
+
+                    // Build History HTML
+                    def histHtml = "<div style='margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 8px;'><b style='font-size:12px; color:#222;'>Recent Event History:</b><br>"
+                    if (data.history && data.history.size() > 0) {
+                        data.history.each { h ->
+                            def c = h.type == 'ALARM' ? '#d9534f' : '#f0ad4e'
+                            histHtml += "<div style='font-size:11px; color:#555;'>• <span style='color:${c}; font-weight:bold;'>${h.type}</span> | Initiated: ${h.start} | Duration: <b>${h.dur}</b></div>"
+                        }
+                    } else {
+                        histHtml += "<div style='font-size:11px; color:#888; font-style:italic;'>No recent events recorded.</div>"
+                    }
+                    histHtml += "</div>"
 
                     def sectionTitle = "${icon} ${haz == 'SevereHeat' ? 'Severe Heat' : haz} DNA &nbsp;|&nbsp; Threat: ${data.threat}% &nbsp;|&nbsp; Conf: ${data.conf}% &nbsp;|&nbsp; State: ${data.state}"
                     def isHidden = (data.state == "Clear" && noaaStatus == "Clear")
@@ -95,11 +107,12 @@ def mainPage() {
                                         <div style="width: 100%; height: 8px; background: #eaecf0; border-radius: 4px;"><div style="width: ${data.conf}%; height: 100%; background: ${cColor}; border-radius: 4px; transition: width 0.5s ease;"></div></div>
                                     </div>
                                 </div>
-                                <div style="flex: 1.2; min-width: 200px; font-size: 13px; color: #444; background: #f8f9fa; border-radius: 6px; padding: 12px; border-left: 4px solid ${stateColor}; display: flex; flex-direction: column; justify-content: center;">
+                                <div style="flex: 1.2; min-width: 250px; font-size: 13px; color: #444; background: #f8f9fa; border-radius: 6px; padding: 12px; border-left: 4px solid ${stateColor}; display: flex; flex-direction: column; justify-content: flex-start;">
                                     <b style="color:#222; margin-bottom: 6px; font-size: 14px;">Diagnostic Report:</b>
                                     <span style="line-height: 1.4;">${data.howWhy}</span>
+                                    ${histHtml}
                                 </div>
-                                <div style="flex: 1.2; min-width: 200px; font-size: 11px; color: #333; background: #eef2f5; border-radius: 6px; padding: 12px; border-left: 4px solid #8e9eab; display: flex; flex-direction: column; justify-content: center; font-family: 'Courier New', Courier, monospace;">
+                                <div style="flex: 1.2; min-width: 200px; font-size: 11px; color: #333; background: #eef2f5; border-radius: 6px; padding: 12px; border-left: 4px solid #8e9eab; display: flex; flex-direction: column; justify-content: flex-start; font-family: 'Courier New', Courier, monospace;">
                                     <b style="color:#222; margin-bottom: 6px; font-size: 12px; font-family: 'Segoe UI', sans-serif;">Algorithmic Engine:</b>
                                     <span style="line-height: 1.5;">${data.mathEx}</span>
                                 </div>
@@ -146,6 +159,21 @@ def mainPage() {
                         </div>
                         """
                         paragraph fHtml
+                    }
+                }
+
+                // --- NEW OVERALL NOAA ALERTS SECTION ---
+                if (settings.enableNOAA) {
+                    section("<b>📡 Official NOAA Active Alerts Report</b>", hideable: true, hidden: false) {
+                        def reportHtml = """
+                        <div style="border: 1px solid #d9534f; border-radius: 8px; background: #fffcfc; padding: 15px; font-family: 'Segoe UI', Tahoma, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05); color: #333;">
+                            <div style="font-size: 14px; font-weight: bold; color: #c9302c; margin-bottom: 8px; border-bottom: 1px solid #f2dede; padding-bottom: 6px;">Unabridged NWS Broadcasts</div>
+                            <div style="font-size: 13px; line-height: 1.5; color: #444;">
+                                ${state.noaaGlobalAlerts ?: "<i>No active national weather alerts for your area.</i>"}
+                            </div>
+                        </div>
+                        """
+                        paragraph reportHtml
                     }
                 }
                 
@@ -323,19 +351,20 @@ def updated() { logInfo("Updated"); unsubscribe(); initialize() }
 def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     
-    state.threatMatrix = [
-        "Tornado": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0],
-        "Thunderstorm": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0],
-        "Flood": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0],
-        "Freeze": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0],
-        "SevereHeat": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0],
-        "Tropical": [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0]
-    ]
+    // Ensure matrix exists without wiping history on update
+    def m = state.threatMatrix ?: [:]
+    ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"].each { haz ->
+        if (!m[haz]) {
+            m[haz] = [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0, history: [], currentEvent: null]
+        }
+    }
+    state.threatMatrix = m
     
     state.watchdogActive = false
     state.cloudOffline = false
     state.noaaFailCount = 0
     state.noaaAlertsMap = [:]
+    if (!state.noaaGlobalAlerts) state.noaaGlobalAlerts = "Initializing broadcast listener..."
     
     if (!state.lastHeartbeat) state.lastHeartbeat = now()
     if (!state.smoothedTemp) state.smoothedTemp = null
@@ -467,8 +496,13 @@ def noaaResponseHandler(response, data) {
         "Tropical": "Clear", "Raw_Tropical": ""
     ]
     
+    def globalAlertsHtml = ""
+    
     alerts.each { alert ->
         def event = alert.properties?.event ?: ""
+        def headline = alert.properties?.headline ?: event
+        
+        globalAlertsHtml += "<b>${event}</b>: ${headline}<br><br>"
         
         if (event.contains("Tornado Warning")) { parsedAlerts["Tornado"] = "ALARM"; parsedAlerts["Raw_Tornado"] += "${event} | " }
         else if (event.contains("Tornado Watch") && parsedAlerts["Tornado"] != "ALARM") { parsedAlerts["Tornado"] = "WARNING"; parsedAlerts["Raw_Tornado"] += "${event} | " }
@@ -488,6 +522,11 @@ def noaaResponseHandler(response, data) {
         if (event.contains("Hurricane Warning") || event.contains("Tropical Storm Warning") || event.contains("Storm Surge Warning")) { parsedAlerts["Tropical"] = "ALARM"; parsedAlerts["Raw_Tropical"] += "${event} | " }
         else if ((event.contains("Hurricane Watch") || event.contains("Tropical Storm Watch") || event.contains("Storm Surge Watch")) && parsedAlerts["Tropical"] != "ALARM") { parsedAlerts["Tropical"] = "WARNING"; parsedAlerts["Raw_Tropical"] += "${event} | " }
     }
+    
+    if (globalAlertsHtml == "") {
+        globalAlertsHtml = "<i>No active national weather alerts for your area at this time.</i>"
+    }
+    state.noaaGlobalAlerts = globalAlertsHtml
     
     def keys = ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"]
     keys.each { k -> 
@@ -583,6 +622,8 @@ void appButtonHandler(btn) {
         state.cloudOffline = false
         state.noaaAlertsMap = [:]
         state.noaaForecastText = null
+        state.noaaGlobalAlerts = "System reset. Awaiting next poll."
+        state.threatMatrix = null // Force complete structural reset on next init
         
         initialize()
         stopAllSirens()
@@ -623,10 +664,9 @@ def updateHistory(historyName, val, maxAgeMs) {
             def timeDiffSecs = (now() - hist.last().time) / 1000.0
             def delta = Math.abs(cleanVal - lastVal)
             
-            // Hard physics limits: Reject impossibly fast leaps over short durations
             if (timeDiffSecs < 120) {
-                if (historyName == "tempHistory" && delta > 8.0) return // Temp cannot jump 8F in < 2 mins
-                if (historyName == "pressureHistory" && delta > 0.3) return // Pressure cannot jump 0.3 inHg in < 2 mins
+                if (historyName == "tempHistory" && delta > 8.0) return 
+                if (historyName == "pressureHistory" && delta > 0.3) return
             }
         }
     }
@@ -707,7 +747,7 @@ def evaluateMatrix() {
     def t = getFloat(sensorTemp, ["temperature", "tempf"], 0.0)
     def h = getFloat(sensorHum, ["humidity"], 0.0)
     def rawP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], 0.0)
-    def p = rawP + (settings.pressOffset ?: 0.0) // Apply MSLP Calibration
+    def p = rawP + (settings.pressOffset ?: 0.0)
     
     def r = getFloat(sensorRain, ["rainRate", "hourlyrainin", "precipRate", "hourlyRain"], 0.0)
     def windVal = getFloat(sensorWind, ["windSpeed", "windspeedmph", "wind"], 0.0)
@@ -727,8 +767,8 @@ def evaluateMatrix() {
     if (dpSpread < 0) dpSpread = 0.0
     updateHistory("spreadHistory", dpSpread, 3600000)
 
-    def pTrendData = getTrendData(state.pressureHistory, 0.25) // 15 min for severe predictive
-    def pTrend3Hr = getTrendData(state.pressureHistory, 2.5)  // Long trend for tropical
+    def pTrendData = getTrendData(state.pressureHistory, 0.25)
+    def pTrend3Hr = getTrendData(state.pressureHistory, 2.5) 
     def tTrendData = getTrendData(state.tempHistory, 0.25)
     def sTrendData = getTrendData(state.spreadHistory, 0.25)
     
@@ -1118,10 +1158,11 @@ def evaluateMatrix() {
     updateChildDevice()
 }
 
-// === HAZARD STATE ROUTING ===
+// === HAZARD STATE & FORENSICS ROUTING ===
 def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
     def matrix = state.threatMatrix ?: [:]
-    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0]
+    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0, history: [], currentEvent: null]
+    if (!data.history) data.history = []
     
     def pfx = haz.toLowerCase()
     def warnThresh = settings["${pfx}WarnThresh"] ?: 50
@@ -1158,6 +1199,20 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
         logAction("${haz} DNA shifted from ${currentState} to ${targetState}.")
         data.lastTrig = now()
         
+        // --- FORENSICS LOGGING ---
+        if (currentState == "WARNING" || currentState == "ALARM") {
+            def startTs = data.currentEvent?.start ?: (now() - timeSinceChange)
+            def durMs = now() - startTs
+            def durMins = Math.round(durMs / 60000)
+            def durStr = durMins > 60 ? "${Math.round(durMins/60)}h ${durMins%60}m" : "${durMins}m"
+            def startStr = new Date(startTs).format("MM/dd HH:mm", location.timeZone)
+            
+            data.history.add(0, [type: currentState, start: startStr, dur: durStr])
+            if (data.history.size() > 5) data.history = data.history[0..4]
+        }
+        data.currentEvent = [state: targetState, start: now()]
+        // -------------------------
+
         def allowedModes = settings["${pfx}Modes"]
         def modeOk = (!allowedModes || allowedModes.contains(location.mode))
         
@@ -1288,6 +1343,16 @@ def buildDashboardTile(hazName, data, noaaState, noaaRaw) {
     def mainBg = bgColors[data.state] ?: "#f8f9fa"
     def noaaColor = borderColors[noaaState] ?: "#5cb85c"
     
+    def histHtml = ""
+    if (data.history && data.history.size() > 0) {
+        histHtml = "<div style='margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;'><b style='font-size:10px; color:#555;'>Recent Events:</b><br>"
+        data.history.each { h ->
+            def c = h.type == 'ALARM' ? '#d9534f' : '#f0ad4e'
+            histHtml += "<div style='font-size:10px; color:#666;'>• <span style='color:${c}; font-weight:bold;'>${h.type}</span> | ${h.start} (${h.dur})</div>"
+        }
+        histHtml += "</div>"
+    }
+    
     def html = """
     <div style="width:100%; height:100%; box-sizing:border-box; padding:8px; font-family:-apple-system, system-ui, sans-serif; background-color:${mainBg}; border: 2px solid ${stateColor}; border-radius:8px; display:flex; flex-direction:column; overflow-y:auto;">
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 6px;">
@@ -1303,6 +1368,7 @@ def buildDashboardTile(hazName, data, noaaState, noaaRaw) {
         
         <div style="flex-grow:1; font-size:11px; color:#333; line-height:1.3; overflow-y:auto; margin-bottom: 6px;">
             <b>Local Report:</b> ${data.howWhy}
+            ${histHtml}
         </div>
         
         <div style="font-size:10px; color:#555; background:rgba(0,0,0,0.05); padding:4px; border-radius:4px; margin-bottom: 6px;">
