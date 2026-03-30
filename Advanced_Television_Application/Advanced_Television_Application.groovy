@@ -20,11 +20,11 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Main Configuration", install: true, uninstall: true) {
         
-      
         section("Live System Dashboard", hideable: true, hidden: false) {
             if (numTVs > 0) {
                 
                 input "btnRefreshData", "button", title: "<i class='fa fa-refresh fa-spin' style='color: #007bff;'></i> Refresh Dashboard Data", description: "Click here to immediately fetch the latest states and metrics for the data table below."
+                
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-top: 10px;'>"
                 statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px; width: 20%;'>Television</th><th style='padding: 8px; width: 35%;'>State & Acoustics</th><th style='padding: 8px;'>Watch Time</th><th style='padding: 8px;'>Top Media</th><th style='padding: 8px;'>Cost Today</th></tr>"
           
@@ -63,7 +63,10 @@ def mainPage() {
                        
                         if (thermo) {
                             def tState = thermo.currentValue("thermostatOperatingState")
-                            if (tState in ["heating", "cooling", "fan only"]) activeAcoustics << "HVAC (${tState.capitalize()}): +${settings["hvacVolumeBoost_${i}"] ?: 3}"
+                            if (tState in ["heating", "cooling", "fan only"]) {
+                                if (settings["enableAbsoluteHvac_${i}"]) activeAcoustics << "HVAC (${tState.capitalize()}): Absolute Vol Active"
+                                else activeAcoustics << "HVAC (${tState.capitalize()}): +${settings["hvacVolumeBoost_${i}"] ?: 3}"
+                            }
                             else activeAcoustics << "HVAC (Idle)"
                         }
                         
@@ -78,7 +81,7 @@ def mainPage() {
                             if (vac.currentValue("switch") == "on") activeAcoustics << "Vacuum (ON): +${settings["vacuumBoost_${i}"] ?: 10}"
                             else activeAcoustics << "Vacuum (OFF)"
                         }
-                        
+    
                         def ap = settings["airPurifier_${i}"]
                         if (ap) {
                             if (ap.currentValue("switch") == "on") activeAcoustics << "Purifier (ON): +${settings["airPurifierBoost_${i}"] ?: 2}"
@@ -87,11 +90,12 @@ def mainPage() {
                         
                         if (activeAcoustics.size() > 0) {
                             def currentBoost = state.currentVolumeBoost?."${i}" ?: 0
-                            def boostDisplay = isTrulyOn ? "<strong style='color:#c0392b;'>Active Volume Boost: +${currentBoost}</strong>" : "<span style='color:#7f8c8d;'>(TV is OFF - Boost Suspended)</span>"
+                            def boostDisplay = isTrulyOn && !settings["enableAbsoluteHvac_${i}"] ? "<strong style='color:#c0392b;'>Active Volume Boost: +${currentBoost}</strong>" : ""
+                            if (!isTrulyOn) boostDisplay = "<span style='color:#7f8c8d;'>(TV is OFF - Boost Suspended)</span>"
                             acousticText = "<div style='margin-top: 6px; padding-top: 6px; border-top: 1px dotted #ccc; font-size:11px; color:#555;'><b>Acoustics:</b> ${activeAcoustics.join(' | ')}<br>${boostDisplay}</div>"
                         }
                     }
-                    
+ 
                     def watchMins = state.watchTimeToday?."${i}" ?: 0
                     def watchDisplay = "${(watchMins / 60).toInteger()}h ${watchMins % 60}m"
                     
@@ -396,7 +400,14 @@ def tvPage(params) {
                     input "pollInterval_${tNum}", "number", title: "Polling Interval (Minutes)", defaultValue: 5, range: "1..10", required: true, description: "How often (in minutes) the app will forcefully ask the thermostat for its current state."
                 }
                 
-                input "hvacVolumeBoost_${tNum}", "number", title: "HVAC Volume Boost (Units)", defaultValue: 3, description: "How many volume units to increase when the HVAC starts running."
+                input "enableAbsoluteHvac_${tNum}", "bool", title: "Enable Absolute Volume Override (0-100%)", defaultValue: false, submitOnChange: true, description: "Bypasses relative clicks (+3) for the HVAC and instead pushes an exact absolute volume limit when the selected thermostat above runs. Ideal for Onkyo/AVRs."
+                if (settings["enableAbsoluteHvac_${tNum}"]) {
+                    input "hvacBaseVol_${tNum}", "number", title: "Base TV Volume (0-100)", required: true, description: "The absolute volume to set when the TV turns on or the HVAC turns off."
+                    input "hvacActiveVol_${tNum}", "number", title: "HVAC Active Volume (0-100)", required: true, description: "The absolute volume to set when the HVAC turns on."
+                } else {
+                    input "hvacVolumeBoost_${tNum}", "number", title: "HVAC Volume Boost (Relative Units)", defaultValue: 3, description: "How many volume units to increase when the HVAC starts running."
+                }
+                
                 input "dishwasher_${tNum}", "capability.switch", title: "Dishwasher Switch / Power State", required: false, description: "Select the smart plug or switch monitoring the dishwasher."
                 input "dishwasherBoost_${tNum}", "number", title: "Dishwasher Volume Boost (Units)", defaultValue: 4, description: "How many volume units to increase when the dishwasher is running."
                 input "vacuum_${tNum}", "capability.switch", title: "Robot Vacuum Switch / Power State", required: false, description: "Select the robot vacuum switch to monitor."
@@ -491,6 +502,7 @@ def initialize() {
     state.cozyLightsActivatedByTv = state.cozyLightsActivatedByTv ?: [:]
     state.activeMacro = state.activeMacro ?: [:]
     state.macroControlledList = state.macroControlledList ?: [:]
+    state.lastHvacState = state.lastHvacState ?: [:]
     
     // Power State Trackers
     state.plugWasOffBeforeShow = state.plugWasOffBeforeShow ?: [:]
@@ -1124,6 +1136,20 @@ def tvPowerEvaluator(evt) {
                         addToHistory("${tvName}: Startup absolute volume adjusted to ${targetVol}.")
                     }
                 }
+
+                // Check absolute HVAC state at startup
+                if (settings["enableAbsoluteHvac_${i}"] && settings["mainThermostat_${i}"]) {
+                    def thermo = settings["mainThermostat_${i}"]
+                    def isRunning = thermo.currentValue("thermostatOperatingState") in ["heating", "cooling", "fan only"]
+                    def targetVol = isRunning ? settings["hvacActiveVol_${i}"] : settings["hvacBaseVol_${i}"]
+                    def audioDevice = getAudioDevice(i)
+                    
+                    if (targetVol != null && audioDevice) {
+                        if (audioDevice.hasCommand("setLevel")) audioDevice.setLevel(targetVol)
+                        else if (audioDevice.hasCommand("setVolume")) audioDevice.setVolume(targetVol)
+                        addToHistory("${tvName}: Setting Initial Absolute HVAC volume to ${targetVol}.")
+                    }
+                }
                 
                 if (settings["enableAcousticMgmt_${i}"]) {
                     def noiseSwitches = settings["tvNoiseSwitches_${i}"]
@@ -1259,7 +1285,7 @@ def tvPowerEvaluator(evt) {
                         if (startTime && endTime) timeOk = timeOfDayIsBetween(timeToday(startTime, location.timeZone), timeToday(endTime, location.timeZone), new Date(), location.timeZone)
                         
                         if (isBlindClosed && timeOk) {
-                              addToHistory("${tvName}: Conditions met. Restoring lights.")
+                             addToHistory("${tvName}: Conditions met. Restoring lights.")
                              lights.each { 
                                  it.on()
                                  pauseExecution(300)
@@ -1329,10 +1355,36 @@ def evaluateAcoustics(i) {
         return
     }
     
+    // NEW: Absolute HVAC Volume Handling
+    def thermo = settings["mainThermostat_${i}"]
+    def hvacRunning = thermo && thermo.currentValue("thermostatOperatingState") in ["heating", "cooling", "fan only"]
+
+    if (settings["enableAbsoluteHvac_${i}"]) {
+        def audioDev = getAudioDevice(i)
+        def activeVol = settings["hvacActiveVol_${i}"]
+        def baseVol = settings["hvacBaseVol_${i}"]
+
+        if (hvacRunning && state.lastHvacState["${i}"] != "running") {
+            state.lastHvacState["${i}"] = "running"
+            if (audioDev && activeVol != null) {
+                if (audioDev.hasCommand("setLevel")) audioDev.setLevel(activeVol)
+                else if (audioDev.hasCommand("setVolume")) audioDev.setVolume(activeVol)
+                addToHistory("${getTvName(i)}: HVAC Started. Setting Absolute Volume to ${activeVol}.")
+            }
+        } else if (!hvacRunning && state.lastHvacState["${i}"] == "running") {
+            state.lastHvacState["${i}"] = "idle"
+            if (audioDev && baseVol != null) {
+                if (audioDev.hasCommand("setLevel")) audioDev.setLevel(baseVol)
+                else if (audioDev.hasCommand("setVolume")) audioDev.setVolume(baseVol)
+                addToHistory("${getTvName(i)}: HVAC Stopped. Restoring Base Volume to ${baseVol}.")
+            }
+        }
+    }
+
+    // Evaluate standard relative acoustic boosts for everything else
     def maxBoost = 0
     
-    def thermo = settings["mainThermostat_${i}"]
-    if (thermo && thermo.currentValue("thermostatOperatingState") in ["heating", "cooling", "fan only"]) {
+    if (thermo && hvacRunning && !settings["enableAbsoluteHvac_${i}"]) {
         maxBoost = Math.max(maxBoost, (settings["hvacVolumeBoost_${i}"] ?: 3) as Integer)
     }
     
@@ -1728,7 +1780,7 @@ def muteActiveTVs() {
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def tv = getPrimaryDevice(i)
         if (isTvActuallyOn(tv, i)) {
-            def audioDevice = getAudioDevice(i)
+             def audioDevice = getAudioDevice(i)
             if (audioDevice.hasCommand("mute")) {
                 audioDevice.mute()
                 pauseExecution(300)
@@ -1826,7 +1878,7 @@ def stopMorningRoutineTest(i) {
 def testHvacBoost(i, isRunning) {
     def tv = getPrimaryDevice(i)
     if (isTvActuallyOn(tv, i)) {
-        def audioDevice = getAudioDevice(i)
+         def audioDevice = getAudioDevice(i)
         def boostAmount = settings["hvacVolumeBoost_${i}"] ?: 3
         def tvName = getTvName(i)
        
@@ -1865,7 +1917,7 @@ def cozyOvercastHandler(evt) {
                 def blinds = settings["cozyBlinds_${i}"]
                 def blindsClosed = blinds && blinds.any { it.currentValue("contact") == "closed" }
                 def cozyLights = settings["cozyLights_${i}"]
-                
+               
                 // Turn OFF if Overcast clears AND blinds are open
                 if (!isOvercast && !blindsClosed && state.cozyLightsActivatedByTv["${i}"]) {
                     addToHistory("${tvName}: Overcast cleared. Turning OFF Cozy Mode lights.")
@@ -1892,7 +1944,7 @@ def cozyOvercastHandler(evt) {
                     if (cozyLights) {
                         cozyLights.each { bulb ->
                             if (targetCT != null && bulb.hasCommand("setColorTemperature")) bulb.setColorTemperature(targetCT, targetLevel)
-                            else bulb.setLevel(targetLevel)
+                             else bulb.setLevel(targetLevel)
                             pauseExecution(300)
                         }
                     }
