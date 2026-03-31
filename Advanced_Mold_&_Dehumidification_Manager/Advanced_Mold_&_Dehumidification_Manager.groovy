@@ -283,6 +283,7 @@ def appButtonHandler(btn) {
             }
             if (btn == "btnResetTank_${i}") {
                 resetTankFullFlag(i, "Manual Dashboard Reset")
+                evaluateZones() // FIX: Added here instead
             }
         }
     }
@@ -347,10 +348,11 @@ def safeSum(list) {
 def resetTankFullFlag(i, reason) {
     state["z${i}TankFull"] = false
     state["z${i}StallBaseRH"] = null
+    state["z${i}StallStart"] = null // FIX: Explicitly clear StallStart
     state["z${i}TankMaxRH"] = null
     state["z${i}TankNotified"] = false
     logAction("ZONE ${i}: Tank Full flag CLEARED. Reason: ${reason}")
-    evaluateZones()
+    // FIX: Removed evaluateZones() to prevent recursive crash loops
 }
 
 // System Cron Job - Triggers exactly at Midnight
@@ -521,7 +523,8 @@ def evaluateZones() {
                         def reqDrop = settings["z${i}StallDrop"] ?: 5
                         def limitMins = settings["z${i}StallMins"] ?: 90
                         
-                        if ((baseRH - h) >= reqDrop) {
+                        // FIX: Added 'baseRH != null' safety net
+                        if (baseRH != null && (baseRH - h) >= reqDrop) {
                             state["z${i}StallStart"] = now()
                             state["z${i}StallBaseRH"] = h // Progress made, reset timer
                         } else if ((now() - state["z${i}StallStart"]) > (limitMins * 60000)) {
