@@ -21,13 +21,11 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Advanced Lock Manager", install: true, uninstall: true) {
         
-      
         section("Live Access Dashboard") {
             // TABLE 1: Lock Status
             def statusText = "<b>Physical Lock Status</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Door</th><th style='padding: 8px;'>Current State</th><th style='padding: 8px;'>Last Action</th></tr>"
             
-     
             if (masterLocks) {
                 masterLocks.each { lock ->
                     def lName = lock.displayName
@@ -37,19 +35,15 @@ def mainPage() {
                     def lastAction = state.lastAction?."${lock.id}" ?: "Awaiting Sync..."
                     def pendingMsg = ""
                     
-
                     // Countdown Timer Math
                     if (lState == "UNLOCKED") {
                         if (state["pendingAutoLock_${lock.id}"]) {
-                           
                             def cSensor = settings["contactSensor_${lock.id}"]
                             if (cSensor && cSensor.currentValue("contact") == "closed") {
                                 pendingMsg = "<br><span style='color: orange; font-size: 11px;'><i>Locking in < 10s...</i></span>"
-                     
                             } else {
                                 pendingMsg = "<br><span style='color: orange; font-size: 11px;'><i>Awaiting Door Close to Auto-Lock</i></span>"
                             }
-                     
                         } else {
                             def epoch = state["autoLockEpoch_${lock.id}"]
                             def delayMins = settings["autoLockTime_${lock.id}"] ?: 0
@@ -64,7 +58,6 @@ def mainPage() {
                                 }
                             }
                         }
-            
                     }
                     
                     statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${lName}</b></td><td style='padding: 8px; color: ${stateColor}; font-weight: bold;'>${lState}</td><td style='padding: 8px;'>${lastAction}${pendingMsg}</td></tr>"
@@ -81,17 +74,14 @@ def mainPage() {
             if (masterLocks) {
                 masterLocks.each { lock ->
                     def lName = lock.displayName
-           
                     def battery = lock.currentValue("battery")
                     def battStr = battery ? "${battery}%" : "N/A"
                     def battColor = (battery && battery < (settings["lowBatteryThreshold"] ?: 20)) ? "red" : "green"
                     
-        
                     def dCycles = state.weeklyDoorCycles?."${lock.id}" ?: 0
                     def lCycles = state.weeklyLockCycles?."${lock.id}" ?: 0
                     
                     def mStatus = "<span style='color: green;'>Healthy</span>"
-             
                     def highCycles = settings["highCycleWarning"] ?: 50
                     if (battery && battery < (settings["lowBatteryThreshold"] ?: 20)) {
                         mStatus = "<span style='color: red; font-weight: bold;'>Replace Battery</span>"
@@ -113,19 +103,16 @@ def mainPage() {
             def userCount = settings["numUsers"] ?: 1
             if (userCount > 0) {
                 for (int i = 1; i <= (userCount as Integer); i++) {
-             
                     def uName = settings["userName_${i}"] ?: "User ${i}"
                     def hasPrimary = settings["userPin_${i}"] ? true : false
                     def hasGhost = settings["userGhostPin_${i}"] ? true : false
                     
-             
                     if (!hasPrimary && !hasGhost) {
                         statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${uName}</b></td><td style='padding: 8px; color: #888;'>Unconfigured</td><td style='padding: 8px;'>-</td></tr>"
                         continue
                     }
                     
                     def allowedLocks = settings["userLocks_${i}"]
-          
                     def lockNames = allowedLocks ? allowedLocks.collect{it.displayName}.join(", ") : "All Locks"
                     def modes = settings["userModes_${i}"] ? settings["userModes_${i}"].join(", ") : "Always"
                     def tStart = settings["userStartTime_${i}"] ? new Date().parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings["userStartTime_${i}"]).format("h:mm a") : ""
@@ -133,7 +120,6 @@ def mainPage() {
                     def timeStr = (tStart && tEnd) ? "${tStart} - ${tEnd}" : "24/7"
                     def rightsStr = "<b>Locks:</b> ${lockNames}<br><b>Modes:</b> ${modes}<br><b>Hours:</b> ${timeStr}"
                     
-                
                     def progState = state.userProgrammed?."${i}"
                     def progColor = progState ? "green" : "orange"
                     def ghostStr = hasGhost ? " + Ghost" : ""
@@ -142,7 +128,6 @@ def mainPage() {
                     statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${uName}</b></td><td style='padding: 8px; font-size: 11px;'>${rightsStr}</td><td style='padding: 8px; color: ${progColor}; font-weight: bold;'>${progText}</td></tr>"
                 }
             } else {
-       
                 statusText += "<tr><td colspan='3' style='padding: 8px; color: #888;'>No users configured.</td></tr>"
             }
             statusText += "</table>"
@@ -155,19 +140,16 @@ def mainPage() {
 
         section("Access Audit Log (Last 10 Entries)") {
             if (atomicState.accessLog && atomicState.accessLog.size() > 0) {
-        
                 def logText = "<table style='width:100%; font-size: 13px; border-collapse: collapse; border: 1px solid #ccc;'>"
                 logText += "<tr style='background-color: #eee; border-bottom: 1px solid #ccc; text-align: left;'><th style='padding: 6px;'>Date & Time</th><th style='padding: 6px;'>Event Details</th></tr>"
                 
                 atomicState.accessLog.each { entry ->
-            
                     logText += "<tr style='border-bottom: 1px solid #eee;'><td style='padding: 6px; width: 35%;'>${entry.time}</td><td style='padding: 6px;'>${entry.event}</td></tr>"
                 }
                 logText += "</table>"
                 paragraph logText
             } else {
                 paragraph "<i>No access events recorded yet.</i>"
-           
             }
         }
         
@@ -185,7 +167,6 @@ def mainPage() {
             input "syncInterval", "enum", title: "Background Sync Interval", required: true, defaultValue: "15", submitOnChange: true, options: [
                 "5": "Every 5 Minutes (High Hub Load)",
                 "10": "Every 10 Minutes",
-            
                 "15": "Every 15 Minutes (Recommended)",
                 "30": "Every 30 Minutes",
                 "60": "Every 1 Hour",
@@ -195,7 +176,6 @@ def mainPage() {
             input "numUsers", "number", title: "Number of Identities/Users to Configure (1-20)", required: true, defaultValue: 1, range: "1..20", submitOnChange: true
             input "btnForceSync", "button", title: "Force Sync All Locks Now"
         }
-        
         
         if (masterLocks) {
             section("System Notifications") {
@@ -211,13 +191,17 @@ def mainPage() {
                 
                 input "lowBatteryThreshold", "number", title: "Critical Battery Threshold (%)", defaultValue: 20, required: true, 
                     description: "Alkaline batteries experience severe voltage drops below 20%, which can cause the internal motor to stall halfway through throwing the deadbolt."
-                    
                 input "highCycleWarning", "number", title: "High Usage Wear Threshold (Cycles per Week)", defaultValue: 50, required: true,
                     description: "If a deadbolt cycles more than this number of times in a single week, it requires powdered graphite lubrication every 3 months to prevent mechanical stripping."
-                
                 input "btnResetCounters", "button", title: "Clear Maintenance Alerts (Reset Counters)"
             }
             
+            section("Life Safety & Emergency Overrides") {
+                paragraph "If smoke or carbon monoxide is detected, all auto-locking routines will be instantly suspended to ensure emergency egress."
+                input "smokeDetectors", "capability.smokeDetector", title: "Smoke Detectors", multiple: true, required: false
+                input "coDetectors", "capability.carbonMonoxideDetector", title: "Carbon Monoxide Detectors", multiple: true, required: false
+            }
+
             section("Auto-Lock & Door Sensors") {
                 paragraph "Configure automatic locking based on time and physical door state. If the timer expires while the door is open, the app will wait for it to close, then lock it after a 10-second grace period."
                 masterLocks.each { lock ->
@@ -231,7 +215,6 @@ def mainPage() {
                 for (int i = 1; i <= 3; i++) {
                     input "autoLockMode_${i}", "mode", title: "Rule ${i}: Trigger Mode", required: false, multiple: false
                     input "autoLockModeDelay_${i}", "number", title: "Rule ${i}: Delay (Minutes)", defaultValue: 0, required: false
-          
                 }
             }
             
@@ -247,7 +230,6 @@ def mainPage() {
                 def uName = settings["userName_${i}"] ?: "User ${i}"
                 section("${uName} Configuration") {
                     href(name: "userHref${i}", page: "userPage", params: [userNum: i], title: "Configure ${uName}")
-     
                 }
             }
         }
@@ -261,7 +243,6 @@ def userPage(params) {
     
     dynamicPage(name: "userPage", title: "${currentName} Identity Setup", install: false, uninstall: false, previousPage: "mainPage") {
         section("Primary Code (Triggers Automations)") {
-    
             input "userName_${uNum}", "text", title: "User Name (e.g., Dog Walker, Mom)", required: false, defaultValue: "User ${uNum}", submitOnChange: true
             input "userSlot_${uNum}", "number", title: "Primary Lock Slot Position (1-30)", required: true, description: "The physical memory slot on the lock. MUST be unique."
             input "userPin_${uNum}", "text", title: "Primary PIN Code (4-8 digits)", required: false
@@ -274,12 +255,10 @@ def userPage(params) {
         }
         
         section("Physical & Access Restrictions (The Dynamic Gate)") {
-  
             paragraph "Leave these blank if the user should have 24/7 access to all configured locks."
             input "userLocks_${uNum}", "capability.lock", title: "Allowed Locks", multiple: true, required: false, description: "Leave blank to allow access to ALL configured locks."
             input "userModes_${uNum}", "mode", title: "Allowed Modes", multiple: true, required: false
             input "userStartTime_${uNum}", "time", title: "Start Time", required: false
-     
             input "userEndTime_${uNum}", "time", title: "End Time", required: false
         }
         
@@ -305,7 +284,6 @@ def updated() {
 
 def initialize() {
     atomicState.historyLog = atomicState.historyLog ?: []
- 
     atomicState.accessLog = atomicState.accessLog ?: []
     
     state.lastAction = state.lastAction ?: [:]
@@ -319,7 +297,6 @@ def initialize() {
         subscribe(masterLocks, "lock", lockHandler)
         
         masterLocks.each { lock ->
-       
             def cSensor = settings["contactSensor_${lock.id}"]
             if (cSensor) {
                 subscribe(cSensor, "contact", contactHandler)
@@ -331,8 +308,15 @@ def initialize() {
     subscribe(location, "mode", modeChangeHandler)
     
     if (showerSensors) {
-  
         subscribe(showerSensors, "motion.active", showerMotionHandler)
+    }
+
+    if (smokeDetectors) {
+        subscribe(smokeDetectors, "smoke", emergencyAlarmHandler)
+    }
+    
+    if (coDetectors) {
+        subscribe(coDetectors, "carbonMonoxide", emergencyAlarmHandler)
     }
     
     // Scheduled Events
@@ -351,7 +335,6 @@ def initialize() {
             schedule("0 0 * * * ?", evaluateSchedules) // Hourly
         } else {
             schedule("0 0/${interval} * * * ?", evaluateSchedules)
-  
         }
     }
     
@@ -385,6 +368,29 @@ def addToAccessLog(String msg) {
 
 def isSystemPaused() {
     return (masterEnableSwitch && masterEnableSwitch.currentValue("switch") == "off")
+}
+
+def isEmergencyActive() {
+    def emergency = false
+    if (smokeDetectors?.find { it.currentValue("smoke") != "clear" }) emergency = true
+    if (coDetectors?.find { it.currentValue("carbonMonoxide") != "clear" }) emergency = true
+    return emergency
+}
+
+// --- EMERGENCY HANDLER ---
+def emergencyAlarmHandler(evt) {
+    if (evt.value != "clear") {
+        addToHistory("EMERGENCY: ${evt.device.displayName} detected ${evt.name}! Suspending all auto-lock operations.")
+        // Immediately invalidate any pending lock routines
+        if (masterLocks) {
+            masterLocks.each { lock ->
+                state["pendingAutoLock_${lock.id}"] = false
+                state["autoLockEpoch_${lock.id}"] = new Date().time 
+            }
+        }
+    } else {
+        addToHistory("SAFETY: ${evt.device.displayName} is now clear.")
+    }
 }
 
 // --- MAINTENANCE & RESET ---
@@ -435,6 +441,11 @@ def appButtonHandler(btn) {
 def showerMotionHandler(evt) {
     if (isSystemPaused() || !masterLocks) return
     
+    if (isEmergencyActive()) {
+        addToHistory("SAFETY OVERRIDE ABORTED: Life Safety Emergency is active.")
+        return
+    }
+
     def sensorName = evt.device.displayName
     addToHistory("SAFETY OVERRIDE: Motion detected at ${sensorName}. Securing perimeter.")
     
@@ -460,7 +471,6 @@ def contactHandler(evt) {
     if (isSystemPaused()) return
     
     def sensorId = evt.device.id
- 
     def isClosed = (evt.value == "closed")
     
     masterLocks.each { lock ->
@@ -469,24 +479,25 @@ def contactHandler(evt) {
             
             if (isClosed) {
                 if (state["pendingAutoLock_${lock.id}"]) {
-            
+                    if (isEmergencyActive()) {
+                        addToHistory("SECURITY: Auto-Lock queue aborted for ${lock.displayName} due to Life Safety Emergency.")
+                        state["pendingAutoLock_${lock.id}"] = false
+                        return
+                    }
                     addToHistory("SECURITY: ${lock.displayName} closed. Executing Auto-Lock in 10 seconds.")
                     def epoch = new Date().time
                     state["autoLockEpoch_${lock.id}"] = epoch
                     runIn(10, "executeFinalAutoLock", [data: [lockId: lock.id, epoch: epoch], overwrite: false])
                 }
-      
             } else {
                 // Tracking Door Open Cycles
                 if (!state.weeklyDoorCycles) state.weeklyDoorCycles = [:]
                 state.weeklyDoorCycles["${lock.id}"] = (state.weeklyDoorCycles["${lock.id}"] ?: 0) + 1
                 
-              
                 // If door opens during the 10-second grace period, cancel the lock command
                 if (state["pendingAutoLock_${lock.id}"]) {
                     state["autoLockEpoch_${lock.id}"] = new Date().time // Invalidate old timers
                     addToHistory("SECURITY: ${lock.displayName} reopened during 10s grace period. Auto-Lock suspended.")
-             
                 }
             }
         }
@@ -498,6 +509,13 @@ def executeFinalAutoLock(data) {
     if (state["autoLockEpoch_${lockId}"] != data.epoch || isSystemPaused()) return
     
     def lock = masterLocks.find { it.id == lockId }
+    
+    if (isEmergencyActive()) {
+        addToHistory("SECURITY: Auto-Lock aborted for ${lock?.displayName} due to active Life Safety Emergency!")
+        state["pendingAutoLock_${lockId}"] = false
+        return
+    }
+
     if (lock && lock.currentValue("lock") == "unlocked") {
         addToHistory("SECURITY: Executing delayed Auto-Lock for ${lock.displayName}.")
         lock.lock()
@@ -545,7 +563,6 @@ def lockHandler(evt) {
             }
             processIdentityAutomation(codeName)
         } else {
-           
             logMsg = "Unlocked (Manual/Thumbturn)"
             addToAccessLog("箔 ${lockName} unlocked manually.")
             addToHistory("ACCESS: ${lockName} unlocked manually.")
@@ -562,7 +579,6 @@ def lockHandler(evt) {
         
     } else if (action == "locked") {
         logMsg = "Locked"
-      
         addToAccessLog("白 ${lockName} was locked.")
         
         // Destroy any running auto-lock timers for this specific door
@@ -579,6 +595,12 @@ def evaluateAutoLock(data) {
     
     def lock = masterLocks.find { it.id == lockId }
     if (!lock || lock.currentValue("lock") != "unlocked") return
+
+    if (isEmergencyActive()) {
+        addToHistory("SECURITY: Auto-Lock aborted for ${lock.displayName} due to active Life Safety Emergency!")
+        state["pendingAutoLock_${lockId}"] = false
+        return
+    }
     
     def cSensor = settings["contactSensor_${lockId}"]
     // If no sensor is configured, we assume the door is closed and blindly throw the deadbolt
@@ -607,7 +629,6 @@ def processIdentityAutomation(String unlockedByName) {
         
         if (configName && configName.equalsIgnoreCase(unlockedByName)) {
             def tModes = settings["triggerFromModes_${i}"]
-       
             def targetMode = settings["arrivalTargetMode_${i}"]
             
             if (tModes && targetMode && tModes.contains(currentMode)) {
@@ -635,7 +656,6 @@ def modeChangeHandler(evt) {
                 masterLocks.each { lock ->
                     if (lock.currentValue("lock") == "unlocked") {
                         def epoch = new Date().time
-         
                         state["autoLockEpoch_${lock.id}"] = epoch
                         
                         if (delayMins > 0) {
@@ -643,7 +663,6 @@ def modeChangeHandler(evt) {
                         } else {
                             // Run instantly
                             evaluateAutoLock([lockId: lock.id, epoch: epoch])
-      
                         }
                     }
                 }
@@ -675,7 +694,6 @@ def evaluateSchedules(forceSync = false) {
         def allowedModes = settings["userModes_${i}"]
         if (allowedModes && !allowedModes.contains(location.mode)) {
             isAllowed = false
-      
         }
         
         // 2. Check Time Restrictions
@@ -684,7 +702,6 @@ def evaluateSchedules(forceSync = false) {
         if (isAllowed && tStart && tEnd) {
             def between = timeOfDayIsBetween(tStart, tEnd, new Date(), location.timeZone)
             if (!between) {
-         
                 isAllowed = false
             }
         }
@@ -698,19 +715,16 @@ def evaluateSchedules(forceSync = false) {
                 def allowedLocks = settings["userLocks_${i}"]
                 def allowedIds = allowedLocks?.collect { it.id }
                 def lockPermitted = (!allowedIds || allowedIds.contains(lock.id))
-    
                 
                 if (lockPermitted) {
                     if (pSlot && pPin && lock.hasCommand("setCode")) lock.setCode(pSlot, pPin, uName)
                     if (gSlot && gPin && lock.hasCommand("setCode")) lock.setCode(gSlot, gPin, "${uName} (Ghost)")
-             
                 } else {
                     if (pSlot && lock.hasCommand("deleteCode")) lock.deleteCode(pSlot)
                     if (gSlot && lock.hasCommand("deleteCode")) lock.deleteCode(gSlot)
                 }
             }
             state.userProgrammed["${i}"] = true
-     
         } 
         else if (!isAllowed && (currentlyProgrammed || forceSync)) {
             addToHistory("SECURITY: Access revoked for ${uName}. Deleting PIN(s).")
