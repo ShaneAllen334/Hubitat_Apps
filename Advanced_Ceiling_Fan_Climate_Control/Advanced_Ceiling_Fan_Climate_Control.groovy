@@ -26,10 +26,8 @@ def mainPage() {
             input "btnRefresh", "button", title: "🔄 Refresh Data"
             input "btnResetOverrides", "button", title: "❌ Clear All Overrides"
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a real-time view of your ceiling fans, comparing actual states to target states, alongside Occupancy and Temperature data.</div>"
-            
-            def appStatus = (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") ? 
-                "<span style='color:red;'><b>DISABLED</b> (Master Switch is OFF)</span>" : 
-                "<span style='color:green;'><b>ACTIVE</b></span>"
+           
+            def appStatus = (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") ? "<span style='color:red;'><b>DISABLED</b> (Master Switch is OFF)</span>" : "<span style='color:green;'><b>ACTIVE</b></span>"
             
             paragraph "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff;'><b>App Status:</b> ${appStatus}</div>"
 
@@ -40,6 +38,7 @@ def mainPage() {
                 .dash-table th { background-color: #343a40; color: white; }
                 .dash-hl { background-color: #f8f9fa; font-weight:bold; }
             </style>
+      
             <table class="dash-table">
                 <thead><tr><th>Room</th><th>Type</th><th>Occupied?</th><th>Dry Bulb</th><th>Wet Bulb</th><th>Target</th><th>Actual State</th><th>Master Relay</th><th>Status</th></tr></thead>
                 <tbody>
@@ -58,12 +57,13 @@ def mainPage() {
                 if (settings["enableZ${i}"] && hasDevice) {
                     hasZones = true
                     def zName = settings["z${i}Name"] ?: "Room ${i}"
+            
                     def zTimeoutMs = (settings["z${i}OccupancyTimeout"] ?: 30) * 60000
 
                     def tDev = settings["z${i}Temp"]
                     def hDev = settings["z${i}Hum"]
                     def cMethod = settings["z${i}ControlMethod"] ?: "wetBulb"
-                    
+              
                     def zTemp = tDev ? (tDev.currentValue("temperature") ?: "--") : "--"
                     def zHum = hDev ? (hDev.currentValue("humidity") ?: "--") : "--"
                     
@@ -78,6 +78,7 @@ def mainPage() {
                     def isManualOverrideActive = isOverrideActive(i)
                     
                     def isOccupiedDisplay = "No"
+              
                     if (isActivityOverride) {
                         isOccupiedDisplay = "<span style='color:blue;'>Yes (Override)</span>"
                     } else if (isOccupiedFlag) {
@@ -432,10 +433,18 @@ def fanSpeedHandler(evt) {
     def roomId = getRoomIdFromDevice(evt.device.id, "fan")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSpeed"]
+    
     if (evt.value != expected && evt.value != "unknown") {
-        setManualOverride(roomId, evt.value)
-        state["z${roomId}ExpectedSpeed"] = evt.value
-        state["z${roomId}Target"] = evt.value 
+        def gnSwitch = settings["z${roomId}GnSwitch"]
+        // If Good Night is active, silently sync the state without triggering an override
+        if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+            state["z${roomId}ExpectedSpeed"] = evt.value
+            state["z${roomId}Target"] = evt.value
+        } else {
+            setManualOverride(roomId, evt.value)
+            state["z${roomId}ExpectedSpeed"] = evt.value
+            state["z${roomId}Target"] = evt.value 
+        }
     }
 }
 
@@ -443,9 +452,15 @@ def simpleFanHandler(evt) {
     def roomId = getRoomIdFromDevice(evt.device.id, "simpleFan")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSimple"]
+    
     if (evt.value != expected) {
-        setManualOverride(roomId, "Relay ${evt.value}")
-        state["z${roomId}ExpectedSimple"] = evt.value
+        def gnSwitch = settings["z${roomId}GnSwitch"]
+        if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+            state["z${roomId}ExpectedSimple"] = evt.value
+        } else {
+            setManualOverride(roomId, "Relay ${evt.value}")
+            state["z${roomId}ExpectedSimple"] = evt.value
+        }
     }
 }
 
@@ -453,9 +468,15 @@ def powerRelayHandler(evt) {
     def roomId = getRoomIdFromDevice(evt.device.id, "power")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedPower"]
+    
     if (evt.value != expected) {
-        setManualOverride(roomId, "Master Relay ${evt.value}")
-        state["z${roomId}ExpectedPower"] = evt.value
+        def gnSwitch = settings["z${roomId}GnSwitch"]
+        if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+            state["z${roomId}ExpectedPower"] = evt.value
+        } else {
+            setManualOverride(roomId, "Master Relay ${evt.value}")
+            state["z${roomId}ExpectedPower"] = evt.value
+        }
     }
 }
 
