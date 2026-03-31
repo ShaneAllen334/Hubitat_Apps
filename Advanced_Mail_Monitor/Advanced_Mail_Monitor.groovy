@@ -209,12 +209,24 @@ def initialize() {
     if (exteriorDoors) subscribe(exteriorDoors, "contact.open", homeActivityHandler)
     if (arrivalSensors) subscribe(arrivalSensors, "presence.present", homeActivityHandler)
     if (priorityYieldSwitch) subscribe(priorityYieldSwitch, "switch", priorityYieldHandler)
- 
+    
+    // NEW: Subscribe to Inovelli switches turning off
+    if (inovelliSwitches) subscribe(inovelliSwitches, "switch.off", inovelliMailSwitchOffHandler)
+    
     schedule("0 0 0 * * ?", "midnightReset")
  
     if (enableNag && nagTime) schedule(nagTime, "nagHandler")
     
     if (enableHourlyNag) runEvery1Hour("hourlyNagHandler")
+}
+
+def inovelliMailSwitchOffHandler(evt) {
+    // If the switch turns off, but the Mail Switch is still ON, re-issue the alert
+    if (mailSwitch && mailSwitch.currentValue("switch") == "on") {
+        log.info "Switch '${evt.device.displayName}' turned off, but Mail is still waiting. Re-applying Mail LED indicator."
+        // We wrap evt.device in brackets to pass it as a list to your existing setLightColor function
+        setLightColor([evt.device], deliveryColor, lightLevel ?: 100, inovelliTarget ?: "All")
+    }
 }
 
 def priorityYieldHandler(evt) {
@@ -279,10 +291,10 @@ def homeActivityHandler(evt) { state.lastHomeActivity = new Date().time }
 def sensorOpenHandler(evt) {
     def now = new Date().time
     
-    // HARD DEBOUNCE
-    def lastEvt = state.lastSensorEvent ?: 0
+    // HARD DEBOUNCE - Changed to atomicState for concurrent sensor safety
+    def lastEvt = atomicState.lastSensorEvent ?: 0
     if ((now - lastEvt) < 5000) return 
-    state.lastSensorEvent = now
+    atomicState.lastSensorEvent = now
 
     def switchState = mailSwitch.currentValue("switch")
     def tz = location.timeZone ?: TimeZone.getDefault()
@@ -329,12 +341,13 @@ def sensorOpenHandler(evt) {
         state.todayRetrievalTime = currentTimeStr
         updateAverage("retrieval", currentMinutes)
         addToHistory("RETRIEVAL DETECTED.${tripTimeStr}")
-    
+  
         if (retrievalLightAction == "Turn Off") {
             if (indicatorLight) restoreLightState(indicatorLight)
             if (inovelliSwitches) {
                 inovelliSwitches.each { device -> 
                     def target = inovelliTarget ?: "All"
+            
                     if (target == "All") {
                         if (device.hasCommand("ledEffectAll")) device.ledEffectAll(255, 0, 0, 0)
                     } else {
@@ -348,6 +361,7 @@ def sensorOpenHandler(evt) {
         if (overrideSwitch) overrideSwitch.off()
   
         if (sendPushRetrieval) sendMessage("📬 Mail retrieved!")
+        
         if (ttsSpeakers && ttsRetrievalText) ttsSpeakers.speak(ttsRetrievalText)
         if (zoozChimes && zoozSoundRetrieval != null) {
             zoozChimes.each { if (it.hasCommand("playSound")) it.playSound(zoozSoundRetrieval as Integer) }
