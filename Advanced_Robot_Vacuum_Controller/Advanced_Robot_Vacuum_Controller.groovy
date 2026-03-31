@@ -493,6 +493,7 @@ void requestDispatch(List selectedRoomNames, Map options = [:]) {
     if (isAppPaused()) return
     
     boolean needsWake = false
+    
     if (settings.smartROISavings) {
         if (dockPlug1 && dockPlug1.currentValue("switch") == "off") needsWake = true
         if (dockPlug2 && dockPlug2.currentValue("switch") == "off") needsWake = true
@@ -516,6 +517,7 @@ def executePendingDispatch() {
     if (rooms) {
         executeRoomClean(rooms, opts)
     }
+ 
     state.pendingDispatchRooms = []
     state.pendingDispatchOptions = [:]
 }
@@ -526,7 +528,8 @@ void evaluateROIPowerState() {
     
     if (vacuum1 && dockPlug1) {
         String state1 = vacuum1.currentValue("state")?.toString()?.toLowerCase() ?: ""
-        String bat1Str = vacuum1.currentValue("battery")?.toString()
+        // FIX: Strip the "%" symbol before checking if it is an integer
+        String bat1Str = vacuum1.currentValue("battery")?.toString()?.replaceAll("[^0-9]", "")
         int bat1 = bat1Str?.isInteger() ? (bat1Str as Integer) : 0
         
         if (bat1 == 100 && state1 in ["charging", "charged", "docked", "idle", "full"]) {
@@ -545,7 +548,8 @@ void evaluateROIPowerState() {
     
     if (vacuum2 && dockPlug2) {
         String state2 = vacuum2.currentValue("state")?.toString()?.toLowerCase() ?: ""
-        String bat2Str = vacuum2.currentValue("battery")?.toString()
+        // FIX: Strip the "%" symbol
+        String bat2Str = vacuum2.currentValue("battery")?.toString()?.replaceAll("[^0-9]", "")
         int bat2 = bat2Str?.isInteger() ? (bat2Str as Integer) : 0
         
         if (bat2 == 100 && state2 in ["charging", "charged", "docked", "idle", "full"]) {
@@ -1080,7 +1084,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                     def currentHum = settings["roomHumidity_${i}"].currentValue("humidity") ?: 0
                     def limitHum = settings["roomHumidityThreshold_${i}"] ?: 75
                     if (currentHum > limitHum) {
-                        dispatchLog[targetName] = "<span style='color:orange;'>Skipped (Humidity: ${currentHum}%)</span>"
+                         dispatchLog[targetName] = "<span style='color:orange;'>Skipped (Humidity: ${currentHum}%)</span>"
                         continue
                     }
                 }
@@ -1089,7 +1093,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 int occMins = (occSecs / 60) as Integer
                 int minThreshold = settings["roomOccupancyThreshold_${i}"] ?: 15
                 int heavyThreshold = settings["roomHeavyTraffic_${i}"] ?: 120
-                
+              
                 if (!ignoreSkip && occMins < minThreshold) {
                     dispatchLog[targetName] = "<span style='color:gray;'>Skipped (Clean: ${occMins}/${minThreshold}m)</span>"
                     continue 
@@ -1101,12 +1105,12 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 }
 
                 String finalSuction = overrideSuction ?: settings["roomSuction_${i}"] ?: "Balanced"
-                
+            
                 if (settings["roomMedia_${i}"]) {
                     def pState = settings["roomMedia_${i}"].currentValue("status") ?: settings["roomMedia_${i}"].currentValue("state")
                     if (pState?.toString()?.toLowerCase() == "playing") {
                         finalSuction = "Quiet"
-                        addToHistory("Acoustic Override: ${targetName} set to Quiet (Media Playing)")
+                         addToHistory("Acoustic Override: ${targetName} set to Quiet (Media Playing)")
                     }
                 } else if (!overrideSuction && occMins >= heavyThreshold) {
                     finalSuction = "Turbo"
@@ -1127,7 +1131,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 if (settings["vacuumAssign_${i}"] == "Vacuum 2") v2Queue << roomData
                 else v1Queue << roomData
             }
-        }
+         }
     }
 
     state.ignoreIntrusions = ignoreSkip 
@@ -1143,18 +1147,31 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         state.v1_intentAction = "Dispatched (Sequence)"
         state.v1_intentRooms = state.v1_maskedRooms.join(", ")
         
+        // FIX: Consolidate room IDs into a single dispatch
+        List<String> combinedRoomIdsV1 = []
+
         v1Queue.each { room ->
             if (settings["roomFan_${room.index}"]) {
                 settings["roomFan_${room.index}"].on()
                 addToHistory("${room.name} Dust Settler: Fan ON")
             }
-            if (room.zone) dispatchVacuum(vacuum1, settings.vac1Brand, "zone", room.zone, "", "")
-            else if (room.id) dispatchVacuum(vacuum1, settings.vac1Brand, "room", room.id, room.water, room.suction)
             
+            if (room.zone) {
+                dispatchVacuum(vacuum1, settings.vac1Brand, "zone", room.zone, "", "")
+                pauseExecution(2500) // Keep delay only for multiple standalone zones
+            } else if (room.id) {
+                combinedRoomIdsV1 << room.id.toString()
+            }
+             
             state["occSecs_${room.name}"] = 0 
             state["motionEvents_${room.name}"] = 0
             state["isMotionActive_${room.name}"] = false
-            pauseExecution(2500)
+        }
+        
+        if (combinedRoomIdsV1.size() > 0) {
+            String targetRooms = combinedRoomIdsV1.join(",")
+            // Uses the water/suction from the first room in the sorted sequence
+            dispatchVacuum(vacuum1, settings.vac1Brand, "room", targetRooms, v1Queue[0].water, v1Queue[0].suction)
         }
     }
 
@@ -1164,18 +1181,30 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         state.v2_intentAction = "Dispatched (Sequence)"
         state.v2_intentRooms = state.v2_maskedRooms.join(", ")
         
+        // FIX: Consolidate room IDs into a single dispatch
+        List<String> combinedRoomIdsV2 = []
+
         v2Queue.each { room ->
             if (settings["roomFan_${room.index}"]) {
                 settings["roomFan_${room.index}"].on()
                 addToHistory("${room.name} Dust Settler: Fan ON")
             }
-            if (room.zone) dispatchVacuum(vacuum2, settings.vac2Brand, "zone", room.zone, "", "")
-            else if (room.id) dispatchVacuum(vacuum2, settings.vac2Brand, "room", room.id, room.water, room.suction)
+            
+            if (room.zone) {
+                dispatchVacuum(vacuum2, settings.vac2Brand, "zone", room.zone, "", "")
+                pauseExecution(2500)
+            } else if (room.id) {
+                combinedRoomIdsV2 << room.id.toString()
+            }
             
             state["occSecs_${room.name}"] = 0 
             state["motionEvents_${room.name}"] = 0
             state["isMotionActive_${room.name}"] = false
-            pauseExecution(2500)
+        }
+        
+        if (combinedRoomIdsV2.size() > 0) {
+            String targetRooms = combinedRoomIdsV2.join(",")
+            dispatchVacuum(vacuum2, settings.vac2Brand, "room", targetRooms, v2Queue[0].water, v2Queue[0].suction)
         }
     }
 }
