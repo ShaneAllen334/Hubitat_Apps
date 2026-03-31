@@ -32,7 +32,7 @@ metadata {
         attribute "dewPoint", "number"
         attribute "dewPointSpread", "number"
         
-        // Trends & Velocities
+        // Trends, Velocities & Advanced Metrics
         attribute "pressureTrend", "string"
         attribute "tempTrend", "string"
         attribute "spreadTrend", "string"
