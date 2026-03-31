@@ -26,7 +26,7 @@ def mainPage() {
                 input "refreshDashboardBtn", "button", title: "🔄 Refresh Live Data"
             }
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Analyzes real-time environmental thermodynamics (VPD, Wet-Bulb, Spread Convergence Velocity, Synergy Multipliers) to predict precipitation with near-perfect accuracy.</div>"
-            
+    
             if (sensorTemp && sensorHum && sensorPress) {
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
                 statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Current Environment</th><th style='padding: 8px;'>Calculated Metrics & Trends</th><th style='padding: 8px;'>System State & Logic</th></tr>"
@@ -39,6 +39,7 @@ def mainPage() {
                 def t = tP ?: 0.0
                 def h = hP ?: 0.0
                 def p = pP ?: 0.0
+               
                 def redundancyActive = false
                 
                 if (settings.enableRedundancy != false) {
@@ -65,7 +66,7 @@ def mainPage() {
                 def lux = getFloat(sensorLux, ["illuminance", "solarradiation", "solarRadiation"], "N/A")
                 def wind = getFloat(sensorWind, ["windSpeed", "windspeedmph", "wind"], "N/A")
                 def windDir = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], "N/A")
-                
+       
                 def strikes = state.lightningHistory?.size() ?: 0
                 def recentLightDist = 999.0
                 if (strikes > 0) {
@@ -90,7 +91,7 @@ def mainPage() {
                 def dryingRate = state.dryingPotential ?: "N/A"
                 def ttd = state.timeToDryStr ?: "N/A"
                 def isStale = state.isStale ?: false
-                
+         
                 def prob = state.rainProbability ?: 0
                 def confScore = state.confidenceScore ?: 0
                 def confReason = state.confidenceReasoning ?: "Gathering logic consensus..."
@@ -105,7 +106,7 @@ def mainPage() {
                 if (sensorWindDir) envDisplay += " @ ${windDir}°"
                 if (sensorLightning && strikes > 0) envDisplay += "<br><b>Lightning:</b> ${strikes} strikes (Closest: ${recentLightDistStr} mi)"
                 else if (sensorLightning) envDisplay += "<br><b>Lightning:</b> None recent"
-                
+       
                 def leakWetStr = "DRY"
                 if (sensorLeak) {
                     if (state.dewRejectionActive) leakWetStr = "<span style='color:orange; font-weight:bold;'>DEW/IGNORED</span>"
@@ -163,14 +164,14 @@ def mainPage() {
                 // --- Rainfall History, Graph & Record Banner ---
                 def recordInfo = state.recordRain ?: [date: "None", amount: 0.0]
                 def sevenDayList = state.sevenDayRain ?: []
-               
+           
                 def historyDisplay = "<div><b>🏆 All-Time Record:</b> <span style='color:blue; font-weight:bold; font-size: 15px;'>${recordInfo.amount}</span> <i style='color:#555;'>(${recordInfo.date})</i></div>"
                 historyDisplay += "<div style='margin-top:5px;'><b>Current Week:</b> ${rainWeek} | <b>Today's Total:</b> ${state.currentDayRain ?: 0.0}</div>"
                 
                 if (sevenDayList.size() > 0) {
                     def maxRain = 0.5 
                     sevenDayList.each { if (it.amount > maxRain) maxRain = it.amount }
-                    
+       
                     historyDisplay += "<div style='margin-top:15px; font-weight:bold;'>7-Day History:</div>"
                     historyDisplay += "<div style='display:flex; align-items:flex-end; height:100px; gap:8px; margin-top:5px; border-bottom:2px solid #aaa; padding-bottom:2px;'>"
                     
@@ -180,7 +181,7 @@ def mainPage() {
                         
                         def dateSplit = item.date.split("-")
                         def shortDate = dateSplit.size() == 3 ? "${dateSplit[1]}/${dateSplit[2]}" : item.date
-                        
+ 
                         historyDisplay += "<div style='display:flex; flex-direction:column; align-items:center; flex:1;'>"
                         historyDisplay += "<div style='font-size:10px; color:#555; margin-bottom:2px;'>${item.amount}</div>"
                         historyDisplay += "<div style='width:80%; max-width:35px; background-color:#4a90e2; height:${barHeight}px; border-radius:3px 3px 0 0;'></div>"
@@ -289,7 +290,7 @@ def configPage() {
             input "enableStaleCheck", "bool", title: "Stale Data Protection", defaultValue: true, description: "Flags the system offline and clears active states if sensor data stops updating."
             input "staleDataTimeout", "number", title: "Stale Data Timeout (Minutes)", defaultValue: 30
         }
-        
+     
         section("<b>Instant 'First Drop' Sensor</b>", hideable: true, hidden: true) {
             paragraph "<i>Map a standard Z-Wave/Zigbee leak sensor placed outside to bypass tipping-bucket delays. Provides an instant 'Sprinkling' state the moment rain begins.</i>"
             input "sensorLeak", "capability.waterSensor", title: "Instant Rain Sensor (e.g., exposed leak sensor)", required: false
@@ -338,6 +339,27 @@ def configPage() {
             input "notifyOnSprinkle", "bool", title: "Notify when Sprinkling starts", defaultValue: true
             input "notifyOnRain", "bool", title: "Notify when Heavy Rain starts", defaultValue: true
             input "notifyOnClear", "bool", title: "Notify when weather clears", defaultValue: false
+        }
+
+        section("<b>Audio Alerts (Zooz Sirens/Speakers)</b>", hideable: true, hidden: true) {
+            paragraph "<i>Select Zooz sirens or audio players to play specific audio files/track numbers when weather states change. Supports standard track numbers depending on your device driver (1, 2, 3, etc.).</i>"
+            input "audioDevices", "capability.actuator", title: "Select Audio/Siren Devices", multiple: true, required: false
+            input "audioModes", "mode", title: "Only play audio in these modes (Leave blank for all)", multiple: true, required: false
+            
+            input "audioProbable", "number", title: "Track/File Number for Rain Probable", required: false, description: "e.g., 1", submitOnChange: true
+            if (audioProbable) {
+                input "testProbableBtn", "button", title: "🔊 Test Rain Probable Audio"
+            }
+            
+            input "audioSprinkling", "number", title: "Track/File Number for Sprinkling", required: false, description: "e.g., 2", submitOnChange: true
+            if (audioSprinkling) {
+                input "testSprinklingBtn", "button", title: "🔊 Test Sprinkling Audio"
+            }
+            
+            input "audioRaining", "number", title: "Track/File Number for Heavy Rain", required: false, description: "e.g., 3", submitOnChange: true
+            if (audioRaining) {
+                input "testRainingBtn", "button", title: "🔊 Test Heavy Rain Audio"
+            }
         }
     }
 }
@@ -482,6 +504,20 @@ void appButtonHandler(btn) {
         safeOff(switchRaining)
         safeOff(switchProbable)
         evaluateWeather()
+    }
+    
+    // --- AUDIO TEST BUTTON HANDLERS ---
+    if (btn == "testProbableBtn") {
+        logAction("MANUAL OVERRIDE: Testing Rain Probable Audio Track ${settings.audioProbable}")
+        playAudioTrack(settings.audioProbable)
+    }
+    if (btn == "testSprinklingBtn") {
+        logAction("MANUAL OVERRIDE: Testing Sprinkling Audio Track ${settings.audioSprinkling}")
+        playAudioTrack(settings.audioSprinkling)
+    }
+    if (btn == "testRainingBtn") {
+        logAction("MANUAL OVERRIDE: Testing Heavy Rain Audio Track ${settings.audioRaining}")
+        playAudioTrack(settings.audioRaining)
     }
 }
 
@@ -644,7 +680,7 @@ def evaluateWeather() {
     
     def vpd = calculateVPD(t, h)
     state.currentVPD = vpd
-    
+  
     def dp = calculateDewPoint(t, h)
     state.currentDewPoint = dp
     
@@ -692,7 +728,7 @@ def evaluateWeather() {
     def evapIndex = vpd
     if (sensorWind) evapIndex += (windVal * 0.03) 
     if (sensorLux) evapIndex += (luxVal / 80000.0)
-    
+  
     if (r > 0 || leakWet) state.dryingPotential = "<span style='color:blue;'>Raining (No Drying)</span>"
     else if (evapIndex < 0.3) state.dryingPotential = "<span style='color:red;'>Very Low (Ground stays wet)</span>"
     else if (evapIndex < 0.8) state.dryingPotential = "<span style='color:orange;'>Moderate (Slow drying)</span>"
@@ -768,7 +804,7 @@ def evaluateWeather() {
         if (settings.enableWindLogic != false && sensorWind) {
             totalModelsEnabled++
             if (wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
-                probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
+                 probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
             }
         }
 
@@ -875,6 +911,7 @@ def evaluateWeather() {
         if (!state.notifiedProb) {
             logAction("Probability threshold (${probThreshold}%) reached.")
             if (notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(probability)}%.")
+            if (audioProbable) playAudioTrack(audioProbable)
             state.notifiedProb = true
         }
     } else if (probability < (probThreshold - 15) || isStale) {
@@ -944,11 +981,13 @@ def evaluateWeather() {
             safeOff(switchSprinkling)
             safeOn(switchRaining)
             if (notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%")
+            if (audioRaining) playAudioTrack(audioRaining)
         } 
         else if (targetState == "Sprinkling") {
             safeOff(switchRaining)
             safeOn(switchSprinkling)
             if (notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%")
+            if (audioSprinkling) playAudioTrack(audioSprinkling)
         } 
         else if (targetState == "Clear") {
             safeOff(switchRaining)
@@ -981,7 +1020,7 @@ def evaluateWeather() {
     if (dataChanged) {
         state.lastChildPayload = currentPayload
     }
-    
+  
     if (allowTransition || (dataChanged && settings.enableSmartSync != false)) {
         updateChildDevice()
     }
@@ -995,7 +1034,7 @@ def updateChildDevice() {
         child.sendEvent(name: "rainProbability", value: state.rainProbability, unit: "%")
         child.sendEvent(name: "confidenceScore", value: state.confidenceScore, unit: "%")
         child.sendEvent(name: "expectedClearTime", value: state.expectedClearTime)
-        
+      
         child.sendEvent(name: "sprinkling", value: state.weatherState == "Sprinkling" ? "on" : "off")
         child.sendEvent(name: "raining", value: state.weatherState == "Raining" ? "on" : "off")
         
@@ -1054,6 +1093,33 @@ def sendNotification(msg) {
     if (notifyDevices) {
         notifyDevices.each { it.deviceNotification(msg) }
         logAction("Notification Sent: ${msg}")
+    }
+}
+
+// === AUDIO PLAYBACK LOGIC ===
+def playAudioTrack(trackNum) {
+    if (audioModes && !audioModes.contains(location.mode)) {
+        logDebug("Audio playback skipped: Current mode (${location.mode}) is not in allowed audio modes.")
+        return
+    }
+
+    if (audioDevices && trackNum) {
+        audioDevices.each { dev ->
+            try {
+                if (dev.hasCommand("playSound")) {
+                    dev.playSound(trackNum as Integer)
+                } else if (dev.hasCommand("playTrack")) {
+                    dev.playTrack(trackNum.toString())
+                } else if (dev.hasCommand("chime")) {
+                    dev.chime(trackNum as Integer)
+                } else {
+                    log.error "${dev.displayName} does not support standard audio/siren commands (playSound, playTrack, or chime)."
+                }
+            } catch (e) {
+                log.error "Error playing audio on ${dev.displayName}: ${e}"
+            }
+        }
+        logAction("Audio Action: Played track ${trackNum} on selected siren/speaker devices.")
     }
 }
 
