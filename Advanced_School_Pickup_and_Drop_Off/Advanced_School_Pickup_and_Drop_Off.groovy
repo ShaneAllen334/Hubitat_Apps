@@ -12,17 +12,32 @@ definition(
 )
 
 preferences {
-    page(name: "mainPage", title: "Advanced School Pickup & Drop Off", install: true, uninstall: true) {
+    page(name: "mainPage")
+}
+
+def mainPage() {
+    dynamicPage(name: "mainPage", title: "Advanced School Pickup & Drop Off", install: true, uninstall: true) {
         
-     
         section("Live Tracker & Averages") {
-            def amCountdown = getCountdownText(amStage3, false)
-            def pmCountdown = getCountdownText(pmStage3, true)
+            def amCountdown = getCountdownText(settings.amStage3, false)
+            def pmCountdown = getCountdownText(settings.pmStage3, true)
             
-            def amAvg = (state.amDoorCount && state.amDoorCount > 0) ?
-"${Math.round(state.amTotalDoorTime / state.amDoorCount / 60)}m ${Math.round(state.amTotalDoorTime / state.amDoorCount % 60)}s" : "N/A"
-            def pmAvg = (state.pmDoorCount && state.pmDoorCount > 0) ?
-"${Math.round(state.pmTotalDoorTime / state.pmDoorCount / 60)}m ${Math.round(state.pmTotalDoorTime / state.pmDoorCount % 60)}s" : "N/A"
+            // Safe Integer Math to prevent BigDecimal Modulo crashes
+            long totalAm = (state.amTotalDoorTime ?: 0) as Long
+            long countAm = (state.amDoorCount ?: 0) as Long
+            def amAvg = "N/A"
+            if (countAm > 0) {
+                long avgAmSecs = totalAm.intdiv(countAm)
+                amAvg = "${avgAmSecs.intdiv(60)}m ${avgAmSecs % 60}s"
+            }
+
+            long totalPm = (state.pmTotalDoorTime ?: 0) as Long
+            long countPm = (state.pmDoorCount ?: 0) as Long
+            def pmAvg = "N/A"
+            if (countPm > 0) {
+                long avgPmSecs = totalPm.intdiv(countPm)
+                pmAvg = "${avgPmSecs.intdiv(60)}m ${avgPmSecs % 60}s"
+            }
             
             def dashText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
             dashText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Status</th><th style='padding: 8px;'>Stage 3 Countdown</th><th style='padding: 8px;'>Avg Door Time</th></tr>"
@@ -33,12 +48,9 @@ preferences {
             def sysStatus = "ACTIVE"
             def statusColor = "green"
         
-            if (!isSystemEnabled()) { sysStatus = "PAUSED (Master Switch OFF)";
-statusColor = "red" }
-            else if (!isSchoolDay()) { sysStatus = "NO SCHOOL TODAY";
-statusColor = "#888" }
-            else if (isSickDay()) { sysStatus = "SICK DAY (Skipping Routines)";
-statusColor = "#ff8c00" }
+            if (!isSystemEnabled()) { sysStatus = "PAUSED (Master Switch OFF)"; statusColor = "red" }
+            else if (!isSchoolDay()) { sysStatus = "NO SCHOOL TODAY"; statusColor = "#888" }
+            else if (isSickDay()) { sysStatus = "SICK DAY (Skipping Routines)"; statusColor = "#ff8c00" }
 
             dashText += "<div style='margin-top: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
             dashText += "<b>System State:</b> <span style='color: ${statusColor}; font-weight: bold;'>${sysStatus}</span></div>"
@@ -56,7 +68,6 @@ statusColor = "#ff8c00" }
                 state.actionHistory.each { entry -> historyText += "<li style='margin-bottom: 4px;'>${entry}</li>" }
                 historyText += "</ul>"
             } else {
-               
                 historyText += "<i style='color: #888;'>No recent activity logged. Waiting for events...</i>"
             }
             historyText += "</div>"
@@ -65,7 +76,6 @@ statusColor = "#ff8c00" }
 
             paragraph dashText
             
-           
             input "forceSyncBtn", "button", title: "Force Sync Calendar Now"
             input "resetStatsBtn", "button", title: "Reset Average Statistics"
             input "clearLogBtn", "button", title: "Clear System Log"
@@ -73,14 +83,12 @@ statusColor = "#ff8c00" }
 
         section("1. Master Control & Conditions") {
             paragraph "MASTER SWITCH: If this switch is selected and turned OFF, the entire application is completely disabled."
-       
             input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false
 
             input "schoolDaySwitch", "capability.switch", title: "School Day Virtual Switch", required: true
             input "enableCalendar", "bool", title: "Auto-update switch via calendar?", defaultValue: true
             
             input "iCalUrl", "text", title: "iCal Feed URL (https://...)", defaultValue: "https://www.elmoreco.com/sys/calendar/export?widgetId=2e3db4a9b8694ac78b296c1ee5c72bab&type=1", required: false
-         
             input "holidayKeywords", "text", title: "Keywords indicating NO school", defaultValue: "spring break, teacher workday, juneteenth, no school, no students, holiday, closed, staff development, professional development, weather, e-learning, elearning, thanksgiving, christmas, winter break, fall break, presidents day, mlk", required: false
 
             input "allowedModes", "mode", title: "Allowed Location Modes", multiple: true, required: false
@@ -95,7 +103,6 @@ statusColor = "#ff8c00" }
             input "sprinklingSwitch", "capability.switch", title: "Sprinkling Virtual Switch", required: false
         }
 
-      
         section("3. Notifications & Audio") {
             input "notifyPhones", "capability.notification", title: "Send Push Alerts to Phones", multiple: true, required: false
             input "ttsDevice", "capability.speechSynthesis", title: "Audio Announcement Device (Echo/Sonos)", required: false
@@ -114,7 +121,6 @@ statusColor = "#ff8c00" }
         section("5. Early Dismissal Override") {
             input "earlyDismissalSwitch", "capability.switch", title: "Early Dismissal Virtual Switch", required: false
             input "earlyOffset", "number", title: "Minutes to shift afternoon schedule earlier", defaultValue: 120
-  
         }
 
         section("6. Dynamic Lighting Effects") {
@@ -129,7 +135,6 @@ statusColor = "#ff8c00" }
         }
         
         section("8. Integration & External Overrides") {
-      
             paragraph "<b>Freeze other applications during sequence</b><br>If you are using shared lights for your bus indicator (such as a porch light managed by a motion lighting app), those other apps might try to turn the light off while the bus notification is active.<br><br>Select a Virtual Switch here. This app will turn it ON during an active bus sequence. You can use that switch in your other apps to 'freeze' or 'disable' them until the sequence completes."
             input "overrideSwitch", "capability.switch", title: "State Override Switch (Freezes external apps)", required: false
         }
@@ -201,27 +206,22 @@ def initialize() {
 
     logAction("System Initialized/Updated.")
 
-    if (doorSensor) {
-        subscribe(doorSensor, "contact.open", doorOpenedHandler)
-    
+    if (settings.doorSensor) {
+        subscribe(settings.doorSensor, "contact.open", doorOpenedHandler)
     }
     
-    if (motionSensor) {
-        subscribe(motionSensor, "motion.active", motionActiveHandler)
+    if (settings.motionSensor) {
+        subscribe(settings.motionSensor, "motion.active", motionActiveHandler)
     }
 
-    if (enableCalendar) {
+    if (settings.enableCalendar) {
         runEvery30Minutes("checkSchoolCalendar")
         runIn(5, "checkSchoolCalendar")
     }
 
-    if (amStage1) schedule(amStage1, "amSetStage1")
-    if (amStage2) schedule(amStage2, "amSetStage2")
-    if (amStage3) schedule(amStage3, "amSetStage3")
-    if (amClear) schedule(amClear, "turnLightOff")
-
-    schedule("0 1 0 ? * *", "scheduleDailyPMEvents")
-    scheduleDailyPMEvents() 
+    // New unified daily scheduling engine
+    schedule("0 1 0 ? * *", "scheduleDailyEvents")
+    scheduleDailyEvents() 
 }
 
 // --- Logging & Helper Methods ---
@@ -237,55 +237,53 @@ def logAction(String msg) {
 }
 
 def isSystemEnabled() {
-    if (masterEnableSwitch && masterEnableSwitch.currentValue("switch") == "off") return false
+    if (settings.masterEnableSwitch && settings.masterEnableSwitch.currentValue("switch") == "off") return false
     return true
 }
 
 def isSchoolDay() {
-    return schoolDaySwitch?.currentValue("switch") == "on"
+    return settings.schoolDaySwitch?.currentValue("switch") == "on"
 }
 
 def isSickDay() {
-    return sickDaySwitch?.currentValue("switch") == "on"
+    return settings.sickDaySwitch?.currentValue("switch") == "on"
 }
 
 def isAllowedMode() {
-    if (!allowedModes) return true
-    return allowedModes.contains(location.mode)
+    if (!settings.allowedModes) return true
+    return settings.allowedModes.contains(location.mode)
 }
 
 def isAudioAllowedMode() {
-    if (!audioAllowedModes) return true
-    return audioAllowedModes.contains(location.mode)
+    if (!settings.audioAllowedModes) return true
+    return settings.audioAllowedModes.contains(location.mode)
 }
 
 def isItRaining() {
-    if (rainSwitch && rainSwitch.currentValue("switch") == "on") return true
-    if (sprinklingSwitch && sprinklingSwitch.currentValue("switch") == "on") return true
-    String currentCondition = weatherDevice?.currentValue("weather") ?: ""
-    return currentCondition.contains(rainCondition ?: "Rain")
+    if (settings.rainSwitch && settings.rainSwitch.currentValue("switch") == "on") return true
+    if (settings.sprinklingSwitch && settings.sprinklingSwitch.currentValue("switch") == "on") return true
+    String currentCondition = settings.weatherDevice?.currentValue("weather") ?: ""
+    return currentCondition.contains(settings.rainCondition ?: "Rain")
 }
 
 // --- Audio Helper Engine ---
 
 def playSirenSound(soundNum, force = false) {
-    if (!zoozSirens || soundNum == null) return
+    if (!settings.zoozSirens || soundNum == null) return
     if (!force && !isAudioAllowedMode()) return
     
     logAction("Playing sound file ${soundNum} on selected Zooz Sirens.")
-    zoozSirens.each { siren ->
+    settings.zoozSirens.each { siren ->
         try {
             // Attempt standard Chime capability command
             siren.playSound(soundNum as Integer)
         } catch (MissingMethodException e) {
             try {
-        
                 // Fallback to AudioNotification capability command
                 siren.playTrack(soundNum as String)
             } catch (Exception ex) {
                 log.error "${siren.displayName} failed to play sound: ${ex.message}"
                 logAction("Error playing Zooz sound ${soundNum} on ${siren.displayName}. See logs.")
-       
             }
         } catch (Exception e) {
             log.error "${siren.displayName} failed to play sound: ${e.message}"
@@ -293,20 +291,27 @@ def playSirenSound(soundNum, force = false) {
     }
 }
 
-// --- Dynamic PM Scheduling Engine ---
+// --- Dynamic Unified Scheduling Engine ---
 
-def scheduleDailyPMEvents() {
-    scheduleTodayEvent(pmStage1, "pmSetStage1")
-    scheduleTodayEvent(pmStage2, "pmSetStage2")
-    scheduleTodayEvent(pmStage3, "pmSetStage3")
-    scheduleTodayEvent(pmClear, "turnLightOff")
+def scheduleDailyEvents() {
+    // Schedule AM
+    scheduleTodayEvent(settings.amStage1, "amSetStage1", false)
+    scheduleTodayEvent(settings.amStage2, "amSetStage2", false)
+    scheduleTodayEvent(settings.amStage3, "amSetStage3", false)
+    scheduleTodayEvent(settings.amClear, "amTurnLightOff", false)
+
+    // Schedule PM
+    scheduleTodayEvent(settings.pmStage1, "pmSetStage1", true)
+    scheduleTodayEvent(settings.pmStage2, "pmSetStage2", true)
+    scheduleTodayEvent(settings.pmStage3, "pmSetStage3", true)
+    scheduleTodayEvent(settings.pmClear, "pmTurnLightOff", true)
 }
 
-def scheduleTodayEvent(timeInput, handlerMethod) {
+def scheduleTodayEvent(timeInput, handlerMethod, isPm = false) {
     if (!timeInput) return
     Date scheduledTime = timeToday(timeInput, location.timeZone)
-    if (earlyDismissalSwitch?.currentValue("switch") == "on") {
-        int offset = earlyOffset ?: 120
+    if (isPm && settings.earlyDismissalSwitch?.currentValue("switch") == "on") {
+        int offset = settings.earlyOffset ?: 120
         use(groovy.time.TimeCategory) { scheduledTime = scheduledTime - offset.minutes }
     }
     
@@ -315,14 +320,18 @@ def scheduleTodayEvent(timeInput, handlerMethod) {
     }
 }
 
+// Wrapping functions so runOnce doesn't overwrite AM clears with PM clears
+def amTurnLightOff() { turnLightOff() }
+def pmTurnLightOff() { turnLightOff() }
+
 // ------------------------------------
 
 def getEpochTime(timeStr, isPm = false) {
     if (!timeStr) return new Date().time + 3600000 
+    
     Date target = timeToday(timeStr, location.timeZone)
-    if (isPm && earlyDismissalSwitch?.currentValue("switch") == "on") {
-       
-        int offset = earlyOffset ?: 120
+    if (isPm && settings.earlyDismissalSwitch?.currentValue("switch") == "on") {
+        int offset = settings.earlyOffset ?: 120
         use(groovy.time.TimeCategory) { target = target - offset.minutes }
     }
     return target.time
@@ -333,16 +342,17 @@ def getCountdownText(timeStr, isPm = false) {
     def now = new Date()
     def target = timeToday(timeStr, location.timeZone)
     
-    if (isPm && earlyDismissalSwitch?.currentValue("switch") == "on") {
-        int offset = earlyOffset ?: 120
+    if (isPm && settings.earlyDismissalSwitch?.currentValue("switch") == "on") {
+        int offset = settings.earlyOffset ?: 120
         use(groovy.time.TimeCategory) { target = target - offset.minutes }
     }
     
     if (target.before(now)) return "Completed Today"
     
     long diff = target.time - now.time
-    long hours = diff / 3600000
-    long mins = (diff % 3600000) / 60000
+    long hours = diff.intdiv(3600000)
+    long mins = (diff % 3600000).intdiv(60000)
+    
     if (hours > 0) return "${hours}h ${mins}m"
     return "${mins} Minutes"
 }
@@ -358,7 +368,6 @@ def getHueColor(colorName) {
         case "Pink": return [hue: 90, saturation: 100]
         case "White": return [hue: 0, saturation: 0]
         default: return [hue: 39, saturation: 100]
-  
     }
 }
 
@@ -420,7 +429,6 @@ def captureLightState(dev) {
 
 def restoreLightState(dev) {
     if (!state.savedLightState) {
-        
         dev.off()
         return
     }
@@ -432,15 +440,14 @@ def restoreLightState(dev) {
         } else if (saved.hue != null && saved.saturation != null) {
             dev.setColor([hue: saved.hue, saturation: saved.saturation, level: saved.level])
         } else {
- 
             dev.on()
             if (saved.level) dev.setLevel(saved.level)
         }
         log.info "Restored ${dev.displayName} to ON state."
-} else {
+    } else {
         dev.off()
         log.info "Restored ${dev.displayName} to OFF state."
-}
+    }
     
     state.savedLightState = [:] // Clear saved state
 }
@@ -449,22 +456,21 @@ def restoreLightState(dev) {
 
 def startLightingSequence(colorName, isRainOverride, nextTargetEpoch, soundNum = null) {
     // FREEZE Motion App & Capture State BEFORE changing lights
-    if (overrideSwitch && overrideSwitch.currentValue("switch") != "on") {
-        overrideSwitch.on()
-        if (busLight) captureLightState(busLight)
+    if (settings.overrideSwitch && settings.overrideSwitch.currentValue("switch") != "on") {
+        settings.overrideSwitch.on()
+        if (settings.busLight) captureLightState(settings.busLight)
     }
 
     state.lightActiveByApp = true 
 
     if (soundNum != null) {
         playSirenSound(soundNum)
-    
     }
 
     if (isRainOverride) {
         logAction("Precipitation detected: Showing Blue for 10 seconds before starting timer.")
         def blueMap = getHueColor("Blue")
-        if (busLight) busLight.setColor([hue: blueMap.hue, saturation: blueMap.saturation, level: 80])
+        if (settings.busLight) settings.busLight.setColor([hue: blueMap.hue, saturation: blueMap.saturation, level: 80])
         runIn(10, "applyNormalStageColor", [data: [color: colorName, target: nextTargetEpoch], overwrite: true])
     } else {
         applyNormalStageColor([color: colorName, target: nextTargetEpoch])
@@ -478,7 +484,7 @@ def applyNormalStageColor(data) {
     def colorMap = getHueColor(colorName)
     state.currentStageColor = colorMap
     
-    if (busLight) busLight.setColor([hue: colorMap.hue, saturation: colorMap.saturation, level: 80])
+    if (settings.busLight) settings.busLight.setColor([hue: colorMap.hue, saturation: colorMap.saturation, level: 80])
 
     if (settings.enableBlinking) {
         state.isBlinking = true
@@ -490,7 +496,6 @@ def applyNormalStageColor(data) {
 
 def blinkLoop() {
     if (!state.isBlinking) return
-    
    
     if (!state.isTesting) {
         if (!isSystemEnabled() || isSickDay() || !isSchoolDay() || !isAllowedMode()) {
@@ -506,7 +511,6 @@ def blinkLoop() {
 
     int interval = 15 
     if (diffSeconds <= 60) interval = 2 
-    
     else if (diffSeconds <= 180) interval = 4 
     else if (diffSeconds <= 300) interval = 8 
     else if (diffSeconds <= 600) interval = 15 
@@ -515,9 +519,9 @@ def blinkLoop() {
     state.blinkState = !state.blinkState
 
     if (state.blinkState) {
-        if (busLight) busLight.setColor([hue: state.currentStageColor.hue, saturation: state.currentStageColor.saturation, level: 80])
+        if (settings.busLight) settings.busLight.setColor([hue: state.currentStageColor.hue, saturation: state.currentStageColor.saturation, level: 80])
     } else {
-        if (busLight) busLight.off()
+        if (settings.busLight) settings.busLight.off()
     }
 
     runIn(interval, "blinkLoop", [overwrite: true])
@@ -542,7 +546,6 @@ def testAmStage2() {
     if (state.hasDeparted) return
     long nextTarget = new Date().time + 30000 
     startLightingSequence(settings.amColor2 ?: "Yellow", isItRaining(), nextTarget, settings.amSound2)
-  
     runIn(30, "testAmStage3", [overwrite: true])
 }
 
@@ -552,8 +555,8 @@ def testAmStage3() {
     long nextTarget = new Date().time + 30000 
     startLightingSequence(settings.amColor3 ?: "Red", isItRaining(), nextTarget, settings.amSound3)
     String msg = "TEST: The school bus is imminent! Time to head to the door."
-    if (notifyPhones) notifyPhones.deviceNotification(msg)
-    if (ttsDevice && isAudioAllowedMode()) ttsDevice.speak(msg)
+    if (settings.notifyPhones) settings.notifyPhones.deviceNotification(msg)
+    if (settings.ttsDevice && isAudioAllowedMode()) settings.ttsDevice.speak(msg)
     runIn(30, "turnLightOff", [overwrite: true])
 }
 
@@ -571,7 +574,6 @@ def startPmTest() {
 
 def testPmStage2() {
     if (!state.isTesting) return
- 
     if (state.hasArrived) return
     long nextTarget = new Date().time + 30000 
     startLightingSequence(settings.pmColor2 ?: "Yellow", isItRaining(), nextTarget, settings.pmSound2)
@@ -584,23 +586,18 @@ def testPmStage3() {
     long nextTarget = new Date().time + 30000 
     startLightingSequence(settings.pmColor3 ?: "Red", isItRaining(), nextTarget, settings.pmSound3)
     String msg = "TEST: The school bus has arrived at the afternoon stop."
-    if (notifyPhones) notifyPhones.deviceNotification(msg)
-    if (ttsDevice && isAudioAllowedMode()) ttsDevice.speak(msg)
-    
+    if (settings.notifyPhones) settings.notifyPhones.deviceNotification(msg)
+    if (settings.ttsDevice && isAudioAllowedMode()) settings.ttsDevice.speak(msg)
     runIn(30, "turnLightOff", [overwrite: true])
 }
 
 // --- Morning Routines ---
 
 def amSetStage1() {
-    if (!isSystemEnabled()) { logAction("AM Stage 1 Aborted: Master Switch is OFF");
-return }
-    if (!isSchoolDay()) { logAction("AM Stage 1 Aborted: Today is not a School Day");
-return }
-    if (isSickDay()) { logAction("AM Stage 1 Aborted: Sick Day is active");
-return }
-    if (!isAllowedMode()) { logAction("AM Stage 1 Aborted: Location Mode '${location.mode}' is not allowed");
-return }
+    if (!isSystemEnabled()) { logAction("AM Stage 1 Aborted: Master Switch is OFF"); return }
+    if (!isSchoolDay()) { logAction("AM Stage 1 Aborted: Today is not a School Day"); return }
+    if (isSickDay()) { logAction("AM Stage 1 Aborted: Sick Day is active"); return }
+    if (!isAllowedMode()) { logAction("AM Stage 1 Aborted: Location Mode '${location.mode}' is not allowed"); return }
 
     logAction("AM Stage 1 Started Successfully.")
     state.waitingForDeparture = true
@@ -608,52 +605,46 @@ return }
     state.amDoorTriggered = false
     state.amMotionTriggered = false
 
-    long nextTarget = getEpochTime(amStage2, false)
+    long nextTarget = getEpochTime(settings.amStage2, false)
     startLightingSequence(settings.amColor1 ?: "Green", isItRaining(), nextTarget, settings.amSound1)
 }
 
 def amSetStage2() {
     if (!isSystemEnabled() || !isSchoolDay() || isSickDay() || !isAllowedMode()) return
-    if (state.hasDeparted) { logAction("AM Stage 2 Skipped: Student already departed.");
-return }
+    if (state.hasDeparted) { logAction("AM Stage 2 Skipped: Student already departed."); return }
     
     logAction("AM Stage 2 Started.")
-    long nextTarget = getEpochTime(amStage3, false)
+    long nextTarget = getEpochTime(settings.amStage3, false)
     startLightingSequence(settings.amColor2 ?: "Yellow", isItRaining(), nextTarget, settings.amSound2)
 }
 
 def amSetStage3() {
     if (!isSystemEnabled() || !isSchoolDay() || isSickDay() || !isAllowedMode()) return
-    if (state.hasDeparted) { logAction("AM Stage 3 Skipped: Student already departed.");
-return }
+    if (state.hasDeparted) { logAction("AM Stage 3 Skipped: Student already departed."); return }
     
     logAction("AM Stage 3 Started. Awaiting conditions.")
     state.amTrackTime = new Date().time
     
-    if (doorSensor || motionSensor) {
-        int delaySeconds = (departureTimeout ?: 5) * 60
+    if (settings.doorSensor || settings.motionSensor) {
+        int delaySeconds = (settings.departureTimeout ?: 5) * 60
         runIn(delaySeconds, "checkMissedBus")
     }
 
-    long nextTarget = getEpochTime(amClear, false)
+    long nextTarget = getEpochTime(settings.amClear, false)
     startLightingSequence(settings.amColor3 ?: "Red", isItRaining(), nextTarget, settings.amSound3)
 
     String msg = "The school bus is imminent! Time to head to the door."
-    if (notifyPhones) notifyPhones.deviceNotification(msg)
-    if (ttsDevice && isAudioAllowedMode()) ttsDevice.speak(msg)
+    if (settings.notifyPhones) settings.notifyPhones.deviceNotification(msg)
+    if (settings.ttsDevice && isAudioAllowedMode()) settings.ttsDevice.speak(msg)
 }
 
 // --- Afternoon Routines ---
 
 def pmSetStage1() {
-    if (!isSystemEnabled()) { logAction("PM Stage 1 Aborted: Master Switch is OFF");
-return }
-    if (!isSchoolDay()) { logAction("PM Stage 1 Aborted: Not a School Day");
-return }
-    if (isSickDay()) { logAction("PM Stage 1 Aborted: Sick Day is active");
-return }
-    if (!isAllowedMode()) { logAction("PM Stage 1 Aborted: Location Mode '${location.mode}' is not allowed");
-return }
+    if (!isSystemEnabled()) { logAction("PM Stage 1 Aborted: Master Switch is OFF"); return }
+    if (!isSchoolDay()) { logAction("PM Stage 1 Aborted: Not a School Day"); return }
+    if (isSickDay()) { logAction("PM Stage 1 Aborted: Sick Day is active"); return }
+    if (!isAllowedMode()) { logAction("PM Stage 1 Aborted: Location Mode '${location.mode}' is not allowed"); return }
 
     logAction("PM Stage 1 Started Successfully.")
     
@@ -662,53 +653,50 @@ return }
     state.pmDoorTriggered = false
     state.pmMotionTriggered = false
 
-    long nextTarget = getEpochTime(pmStage2, true)
+    long nextTarget = getEpochTime(settings.pmStage2, true)
     startLightingSequence(settings.pmColor1 ?: "Green", isItRaining(), nextTarget, settings.pmSound1)
 }
 
 def pmSetStage2() {
     if (!isSystemEnabled() || !isSchoolDay() || isSickDay() || !isAllowedMode()) return
-    if (state.hasArrived) { logAction("PM Stage 2 Skipped: Student already arrived.");
-return }
+    if (state.hasArrived) { logAction("PM Stage 2 Skipped: Student already arrived."); return }
     
     logAction("PM Stage 2 Started.")
-    long nextTarget = getEpochTime(pmStage3, true)
+    long nextTarget = getEpochTime(settings.pmStage3, true)
     startLightingSequence(settings.pmColor2 ?: "Yellow", isItRaining(), nextTarget, settings.pmSound2)
 }
 
 def pmSetStage3() {
     if (!isSystemEnabled() || !isSchoolDay() || isSickDay() || !isAllowedMode()) return
-    if (state.hasArrived) { logAction("PM Stage 3 Skipped: Student already arrived.");
-return }
+    if (state.hasArrived) { logAction("PM Stage 3 Skipped: Student already arrived."); return }
     
     logAction("PM Stage 3 Started. Awaiting conditions.")
     state.pmTrackTime = new Date().time
     
-    if (doorSensor || motionSensor) {
-        int delaySeconds = (arrivalTimeout ?: 15) * 60
+    if (settings.doorSensor || settings.motionSensor) {
+        int delaySeconds = (settings.arrivalTimeout ?: 15) * 60
         runIn(delaySeconds, "checkSafeArrival")
     }
 
-    long nextTarget = getEpochTime(pmClear, true)
+    long nextTarget = getEpochTime(settings.pmClear, true)
     startLightingSequence(settings.pmColor3 ?: "Red", isItRaining(), nextTarget, settings.pmSound3)
 
     String msg = "The school bus has arrived at the afternoon stop."
-    if (notifyPhones) notifyPhones.deviceNotification(msg)
-    if (ttsDevice && isAudioAllowedMode()) ttsDevice.speak(msg)
+    if (settings.notifyPhones) settings.notifyPhones.deviceNotification(msg)
+    if (settings.ttsDevice && isAudioAllowedMode()) settings.ttsDevice.speak(msg)
 }
 
 // --- Door and Security Routines ---
 
 def doorOpenedHandler(evt) {
     if (!isSystemEnabled()) return
-    boolean needAmMotion = (motionSensor != null)
-    boolean needPmMotion = (motionSensor != null && !ignorePmMotion)
+    boolean needAmMotion = (settings.motionSensor != null)
+    boolean needPmMotion = (settings.motionSensor != null && !settings.ignorePmMotion)
 
     if (state.waitingForArrival && !state.hasArrived && !state.pmDoorTriggered) {
         state.pmDoorTriggered = true
         if (needPmMotion && !state.pmMotionTriggered) {
             logAction("Front door opened. Waiting for outside motion (Afternoon)...")
-     
         }
         checkArrivalDepartureConditions()
     }
@@ -724,8 +712,7 @@ def doorOpenedHandler(evt) {
 
 def motionActiveHandler(evt) {
     if (!isSystemEnabled()) return
-  
-    boolean needPmMotion = (motionSensor != null && !ignorePmMotion)
+    boolean needPmMotion = (settings.motionSensor != null && !settings.ignorePmMotion)
 
     if (state.waitingForArrival && !state.hasArrived && !state.pmMotionTriggered) {
         state.pmMotionTriggered = true
@@ -745,8 +732,8 @@ def motionActiveHandler(evt) {
 }
 
 def checkArrivalDepartureConditions() {
-    boolean needAmMotion = (motionSensor != null)
-    boolean needPmMotion = (motionSensor != null && !ignorePmMotion)
+    boolean needAmMotion = (settings.motionSensor != null)
+    boolean needPmMotion = (settings.motionSensor != null && !settings.ignorePmMotion)
 
     if (state.waitingForArrival && !state.hasArrived) {
         boolean pmCondition = needPmMotion ? (state.pmDoorTriggered && state.pmMotionTriggered) : state.pmDoorTriggered
@@ -754,19 +741,17 @@ def checkArrivalDepartureConditions() {
             logAction("Arrival conditions met! Safe drop-off recorded.")
             state.waitingForArrival = false
             state.hasArrived = true
-     
             state.isBlinking = false 
             
             if (state.pmTrackTime && !state.isTesting) {
                 long diff = (new Date().time - state.pmTrackTime) / 1000
                 state.pmTotalDoorTime = (state.pmTotalDoorTime ?: 0) + diff
-                
                 state.pmDoorCount = (state.pmDoorCount ?: 0) + 1
                 state.pmTrackTime = null
             }
 
             if (isAllowedMode() || state.isTesting) {
-                if (busLight) busLight.setColor([hue: 39, saturation: 100, level: 100]) 
+                if (settings.busLight) settings.busLight.setColor([hue: 39, saturation: 100, level: 100]) 
             }
         
             runIn(10, "turnLightOff")
@@ -782,17 +767,15 @@ def checkArrivalDepartureConditions() {
             state.hasDeparted = true
             state.isBlinking = false 
             
-           
             if (state.amTrackTime && !state.isTesting) {
                 long diff = (new Date().time - state.amTrackTime) / 1000
                 state.amTotalDoorTime = (state.amTotalDoorTime ?: 0) + diff
                 state.amDoorCount = (state.amDoorCount ?: 0) + 1
                 state.amTrackTime = null
-         
             }
 
             if (isAllowedMode() || state.isTesting) {
-                if (busLight) busLight.setColor([hue: 39, saturation: 100, level: 100]) 
+                if (settings.busLight) settings.busLight.setColor([hue: 39, saturation: 100, level: 100]) 
             }
             runIn(5, "turnLightOff")
             unschedule("checkMissedBus")
@@ -802,12 +785,12 @@ def checkArrivalDepartureConditions() {
 
 def checkMissedBus() {
     if (!isSystemEnabled()) return
-    boolean needAmMotion = (motionSensor != null)
+    boolean needAmMotion = (settings.motionSensor != null)
 
     if (state.waitingForDeparture && !state.hasDeparted) {
         logAction("WARNING: Missed bus alert triggered!")
         String alertMsg = needAmMotion ? "WARNING: The bus arrived, but the door/motion conditions were not met!" : "WARNING: The bus arrived, but the front door never opened!"
-        if (notifyPhones) notifyPhones.deviceNotification(alertMsg)
+        if (settings.notifyPhones) settings.notifyPhones.deviceNotification(alertMsg)
         state.waitingForDeparture = false
         state.amTrackTime = null
     }
@@ -815,12 +798,12 @@ def checkMissedBus() {
 
 def checkSafeArrival() {
     if (!isSystemEnabled()) return
-    boolean needPmMotion = (motionSensor != null && !ignorePmMotion)
+    boolean needPmMotion = (settings.motionSensor != null && !settings.ignorePmMotion)
 
     if (state.waitingForArrival && !state.hasArrived) {
         logAction("CRITICAL: Missed drop-off alert triggered!")
         String alertMsg = needPmMotion ? "CRITICAL: The bus dropped off, but the door/motion conditions were not met!" : "CRITICAL: The school bus dropped off, but the front door hasn't opened!"
-        if (notifyPhones) notifyPhones.deviceNotification(alertMsg)
+        if (settings.notifyPhones) settings.notifyPhones.deviceNotification(alertMsg)
         state.waitingForArrival = false
         state.pmTrackTime = null
     }
@@ -838,8 +821,8 @@ def turnLightOff() {
     state.waitingForDeparture = false
     
     // RESTORE STATE & UNFREEZE Motion App
-    if (busLight) restoreLightState(busLight)
-    if (overrideSwitch) overrideSwitch.off()
+    if (settings.busLight) restoreLightState(settings.busLight)
+    if (settings.overrideSwitch) settings.overrideSwitch.off()
     
     unschedule("testAmStage2")
     unschedule("testAmStage3")
@@ -859,13 +842,12 @@ def doCalendarSync(boolean isForced) {
         return
     }
     
-    if (!enableCalendar && !isForced) return
+    if (!settings.enableCalendar && !isForced) return
 
     boolean onlineSuccess = false
 
-    if (iCalUrl) {
-  
-        String fetchUrl = iCalUrl.replace("webcal://", "https://")
+    if (settings.iCalUrl) {
+        String fetchUrl = settings.iCalUrl.replace("webcal://", "https://")
         def params = [
             uri: fetchUrl,
             headers: ["User-Agent": "Hubitat/2.0"],
@@ -874,7 +856,6 @@ def doCalendarSync(boolean isForced) {
 
         try {
             httpGet(params) { response ->
-       
                 if (response.status == 200) {
                     onlineSuccess = true
                     String icsData = ""
@@ -885,12 +866,10 @@ def doCalendarSync(boolean isForced) {
                         icsData = response.data
                     } else {
                         try {
-                     
                             icsData = response.data.text
                         } catch (e) {
                             icsData = response.data.toString()
                         }
-          
                     }
                     
                     if (!icsData || !icsData.contains("BEGIN:VCALENDAR")) {
@@ -898,7 +877,6 @@ def doCalendarSync(boolean isForced) {
                         log.warn "iCal fetch succeeded, but payload missing calendar headers. Payload preview: ${icsData?.take(50)}"
                         applyDayResult(determineIfSchoolDayOffline(), "Offline Local Math", isForced)
                         return
-            
                     }
 
                     boolean isSchoolDay = processCalendarData(icsData) 
@@ -906,7 +884,6 @@ def doCalendarSync(boolean isForced) {
                 }
             }
         } catch (e) {
-     
             log.warn "Failed to fetch iCal feed. Error: ${e.message}"
         }
     }
@@ -934,7 +911,6 @@ def processCalendarData(String icsData) {
         forecastMap[dateKey] = [
             label: dateLabel, 
             events: [], 
-   
             status: isWeekend ? "Weekend" : "School Day", 
             color: isWeekend ? "#888" : "green",
             isSchoolDay: !isWeekend
@@ -942,10 +918,9 @@ def processCalendarData(String icsData) {
         localCalendar.add(Calendar.DAY_OF_YEAR, 1)
     }
 
-    String rawKeywords = holidayKeywords ?: "spring break, teacher workday, no school"
+    String rawKeywords = settings.holidayKeywords ?: "spring break, teacher workday, no school"
     List<String> keywords = rawKeywords.split(',').collect { it.trim().toLowerCase() }.findAll { it.length() > 0 }
 
-    
     def lines = icsData.split(/\r?\n/)
     boolean inEvent = false
     String eventStart = ""
@@ -957,8 +932,7 @@ def processCalendarData(String icsData) {
         
         if (upperLine.startsWith("BEGIN:VEVENT")) {
             inEvent = true
-            eventStart = "";
-            eventEnd = ""; eventSummary = ""
+            eventStart = ""; eventEnd = ""; eventSummary = ""
         } else if (upperLine.startsWith("END:VEVENT")) {
             if (inEvent && eventStart && eventSummary) {
                 if (!eventEnd) eventEnd = eventStart 
@@ -967,40 +941,33 @@ def processCalendarData(String icsData) {
                         if (!forecastMap[tDate].events.contains(eventSummary)) {
                             forecastMap[tDate].events.add(eventSummary)
                         }
-                 
                         String lowerSummary = eventSummary.toLowerCase()
                         for (String keyword : keywords) {
                             if (lowerSummary.contains(keyword)) {
-                               
                                 forecastMap[tDate].status = "No School (${keyword})"
                                 forecastMap[tDate].color = "#aa0000"
                                 forecastMap[tDate].isSchoolDay = false
-                           
                                 break
                             }
                         }
                     }
                 }
-       
             }
             inEvent = false
         } else if (inEvent) {
             if (upperLine.startsWith("DTSTART")) {
                 int idx = line.indexOf(':')
                 if (idx > -1) {
-                
                     String val = line.substring(idx+1).replaceAll("[^0-9]", "")
                     if (val.length() >= 8) eventStart = val.substring(0, 8)
                 }
             } else if (upperLine.startsWith("DTEND")) {
                 int idx = line.indexOf(':')
-              
                 if (idx > -1) {
                     String val = line.substring(idx+1).replaceAll("[^0-9]", "")
                     if (val.length() >= 8) eventEnd = val.substring(0, 8)
                 }
             } else if (upperLine.startsWith("SUMMARY")) {
-           
                 int idx = line.indexOf(':')
                 if (idx > -1) {
                     eventSummary = line.substring(idx+1).trim()
@@ -1023,12 +990,12 @@ def processCalendarData(String icsData) {
 }
 
 def applyDayResult(boolean isSchoolDay, String source, boolean isForced) {
-    boolean currentSwitch = schoolDaySwitch?.currentValue("switch") == "on"
+    boolean currentSwitch = settings.schoolDaySwitch?.currentValue("switch") == "on"
     if (isSchoolDay) {
-        schoolDaySwitch?.on()
+        settings.schoolDaySwitch?.on()
         if (!currentSwitch || isForced) logAction("Calendar Sync: Marked as School Day [${source}]")
     } else {
-        schoolDaySwitch?.off()
+        settings.schoolDaySwitch?.off()
         if (currentSwitch || isForced) logAction("Calendar Sync: Marked as Off-Day [${source}]")
     }
 }
