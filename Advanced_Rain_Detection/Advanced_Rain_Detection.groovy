@@ -30,8 +30,9 @@ def renderChartHTML() {
     def probJs = buildJsArray(state.probHistory)
 
     return """
-    <div style="width: 100%; max-width: 800px; margin: 20px auto; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 5px;">
-        <canvas id="weatherChart" height="100"></canvas>
+    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">24-Hour Timeline</h4>
+    <div style="position: relative; height: 350px; width: 100%;">
+        <canvas id="weatherChart"></canvas>
     </div>
     
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -39,117 +40,132 @@ def renderChartHTML() {
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
     
     <script>
-    setTimeout(function() {
-        var ctx = document.getElementById('weatherChart').getContext('2d');
-        var weatherChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: [
-                    {
-                        label: 'Temperature (°)',
-                        data: ${tempJs},
-                        borderColor: 'rgb(255, 99, 132)',
-                        yAxisID: 'yTemp',
-                        tension: 0.3,
-                        pointRadius: 0
-                    },
-                    {
-                        label: 'Dew Point Spread (°)',
-                        data: ${spreadJs},
-                        borderColor: 'rgb(54, 162, 235)',
-                        yAxisID: 'yTemp',
-                        borderDash: [5, 5],
-                        tension: 0.3,
-                        pointRadius: 0
-                    },
-                    {
-                        label: 'Pressure',
-                        data: ${pressJs},
-                        borderColor: 'rgb(75, 192, 192)',
-                        yAxisID: 'yPress',
-                        tension: 0.3,
-                        pointRadius: 0
-                    },
-                    {
-                        label: 'Rain Probability (%)',
-                        data: ${probJs},
-                        backgroundColor: 'rgba(153, 102, 255, 0.2)',
-                        borderColor: 'rgb(153, 102, 255)',
-                        yAxisID: 'yProb',
-                        fill: true,
-                        stepped: true,
-                        pointRadius: 0
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                interaction: { mode: 'index', intersect: false },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: { unit: 'hour' },
-                        title: { display: true, text: '24 Hour Timeline' }
-                    },
-                    yTemp: {
-                        type: 'linear',
-                        display: true,
-                        position: 'left',
-                        title: { display: true, text: 'Temp / Spread' }
-                    },
-                    yPress: {
-                        type: 'linear',
-                        display: true,
-                        position: 'right',
-                        title: { display: true, text: 'Pressure' },
-                        grid: { drawOnChartArea: false }
-                    },
-                    yProb: {
-                        type: 'linear',
-                        display: true,
-                        position: 'right',
-                        min: 0,
-                        max: 100,
-                        title: { display: true, text: 'Probability %' },
-                        grid: { drawOnChartArea: false }
+    (function() {
+        function initChart() {
+            var canvas = document.getElementById('weatherChart');
+            
+            // Intelligently poll until the canvas is in the DOM and libraries are loaded
+            if (!canvas || typeof Chart === 'undefined' || typeof luxon === 'undefined') {
+                setTimeout(initChart, 50);
+                return;
+            }
+            
+            // Destroy existing chart if Hubitat does a partial UI refresh
+            if (window.myWeatherChart) {
+                window.myWeatherChart.destroy();
+            }
+            
+            var ctx = canvas.getContext('2d');
+            window.myWeatherChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Temperature (°)',
+                            data: ${tempJs},
+                            borderColor: 'rgb(255, 99, 132)',
+                            yAxisID: 'yTemp',
+                            tension: 0.3,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Dew Point Spread (°)',
+                            data: ${spreadJs},
+                            borderColor: 'rgb(54, 162, 235)',
+                            yAxisID: 'yTemp',
+                            borderDash: [5, 5],
+                            tension: 0.3,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Pressure',
+                            data: ${pressJs},
+                            borderColor: 'rgb(75, 192, 192)',
+                            yAxisID: 'yPress',
+                            tension: 0.3,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Rain Probability (%)',
+                            data: ${probJs},
+                            backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                            borderColor: 'rgb(153, 102, 255)',
+                            yAxisID: 'yProb',
+                            fill: true,
+                            stepped: true,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'hour' },
+                            title: { display: false }
+                        },
+                        yTemp: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Temp / Spread' }
+                        },
+                        yPress: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'Pressure' },
+                            grid: { drawOnChartArea: false }
+                        },
+                        yProb: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            title: { display: true, text: 'Probability %' },
+                            grid: { drawOnChartArea: false }
+                        }
                     }
                 }
-            }
-        });
-    }, 500);
+            });
+        }
+        initChart();
+    })();
     </script>
     """
 }
 
 def renderTableHTML() {
     if (!state.tempHistory || state.tempHistory.size() == 0) {
-        return "<div style='margin-top:20px; padding:15px; border:1px solid #ccc; background:#fff;'>Gathering history data... check back in a few minutes.</div>"
+        return "<h4 style='margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;'>24-Hour Timeline</h4><div>Gathering history data... check back in a few minutes.</div>"
     }
     
     def reversedHist = state.tempHistory.reverse()
     
     def tableHTML = """
-    <div style="width: 100%; max-width: 800px; margin: 20px auto; background: #fff; border: 1px solid #ccc; border-radius: 5px; overflow: hidden;">
-        <h4 style="margin:0; padding:10px 15px; background:#f4f4f4; border-bottom:1px solid #ccc; color:#333;">24-Hour Local Data Table</h4>
-        <div style="max-height: 300px; overflow-y: auto;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; font-family: monospace;">
-                <thead style="background: #eee; position: sticky; top: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                    <tr>
-                        <th style="padding: 8px; border-bottom: 1px solid #ccc;">Time</th>
-                        <th style="padding: 8px; border-bottom: 1px solid #ccc;">Temp</th>
-                        <th style="padding: 8px; border-bottom: 1px solid #ccc;">Pressure</th>
-                        <th style="padding: 8px; border-bottom: 1px solid #ccc;">DP Spread</th>
-                        <th style="padding: 8px; border-bottom: 1px solid #ccc;">Rain Prob</th>
-                    </tr>
-                </thead>
-                <tbody>
+    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">24-Hour Local Data Table</h4>
+    <div style="height: 350px; overflow-y: auto; border: 1px solid #eee;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; font-family: monospace;">
+            <thead style="background: #eee; position: sticky; top: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                <tr>
+                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Time</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Temp</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Pressure</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">DP Spread</th>
+                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Rain Prob</th>
+                </tr>
+            </thead>
+            <tbody>
     """
     
     reversedHist.each { entry ->
         def timeStr = new Date((long)entry.time).format("MM/dd HH:mm", location.timeZone)
         def tVal = String.format('%.1f', entry.value)
         
-        // Find matching timestamps for other metrics (within ~2 minutes)
         def findMatch = { hist -> 
             def match = hist?.find { Math.abs(it.time - entry.time) < 120000 }
             return match ? String.format('%.2f', match.value) : "--"
@@ -173,9 +189,8 @@ def renderTableHTML() {
     }
     
     tableHTML += """
-                </tbody>
-            </table>
-        </div>
+            </tbody>
+        </table>
     </div>
     """
     return tableHTML
@@ -186,11 +201,8 @@ def renderRadarHTML() {
     def lon = location.longitude ?: -98.5795
 
     return """
-    <div style="width: 100%; max-width: 800px; margin: 20px auto; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 5px;">
-        <h4 style="margin-top:0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">Live Regional Radar</h4>
-        <div style="font-size: 11px; color: #666; margin-bottom: 10px;">Cross-reference local sensor data with incoming NOAA/Global radar fronts. Centered on hub location.</div>
-        <iframe width="100%" height="350" src="https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=8&level=surface&overlay=radar&menu=&message=&marker=true&calendar=&pressure=&type=map&location=coordinates&detail=&detailLat=${lat}&detailLon=${lon}&metricWind=mph&metricTemp=%C2%B0F&radarRange=-1" frameborder="0" style="border-radius: 4px;"></iframe>
-    </div>
+    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">Live Regional Radar</h4>
+    <iframe width="100%" height="350" src="https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=8&level=surface&overlay=radar&menu=&message=&marker=true&calendar=&pressure=&type=map&location=coordinates&detail=&detailLat=${lat}&detailLon=${lon}&metricWind=mph&metricTemp=%C2%B0F&radarRange=-1" frameborder="0" style="border-radius: 4px;"></iframe>
     """
 }
 
@@ -381,25 +393,35 @@ def mainPage() {
 
                 statusText += logicPanel
 
-                // --- 24-Hour Visual Data Trend / Table ---
+                // --- CSS Flexbox Layout for Chart & Radar ---
+                def visualWidgets = "<div style='display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px; align-items: stretch;'>"
+                
                 def dispMode = settings.historyDisplayMode ?: "Chart (Chart.js)"
                 if (dispMode == "Chart (Chart.js)") {
-                    statusText += renderChartHTML()
+                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
+                    visualWidgets += renderChartHTML()
+                    visualWidgets += "</div>"
                 } else if (dispMode == "Data Table") {
-                    statusText += renderTableHTML()
+                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
+                    visualWidgets += renderTableHTML()
+                    visualWidgets += "</div>"
                 }
                 
-                // --- Live NOAA Radar Map ---
                 if (settings.enableRadar != false) {
-                    statusText += renderRadarHTML()
+                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
+                    visualWidgets += renderRadarHTML()
+                    visualWidgets += "</div>"
                 }
+                visualWidgets += "</div>"
+                
+                statusText += visualWidgets
                 
                 // Switch Status
                 def rainSw = switchRaining?.currentValue("switch") == "on" ? "<span style='color:blue; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
                 def sprinkSw = switchSprinkling?.currentValue("switch") == "on" ? "<span style='color:blue; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
                 def probSw = switchProbable?.currentValue("switch") == "on" ? "<span style='color:orange; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
                 
-                statusText += "<div style='margin-top: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 15px; border: 1px solid #ccc;'>"
+                statusText += "<div style='margin-top: 15px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 15px; border: 1px solid #ccc;'>"
                 statusText += "<div><b>Virtual Switches:</b> Probable Threat: [${probSw}] | Sprinkling: [${sprinkSw}] | Heavy Rain: [${rainSw}]</div>"
                 statusText += "</div>"
 
