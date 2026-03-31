@@ -1,7 +1,7 @@
 /**
  * Advanced Robot Vacuum Controller
  * Orchestration app for the Roborock Robot Vacuum driver with Live Dashboard, Master Override, and Dynamic 12-Room Setup.
-*/
+ */
 
 definition(
     name: "Advanced Robot Vacuum Controller",
@@ -154,6 +154,7 @@ def mainPage() {
         }
 
         section("<b>4. Global Constraints & Overdue Logic</b>", hideable: true, hidden: true) {
+            input "pauseOnIntrusion", "bool", title: "Pause Active Cleans on Intrusion (Real-Time Interruption)", defaultValue: false
             input "allowedModes", "mode", title: "Allowed Operating Modes (Leave blank for any)", required: false, multiple: true
             input "allowedStartTime", "time", title: "Quiet Hours: Do NOT run BEFORE", required: false
             input "allowedEndTime", "time", title: "Quiet Hours: Do NOT run AFTER", required: false
@@ -184,6 +185,52 @@ def mainPage() {
             input "notifyTypes", "enum", title: "Select Alert Types to Receive", options: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"], multiple: true, required: false, defaultValue: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"]
             input "alertThreshold", "number", title: "Alert when consumables drop below (%)", defaultValue: 5, required: true
             input "autoPauseOnError", "bool", title: "Auto-Pause Vacuum on Error", defaultValue: true
+            input "ignoredPauseErrors", "text", title: "Ignore these Error Codes (Comma separated, e.g. 38, 105)", required: false
+            
+            String chartHTML = """
+            <details style='margin-top: 15px;'>
+                <summary style='cursor: pointer; color: #0066cc;'><b>📚 View Roborock Error Code Reference Chart</b></summary>
+                <div style='margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #fcfcfc; font-size: 12px; font-family: sans-serif;'>
+                    <b style='color: green;'>💧 Dock & Mopping Systems (Great Candidates for Ignore List)</b>
+                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px;'>
+                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>38</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Clean water tank empty/missing</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>39</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dirty water tank full/missing</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>40</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dock water filter blocked</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>42</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Cleaning tray blocked/jammed</td></tr>
+                    </table>
+
+                    <b style='color: red;'>🛑 Navigation & Movement (Do Not Ignore)</b>
+                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px;'>
+                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>1</b></td><td style='padding: 4px; border: 1px solid #ccc;'>LiDAR laser blocked or stuck</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>2</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Bumper stuck</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>3</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Wheels suspended</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>4</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Cliff sensor error</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>7</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Main wheels jammed</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>8</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Robot trapped</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>11</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Magnetic boundary detected</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>16</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Uneven surface</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>21</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Vertical bumper pressed</td></tr>
+                    </table>
+
+                    <b style='color: orange;'>⚙️ Hardware & Consumables (Proceed with Caution)</b>
+                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px;'>
+                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>5</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Main brush jammed</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>6</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Side brush jammed</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>9</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dustbin missing</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>10</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Filter blocked or wet</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>12</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Battery critically low</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>13/14</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Battery/Charging fault</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>15</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Wall sensor dirty</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>17</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Side brush module fault</td></tr>
+                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>18</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Vacuum fan error</td></tr>
+                    </table>
+                </div>
+            </details>
+            """
+            paragraph chartHTML
         }
         
         section("<b>8. Logging & Maintenance</b>", hideable: true, hidden: true) {
@@ -724,6 +771,7 @@ def vacuumStateHandler(evt) {
     String vState = evt.value?.toString()?.toLowerCase()
     
     if (vState in ["charging", "charged", "docked", "returning to dock", "idle", "full"]) {
+        state.ignoreIntrusions = false 
         if (evt.device.id == vacuum1?.id && state.v1_maskedRooms?.size() > 0) {
             state.v1_maskedRooms.each { rName -> triggerFanCountdown(rName) }
             state.v1_maskedRooms = []
@@ -778,6 +826,7 @@ def masterSwitchHandler(evt) {
 def occupancyHandler(evt) {
     if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
+    if (state.ignoreIntrusions) return // Ignore real-time pauses entirely during forced Full Cleans
     
     String triggeredRoom = ""
     int triggeredIndex = 0
@@ -812,6 +861,7 @@ def occupancyHandler(evt) {
     boolean v1InRoom = state.v1_maskedRooms?.contains(triggeredRoom)
     boolean v2InRoom = state.v2_maskedRooms?.contains(triggeredRoom)
 
+    // Log the motion for calculations, regardless of whether the vacuum is running
     if (evt.name == "motion" && isAccumulator && !v1InRoom && !v2InRoom) {
         if (!isGoodNight) {
             def motions = [settings["roomMotion_${triggeredIndex}"]].flatten().findAll { it }
@@ -846,6 +896,14 @@ def occupancyHandler(evt) {
     }
 
     if (evt.value == "active" || evt.value == "on") {
+        boolean doPause = settings.pauseOnIntrusion ?: false
+        if (!doPause) return // Bail out completely. Do not interrupt an active clean.
+        
+        // Prevent the vacuum from pausing itself via ANY motion sensors while it is present
+        if (evt.name == "motion" && (v1InRoom || v2InRoom)) {
+            return 
+        }
+        
         if (v1InRoom && vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
             addToHistory("<span style='color:orange;'>V1 Paused: Intrusion in ${triggeredRoom}</span>")
             commandVacuum(vacuum1, settings.vac1Brand, "pause")
@@ -857,6 +915,9 @@ def occupancyHandler(evt) {
             unschedule("resumeVacuum2")
         }
     } else if (evt.value == "inactive" || evt.value == "off") {
+        boolean doPause = settings.pauseOnIntrusion ?: false
+        if (!doPause) return // Bail out completely. It was never paused to begin with.
+
         if (!isRoomCurrentlyOccupied(triggeredIndex)) {
             int delaySeconds = (settings.pauseGracePeriod ?: 2) * 60
             if (v1InRoom && vacuum1 && vacuum1.currentValue("state")?.toLowerCase() == "paused") {
@@ -950,10 +1011,28 @@ def schoolRunHandler(evt) {
 
 def errorHandler(evt) {
     if (isAppPaused()) return
-    String errorMsg = evt.value?.toString()?.toLowerCase()
+    String errorCode = evt.value?.toString()
+    String errorMsg = errorCode?.toLowerCase()
+    
     if (errorMsg == "no error" || errorMsg == "0") return
     
-    String msg = "${evt.device.displayName} Error: ${evt.value}"
+    // Parse the user's ignored codes into a list
+    List ignoredCodes = settings.ignoredPauseErrors ? settings.ignoredPauseErrors.split(",").collect { it.trim() } : []
+    
+    if (ignoredCodes.contains(errorCode)) {
+        addToHistory("<span style='color:gray;'><i>Ignored Error ${errorCode} (Bypassed Auto-Pause & Alerts)</i></span>")
+        
+        // --- NEW AUTO-DRY SWEEP LOGIC ---
+        if (errorCode in ["38", "39", "40"]) {
+            def vac = evt.device
+            def brand = (vac.id == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
+            addToHistory("<span style='color:teal;'><b>Water Error Detected: Forcing Water Level to OFF to protect pump.</b></span>")
+            dispatchVacuum(vac, brand, "water", "", "off", "") // Forces the water setting to off
+        }
+        return // Exit early to bypass push alerts and auto-pause
+    }
+    
+    String msg = "${evt.device.displayName} Error: ${errorCode}"
     addToHistory("<span style='color:red;'><b>${msg}</b></span>")
     
     sendAlert("Errors", msg)
@@ -1051,6 +1130,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         }
     }
 
+    state.ignoreIntrusions = ignoreSkip 
     state.lastDispatchLog = dispatchLog
 
     if (v1Queue.size() > 0 || v2Queue.size() > 0) {
@@ -1252,7 +1332,6 @@ String buildDashboardHTML() {
     double v2MoneySaved = v2KwhSaved * kwRate
     double totalMoneySaved = totalKwhSaved * kwRate
     
-    // FIX: Removed the totalKwhSaved > 0 condition so the UI always renders.
     if (settings.smartROISavings) {
         html += "<div style='margin-top: 10px; padding: 8px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px; font-size: 13px; color: #2e7d32;'>"
         html += "<b>Financial & Energy ROI:</b> System has prevented a total of <b>${String.format("%.2f", totalKwhSaved)} kWh</b> of phantom draw, saving <b>\$${String.format("%.2f", totalMoneySaved)}</b>.<br>"
