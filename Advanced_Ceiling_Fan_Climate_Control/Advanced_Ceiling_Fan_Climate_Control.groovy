@@ -51,7 +51,7 @@ def mainPage() {
             
             for (int i = 1; i <= 8; i++) {
                 def rawFanType = settings["z${i}FanType"] ?: "speed3"
-                def fanType = (rawFanType == "speed") ? "speed3" : rawFanType // Backward compatibility
+                def fanType = (rawFanType == "speed") ? "speed3" : rawFanType 
                 def hasDevice = (fanType.startsWith("speed") && settings["z${i}Fan"]) || (fanType == "switch" && settings["z${i}SimpleFan"])
                 
                 if (settings["enableZ${i}"] && hasDevice) {
@@ -255,7 +255,9 @@ def mainPage() {
                     input "z${i}Temp", "capability.temperatureMeasurement", title: "Temperature Sensor", required: true
                     input "z${i}Hum", "capability.relativeHumidityMeasurement", title: "Humidity Sensor (Optional)", required: false
                     
-                    input "z${i}Motion", "capability.motionSensor", title: "Motion Sensor (Optional)", required: false, submitOnChange: true
+                    // NEW: Changed to allow multiple motion sensors
+                    input "z${i}Motion", "capability.motionSensor", title: "Motion Sensor(s) (Optional)", required: false, multiple: true, submitOnChange: true
+                    
                     if (settings["enableOccupancy"] && settings["z${i}Motion"]) {
                         input "z${i}OccupancyTimeout", "number", title: "Minutes of no motion before turning off fan", required: false, defaultValue: 30
                     }
@@ -293,6 +295,7 @@ def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     if (!state.zoneLastActive) state.zoneLastActive = [:]
     if (!state.overrideUntil) state.overrideUntil = [:]
+    if (!state.ignoreOverridesUntil) state.ignoreOverridesUntil = [:] // Setup blind spot tracking
     
     // Subscribe to events
     subscribe(location, "systemStart", hubRestartHandler)
@@ -313,7 +316,7 @@ def initialize() {
             // Subscriptions for standard automation
             if (settings["z${i}Temp"]) subscribe(settings["z${i}Temp"], "temperature", sensorHandler)
             if (settings["z${i}Hum"]) subscribe(settings["z${i}Hum"], "humidity", sensorHandler)
-            if (settings["z${i}Motion"]) subscribe(settings["z${i}Motion"], "motion", motionHandler)
+            if (settings["z${i}Motion"]) subscribe(settings["z${i}Motion"], "motion", motionHandler) // Will handle multiple
             if (settings["z${i}GnSwitch"]) subscribe(settings["z${i}GnSwitch"], "switch", sensorHandler)
             if (settings["z${i}ShadeContact"]) subscribe(settings["z${i}ShadeContact"], "contact", sensorHandler)
             if (settings["z${i}ActivitySwitch"]) subscribe(settings["z${i}ActivitySwitch"], "switch", sensorHandler)
@@ -351,6 +354,7 @@ def appButtonHandler(btn) {
         logInfo("Dashboard data manually refreshed by user.")
     } else if (btn == "btnResetOverrides") {
         state.overrideUntil = [:]
+        state.ignoreOverridesUntil = [:] // Clear blind spots too
         logAction("User manually cleared all overrides.")
         evaluateFans()
     }
@@ -360,12 +364,14 @@ def appButtonHandler(btn) {
 def modeChangeHandler(evt) {
     logAction("Location mode changed to: ${evt.value}. Clearing all manual overrides.")
     state.overrideUntil = [:]
+    state.ignoreOverridesUntil = [:]
     evaluateFans()
 }
 
 def motionHandler(evt) {
     if (evt.value == "active") {
         def map = state.zoneLastActive ?: [:]
+        // Tracks each individual sensor's last active time
         map[evt.device.id] = now()
         state.zoneLastActive = map
         evaluateFans()
@@ -379,6 +385,20 @@ def sensorHandler(evt) {
 // ==============================================================================
 // OVERRIDE DETECTION
 // ==============================================================================
+
+// Helper function to pause manual override detection when the app itself sends a command
+def pauseOverrideDetection(roomId, seconds = 15) {
+    def map = state.ignoreOverridesUntil ?: [:]
+    map[roomId.toString()] = now() + (seconds * 1000)
+    state.ignoreOverridesUntil = map
+}
+
+def isDetectionPaused(roomId) {
+    def map = state.ignoreOverridesUntil ?: [:]
+    def expireTime = map[roomId.toString()]
+    if (expireTime && now() < expireTime.toLong()) return true
+    return false
+}
 
 def getRoomIdFromDevice(deviceId, devType) {
     for (int i = 1; i <= 8; i++) {
@@ -433,10 +453,16 @@ def fanSpeedHandler(evt) {
     def roomId = getRoomIdFromDevice(evt.device.id, "fan")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSpeed"]
+    def target = state["z${roomId}Target"]
+    
+    // BLIND SPOT & TARGET CHECK: Ignore if detection is paused OR if the fan finally matched our ultimate target speed.
+    if (isDetectionPaused(roomId) || evt.value == target) {
+        state["z${roomId}ExpectedSpeed"] = evt.value
+        return
+    }
     
     if (evt.value != expected && evt.value != "unknown") {
         def gnSwitch = settings["z${roomId}GnSwitch"]
-        // If Good Night is active, silently sync the state without triggering an override
         if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
             state["z${roomId}ExpectedSpeed"] = evt.value
             state["z${roomId}Target"] = evt.value
@@ -453,6 +479,12 @@ def simpleFanHandler(evt) {
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSimple"]
     
+    // BLIND SPOT CHECK
+    if (isDetectionPaused(roomId)) {
+        state["z${roomId}ExpectedSimple"] = evt.value
+        return
+    }
+    
     if (evt.value != expected) {
         def gnSwitch = settings["z${roomId}GnSwitch"]
         if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
@@ -468,6 +500,12 @@ def powerRelayHandler(evt) {
     def roomId = getRoomIdFromDevice(evt.device.id, "power")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedPower"]
+    
+    // BLIND SPOT CHECK
+    if (isDetectionPaused(roomId)) {
+        state["z${roomId}ExpectedPower"] = evt.value
+        return
+    }
     
     if (evt.value != expected) {
         def gnSwitch = settings["z${roomId}GnSwitch"]
@@ -488,13 +526,20 @@ def getRoomOccupancy(roomId, timeoutMs) {
     def actSwitch = settings["z${roomId}ActivitySwitch"]
     if (actSwitch && actSwitch.currentValue("switch") == "on") return true
 
-    def mDev = settings["z${roomId}Motion"]
-    if (!settings["enableOccupancy"] || !mDev) return true
+    def mDevs = settings["z${roomId}Motion"]
+    if (!settings["enableOccupancy"] || !mDevs) return true
     
-    def lastActive = state.zoneLastActive ? state.zoneLastActive[mDev.id] : null
-    if (!lastActive || (now() - lastActive.toLong()) > timeoutMs) return false
+    // NEW: Loop through all selected motion sensors for this room
+    for (mDev in mDevs) {
+        if (mDev.currentValue("motion") == "active") return true
+        
+        def lastActive = state.zoneLastActive ? state.zoneLastActive[mDev.id] : null
+        if (lastActive && (now() - lastActive.toLong()) <= timeoutMs) {
+            return true
+        }
+    }
     
-    return true
+    return false
 }
 
 def shouldKeepRelayOn(roomId, isOccupied, isAway, isNight) {
@@ -612,12 +657,14 @@ def evaluateFans() {
                         if (targetSpeed == "off") {
                             if (keepOn && pwrState != "on") {
                                 logAction("Smart Lighting Needed: Proactively powering ON relay for ${zName}.")
+                                pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 setExpectedState(i, "power", "on")
                                 pDev.on()
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "power"], overwrite: false])
                             } 
                             else if (!keepOn && pwrState != "off" && fDev.currentValue("speed") == "off") {
                                 logAction("Smart Lighting conditions cleared. Sweeping power relay OFF for ${zName}.")
+                                pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 setExpectedState(i, "power", "off")
                                 pDev.off()
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "power"], overwrite: false])
@@ -651,6 +698,7 @@ def turnRoomOff(roomId, fanType, roomName, reason) {
         def sDev = settings["z${roomId}SimpleFan"]
         if (sDev && sDev.currentValue("switch") != "off") {
             logAction("Stopping ${roomName} simple fan relay. (${reason})")
+            pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "off")
             sDev.off()
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
@@ -666,6 +714,7 @@ def evaluateSimpleFan(roomId, switchDevice, roomName, currentTemp, targetSetpoin
     if (currentTemp >= targetSetpoint) {
         if (switchDevice.currentValue("switch") != "on") {
             logAction("Starting ${roomName} relay. (${label} Temp: ${currentTemp}°, Target: ${targetSetpoint}°, Delta: +${delta}°)")
+            pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "on")
             switchDevice.on()
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
@@ -673,6 +722,7 @@ def evaluateSimpleFan(roomId, switchDevice, roomName, currentTemp, targetSetpoin
     } else if (currentTemp <= (targetSetpoint - 0.5)) {
         if (switchDevice.currentValue("switch") != "off") {
             logAction("Stopping ${roomName} relay. (Deadband satisfied: ${currentTemp}° <= ${targetSetpoint - 0.5}°)")
+            pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "off")
             switchDevice.off()
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
@@ -741,6 +791,7 @@ def setFanTarget(roomId, fDev, pDev, roomName, newTargetSpeed, reason) {
 
     if (newTargetSpeed != "off" && pDev && pDev.currentValue("switch") != "on") {
         logAction("Powering ON ${roomName} relay for active cooling.")
+        pauseOverrideDetection(roomId, 30) // Setup Blind Spot
         setExpectedState(roomId, "power", "on")
         pDev.on()
         runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
@@ -776,6 +827,7 @@ def stepFan(roomId) {
     if (currentInt < targetInt) {
         def nextSpeed = lMap[currentInt + 1]
         logAction("Stepping ${settings["z${roomId}Name"]} UP to ${nextSpeed.toUpperCase()}...")
+        pauseOverrideDetection(roomId, 60) // HUGE Blind Spot for sluggish cloud hubs
         setExpectedState(roomId, "fan", nextSpeed)
         fDev.setSpeed(nextSpeed)
         runIn(delay, "stepFanTrigger", [data: [room: roomId]])
@@ -783,6 +835,7 @@ def stepFan(roomId) {
     else if (currentInt > targetInt) {
         def nextSpeed = lMap[currentInt - 1]
         logAction("Stepping ${settings["z${roomId}Name"]} DOWN to ${nextSpeed.toUpperCase()}...")
+        pauseOverrideDetection(roomId, 60) // HUGE Blind Spot for sluggish cloud hubs
         setExpectedState(roomId, "fan", nextSpeed)
         fDev.setSpeed(nextSpeed)
         runIn(delay, "stepFanTrigger", [data: [room: roomId]])
@@ -818,6 +871,7 @@ def killPowerRelay(data) {
         }
         
         logAction("Spin-down delay complete. No lighting overrides active. Killing power relay for Room ${roomId}.")
+        pauseOverrideDetection(roomId, 30) // Setup Blind Spot
         setExpectedState(roomId, "power", "off")
         pDev.off()
         runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
@@ -847,11 +901,13 @@ def doHourlyWiggle() {
             if (currentInt > 0) {
                 def dropSpeed = lMap[currentInt - 1]
                 logAction("Wiggle: Dropping ${settings["z${i}Name"]} to ${dropSpeed.toUpperCase()} temporarily.")
+                pauseOverrideDetection(i, 60) // HUGE Blind Spot for sluggish cloud hubs
                 setExpectedState(i, "fan", dropSpeed)
                 fDev.setSpeed(dropSpeed)
             } 
             else if (currentInt == 0 && targetSpeed == "off") {
                 logAction("Wiggle: Bumping ${settings["z${i}Name"]} to LOW to force Bond Bridge reset.")
+                pauseOverrideDetection(i, 60) // HUGE Blind Spot for sluggish cloud hubs
                 setExpectedState(i, "fan", "low")
                 fDev.setSpeed("low")
             }
