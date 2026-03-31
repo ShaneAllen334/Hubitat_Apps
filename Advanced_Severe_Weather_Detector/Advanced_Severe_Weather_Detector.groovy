@@ -57,7 +57,7 @@ def mainPage() {
                     def haz = hazMap.id
                     def icon = hazMap.icon
                     def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Gathering sensor data...", mathEx: "Awaiting math cycle...", lastTrig: 0, history: []]
-                    
+  
                     def noaaStatus = noaaMap[haz] ?: "Clear"
                     def noaaRaw = noaaMap["Raw_${haz}"] ?: "No official alerts for this sector."
                     def noaaColor = noaaStatus == "ALARM" ? "#d9534f" : (noaaStatus == "WARNING" ? "#f0ad4e" : "#5cb85c")
@@ -314,9 +314,8 @@ def dnaConfigPage() {
                     input "switch${id}Warn", "capability.switch", title: "Map WARNING Virtual Switch", required: false
                     input "switch${id}Alarm", "capability.switch", title: "Map ALARM Virtual Switch", required: false
                     
-                    input "${lName}Modes", "mode", title: "<b>Restrict Alerts to these Modes</b> (Leave blank for all)", multiple: true, required: false
-                    
                     paragraph "<b>▶ Warning Output Routing</b>"
+                    input "${lName}WarnModes", "mode", title: "<b>Restrict WARNING Alerts to these Modes</b> (Leave blank for all)", multiple: true, required: false
                     input "${lName}WarnNotify", "bool", title: "Send Push Notification", defaultValue: true
                     input "${lName}WarnTTS", "bool", title: "Broadcast TTS", defaultValue: true, submitOnChange: true
                     if (settings["${lName}WarnTTS"]) input "tts${id}Warn", "text", title: "TTS String", required: false, defaultValue: dna.wTTS
@@ -325,6 +324,7 @@ def dnaConfigPage() {
                     if (settings["${lName}WarnSound"]) input "url${id}Warn", "text", title: "Sound File URL", required: true
 
                     paragraph "<b>▶ Alarm Output Routing</b>"
+                    input "${lName}AlarmModes", "mode", title: "<b>Restrict ALARM Alerts to these Modes</b> (Leave blank for all)", multiple: true, required: false
                     input "${lName}AlarmNotify", "bool", title: "Send Push Notification", defaultValue: true
                     input "${lName}AlarmTTS", "bool", title: "Broadcast TTS", defaultValue: true, submitOnChange: true
                     if (settings["${lName}AlarmTTS"]) input "tts${id}Alarm", "text", title: "TTS String", required: false, defaultValue: dna.aTTS
@@ -681,12 +681,16 @@ def updateHistory(historyName, val, maxAgeMs) {
 
 def stdHandler(evt) { markActive(); runIn(1, "evaluateMatrix") }
 def tempHandler(evt) { updateHistory("tempHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
+
+// FIXED: pressureHandler now extracts value directly from evt
 def pressureHandler(evt) { 
-    def raw = getFloat(evt, ["value"], 0.0)
+    def raw = 0.0
+    try { raw = evt.value.toString().replaceAll("[^\\d.-]", "").toFloat() } catch(e) {}
     def cal = raw + (settings.pressOffset ?: 0.0)
     updateHistory("pressureHistory", cal, 10800000)
     runIn(1, "evaluateMatrix") 
 } 
+
 def windHandler(evt) { updateHistory("windHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
 def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
 def lightningHandler(evt) { updateHistory("lightningHistory", evt.value, 1800000); runIn(1, "evaluateMatrix") }
@@ -1213,8 +1217,12 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
         data.currentEvent = [state: targetState, start: now()]
         // -------------------------
 
-        def allowedModes = settings["${pfx}Modes"]
-        def modeOk = (!allowedModes || allowedModes.contains(location.mode))
+        // Check granular modes for WARNING and ALARM
+        def warnAllowedModes = settings["${pfx}WarnModes"]
+        def warnModeOk = (!warnAllowedModes || warnAllowedModes.contains(location.mode))
+        
+        def alarmAllowedModes = settings["${pfx}AlarmModes"]
+        def alarmModeOk = (!alarmAllowedModes || alarmAllowedModes.contains(location.mode))
         
         def warnSw = settings["switch${haz}Warn"]
         def alarmSw = settings["switch${haz}Alarm"]
@@ -1223,7 +1231,7 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
             safeOn(alarmSw)
             safeOff(warnSw)
             
-            if (modeOk) {
+            if (alarmModeOk) {
                 if (settings["${pfx}AlarmNotify"]) sendNotification("🚨 CRITICAL: ${haz} ALARM Conditions Detected!")
                 if (settings["${pfx}AlarmTTS"]) playAudio(settings["tts${haz}Alarm"])
                 if (settings["${pfx}AlarmSiren"]) triggerSiren()
@@ -1236,7 +1244,7 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
             safeOff(alarmSw)
             safeOn(warnSw)
             
-            if (modeOk) {
+            if (warnModeOk) {
                 if (settings["${pfx}WarnNotify"]) sendNotification("⚠ WARNING: Elevated ${haz} Conditions.")
                 if (settings["${pfx}WarnTTS"]) playAudio(settings["tts${haz}Warn"])
                 if (settings["${pfx}WarnSiren"]) triggerSiren()
@@ -1250,7 +1258,7 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
             safeOff(warnSw)
             if (currentState != "Clear") {
                 stopAllSirens()
-                if (modeOk && settings["${pfx}WarnNotify"]) sendNotification("✅ The localized ${haz} threat has cleared.")
+                if ((warnModeOk || alarmModeOk) && settings["${pfx}WarnNotify"]) sendNotification("✅ The localized ${haz} threat has cleared.")
             }
         }
     }
