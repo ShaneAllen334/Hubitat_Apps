@@ -104,7 +104,8 @@ def mainPage() {
                     def targetSpeedDisp = "N/A"
                     
                     if (isAsleep) {
-                        expLights = "OFF"
+                        def hasOnLights = settings["roomLightsOn${i}"] ? true : false
+                        expLights = hasOnLights ? "OFF / Bedtime Plugs ON" : "OFF"
                         expAudio = "PLAYING (Unless Timer Ended)"
                         
                         if (cTemp != null) {
@@ -235,6 +236,12 @@ def mainPage() {
                     input "roomName${i}", "text", title: "Custom Room Name", defaultValue: "Room ${i}", submitOnChange: true
                     input "roomSwitch${i}", "capability.switch", title: "${rName} Good Night Virtual Switch", required: true
                     
+                    paragraph "<b>Good Night Toggle Button</b>"
+                    input "gnButton${i}", "capability.pushableButton", title: "Toggle Button Device", required: false
+                    input "gnButtonNum${i}", "number", title: "Button Number", required: false, defaultValue: 1
+                    input "gnButtonAction${i}", "enum", title: "Button Action", options: ["pushed":"Pushed", "doubleTapped":"Double Tapped", "held":"Held", "released":"Released"], required: false, defaultValue: "pushed"
+                    input "gnButtonModes${i}", "mode", title: "Only Allow in These Modes", multiple: true, required: false
+                    
                     paragraph "<b>1. Climate & Environment</b>"
                     input "tempSensor${i}", "capability.temperatureMeasurement", title: "Temperature Sensor", required: true
                     input "humSensor${i}", "capability.relativeHumidityMeasurement", title: "Humidity Sensor (Optional - for sleep rating)", required: false
@@ -255,6 +262,7 @@ def mainPage() {
                     
                     paragraph "<b>2. Lighting & Shades</b>"
                     input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF", multiple: true, required: false
+                    input "roomLightsOn${i}", "capability.switch", title: "Lights/Plugs to Turn ON (Turns OFF when waking)", multiple: true, required: false
                     input "pauseLightingEnforcement${i}", "capability.switch", title: "Pause Lighting Enforcement Switch (Syncs with Sunrise App)", required: false
                     input "shadeContact${i}", "capability.contactSensor", title: "Shade Open/Close Contact Sensor", required: false
                     input "roomShade${i}", "capability.windowShade", title: "Window Shade to Close", required: false
@@ -283,6 +291,7 @@ def mainPage() {
                     }
                     
                     paragraph "<b>3. Sonos Audio Polish</b>"
+                    input "roomSpeakerPower${i}", "capability.switch", title: "Sonos Speaker Power Plug (Optional)", required: false
                     input "roomSpeaker${i}", "capability.musicPlayer", title: "Sonos Speaker", required: false
                     input "audioVolume${i}", "number", title: "Fixed Nighttime Volume (1-100)", required: false, defaultValue: 15
                     input "audioTimer${i}", "number", title: "Sleep Timer: Stop audio after X minutes (Leave blank for continuous)", required: false
@@ -391,6 +400,13 @@ def initialize() {
             if (settings["tempSensor${i}"]) {
                 subscribe(settings["tempSensor${i}"], "temperature", tempHandler)
             }
+            
+            // Good Night Toggle Button Subscription
+            if (settings["gnButton${i}"]) {
+                def action = settings["gnButtonAction${i}"] ?: "pushed"
+                subscribe(settings["gnButton${i}"], action, goodNightButtonHandler)
+            }
+            
             // Reading Buttons Subscription
             if (settings["enableReadingLight1_${i}"] && settings["readingButton1_${i}"]) {
                 subscribe(settings["readingButton1_${i}"], "pushed", readingButtonHandler)
@@ -410,6 +426,40 @@ def initialize() {
         }
         if (blockingSwitches) {
             subscribe(blockingSwitches, "switch", blockingSwitchHandler)
+        }
+    }
+}
+
+// --- GOOD NIGHT BUTTON TOGGLE ENGINE ---
+def goodNightButtonHandler(evt) {
+    def btnId = evt.device.id
+    def btnNum = evt.value
+
+    for (int i = 1; i <= 4; i++) {
+        if (!settings["enableRoom${i}"]) continue
+
+        def confBtn = settings["gnButton${i}"]
+        def confNum = settings["gnButtonNum${i}"]?.toString() ?: "1"
+        def confAction = settings["gnButtonAction${i}"] ?: "pushed"
+        def rName = settings["roomName${i}"] ?: "Room ${i}"
+
+        if (confBtn && confBtn.id == btnId && evt.name == confAction && btnNum == confNum) {
+            def rModes = settings["gnButtonModes${i}"]
+            if (rModes && !(rModes as List).contains(location.mode)) {
+                logInfo("${rName}: Good Night button pressed, but not in an allowed mode.")
+                return
+            }
+
+            def sw = settings["roomSwitch${i}"]
+            if (sw) {
+                if (sw.currentValue("switch") == "on") {
+                    logInfo("${rName}: Toggle button pressed. Turning Good Night OFF.")
+                    sw.off()
+                } else {
+                    logInfo("${rName}: Toggle button pressed. Turning Good Night ON.")
+                    sw.on()
+                }
+            }
         }
     }
 }
@@ -598,6 +648,17 @@ def periodicEnforcementHandler() {
                                 }
                             }
                         }
+                        
+                        def lightsOn = settings["roomLightsOn${i}"]
+                        if (lightsOn) {
+                            lightsOn.each { lgt ->
+                                if (lgt.currentValue("switch") == "off") {
+                                    lgt.on()
+                                    logInfo("ENFORCEMENT: ${rName} is asleep but bedtime light/plug [${lgt.displayName}] was OFF. Forced ON.")
+                                }
+                            }
+                        }
+                        
                     } else {
                         if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks successfully paused for ${rName} (Sunrise Active)."
                     }
@@ -914,6 +975,14 @@ def executeRoomGoodNight(roomNum) {
         logInfo("${rName}: Lights turned OFF (w/ 1% flashbang protection if applicable).") 
     }
     
+    def lightsOn = settings["roomLightsOn${roomNum}"]
+    if (lightsOn) {
+        lightsOn.each { lgt ->
+            if (lgt.currentValue("switch") != "on") lgt.on()
+        }
+        logInfo("${rName}: Bedtime Lights/Plugs turned ON.")
+    }
+    
     def shadeContact = settings["shadeContact${roomNum}"]
     def shade = settings["roomShade${roomNum}"]
     if (shadeContact && shade && shadeContact.currentValue("contact") == "open") {
@@ -921,17 +990,42 @@ def executeRoomGoodNight(roomNum) {
         logInfo("${rName}: Shade contact is open. Closing shade.")
     }
     
-    // --- UPDATED AUDIO EXECUTION LOGIC ---
+    // --- UPDATED AUDIO EXECUTION LOGIC (WITH SMART PLUG DELAY) ---
+    def speakerPower = settings["roomSpeakerPower${roomNum}"]
     def speaker = settings["roomSpeaker${roomNum}"]
     def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
     
+    if (speaker || audioType == "switch") {
+        if (speakerPower && speakerPower.currentValue("switch") == "off") {
+            logInfo("${rName}: Speaker power plug is OFF. Turning ON and waiting 120s before initiating audio play.")
+            speakerPower.on()
+            runIn(120, "playDelayedAudioRoom${roomNum}")
+        } else {
+            executeAudioPlay(roomNum)
+        }
+    }
+    
+    evaluateFans(roomNum)
+}
+
+// --- DELAYED AUDIO WRAPPERS ---
+def playDelayedAudioRoom1() { executeAudioPlay(1) }
+def playDelayedAudioRoom2() { executeAudioPlay(2) }
+def playDelayedAudioRoom3() { executeAudioPlay(3) }
+def playDelayedAudioRoom4() { executeAudioPlay(4) }
+
+def executeAudioPlay(roomNum) {
+    def speaker = settings["roomSpeaker${roomNum}"]
+    def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+
     if (speaker) {
         def setVol = settings["audioVolume${roomNum}"]
         if (setVol != null) {
             speaker.setVolume(setVol)
             logInfo("${rName}: Speaker volume forced to ${setVol}%.")
         }
-        
+
         if (audioType == "uri") {
             def trackToPlay = state."nextUri${roomNum}"
             if (trackToPlay) {
@@ -969,8 +1063,6 @@ def executeRoomGoodNight(roomNum) {
             runIn(sTimer * 60, "stopAudioRoom${roomNum}") 
         }
     }
-    
-    evaluateFans(roomNum)
 }
 
 def stopAudioRoom1() { executeAudioStop(1) }
@@ -1007,6 +1099,7 @@ def endRoomGoodNight(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     logInfo("${rName}: Executing Wake-Up routine (shutting down fans and audio).")
     
+    unschedule("playDelayedAudioRoom${roomNum}")
     unschedule("stopAudioRoom${roomNum}")
     unschedule("applyDelayedFanSpeedRoom${roomNum}")
     unschedule("applyDelayedVolumeRoom${roomNum}")
@@ -1014,6 +1107,14 @@ def endRoomGoodNight(roomNum) {
     
     def stdFans = settings["roomFans${roomNum}"]
     if (stdFans) stdFans.off()
+    
+    def lightsOn = settings["roomLightsOn${roomNum}"]
+    if (lightsOn) {
+        lightsOn.each { lgt ->
+            if (lgt.currentValue("switch") != "off") lgt.off()
+        }
+        logInfo("${rName}: Bedtime Lights/Plugs turned OFF (Wake-up).")
+    }
     
     // --- 3x REDUNDANT CEILING FAN SHUTDOWN (W/ LOW-OFF WIGGLE FIX) ---
     def cFanSwitch = settings["ceilingFanSwitch${roomNum}"]
