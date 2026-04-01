@@ -67,6 +67,7 @@ def mainPage() {
                 def loadStr = "N/A (Outdoor Sensor Missing)"
                 if (outdoorSensor && outdoorSensor.currentValue("temperature") != null) {
                     def outT = outdoorSensor.currentValue("temperature").toBigDecimal()
+                  
                     def delta = Math.abs(outT - avgTemp.toBigDecimal()).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
                     def loadWord = "Low"
                     def loadColor = "green"
@@ -124,10 +125,12 @@ def mainPage() {
 
                 def deltaTStr = "N/A (Disabled or Missing Sensors)"
                 if (enableDeltaT && returnSensor && dischargeSensor) {
+           
                     def retT = returnSensor.currentValue("temperature")
                     def disT = dischargeSensor.currentValue("temperature")
                     if (retT != null && disT != null) {
                         def dT = 0.0
+          
                         if (tstatState == "COOLING") dT = (retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
                         else if (tstatState == "HEATING") dT = (disT - retT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
                         else dT = Math.abs(retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP) 
@@ -171,6 +174,18 @@ def mainPage() {
                 if (hvacCompanyName || hvacCompanyPhone) {
                     hvacContactStr = "${hvacCompanyName ?: 'N/A'} ${hvacCompanyPhone ? '(' + hvacCompanyPhone + ')' : ''}"
                 }
+
+                // --- 7-Day Compressor Runs Calculation ---
+                def sevenDayRuns = 0
+                def sevenDayRuntime = 0.0
+                if (state.runHistory) {
+                    state.runHistory.each { date, data ->
+                        sevenDayRuns += (data.runs ?: 0)
+                        sevenDayRuntime += (data.cool ?: 0.0) + (data.heat ?: 0.0) + (data.aux ?: 0.0)
+                    }
+                }
+                def totalRunHours = (sevenDayRuntime / 60.0).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+                def compressorRunsStr = "${sevenDayRuns} Cycles (${totalRunHours} Total Hours)"
                 
                 // Unified Dashboard HTML
                 def dashHTML = """
@@ -185,6 +200,7 @@ def mainPage() {
                 <table class="dash-table">
                     <thead><tr><th>Metric</th><th>Calculated Average (Rooms)</th><th>Thermostat Sensor</th><th>Target Setpoint</th></tr></thead>
                     <tbody>
+                    
                         <tr><td class="dash-hl">Temperature</td><td><b>${avgTemp}°</b></td><td>${tstatTemp}°</td><td>Cool: ${tstatCool}° | Heat: ${tstatHeat}°</td></tr>
                         <tr><td class="dash-hl">Humidity</td><td><b>${avgHum}%</b></td><td>${tstatHum}%</td><td>Limit: ${maxHumidity ?: '--'}%</td></tr>
                         <tr><td class="dash-hl">HVAC State</td><td><b>Mode: ${tstatMode}</b></td><td colspan="2" style="color:${stateColor};"><b>Status: ${tstatState}</b></td></tr>
@@ -200,6 +216,7 @@ def mainPage() {
                         <tr><td class="dash-hl">Compressor Protection</td><td colspan="3" class="dash-val">${bufferStr}</td></tr>
                         
                         <tr><td colspan="4" class="dash-subhead">Maintenance & Service</td></tr>
+                        <tr><td class="dash-hl">7-Day Compressor Runs</td><td colspan="3" class="dash-val">${compressorRunsStr}</td></tr>
                         <tr><td class="dash-hl">Filter Life Remaining</td><td colspan="3" class="dash-val">${filterLifeStr}</td></tr>
                         <tr><td class="dash-hl">Last Filter Change</td><td colspan="3" class="dash-val">${state.lastFilterDate ?: "Not Recorded"}</td></tr>
                         <tr><td class="dash-hl">Last HVAC Service</td><td colspan="3" class="dash-val">${state.lastServiceDate ?: "Not Recorded"}</td></tr>
@@ -208,7 +225,7 @@ def mainPage() {
                 </table>
                 """
                 paragraph dashHTML
-                
+             
                 if (enableCostTracker && state.runHistory) {
                     paragraph "<b>7-Day Energy Cost & Savings Estimate</b>"
                     paragraph renderCostDashboard()
@@ -229,6 +246,7 @@ def mainPage() {
             for (int i = 1; i <= 12; i++) {
                 if (settings["enableZ${i}"] && settings["z${i}Temp"]) {
                     hasZones = true
+                  
                     def zName = settings["z${i}Name"] ?: "Zone ${i}"
                     def zTempDev = settings["z${i}Temp"]
                     
@@ -244,10 +262,11 @@ def mainPage() {
                     
                     def isOccupied = "N/A"
                     def zStatus = "<span style='color:green;'>Averaging</span>"
-                    
+      
                     if (isError) {
                         zStatus = "<span style='color:red;'>Sensor Error (Ignored)</span>"
                         isOccupied = "N/A"
+         
                     } else if (isNight) {
                         def nSwitch = settings["z${i}NightSwitch"]
                         def isNightForced = nSwitch && nSwitch.currentValue("switch") == "on"
@@ -267,6 +286,7 @@ def mainPage() {
                             zStatus = "<span style='color:gray;'>Ignored (Empty)</span>"
                         }
                     }
+    
                     zoneHTML += "<tr><td><b>${zName}</b></td><td>${zTempStr}</td><td>${zHum}%</td><td>${isOccupied}</td><td>${zStatus}</td></tr>"
                 }
             }
@@ -406,7 +426,7 @@ def mainPage() {
             if (enableWindowDefeat) {
                 input "contactSensors", "capability.contactSensor", title: "Select Perimeter Contact Sensors", required: false, multiple: true
                 input "contactDelay", "number", title: "Minutes to wait before shutting off HVAC", required: false, defaultValue: 3
-            }
+             }
         }
 
         section("<b>8. Multi-Stage Dehumidification</b>") {
@@ -474,6 +494,7 @@ def mainPage() {
             
             paragraph "<b>Oversized Unit Protection</b>"
             input "enableMinRuntime", "bool", title: "<b>Enable Min Run Time Protection</b>", defaultValue: true, submitOnChange: true
+         
             if (enableMinRuntime) {
                 input "minRunTime", "number", title: "Minimum Run Time (minutes)", required: false, defaultValue: 10
                 input "delayModeChangeForMinRun", "bool", title: "Delay Mode Changes until Min Run Time completes", defaultValue: false
@@ -622,6 +643,7 @@ def hubRestartHandler(evt) {
     state.cycleStartTime = null; state.currentAction = "idle"; state.cycleStartMode = null; state.modeDelayLogged = false
     state.alignmentLockout = null; state.alignmentLockoutTarget = null
     state.activeHysteresis = "idle"
+ 
     if (state.savedPlugStates) restorePlugs() 
     
     unschedule()
@@ -635,6 +657,7 @@ def hubRestartHandler(evt) {
         else if (interval == "30") runEvery30Minutes(routineSweep)
         else if (interval == "60") runEvery1Hour(routineSweep)
     }
+   
     evaluateSystem()
 }
 
@@ -845,6 +868,7 @@ def freeCoolTimeoutHandler() {
 def engageFreeCooling() {
     logAction("Free Cooling ACTIVE: AC suspended.")
     state.fcStartTime = now()
+  
     if (freeCoolSwitch) freeCoolSwitch.on()
     if (freeCoolFan && thermostat) {
         logAction("Free Cooling: Turning HVAC Fan ON to circulate outside air.")
@@ -872,7 +896,7 @@ def trackFreeCoolingSavings() {
     
     def today = new Date().format("yyyy-MM-dd", location.timeZone)
     if (!state.runHistory) state.runHistory = [:]
-    if (!state.runHistory[today]) state.runHistory[today] = [cool: 0.0, heat: 0.0, aux: 0.0, fcSavedMins: 0.0]
+    if (!state.runHistory[today]) state.runHistory[today] = [cool: 0.0, heat: 0.0, aux: 0.0, fcSavedMins: 0.0, runs: 0]
     
     state.runHistory[today].fcSavedMins = (state.runHistory[today].fcSavedMins ?: 0.0) + estimatedSavedRunMins
     logAction("ROI: Logged ${String.format('%.1f', estimatedSavedRunMins)} minutes of estimated avoided compressor runtime via Free Cooling.")
@@ -1093,7 +1117,7 @@ def evaluateSystem() {
             def buffer = setpointBuffer ?: 2.0
             
             if (state.currentAction == "cooling") {
-                 if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
+                if (targetCool > thermostat.currentValue("coolingSetpoint").toBigDecimal()) {
                     targetCool = thermostat.currentValue("coolingSetpoint").toBigDecimal()
                     syncMessage += " [Compressor Protection: Lockout Prevented Setpoint Rise]"
                 }
@@ -1134,7 +1158,6 @@ def evaluateSystem() {
                     targetHeat = localTemp + 1.0
                     def maxAllowed = baseHeat + buffer
  
-                    
                     if (targetHeat > maxAllowed) {
                         targetHeat = maxAllowed
                         
@@ -1326,11 +1349,15 @@ def hvacStateHandler(evt) {
 def trackEnergyCost(action, runMinutes) {
     def today = new Date().format("yyyy-MM-dd", location.timeZone)
     if (!state.runHistory) state.runHistory = [:]
-    if (!state.runHistory[today]) state.runHistory[today] = [cool: 0.0, heat: 0.0, aux: 0.0, fcSavedMins: 0.0]
+    if (!state.runHistory[today]) state.runHistory[today] = [cool: 0.0, heat: 0.0, aux: 0.0, fcSavedMins: 0.0, runs: 0]
     
     if (action == "cooling") state.runHistory[today].cool += runMinutes
     if (action == "heating") state.runHistory[today].heat += runMinutes
     if (action == "auxHeating") state.runHistory[today].aux += runMinutes
+    
+    if (action in ["cooling", "heating", "auxHeating"]) {
+        state.runHistory[today].runs = (state.runHistory[today].runs ?: 0) + 1
+    }
     
     def keys = state.runHistory.keySet().sort().reverse()
     if (keys.size() > 7) { state.runHistory = state.runHistory.subMap(keys[0..6]) }
@@ -1509,7 +1536,7 @@ def trackRecentCycle(action, runMinutes) {
     
     state.recentCycles.add(0, cycleLog)
     if (state.recentCycles.size() > 10) {
-           state.recentCycles = state.recentCycles[0..9]
+        state.recentCycles = state.recentCycles[0..9]
     }
 }
 
