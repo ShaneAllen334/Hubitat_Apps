@@ -39,6 +39,7 @@ def mainPage() {
 
             def effectivenessStr = "Requires Indoor and Outdoor Sensors"
             def outVal = getAQI(outdoorAQI)
+       
             if (isWholeHouse && indoorAQI && outdoorAQI) {
                 def inVal = getAQI(indoorAQI)
                 if (inVal != null && outVal != null) {
@@ -498,12 +499,12 @@ def evaluateSystem(evt = null) {
     // 1. HARD OVERRIDES (Master Switch & Modes)
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") {
         turnOffAll()
-        state.currentReason = "Master Switch is OFF."
+        state.currentReason = "OFF: Master Switch is Disabled."
         return
     }
     if (allowedModes && !(allowedModes as List).contains(location.mode)) {
         turnOffAll()
-        state.currentReason = "Location Mode not allowed."
+        state.currentReason = "OFF: Current Location Mode is not allowed."
         return
     }
 
@@ -522,7 +523,7 @@ def evaluateSystem(evt = null) {
 
     def anyZoneNeedsPurification = false
     def highestZoneAQI = 0
-    def triggerReason = "Idle"
+    def activeZoneReasons = [] // Collect all reasons instead of overwriting
     def hasConfiguredZones = false
     
     if (!state.scrubEndTimes) state.scrubEndTimes = [:]
@@ -550,12 +551,10 @@ def evaluateSystem(evt = null) {
             def isScrubbing = false
             if (!isWholeHouse && settings["z${i}TriggerSwitch"]) {
                 if (settings["z${i}TriggerSwitch"].any { it.currentValue("switch") == "on" }) {
-                    zNeedsIt = true;
-                    isForcedOn = true
+                    zNeedsIt = true; isForcedOn = true
                     state.scrubEndTimes["z${i}"] = now() + ((settings["z${i}ScrubTime"] ?: 30) * 60000)
                 } else if (state.scrubEndTimes?.get("z${i}") && now() < state.scrubEndTimes.get("z${i}")) {
-                    zNeedsIt = true;
-                    isScrubbing = true
+                    zNeedsIt = true; isScrubbing = true
                     runIn(((state.scrubEndTimes.get("z${i}") - now()) / 1000).toInteger(), "evaluateSystem")
                 }
             }
@@ -594,7 +593,10 @@ def evaluateSystem(evt = null) {
 
             if (zNeedsIt) {
                 anyZoneNeedsPurification = true
-                triggerReason = (isForcedOn || isScrubbing) ? "Trigger/Scrub on ${zName}" : "Triggered by ${zName} (AQI: ${aqiVal})"
+                // Add specific reason to the list
+                if (isScrubbing) activeZoneReasons << "${zName} (Scrubbing)"
+                else if (isForcedOn) activeZoneReasons << "${zName} (Trigger Switch)"
+                else activeZoneReasons << "${zName} (AQI: ${aqiVal})"
             }
         }
     }
@@ -612,8 +614,7 @@ def evaluateSystem(evt = null) {
                 isMainForcedOn = true
                 state.mainScrubEnd = now() + ((mainScrubTime ?: 30) * 60000)
             } else if (state.mainScrubEnd && now() < state.mainScrubEnd) {
-                isMainForcedOn = true;
-                isMainScrubbing = true
+                isMainForcedOn = true; isMainScrubbing = true
                 runIn(((state.mainScrubEnd - now()) / 1000).toInteger(), "evaluateSystem")
             }
         }
@@ -639,20 +640,20 @@ def evaluateSystem(evt = null) {
         // Generate Specific Reason String
         def currentActionReason = "Idle"
         if (mainNeedsIt) {
-            if (isMainScrubbing) currentActionReason = "Post-Cleaning Scrubbing"
-            else if (isMainForcedOn) currentActionReason = "Forced by Main Trigger Switch"
-            else if (isQuiet) currentActionReason = "Emergency AQI Override during Quiet Mode"
-            else if (isPollenContinuous) currentActionReason = "Continuous Run: High Pollen (${pollenVal})"
-            else if (mainHouseNeedsIt) currentActionReason = "Main Indoor AQI (${mainIndoorAQIVal}) > Target (${baseTarget})"
-            else if (anyZoneNeedsPurification) currentActionReason = triggerReason
+            if (isMainScrubbing) currentActionReason = "ON: Main Post-Cleaning Scrubbing Active"
+            else if (isMainForcedOn) currentActionReason = "ON: Forced by Main Trigger Switch"
+            else if (isQuiet) currentActionReason = "ON: Emergency AQI Override during Quiet Mode"
+            else if (isPollenContinuous) currentActionReason = "ON: Continuous Run for High Pollen (${pollenVal})"
+            else if (mainHouseNeedsIt) currentActionReason = "ON: Main Indoor AQI (${mainIndoorAQIVal}) > Target (${baseTarget})"
+            else if (anyZoneNeedsPurification) currentActionReason = "ON: Triggered by " + activeZoneReasons.join(", ")
         } else {
             if (mainPreventSwitch && mainPreventSwitch.currentValue("switch") == "on") {
-                currentActionReason = "Blocked by Prevent Switch (AQI: ${mainIndoorAQIVal})"
+                currentActionReason = "OFF: Blocked by Prevent Switch (AQI: ${mainIndoorAQIVal})"
             } else if (isQuiet) {
-                currentActionReason = "Quiet Mode Active (AQI: ${mainIndoorAQIVal})"
+                currentActionReason = "OFF: Quiet Mode Active (AQI: ${mainIndoorAQIVal} < Emergency Level)"
             } else {
                 def maxCurrent = Math.max(mainIndoorAQIVal, highestZoneAQI)
-                currentActionReason = hasConfiguredZones ? "All zones and Main satisfied (Max AQI: ${maxCurrent})" : "Indoor AQI Satisfied (${mainIndoorAQIVal} < Target ${baseTarget})"
+                currentActionReason = hasConfiguredZones ? "OFF: All zones and Main satisfied (Max AQI: ${maxCurrent} < Target ${baseTarget})" : "OFF: Indoor AQI Satisfied (${mainIndoorAQIVal} < Target ${baseTarget})"
             }
         }
 
@@ -670,7 +671,8 @@ def evaluateSystem(evt = null) {
             state.currentReason = currentActionReason 
         }
     } else if (!isWholeHouse) {
-        state.currentReason = anyZoneNeedsPurification ? "Individual zones active." : "All zones satisfied."
+        // Detailed Multi-Zone Output
+        state.currentReason = anyZoneNeedsPurification ? "MIXED: Active Zones -> " + activeZoneReasons.join(" | ") : "OFF: All zones satisfied (AQI < Target)."
     }
 }
 
