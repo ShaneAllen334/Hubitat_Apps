@@ -173,7 +173,7 @@ def mainPage() {
             
             paragraph "<b>Smart ROI Savings (Phantom Power Control):</b>"
             input "smartROISavings", "bool", title: "<b>Enable Smart ROI Power Management</b>", defaultValue: true, submitOnChange: true
-            paragraph "<i>If enabled, the app automatically wakes the docks 90 seconds before dispatching, issues realignment commands, cuts power once charged to 100%, and wakes the dock for a top-off if the battery drops to 70%.</i>"
+            paragraph "<i>If enabled, the app automatically wakes the docks 90 seconds before dispatching, issues realignment commands, cuts power once charged to 100%, and wakes the dock for a top-off if the battery drops to 80% or if the vacuum goes offline.</i>"
             
             input "dockPlug1", "capability.switch", title: "Vacuum 1 Dock Smart Plug", required: false
             input "dockPlug2", "capability.switch", title: "Vacuum 2 Dock Smart Plug", required: false
@@ -341,6 +341,7 @@ def initialize() {
     
     if (vacuum1) {
         subscribe(vacuum1, "state", vacuumStateHandler)
+        subscribe(vacuum1, "presence", healthHandler)
         subscribe(vacuum1, "battery", batteryHandler)
         subscribe(vacuum1, "error", errorHandler)
         subscribe(vacuum1, "dockError", dockErrorHandler)
@@ -351,6 +352,7 @@ def initialize() {
     }
     if (vacuum2) {
         subscribe(vacuum2, "state", vacuumStateHandler)
+        subscribe(vacuum2, "presence", healthHandler)
         subscribe(vacuum2, "battery", batteryHandler)
         subscribe(vacuum2, "error", errorHandler)
         subscribe(vacuum2, "dockError", dockErrorHandler)
@@ -386,7 +388,7 @@ void commandVacuum(vacDevice, String brand, String cmd) {
             case "Roborock (Community)":
                 if (cmd == "pause") vacDevice.appPause()
                 if (cmd == "resume") vacDevice.appRoomResume()
-                if (cmd == "dock") { try { vacDevice.charge() } catch(e) { try { vacDevice.home() } catch(ex){} } }
+                if (cmd == "dock") vacDevice.appDock() // Bloodtick explicitly uses appDock()
                 break
             case "iRobot Roomba (Native)":
             case "Ecovacs/Deebot":
@@ -408,17 +410,32 @@ void dispatchVacuum(vacDevice, String brand, String type, String target, String 
     try {
         switch(brand) {
             case "Roborock (Community)":
+                // Send custom JSON parameter to set suction via MQTT execute
                 if (suction) {
-                    try { vacDevice.setFanSpeed(suction.toLowerCase()) } catch(e) { }
-                    try { vacDevice.setFanPower(suction.toLowerCase()) } catch(e) { }
-                }
-                if (water) {
-                    try { vacDevice.setWater(water.toLowerCase()) } catch(e) { }
-                    try { vacDevice.setWaterLevel(water.toLowerCase()) } catch(e) { }
+                    Map suctionMap = ["quiet": 101, "balanced": 102, "turbo": 103, "max": 104]
+                    Integer sCode = suctionMap[suction.toLowerCase()]
+                    if (sCode) {
+                        try { vacDevice.execute("set_custom_mode", "[${sCode}]") } catch(e) { logInfo("Suction execute error: ${e}") }
+                    }
                 }
                 
-                if (type == "room") vacDevice.appRoomClean(target)
-                else if (type == "zone") vacDevice.appZoneClean(target)
+                // Trigger dispatch
+                if (type == "room") {
+                    try {
+                        // Driver explicitly requires: appRoomClean(String rooms, String mopWater)
+                        if (water) {
+                            vacDevice.appRoomClean(target, water.capitalize())
+                        } else {
+                            vacDevice.appRoomClean(target)
+                        }
+                    } catch(e) { logInfo("appRoomClean dispatch error: ${e}") }
+                }
+                else if (type == "zone") {
+                    try { vacDevice.execute("app_zoned_clean", "[${target}]") } catch(e) { }
+                }
+                else if (type == "waterOff") {
+                    try { vacDevice.execute("set_water_box_custom_mode", "[200]") } catch(e) { }
+                }
                 break
                 
             case "Dreame":
@@ -524,45 +541,41 @@ def executePendingDispatch() {
 
 void evaluateROIPowerState() {
     if (isAppPaused() || !settings.smartROISavings) return
-    if (state.pendingDispatchRooms?.size() > 0) return // Do not cut power if we are waiting for a dispatch
+    if (state.pendingDispatchRooms?.size() > 0) return 
     
-    if (vacuum1 && dockPlug1) {
-        String state1 = vacuum1.currentValue("state")?.toString()?.toLowerCase() ?: ""
-        // FIX: Strip the "%" symbol before checking if it is an integer
-        String bat1Str = vacuum1.currentValue("battery")?.toString()?.replaceAll("[^0-9]", "")
-        int bat1 = bat1Str?.isInteger() ? (bat1Str as Integer) : 0
-        
-        if (bat1 == 100 && state1 in ["charging", "charged", "docked", "idle", "full"]) {
-            if (dockPlug1.currentValue("switch") != "off") {
-                dockPlug1.off()
-                addToHistory("V1 Dock Powered OFF (Smart ROI Assassin)")
-            }
-        } else if (bat1 <= 70) {
-            if (dockPlug1.currentValue("switch") == "off") {
-                dockPlug1.on()
-                addToHistory("V1 Dock Powered ON (Smart ROI Top-Off: Battery at ${bat1}%)")
-                runIn(15, "remountVacuum1")
-            }
+    checkVacuumHealth(vacuum1, dockPlug1, 1)
+    checkVacuumHealth(vacuum2, dockPlug2, 2)
+}
+
+void checkVacuumHealth(vacDevice, dockPlug, int vacNum) {
+    if (!vacDevice || !dockPlug) return
+    
+    String vState = vacDevice.currentValue("state")?.toString()?.toLowerCase() ?: ""
+    String presence = vacDevice.currentValue("presence")?.toString()?.toLowerCase() ?: "present"
+    String batStr = vacDevice.currentValue("battery")?.toString()?.replaceAll("[^0-9]", "")
+    int bat = batStr?.isInteger() ? (batStr as Integer) : 0
+    
+    boolean isOffline = (vState == "offline" || presence == "not present" || presence == "offline")
+
+    if (isOffline) {
+        if (dockPlug.currentValue("switch") == "off") {
+            dockPlug.on()
+            addToHistory("V${vacNum} Dock Powered ON (Connection Lost: Vacuum Offline)")
+            runIn(15, "remountVacuum${vacNum}")
         }
+        return
     }
-    
-    if (vacuum2 && dockPlug2) {
-        String state2 = vacuum2.currentValue("state")?.toString()?.toLowerCase() ?: ""
-        // FIX: Strip the "%" symbol
-        String bat2Str = vacuum2.currentValue("battery")?.toString()?.replaceAll("[^0-9]", "")
-        int bat2 = bat2Str?.isInteger() ? (bat2Str as Integer) : 0
-        
-        if (bat2 == 100 && state2 in ["charging", "charged", "docked", "idle", "full"]) {
-            if (dockPlug2.currentValue("switch") != "off") {
-                dockPlug2.off()
-                addToHistory("V2 Dock Powered OFF (Smart ROI Assassin)")
-            }
-        } else if (bat2 <= 70) {
-            if (dockPlug2.currentValue("switch") == "off") {
-                dockPlug2.on()
-                addToHistory("V2 Dock Powered ON (Smart ROI Top-Off: Battery at ${bat2}%)")
-                runIn(15, "remountVacuum2")
-            }
+
+    if (bat == 100 && vState in ["charging", "charged", "docked", "idle", "full"]) {
+        if (dockPlug.currentValue("switch") != "off") {
+            dockPlug.off()
+            addToHistory("V${vacNum} Dock Powered OFF (Smart ROI Assassin)")
+        }
+    } else if (bat <= 80) {
+        if (dockPlug.currentValue("switch") == "off") {
+            dockPlug.on()
+            addToHistory("V${vacNum} Dock Powered ON (Smart ROI Top-Off: Battery at ${bat}%)")
+            runIn(15, "remountVacuum${vacNum}")
         }
     }
 }
@@ -733,6 +746,14 @@ def dockErrorHandler(evt) {
     addToHistory("<span style='color:red;'><b>Dock Error: ${evt.value}</b></span>")
 }
 
+def healthHandler(evt) {
+    if (isAppPaused()) return
+    String val = evt.value?.toString()?.toLowerCase()
+    if (val == "not present" || val == "offline") {
+        evaluateROIPowerState()
+    }
+}
+
 def batteryHandler(evt) {
     evaluateROIPowerState()
 }
@@ -766,7 +787,7 @@ def wakeDocks() {
     
     if (waked) {
         addToHistory("Docks Powered ON (Smart ROI Wake-Up)")
-        runIn(15, "remountVacuums") // Allow plugs to power up, then command alignment
+        runIn(15, "remountVacuums") 
     }
 }
 
@@ -774,7 +795,7 @@ def vacuumStateHandler(evt) {
     if (isAppPaused()) return
     String vState = evt.value?.toString()?.toLowerCase()
     
-    if (vState in ["charging", "charged", "docked", "returning to dock", "idle", "full"]) {
+    if (vState in ["charging", "charged", "docked", "returning dock", "returning to dock", "idle", "full"]) {
         state.ignoreIntrusions = false 
         if (evt.device.id == vacuum1?.id && state.v1_maskedRooms?.size() > 0) {
             state.v1_maskedRooms.each { rName -> triggerFanCountdown(rName) }
@@ -1020,20 +1041,19 @@ def errorHandler(evt) {
     
     if (errorMsg == "no error" || errorMsg == "0") return
     
-    // Parse the user's ignored codes into a list
     List ignoredCodes = settings.ignoredPauseErrors ? settings.ignoredPauseErrors.split(",").collect { it.trim() } : []
     
     if (ignoredCodes.contains(errorCode)) {
         addToHistory("<span style='color:gray;'><i>Ignored Error ${errorCode} (Bypassed Auto-Pause & Alerts)</i></span>")
         
-        // --- NEW AUTO-DRY SWEEP LOGIC ---
+        // --- AUTO-DRY SWEEP LOGIC (Roborock Execute Compatible) ---
         if (errorCode in ["38", "39", "40"]) {
             def vac = evt.device
             def brand = (vac.id == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
             addToHistory("<span style='color:teal;'><b>Water Error Detected: Forcing Water Level to OFF to protect pump.</b></span>")
-            dispatchVacuum(vac, brand, "water", "", "off", "") // Forces the water setting to off
+            dispatchVacuum(vac, brand, "waterOff", "", "", "") 
         }
-        return // Exit early to bypass push alerts and auto-pause
+        return
     }
     
     String msg = "${evt.device.displayName} Error: ${errorCode}"
@@ -1147,7 +1167,6 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         state.v1_intentAction = "Dispatched (Sequence)"
         state.v1_intentRooms = state.v1_maskedRooms.join(", ")
         
-        // FIX: Consolidate room IDs into a single dispatch
         List<String> combinedRoomIdsV1 = []
 
         v1Queue.each { room ->
@@ -1158,7 +1177,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
             
             if (room.zone) {
                 dispatchVacuum(vacuum1, settings.vac1Brand, "zone", room.zone, "", "")
-                pauseExecution(2500) // Keep delay only for multiple standalone zones
+                pauseExecution(2500) 
             } else if (room.id) {
                 combinedRoomIdsV1 << room.id.toString()
             }
@@ -1170,7 +1189,6 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         
         if (combinedRoomIdsV1.size() > 0) {
             String targetRooms = combinedRoomIdsV1.join(",")
-            // Uses the water/suction from the first room in the sorted sequence
             dispatchVacuum(vacuum1, settings.vac1Brand, "room", targetRooms, v1Queue[0].water, v1Queue[0].suction)
         }
     }
@@ -1181,7 +1199,6 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
         state.v2_intentAction = "Dispatched (Sequence)"
         state.v2_intentRooms = state.v2_maskedRooms.join(", ")
         
-        // FIX: Consolidate room IDs into a single dispatch
         List<String> combinedRoomIdsV2 = []
 
         v2Queue.each { room ->
@@ -1245,7 +1262,7 @@ String getConsumableVal(vacDevice, String attr) {
     return val != null ? "${val}%" : "--"
 }
 
-String generateVacuumTable(vacDevice, String vacTitle, String intentAction, String intentRooms) {
+String generateVacuumTable(vacDevice, dockPlug, String vacTitle, String intentAction, String intentRooms) {
     if (!vacDevice) return ""
     String vState = vacDevice.currentValue("state") ?: "Unknown"
     String vBat = vacDevice.currentValue("battery") ?: "--"
@@ -1258,12 +1275,18 @@ String generateVacuumTable(vacDevice, String vacTitle, String intentAction, Stri
     String stateColor = "black"
     if (vState.toLowerCase() in ["cleaning", "room clean", "zone clean"]) stateColor = "green"
     if (vState.toLowerCase() in ["charging", "charged"]) stateColor = "blue"
-    if (vState.toLowerCase() in ["paused", "returning to dock"]) stateColor = "orange"
+    if (vState.toLowerCase() in ["paused", "returning dock", "returning to dock"]) stateColor = "orange"
 
     String filter = getConsumableVal(vacDevice, "remainingFilter") ?: getConsumableVal(vacDevice, "filter")
     String mBrush = getConsumableVal(vacDevice, "remainingMainBrush") ?: getConsumableVal(vacDevice, "mainBrush")
     String sBrush = getConsumableVal(vacDevice, "remainingSideBrush") ?: getConsumableVal(vacDevice, "sideBrush")
     String sensor = getConsumableVal(vacDevice, "remainingSensors") ?: getConsumableVal(vacDevice, "sensor")
+    
+    String presence = vacDevice.currentValue("presence")?.toString()?.capitalize() ?: "Online"
+    String presenceColor = (presence.toLowerCase() == "not present" || presence.toLowerCase() == "offline") ? "red" : "green"
+    
+    String powerState = dockPlug ? (dockPlug.currentValue("switch")?.toString()?.toUpperCase() ?: "UNKNOWN") : "UNMANAGED"
+    String powerColor = (powerState == "ON") ? "green" : (powerState == "OFF" ? "red" : "gray")
     
     String html = "<div style='margin-bottom: 15px;'><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
     html += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th colspan='4' style='padding: 8px;'>${vacTitle}</th></tr>"
@@ -1286,9 +1309,14 @@ String generateVacuumTable(vacDevice, String vacTitle, String intentAction, Stri
     String errColor = (vErr.toLowerCase() in ['no error', 'ok', '0']) ? "green" : "red"
     String dockErrColor = (dockErr.toLowerCase() in ['no error', 'ok', '0']) ? "green" : "red"
     
-    html += "<tr style='border-bottom: 2px solid #ddd;'>"
+    html += "<tr style='border-bottom: 1px solid #ddd;'>"
     html += "<td style='padding: 8px;'><b>Hardware Error</b></td><td style='padding: 8px; color: ${errColor}; font-weight:bold;'>${vErr.capitalize()}</td>"
     html += "<td style='padding: 8px;'><b>Dock Status</b></td><td style='padding: 8px; color: ${dockErrColor}; font-weight:bold;'>${dockErr.capitalize()}</td>"
+    html += "</tr>"
+
+    html += "<tr style='border-bottom: 2px solid #ddd; background-color: #f0f8ff;'>"
+    html += "<td style='padding: 8px;'><b>Network Health</b></td><td style='padding: 8px; color: ${presenceColor}; font-weight:bold;'>${presence}</td>"
+    html += "<td style='padding: 8px;'><b>Dock Power</b></td><td style='padding: 8px; color: ${powerColor}; font-weight:bold;'>${powerState}</td>"
     html += "</tr>"
 
     html += "<tr style='background-color: #f0f0f0; text-align: center; font-size: 11px;'><th style='padding: 4px;'>Filter</th><th style='padding: 4px;'>Main Brush</th><th style='padding: 4px;'>Side Brush</th><th style='padding: 4px;'>Sensors</th></tr>"
@@ -1304,8 +1332,8 @@ String buildDashboardHTML() {
         html += "<div style='margin-bottom: 15px; padding: 10px; background: #ffebee; border: 2px solid red; border-radius: 4px; text-align: center; font-weight: bold; color: red;'>SYSTEM PAUSED VIA MASTER VIRTUAL SWITCH</div>"
     }
 
-    if (vacuum1) html += generateVacuumTable(vacuum1, "Vacuum 1 (Primary)", state.v1_intentAction ?: "Idle", state.v1_intentRooms ?: "--")
-    if (vacuum2) html += generateVacuumTable(vacuum2, "Vacuum 2 (Secondary)", state.v2_intentAction ?: "Idle", state.v2_intentRooms ?: "--")
+    if (vacuum1) html += generateVacuumTable(vacuum1, dockPlug1, "Vacuum 1 (Primary)", state.v1_intentAction ?: "Idle", state.v1_intentRooms ?: "--")
+    if (vacuum2) html += generateVacuumTable(vacuum2, dockPlug2, "Vacuum 2 (Secondary)", state.v2_intentAction ?: "Idle", state.v2_intentRooms ?: "--")
     
     boolean isPaused = masterSwitch ? (masterSwitch.currentValue("switch") == "off") : false
     String globalStatus = isPaused ? "<span style='color: red; font-weight: bold;'>PAUSED (Physical Master Switch Off)</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
@@ -1342,7 +1370,6 @@ String buildDashboardHTML() {
     
     if (roomsExist) html += roomHtml
 
-    // --- UPDATED ROI CALCULATION BLOCK ---
     double v1Watts = getVacWatts(settings.vac1Model, settings.vac1Watts)
     double v2Watts = getVacWatts(settings.vac2Model, settings.vac2Watts)
     
@@ -1365,7 +1392,6 @@ String buildDashboardHTML() {
         html += "<div style='margin-top: 10px; padding: 8px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px; font-size: 13px; color: #2e7d32;'>"
         html += "<b>Financial & Energy ROI:</b> System has prevented a total of <b>${String.format("%.2f", totalKwhSaved)} kWh</b> of phantom draw, saving <b>\$${String.format("%.2f", totalMoneySaved)}</b>.<br>"
         
-        // Always show the breakdown if the vacuums exist in the settings
         html += "<div style='margin-top: 6px; font-size: 12px; border-top: 1px solid #c8e6c9; padding-top: 6px;'>"
         if (vacuum1) html += "↳ <b>Vacuum 1:</b> ${String.format("%.2f", v1KwhSaved)} kWh saved (\$${String.format("%.2f", v1MoneySaved)})<br>"
         if (vacuum2) html += "↳ <b>Vacuum 2:</b> ${String.format("%.2f", v2KwhSaved)} kWh saved (\$${String.format("%.2f", v2MoneySaved)})"
