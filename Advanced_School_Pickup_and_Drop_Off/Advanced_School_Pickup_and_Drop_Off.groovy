@@ -604,6 +604,7 @@ def amSetStage1() {
     state.hasDeparted = false
     state.amDoorTriggered = false
     state.amMotionTriggered = false
+    state.amTrackTime = null
 
     long nextTarget = getEpochTime(settings.amStage2, false)
     startLightingSequence(settings.amColor1 ?: "Green", isItRaining(), nextTarget, settings.amSound1)
@@ -652,6 +653,7 @@ def pmSetStage1() {
     state.hasArrived = false
     state.pmDoorTriggered = false
     state.pmMotionTriggered = false
+    state.pmTrackTime = null
 
     long nextTarget = getEpochTime(settings.pmStage2, true)
     startLightingSequence(settings.pmColor1 ?: "Green", isItRaining(), nextTarget, settings.pmSound1)
