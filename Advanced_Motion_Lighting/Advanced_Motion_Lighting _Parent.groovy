@@ -20,12 +20,12 @@ preferences {
 
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Advanced Motion Lighting", install: true, uninstall: true) {
-        
-        if (pauseSystem) {
-            paragraph "<div style='background-color: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold; font-size: 16px; text-align: center;'>⚠️ GLOBAL SYSTEM PAUSED ⚠️<br>All lighting rules are currently disabled.</div>"
-        }
 
         section("Global System Dashboard") {
+            if (pauseSystem) {
+                paragraph "<div style='background-color: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold; font-size: 16px; text-align: center;'>⚠️ GLOBAL SYSTEM PAUSED ⚠️<br>All lighting rules are currently disabled.</div>"
+            }
+            
             input "btnRefresh", "button", title: "🔄 Refresh Dashboard Data Now"
             
             def children = getChildApps()
