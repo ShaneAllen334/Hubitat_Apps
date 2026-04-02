@@ -843,6 +843,8 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
     def target = [action: null, reason: null]
     
     def dir = settings["direction_${roomNum}"]
+    def dirName = dir ? dir : "these"
+    
     def tempSensor = settings["tempSensor_${roomNum}"]
     def currentTemp = tempSensor ? (tempSensor.currentValue("temperature")?.toBigDecimal() ?: 70.0) : 70.0
     def outTemp = outdoorTempSensor ? (outdoorTempSensor.currentValue("temperature")?.toBigDecimal() ?: 70.0) : 70.0
@@ -899,7 +901,7 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
                 if (isSunFacing && (hvacState == "heating" || hvacState == "idle")) {
                     target.action = "open"
                     def wReason = indoorWinterTrigger ? "In: ${currentTemp}° <= ${winterThresh}°" : "Out: ${outTemp}° <= ${winterOutThresh}°"
-                    target.reason = "Winter Mode (Free Solar Harvesting) [${wReason}]"
+                    target.reason = "Winter Mode: Opening ${dirName} facing blinds to harvest active solar heat [${wReason}]"
                     return target
                 }
             }
@@ -908,14 +910,14 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
 
     if (!isNight && isHighRadiation && isSunFacing) {
         target.action = "close"
-        target.reason = "High Solar Radiation Block [Lux: ${outLux} >= ${highRadiationLimit}]"
+        target.reason = "High Solar Radiation: Closing ${dirName} blinds because the sun is currently on this side [Lux: ${outLux} >= ${highRadiationLimit}]"
         return target
     }
 
     def coolingDefense = settings["activeCoolingDefense"] != null ? settings["activeCoolingDefense"] : true
     if (coolingDefense && hvacState == "cooling" && !isNight && isSunFacing) {
         target.action = "close"
-        target.reason = "HVAC Active Cooling Block [State: ${hvacState.capitalize()}]"
+        target.reason = "HVAC Active Cooling: Closing ${dirName} blinds to block direct sun [State: ${hvacState.capitalize()}]"
         return target
     }
 
@@ -944,11 +946,11 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
                 if (hvacState != "heating") {
                     if (houseIsHot) {
                         target.action = "close"
-                        target.reason = "Summer Mode (House Hot) [AvgIn: ${avgTemp}° >= ${summerThresh}°]"
+                        target.reason = "Summer Mode: House is hot, closing ${dirName} blinds to defend against heat [AvgIn: ${avgTemp}° >= ${summerThresh}°]"
                         return target
                     } else if (isSunFacing) {
                         target.action = "close"
-                        target.reason = "Summer Mode (Direct Sun Block) [${sReason}]"
+                        target.reason = "Summer Mode: Closing ${dirName} blinds because direct sun is heating this side [${sReason}]"
                         return target
                     }
                 }
