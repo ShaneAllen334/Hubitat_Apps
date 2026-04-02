@@ -148,7 +148,6 @@ def renderChartHTML() {
                     }
                 }
             });
-            
             if (loading) loading.style.display = 'none';
             if (canvas) canvas.style.opacity = '1';
         }
@@ -347,6 +346,7 @@ def mainPage() {
                 
                 // Active Algorithms List
                 def algos = []
+                
                 if (settings.enableDPLogic != false) algos << "Convergence"
                 if (settings.enableVPDLogic != false) algos << "VPD"
                 if (settings.enablePressureLogic != false) algos << "Pressure"
@@ -408,6 +408,7 @@ def mainPage() {
                         def targetLon = settings.manualLon ?: location.longitude
                         apiDisplay += "<span style='font-size: 11px; color: #666;'><i>Lat: ${targetLat}, Lon: ${targetLon} | Max Probability: ${omProb}% | Total Expected Vol: ${state.omRain ?: "0.00"} in/mm (Last sync: ${state.omLastSync ?: "Pending"})</i></span>"
                     }
+ 
                     apiDisplay += "</div>"
                     
                     statusText += "<tr><td colspan='3' style='padding: 10px;'>${apiDisplay}</td></tr>"
@@ -604,7 +605,7 @@ def configPage() {
             input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor (Detects frontal passages)", required: false
             input "sensorLightning", "capability.sensor", title: "Lightning Detector", required: false
             if (sensorLightning) {
-                 input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
+                input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
             }
         }
 
@@ -904,6 +905,7 @@ void appButtonHandler(btn) {
         state.sevenDayRain = []
         state.recordRain = [date: "None", amount: 0.0]
         state.currentDayRain = 0.0
+       
         state.notifiedProb = false
         state.confidenceScore = 0
         state.confidenceReasoning = "System reset."
@@ -1092,6 +1094,12 @@ def evaluateWeather() {
     def windDirVal = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], 0.0)
     def lightDist = getFloat(sensorLightning, ["lightningDistance", "distance"], 999.0)
     def strikeCount = state.lightningHistory?.size() ?: 0
+
+    // NEW: Find the closest recorded lightning strike
+    def closestLightning = lightDist
+    if (strikeCount > 0) {
+        state.lightningHistory.each { if (it.value < closestLightning) closestLightning = it.value }
+    }
     
     def vpd = calculateVPD(t, h)
     state.currentVPD = vpd
@@ -1107,7 +1115,7 @@ def evaluateWeather() {
     state.dewPointSpread = dpSpread
     
     updateHistory("spreadHistory", dpSpread, 86400000)
-    
+   
     def pTrendData = getTrendData(state.pressureHistory, 0.25)
     def tTrendData = getTrendData(state.tempHistory, 0.16)
     def sTrendData = getTrendData(state.spreadHistory, 0.16)
@@ -1187,10 +1195,17 @@ def evaluateWeather() {
             if (sTrendData.rate <= -3.0) { probability += 30; reasoning << "Spread Velocity Convergence! Atmosphere saturating rapidly"; activeFactors++; activeFactorNames << "Squeeze Velocity" }
         }
         
+        // NEW: Fixed VPD Penalty Block
         if (settings.enableVPDLogic != false) {
             totalModelsEnabled++
             if (vpd < 0.2) { probability += 20; reasoning << "VPD extremely low"; activeFactors++; activeFactorNames << "VPD" }
-            else if (vpd > 1.0) { probability -= 20; reasoning << "VPD High (Dry air)" }
+            else if (vpd > 1.0) { 
+                if (strikeCount > 0) {
+                    reasoning << "VPD High (Penalty suspended due to active lightning)"
+                } else {
+                    probability -= 20; reasoning << "VPD High (Dry air)" 
+                }
+            }
         }
         
         if (settings.enableWetBulbLogic != false) {
@@ -1219,7 +1234,7 @@ def evaluateWeather() {
         if (settings.enableWindLogic != false && sensorWind) {
             totalModelsEnabled++
             if (wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
-                   probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
+                probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
             }
         }
 
@@ -1230,12 +1245,13 @@ def evaluateWeather() {
             }
         }
         
-        if (settings.enableLightningLogic != false && sensorLightning && lightDist != 999.0) {
+        // NEW: Fixed Lightning Logic Block using closestLightning
+        if (settings.enableLightningLogic != false && sensorLightning && closestLightning != 999.0) {
             totalModelsEnabled++
             def reqStrikes = settings.lightningStrikeThreshold ?: 3
             if (strikeCount >= reqStrikes) {
-                if (lightDist <= 10.0) { probability += 50; reasoning << "Critical: Lightning nearby (<= 10 miles)"; activeFactors++; activeFactorNames << "Lightning" }
-                else if (lightDist <= 25.0) { probability += 25; reasoning << "Storms approaching (Lightning <= 25 miles)"; activeFactors++; activeFactorNames << "Lightning" }
+                if (closestLightning <= 10.0) { probability += 50; reasoning << "Critical: Lightning nearby (<= 10 miles)"; activeFactors++; activeFactorNames << "Lightning" }
+                else if (closestLightning <= 25.0) { probability += 25; reasoning << "Storms approaching (Lightning <= 25 miles)"; activeFactors++; activeFactorNames << "Lightning" }
             }
         }
         
@@ -1250,6 +1266,11 @@ def evaluateWeather() {
                 probability *= 1.2
                 reasoning << "SYNERGY: Temp Drop + Wind Shift (1.2x Multiplier)"
             }
+            // NEW: Severe Squall Synergy
+            if (settings.enableLightningLogic != false && settings.enableWindShiftLogic != false && sensorWindDir && state.windShiftDetected && strikeCount > 0) {
+                probability *= 1.3
+                reasoning << "SYNERGY: Lightning + Frontal Wind Shift (1.3x Multiplier)"
+            }
         }
         
         // OPEN-METEO API SYNERGY (Only apply if API is Online)
@@ -1260,6 +1281,13 @@ def evaluateWeather() {
                 probability += boost
                 reasoning << "SYNERGY: Open-Meteo Regional Forecast (+${boost}% Multiplier)"
             }
+        }
+        
+        // --- Post-Rain / Dew Saturation Penalty ---
+        // Prevents the "Rain Probable" switch from getting stuck ON after a storm due to ground evaporation
+        if (r == 0 && !leakWet && pTrendData.rate > -0.02 && dpSpread <= 4.0) {
+            probability -= 25
+            reasoning << "Evaporation Penalty (Stable Pressure + Saturated Air)"
         }
 
         probability = Math.round(probability)
@@ -1331,7 +1359,7 @@ def evaluateWeather() {
     state.confidenceReasoning = confRes
     
     // --- Switches and State ---
-    def probThreshold = notifyProbThreshold ?: 75
+    def probThreshold = settings.notifyProbThreshold != null ? settings.notifyProbThreshold.toInteger() : 75
     if (probability >= probThreshold && !isStale) {
         safeOn(switchProbable)
         if (!state.notifiedProb) {
