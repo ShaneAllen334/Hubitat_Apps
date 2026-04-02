@@ -31,26 +31,42 @@ def renderChartHTML() {
 
     return """
     <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">24-Hour Timeline</h4>
-    <div style="position: relative; height: 350px; width: 100%;">
-        <canvas id="weatherChart"></canvas>
+    <div id="chartWrapper" style="position: relative; height: 350px; width: 100%; background: #fdfdfd; border: 1px solid #eee; border-radius: 4px;">
+        <div id="chartLoadingText" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-family: sans-serif; color: #555; font-weight: bold; font-size: 14px;">
+            Loading chart data...
+        </div>
+        <canvas id="weatherChart" style="opacity: 0; transition: opacity 0.4s ease-in-out;"></canvas>
     </div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
     
     <script>
     (function() {
+        var chartLibs = [
+            "https://cdn.jsdelivr.net/npm/chart.js",
+            "https://cdn.jsdelivr.net/npm/luxon",
+            "https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"
+        ];
+        
+        function loadScript(url, callback) {
+            if (document.querySelector('script[src="' + url + '"]')) {
+                if (callback) callback();
+                return;
+            }
+            var s = document.createElement('script');
+            s.type = 'text/javascript';
+            s.src = url;
+            s.onload = callback;
+            document.head.appendChild(s);
+        }
+
         function initChart() {
             var canvas = document.getElementById('weatherChart');
+            var loading = document.getElementById('chartLoadingText');
             
-            // Intelligently poll until the canvas is in the DOM and libraries are loaded
             if (!canvas || typeof Chart === 'undefined' || typeof luxon === 'undefined') {
-                setTimeout(initChart, 50);
+                setTimeout(initChart, 100);
                 return;
             }
             
-            // Destroy existing chart if Hubitat does a partial UI refresh
             if (window.myWeatherChart) {
                 window.myWeatherChart.destroy();
             }
@@ -132,8 +148,18 @@ def renderChartHTML() {
                     }
                 }
             });
+            
+            if (loading) loading.style.display = 'none';
+            if (canvas) canvas.style.opacity = '1';
         }
-        initChart();
+
+        loadScript(chartLibs[0], function() {
+            loadScript(chartLibs[1], function() {
+                loadScript(chartLibs[2], function() {
+                    initChart();
+                });
+            });
+        });
     })();
     </script>
     """
@@ -197,8 +223,8 @@ def renderTableHTML() {
 }
 
 def renderRadarHTML() {
-    def lat = location.latitude ?: 39.8283
-    def lon = location.longitude ?: -98.5795
+    def lat = settings.manualLat ?: (location.latitude ?: 39.8283)
+    def lon = settings.manualLon ?: (location.longitude ?: -98.5795)
 
     return """
     <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">Live Regional Radar</h4>
@@ -213,6 +239,7 @@ def mainPage() {
             if (app.id) {
                 input "refreshDashboardBtn", "button", title: "🔄 Refresh Live Data"
             }
+ 
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Analyzes real-time environmental thermodynamics (VPD, Wet-Bulb, Spread Convergence Velocity, Synergy Multipliers) to predict precipitation with near-perfect accuracy.</div>"
     
             if (sensorTemp && sensorHum && sensorPress) {
@@ -331,6 +358,7 @@ def mainPage() {
                 if (settings.enableLightningLogic != false && sensorLightning) algos << "Lightning"
                 if (settings.enableThermalSmoothing != false) algos << "Smoothing"
                 if (settings.enableRedundancy != false && (sensorTempBackup || sensorHumBackup || sensorPressBackup)) algos << "Redundancy"
+                if (settings.enableOpenMeteo != false && !state.apiOffline) algos << "External API Synergy"
                 
                 calcDisplay += "<br><br><span style='font-size:10px; color:#555;'><b>Active Models:</b> ${algos.join(", ")}</span>"
                 
@@ -349,6 +377,42 @@ def mainPage() {
 
                 statusText += "<tr><td style='padding: 8px; vertical-align:top; border-right:1px solid #ddd;'>${envDisplay}</td><td style='padding: 8px; vertical-align:top; border-right:1px solid #ddd;'>${calcDisplay}</td><td style='padding: 8px; vertical-align:top;'>${stateDisplay}</td></tr>"
                 
+                // --- Live Hour-by-Hour API Banner ---
+                if (settings.enableOpenMeteo != false) {
+                    def apiDisplay = "<div style='background: #e6f7ff; border: 1px solid #91d5ff; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 13px;'>"
+                    
+                    if (state.apiOffline) {
+                        apiDisplay += "<b>🌐 External Forecast (Open-Meteo)</b><br>"
+                        apiDisplay += "<span style='color:red; font-weight:bold;'>⚠ Connection Offline - System running strictly on local sensors to prevent hub noise.</span>"
+                    } else {
+                        def omProb = state.omProb ?: 0
+                        def omColor = omProb > 50 ? "red" : (omProb > 20 ? "orange" : "green")
+                        
+                        apiDisplay += "<b>🌐 Expert Forecast (Open-Meteo) - Live Hour-by-Hour</b><br>"
+                        apiDisplay += "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-top:5px; margin-bottom:5px;'>"
+                        
+                        if (state.omHourlyData) {
+                            state.omHourlyData.each { hr ->
+                                def hrColor = hr.prob > 50 ? "red" : (hr.prob > 20 ? "orange" : "black")
+                                apiDisplay += "<div style='background:white; border:1px solid #ccc; padding:4px 8px; border-radius:3px; text-align:center; flex:1; min-width:60px;'>"
+                                apiDisplay += "<div style='font-size:11px; color:#555;'>${hr.time}</div>"
+                                apiDisplay += "<div style='font-weight:bold; color:${hrColor};'>${hr.prob}%</div>"
+                                apiDisplay += "<div style='font-size:10px; color:#888;'>${hr.rain}\"</div>"
+                                apiDisplay += "</div>"
+                            }
+                        } else {
+                            apiDisplay += "<i>Awaiting first API sync...</i>"
+                        }
+                        apiDisplay += "</div>"
+                        def targetLat = settings.manualLat ?: location.latitude
+                        def targetLon = settings.manualLon ?: location.longitude
+                        apiDisplay += "<span style='font-size: 11px; color: #666;'><i>Lat: ${targetLat}, Lon: ${targetLon} | Max Probability: ${omProb}% | Total Expected Vol: ${state.omRain ?: "0.00"} in/mm (Last sync: ${state.omLastSync ?: "Pending"})</i></span>"
+                    }
+                    apiDisplay += "</div>"
+                    
+                    statusText += "<tr><td colspan='3' style='padding: 10px;'>${apiDisplay}</td></tr>"
+                }
+
                 // --- Rainfall History, Graph & Record Banner ---
                 def recordInfo = state.recordRain ?: [date: "None", amount: 0.0]
                 def sevenDayList = state.sevenDayRain ?: []
@@ -381,7 +445,7 @@ def mainPage() {
                     historyDisplay += "<div style='margin-top:15px; font-size:11px; color:#888;'><i>7-Day Graph will generate after the first midnight rollover...</i></div>"
                 }
                 
-                statusText += "<tr style='border-top: 1px solid #ccc; background-color: #e6f2ff;'><td colspan='3' style='padding: 15px;'>${historyDisplay}</td></tr>"
+                statusText += "<tr style='border-top: 1px solid #ccc; background-color: #f9f9f9;'><td colspan='3' style='padding: 15px;'>${historyDisplay}</td></tr>"
                 statusText += "</table>"
                 
                 // --- Predictive Logic & Explanation Panel ---
@@ -459,6 +523,7 @@ def mainPage() {
                 input "forceEvalBtn", "button", title: "⚙️ Force Logic Evaluation"
                 input "resetRecordBtn", "button", title: "🗑️ Reset All-Time Rain Record"
                 input "clearStateBtn", "button", title: "⚠ Reset Internal State & History"
+                input "forceApiBtn", "button", title: "🌐 Force Open-Meteo API Sync"
             }
         }
 
@@ -516,6 +581,16 @@ def configPage() {
             input "enableStaleCheck", "bool", title: "Stale Data Protection", defaultValue: true, description: "Flags the system offline and clears active states if sensor data stops updating."
             input "staleDataTimeout", "number", title: "Stale Data Timeout (Minutes)", defaultValue: 30
         }
+
+        section("<b>External API (Open-Meteo)</b>", hideable: true, hidden: true) {
+            paragraph "<i>Pull free regional forecasting data based on your hub's coordinates (No sign-up or API key required). This provides an expert comparison on the dashboard.</i>"
+            input "enableOpenMeteo", "bool", title: "Enable Free Open-Meteo API Sync", defaultValue: true, submitOnChange: true
+            if (enableOpenMeteo) {
+                input "enableOpenMeteoSynergy", "bool", title: "Allow API to Influence Probability", defaultValue: false, description: "If enabled, local probability will be slightly boosted if the external API expects heavy rain, creating a synergistic prediction."
+                input "manualLat", "decimal", title: "Manual Latitude Override", required: false, description: "Pinpoint your exact house. Leave blank to use Hub location."
+                input "manualLon", "decimal", title: "Manual Longitude Override", required: false, description: "Pinpoint your exact house. Leave blank to use Hub location."
+            }
+        }
      
         section("<b>Instant 'First Drop' Sensor</b>", hideable: true, hidden: true) {
             paragraph "<i>Map a standard Z-Wave/Zigbee leak sensor placed outside to bypass tipping-bucket delays. Provides an instant 'Sprinkling' state the moment rain begins.</i>"
@@ -529,7 +604,7 @@ def configPage() {
             input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor (Detects frontal passages)", required: false
             input "sensorLightning", "capability.sensor", title: "Lightning Detector", required: false
             if (sensorLightning) {
-                input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
+                 input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
             }
         }
 
@@ -609,6 +684,13 @@ def initialize() {
     if (!state.confidenceReasoning) state.confidenceReasoning = "Initializing..."
     if (!state.smoothedTemp) state.smoothedTemp = null
     
+    // Initialize API tracking & Anti-Noise
+    if (!state.omHourlyData) state.omHourlyData = []
+    if (!state.omProb) state.omProb = 0
+    if (!state.omRain) state.omRain = 0.0
+    if (!state.apiConsecutiveFails) state.apiConsecutiveFails = 0
+    state.apiOffline = false
+    
     // Initialize History Maps
     if (!state.pressureHistory) state.pressureHistory = []
     if (!state.tempHistory) state.tempHistory = []
@@ -645,7 +727,7 @@ def initialize() {
     subscribeMulti(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], "stdHandler")
     if (sensorLeak) subscribe(sensorLeak, "water", "stdHandler")
     
-    // Polling Scheduler
+    // Polling Schedulers
     unschedule("pollSensors")
     if (enablePolling && pollInterval) {
         def safeInterval = pollInterval.toInteger()
@@ -655,10 +737,108 @@ def initialize() {
         logAction("Active polling scheduled every ${safeInterval} minutes.")
     }
     
+    unschedule("fetchOpenMeteoData")
+    if (settings.enableOpenMeteo != false) {
+        runEvery30Minutes("fetchOpenMeteoData")
+        runIn(5, "fetchOpenMeteoData") // Initial fetch
+    }
+    
     runEvery5Minutes("evaluateWeather")
     scheduleChildSync()
     
     logAction("Advanced Rain Detection Initialized.")
+    evaluateWeather()
+}
+
+// === OPEN-METEO API INTEGRATION (Smart Offline/Anti-Noise Logic) ===
+def fetchOpenMeteoData() {
+    def targetLat = settings.manualLat ?: location.latitude
+    def targetLon = settings.manualLon ?: location.longitude
+
+    if (!targetLat || !targetLon) {
+        if (!state.apiOffline) log.warn "Cannot fetch Open-Meteo data: Hub Latitude/Longitude are missing."
+        return
+    }
+
+    def params = [
+        uri: "https://api.open-meteo.com/v1/forecast?latitude=${targetLat}&longitude=${targetLon}&hourly=precipitation_probability,rain&forecast_hours=6&timezone=auto",
+        timeout: 10
+    ]
+
+    try {
+        asynchttpGet("openMeteoHandler", params)
+    } catch (e) {
+        handleApiError(e.toString())
+    }
+}
+
+def openMeteoHandler(response, data) {
+    if (response.hasError()) {
+        handleApiError(response.getErrorMessage())
+        return
+    }
+
+    try {
+        def json = response.json
+        if (json && json.hourly) {
+            if (state.apiOffline) {
+                logAction("🌐 Open-Meteo API connection restored. Resuming online synergy.")
+            }
+            state.apiConsecutiveFails = 0
+            state.apiOffline = false
+            
+            def hourlyData = []
+            def maxProb = 0
+            def totalRain = 0.0
+            
+            // Loop through the next 6 hours to build the dynamic live breakdown
+            for (int i = 0; i < 6; i++) {
+                def rawTime = json.hourly.time[i]
+                if (!rawTime) continue
+                
+                // Parse "YYYY-MM-DDTHH:00" string safely into dynamic 12-hour format
+                def timeStr = rawTime.split("T")[1]
+                def hour = timeStr.split(":")[0].toInteger()
+                def ampm = hour >= 12 ? "PM" : "AM"
+                def displayHour = hour % 12
+                if (displayHour == 0) displayHour = 12
+                def shortTime = "${displayHour} ${ampm}"
+                
+                def p = json.hourly.precipitation_probability[i] ?: 0
+                def r = json.hourly.rain[i] ?: 0.0
+                
+                if (p > maxProb) maxProb = p
+                totalRain += r
+                
+                hourlyData << [time: shortTime, prob: p, rain: String.format("%.2f", r)]
+            }
+            
+            state.omHourlyData = hourlyData
+            state.omProb = maxProb
+            state.omRain = String.format("%.2f", totalRain)
+            state.omLastSync = new Date().format("h:mm a", location.timeZone)
+            
+            evaluateWeather()
+        }
+    } catch (e) {
+        handleApiError("Parsing error: ${e}")
+    }
+}
+
+def handleApiError(msg) {
+    state.apiConsecutiveFails = (state.apiConsecutiveFails ?: 0) + 1
+    
+    if (state.apiConsecutiveFails >= 2) {
+        if (!state.apiOffline) {
+            logAction("⚠ Open-Meteo API connection failed. System flagged OFFLINE. Reverting strictly to local sensors to prevent hub error noise.")
+            state.apiOffline = true
+        }
+    } else {
+        log.warn "Open-Meteo API fetch failed (Attempt 1): ${msg}"
+    }
+    
+    // Clear the active data so the dashboard reflects the outage
+    state.omHourlyData = []
     evaluateWeather()
 }
 
@@ -704,6 +884,7 @@ void appButtonHandler(btn) {
     if (btn == "refreshDashboardBtn") return
     if (btn == "createDeviceBtn") { createChildDevice(); return }
     if (btn == "forceEvalBtn") { logAction("MANUAL OVERRIDE: Forcing logic evaluation."); evaluateWeather() }
+    if (btn == "forceApiBtn") { logAction("MANUAL OVERRIDE: Forcing Open-Meteo Sync."); fetchOpenMeteoData() }
     if (btn == "resetRecordBtn") {
         logAction("MANUAL OVERRIDE: All-Time Rain Record Reset.")
         state.recordRain = [date: "None", amount: 0.0]
@@ -838,6 +1019,7 @@ def evaluateWeather() {
         def yesterdayTotal = state.currentDayRain ?: 0.0
         def hist = state.sevenDayRain ?: []
         hist.add(0, [date: state.currentDateStr, amount: yesterdayTotal])
+ 
         if (hist.size() > 7) hist = hist[0..6]
         state.sevenDayRain = hist
         
@@ -897,7 +1079,6 @@ def evaluateWeather() {
         def lastT = state.smoothedTemp != null ? state.smoothedTemp : t
         def delta = Math.abs(t - lastT)
         
-        // If temperature jumped more than 3 degrees physically instantly, smooth it (30% EWMA)
         if (delta > 3.0 && state.tempHistory?.size() > 0) {
             t = lastT + ((t - lastT) * 0.3)
             smoothedAnomaly = true
@@ -1038,7 +1219,7 @@ def evaluateWeather() {
         if (settings.enableWindLogic != false && sensorWind) {
             totalModelsEnabled++
             if (wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
-                  probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
+                   probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
             }
         }
 
@@ -1070,6 +1251,16 @@ def evaluateWeather() {
                 reasoning << "SYNERGY: Temp Drop + Wind Shift (1.2x Multiplier)"
             }
         }
+        
+        // OPEN-METEO API SYNERGY (Only apply if API is Online)
+        if (settings.enableOpenMeteo != false && settings.enableOpenMeteoSynergy != false && !state.apiOffline) {
+            totalModelsEnabled++
+            if (state.omProb && state.omProb > 50) {
+                def boost = (state.omProb * 0.15).toInteger()
+                probability += boost
+                reasoning << "SYNERGY: Open-Meteo Regional Forecast (+${boost}% Multiplier)"
+            }
+        }
 
         probability = Math.round(probability)
         if (probability < 0) probability = 0
@@ -1099,6 +1290,7 @@ def evaluateWeather() {
     if (sensorWindDir) conf += 5
     if (sensorLeak) conf += 5
     if (sensorRain) conf += 5
+    if (settings.enableOpenMeteo != false && !state.apiOffline) conf += 5
     
     def highAgreementThreshold = (totalModelsEnabled / 2).toInteger()
     if (highAgreementThreshold < 1) highAgreementThreshold = 1
@@ -1259,7 +1451,6 @@ def evaluateWeather() {
         updateChildDevice()
     }
     
-    // Log the current probability to the new 24-hour timeline
     logProbabilityHistory()
 }
 
@@ -1277,7 +1468,7 @@ def updateChildDevice() {
         def rawDrying = state.dryingPotential?.replaceAll("<[^>]*>", "") ?: "N/A"
         child.sendEvent(name: "dryingPotential", value: rawDrying)
         child.sendEvent(name: "timeToDry", value: state.timeToDryStr ?: "N/A")
-        
+       
         child.sendEvent(name: "vpd", value: String.format("%.2f", state.currentVPD ?: 0.0), unit: "kPa")
         child.sendEvent(name: "wetBulb", value: String.format("%.1f", state.currentWetBulb ?: 0.0), unit: "°")
         child.sendEvent(name: "dewPoint", value: String.format("%.1f", state.currentDewPoint ?: 0.0), unit: "°")
