@@ -75,7 +75,7 @@ def mainPage() {
                     
                     statusText += "<tr style='border-bottom: 1px solid #eee;'>"
                     statusText += "<td style='padding: 8px;'><b>${settings["z${i}Name"]}</b><br><div style='margin-top:4px; margin-bottom:4px;'>${pwrBadge}</div><small style='color:#555;'>${logicDisplay}</small>${ashraeFlag}</td>"
-                    statusText += "<td style='padding: 8px;'>${envDisplay}<br><small style='color:#666;'>Target: ${zData.target}%</small></td>"
+                    statusText += "<td style='padding: 8px;'>${envDisplay}<br><small style='color:#666;'>Target: ${zData.target}% | DB: ${zData.deadband}%</small></td>"
                     statusText += "<td style='padding: 8px; color:${riskColor}; font-weight:bold;'>${zData.riskLevel}<br><small>${zData.riskScore}%</small></td>"
                     statusText += "<td style='padding: 8px;'>${zData.duration}<br><small>${filterDisplay}</small>${actionHtml}</td>"
                     statusText += "<td style='padding: 8px;'><span style='color:red;'>7D Spend: &#36;${String.format("%.2f", zData.spend7d)}</span><br><span style='color:green;'>7D Saved: &#36;${String.format("%.2f", zData.save7d)}</span></td>"
@@ -754,9 +754,20 @@ def calculateZoneState(zone) {
     def forceSave = isEnergySaverActive() || (settings.enableTOU && isTOUPeak() && settings.forceSaveOnPeak)
     
     def target = 100
-    if (isWinterShieldActive()) target = winterHumSetpoint ?: 35
-    else if (forceSave || settings["z${zone}EnableSaving"]) target = (settings["z${zone}SavePoint"] ?: 60) + tvOffset
-    else if (settings["z${zone}EnableComfort"]) target = (settings["z${zone}ComfortPoint"] ?: 45) + tvOffset
+    def deadband = 0
+    
+    if (isWinterShieldActive()) {
+        target = winterHumSetpoint ?: 35
+        deadband = winterShieldDB ?: 3
+    }
+    else if (forceSave || settings["z${zone}EnableSaving"]) {
+        target = (settings["z${zone}SavePoint"] ?: 60) + tvOffset
+        deadband = settings["z${zone}SaveDB"] ?: 5
+    }
+    else if (settings["z${zone}EnableComfort"]) {
+        target = (settings["z${zone}ComfortPoint"] ?: 45) + tvOffset
+        deadband = settings["z${zone}ComfortDB"] ?: 3
+    }
     
     def rScore = state["z${zone}RiskScore"] ?: 0
     
@@ -795,6 +806,7 @@ def calculateZoneState(zone) {
         dewPoint: inDP,
         spread: (currTemp != null && inDP != null) ? (Math.round((currTemp - inDP) * 10.0) / 10.0) : null,
         target: target,
+        deadband: deadband,
         riskScore: rScore, 
         riskLevel: (rScore > 80 ? "DANGER" : rScore > 50 ? "WARNING" : "SAFE"), 
         duration: durStr, 
