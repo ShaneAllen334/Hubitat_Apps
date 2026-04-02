@@ -276,7 +276,7 @@ def appButtonHandler(btn) {
         def chimes = settings["dcZoozChimes${idx}"]
         def sound = settings["dcZoozSound${idx}"]
         if (chimes && sound != null) {
-            chimes.each { if (it.hasCommand("playSound")) it.playSound(sound as Integer) }
+            chimes.each { it.playSound(sound.toInteger()) }
             logAction("Tested Zooz Chime for Rule ${idx}: Sound ${sound}")
         }
     }
@@ -412,7 +412,7 @@ def executeTransition() {
             def pSens = settings["transConditionPower${ruleIdx}"]
             if (pSens && (pSens.currentValue("power") ?: 0) > (settings["transPowerThreshold${ruleIdx}"] ?: 15)) {
                 logAction("🛑 Aborted: Power threshold exceeded.")
-                 clearPendingTransition()
+                clearPendingTransition()
                 return
             }
         }
@@ -468,9 +468,11 @@ def enforceDevices(ruleIdx) {
         ruleTtsSpeakers.speak(ttsMsg)
         logMsg += "[TTS: ${ttsMsg}] "
     }
+    
+    // FIX APPLIED HERE: Delayed execution for Zooz Chimes
     if (chimeSound != null && ruleZoozChimes) {
-        ruleZoozChimes.each { if (it.hasCommand("playSound")) it.playSound(chimeSound as Integer) }
-        logMsg += "[Zooz Chime: File ${chimeSound}] "
+        runInMillis(2000, "playDelayedZoozChimes", [data: [ruleIdx: ruleIdx]])
+        logMsg += "[Zooz Chime: Scheduled File ${chimeSound} (Delayed 2s)] "
     }
 
     // Process Inovelli LED color changes
@@ -610,6 +612,15 @@ def turnOffWeatherSwitch(data) {
     if (ruleIdx && settings["dcWeatherSwitch${ruleIdx}"]) {
         settings["dcWeatherSwitch${ruleIdx}"].off()
         logAction("Weather Forecast Switch for Rule ${ruleIdx} turned OFF automatically after 5 minutes.")
+    }
+}
+
+// FIX APPLIED HERE: New utility function for handling the Zooz mesh delay
+def playDelayedZoozChimes(data) {
+    def ruleIdx = data?.ruleIdx
+    if (ruleIdx && settings["dcZoozChimes${ruleIdx}"]) {
+        def sound = settings["dcZoozSound${ruleIdx}"]
+        settings["dcZoozChimes${ruleIdx}"].each { it.playSound(sound.toInteger()) }
     }
 }
 
