@@ -38,7 +38,6 @@ def mainPage() {
                     }
                
                     def isTrulyOn = isTvActuallyOn(tv, i)
-                
                     def powerState = isTrulyOn ? "ON" : "STANDBY / OFF"
                     def pwrColor = isTrulyOn ? "green" : "red"
                     
@@ -58,7 +57,6 @@ def mainPage() {
                     def acousticText = ""
                     if (settings["enableAcousticMgmt_${i}"]) {
                         def activeAcoustics = []
-                        
                         def thermo = settings["mainThermostat_${i}"]
                        
                         if (thermo) {
@@ -81,7 +79,7 @@ def mainPage() {
                             if (vac.currentValue("switch") == "on") activeAcoustics << "Vacuum (ON): +${settings["vacuumBoost_${i}"] ?: 10}"
                             else activeAcoustics << "Vacuum (OFF)"
                         }
-    
+   
                         def ap = settings["airPurifier_${i}"]
                         if (ap) {
                             if (ap.currentValue("switch") == "on") activeAcoustics << "Purifier (ON): +${settings["airPurifierBoost_${i}"] ?: 2}"
@@ -98,6 +96,32 @@ def mainPage() {
  
                     def watchMins = state.watchTimeToday?."${i}" ?: 0
                     def watchDisplay = "${(watchMins / 60).toInteger()}h ${watchMins % 60}m"
+                    
+                    // --- Time Limit Dashboard Extensions ---
+                    if (settings["enableTimeLimits_${i}"]) {
+                        def maxTv = settings["tvMaxLimitMins_${i}"]
+                        def ext = state.tvTimeExtended?."${i}" ?: 0
+                        def limitText = ""
+                        
+                        if (maxTv) {
+                            def totalAllowedTv = maxTv + ext
+                            def remainTv = totalAllowedTv - watchMins
+                            if (remainTv < 0) remainTv = 0
+                            limitText += "<br><span style='color:#e67e22; font-size:11px;'>TV Limit: ${(remainTv/60).toInteger()}h ${remainTv%60}m left</span>"
+                        }
+                        
+                        def limitedApps = settings["appLimitList_${i}"]
+                        def appLimit = settings["appLimitMins_${i}"]
+                        if (limitedApps && appLimit && isTrulyOn && limitedApps.contains(currentApp)) {
+                            def appMins = state.appTimeWatched?."${i}"?."${currentApp}" ?: 0
+                            def totalAllowedApp = appLimit + ext
+                            def remainApp = totalAllowedApp - appMins
+                            if (remainApp < 0) remainApp = 0
+                            limitText += "<br><span style='color:#c0392b; font-size:11px;'>App Limit: ${(remainApp/60).toInteger()}h ${remainApp%60}m left</span>"
+                        }
+                        
+                        watchDisplay += limitText
+                    }
                     
                     def topApp = "None"
                     def topTime = 0
@@ -242,6 +266,40 @@ def tvPage(params) {
                 input "audioType_${tNum}", "enum", title: "Audio Control Protocol", options: ["Standard Soundbar (Volume Clicks)", "Network AVR / Absolute (SetLevel 0-100)", "Onkyo / Pioneer Protocol", "Sonos / Wi-Fi Speaker"], defaultValue: "Standard Soundbar (Volume Clicks)", required: false, description: "Select the protocol used by your external audio device to ensure volume normalization works correctly."
             }
         }
+        
+        // --- NEW SECTION: APPLICATION TIME LIMITS ---
+        section("Application & TV Time Limits", hideable: true, hidden: true) {
+            input "enableTimeLimits_${tNum}", "bool", title: "Enable Time Limits", defaultValue: false, submitOnChange: true, description: "Limit screen time per TV or individual applications."
+            if (settings["enableTimeLimits_${tNum}"]) {
+                
+                def savedAppsList = state.savedApps?."${tNum}" ?: []
+                
+                paragraph "<b>Saved Applications:</b><br>${savedAppsList.size() > 0 ? savedAppsList.join(', ') : '<i>No apps detected yet. Let the TV run.</i>'}"
+                
+                if (savedAppsList.size() > 0) {
+                    input "appLimitList_${tNum}", "enum", title: "Select Apps to Limit", options: savedAppsList, multiple: true, submitOnChange: true, description: "Choose which specific applications should have limits."
+                    if (settings["appLimitList_${tNum}"]) {
+                        input "appLimitMins_${tNum}", "number", title: "Time Limit for Selected Apps (Minutes/Day)", required: true
+                        input "appLimitAction_${tNum}", "enum", title: "Action when limit reached", options: ["Turn Off TV", "Return to Home Menu"], defaultValue: "Turn Off TV"
+                    }
+                    
+                    input "clearAppsBtn_${tNum}", "button", title: "Clear Entire Saved Apps List", description: "Wipes out all stored applications."
+                    input "deleteApp_${tNum}", "enum", title: "Delete Individual App from List", options: savedAppsList, submitOnChange: true
+                    if (settings["deleteApp_${tNum}"]) {
+                        input "confirmDeleteAppBtn_${tNum}", "button", title: "Confirm Delete [${settings["deleteApp_${tNum}"]}]"
+                    }
+                }
+                
+                paragraph "<hr><b>Global TV Limits & Extensions</b>"
+                input "tvMaxLimitMins_${tNum}", "number", title: "Maximum TV Limit (Minutes/Day)", required: false, description: "Global screen time allowed for this television per day."
+                input "tvLimitAction_${tNum}", "enum", title: "Action when TV limit reached", options: ["Turn Off TV", "Return to Home Menu"], defaultValue: "Turn Off TV"
+                
+                input "extend30mBtn_${tNum}", "button", title: "Extend Time by 30 Minutes", description: "Adds a temporary 30m allowance to today's limits."
+                input "extend1hrBtn_${tNum}", "button", title: "Extend Time by 1 Hour", description: "Adds a temporary 1hr allowance to today's limits."
+                input "extendSwitch_${tNum}", "capability.switch", title: "Virtual Switch to Extend Time", required: false, description: "If this switch turns on, it adds 30 minutes to the limit, then automatically turns itself back off after 30 seconds."
+            }
+        }
+        // ---------------------------------------------
         
         section("Dedicated Movie Mode (Macro / Scene)", hideable: true, hidden: true) {
             input "enableMovieMode_${tNum}", "bool", title: "Enable Movie Mode", defaultValue: false, submitOnChange: true, description: "Triggers a full home theater macro from a single virtual switch. Orchestrates TV power, inputs, volume, lights, shades, locks, fans, and HVAC in one smooth sequence."
@@ -504,6 +562,11 @@ def initialize() {
     state.macroControlledList = state.macroControlledList ?: [:]
     state.lastHvacState = state.lastHvacState ?: [:]
     
+    // NEW: Time limit states
+    state.savedApps = state.savedApps ?: [:]
+    state.appTimeWatched = state.appTimeWatched ?: [:]
+    state.tvTimeExtended = state.tvTimeExtended ?: [:]
+    
     // Power State Trackers
     state.plugWasOffBeforeShow = state.plugWasOffBeforeShow ?: [:]
     state.plugWasOffBeforeMorning = state.plugWasOffBeforeMorning ?: [:]
@@ -532,6 +595,11 @@ def initialize() {
         }
         if (settings["enableGamingMode_${i}"] && settings["gamingSwitch_${i}"]) {
             subscribe(settings["gamingSwitch_${i}"], "switch", macroModeHandler)
+        }
+        
+        // NEW: Subscribe to Time Extension Switches
+        if (settings["enableTimeLimits_${i}"] && settings["extendSwitch_${i}"]) {
+            subscribe(settings["extendSwitch_${i}"], "switch", extendSwitchHandler)
         }
     }
     if (needsPolling) schedule("0 * * * * ?", "pollThermostats") 
@@ -574,6 +642,48 @@ def initialize() {
         if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]) {
             subscribe(settings["cozyOvercast_${i}"], "switch", cozyOvercastHandler)
         }
+    }
+}
+
+// --- NEW: Time Limit & Extension Handlers ---
+
+def extendSwitchHandler(evt) {
+    def isOn = evt.value == "on"
+    if (!isOn) return
+    def deviceId = evt.device.id
+    
+    for (int i = 1; i <= (numTVs as Integer); i++) {
+        if (settings["enableTimeLimits_${i}"] && settings["extendSwitch_${i}"]?.id == deviceId) {
+            if (!state.tvTimeExtended) state.tvTimeExtended = [:]
+            state.tvTimeExtended["${i}"] = (state.tvTimeExtended["${i}"] ?: 0) + 30
+            addToHistory("${getTvName(i)}: Time limit extended by 30 minutes via switch.")
+            
+            runIn(30, "turnOffExtendSwitch", [data: [tvNum: i]])
+        }
+    }
+}
+
+def turnOffExtendSwitch(data) {
+    def i = data.tvNum
+    def sw = settings["extendSwitch_${i}"]
+    if (sw && sw.currentValue("switch") == "on") {
+        sw.off()
+    }
+}
+
+def enforceLimitAction(i, actionType) {
+    def tv = getPrimaryDevice(i)
+    if (!tv) return
+    
+    if (actionType == "Return to Home Menu") {
+        addToHistory("${getTvName(i)}: Time Limit Reached. Returning to Home Menu.")
+        if (tv.hasCommand("keyPress")) tv.keyPress("Home")
+        else if (tv.hasCommand("setApplication")) tv.setApplication("Home")
+        else if (tv.hasCommand("home")) tv.home()
+        else issuePowerCommand(i, "off", 1) // Fallback if no home command
+    } else {
+        addToHistory("${getTvName(i)}: Time Limit Reached. Powering OFF.")
+        issuePowerCommand(i, "off", 1)
     }
 }
 
@@ -1174,11 +1284,11 @@ def tvPowerEvaluator(evt) {
                     if (lights) {
                          def activeLights = lights.findAll { it.currentValue("switch") == "on" }
                          if (activeLights) {
-                            addToHistory("${tvName}: Environment sync. Delaying 2s to turn OFF lights.")
+                             addToHistory("${tvName}: Environment sync. Delaying 2s to turn OFF lights.")
                             state.lightsPausedByTv["${i}"] = true
                             runIn(2, "delayedLightTurnOff", [data: [tvNum: i], overwrite: false])
                         } else {
-                            state.lightsPausedByTv["${i}"] = false
+                             state.lightsPausedByTv["${i}"] = false
                         }
                     }
                 }
@@ -1192,7 +1302,7 @@ def tvPowerEvaluator(evt) {
                         def blindsClosed = blinds && blinds.any { it.currentValue("contact") == "closed" }
 
                         if (isOvercast || blindsClosed) {
-                            def targetLevel = settings["cozyLevel_${i}"] ?: 50
+                             def targetLevel = settings["cozyLevel_${i}"] ?: 50
                             def ctVarName = settings["cozyCTVar_${i}"]
                             def targetCT = null
 
@@ -1208,13 +1318,13 @@ def tvPowerEvaluator(evt) {
                                     else bulb.setLevel(targetLevel)
                                     pauseExecution(300)
                                 }
-                            } else {
+                             } else {
                                 addToHistory("${tvName}: Cozy Mode conditions met. Setting accent lights to ${targetLevel}%.")
                                 cozyLights.each { 
                                     it.setLevel(targetLevel)
                                     pauseExecution(300)
                                 }
-                            }
+                             }
                             
                             state.cozyLightsActivatedByTv["${i}"] = true
                         } else {
@@ -1222,7 +1332,7 @@ def tvPowerEvaluator(evt) {
                         }
                     }
                 }
-               
+                
                 if (settings["enableSweeper_${i}"]) {
                     runIn(4, "executeSweeperDelay", [data: [tvNum: i, isPeriodic: false], overwrite: false])
                 }
@@ -1260,7 +1370,7 @@ def tvPowerEvaluator(evt) {
                     def noiseSwitches = settings["tvNoiseSwitches_${i}"]
                     def pausedIds = state.noiseSwitchesPaused["${i}"] ?: []
                     if (noiseSwitches && pausedIds) {
-                        def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
+                         def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
                         if (toRestore) {
                              addToHistory("${tvName}: Restoring background appliances: ${toRestore.join(', ')}")
                              toRestore.each { 
@@ -1569,10 +1679,8 @@ def trackUsageStep() {
         if (isTvActuallyOn(tv, i)) {
             def wattage = settings["tvWattage_${i}"] ?: 150
             def costPerMin = (wattage / 1000.0) * rate / 60.0
-            state.watchTimeToday["${i}"] = (state.watchTimeToday["${i}"] ?: 0) + 5
-            state.costToday["${i}"] = (state.costToday["${i}"] ?: 0.0) + (costPerMin * 5)
-            
             def currentApp = "Unknown"
+            
             if (settings["isAvrOnly_${i}"]) {
                 def rawInput = tv.currentValue("mediaInputSource") ?: "Unknown"
                 currentApp = getMappedAppName(i, rawInput)
@@ -1580,8 +1688,48 @@ def trackUsageStep() {
                 currentApp = tv.currentValue("application") ?: "Unknown/Home"
             }
             
+            // Increment Base Stats
+            state.watchTimeToday["${i}"] = (state.watchTimeToday["${i}"] ?: 0) + 5
+            state.costToday["${i}"] = (state.costToday["${i}"] ?: 0.0) + (costPerMin * 5)
             if (!state.appStats["${i}"]) state.appStats["${i}"] = [:]
             state.appStats["${i}"][currentApp] = (state.appStats["${i}"][currentApp] ?: 0) + 5
+            
+            // --- NEW: Time Limit Tracking ---
+            if (settings["enableTimeLimits_${i}"]) {
+                
+                // Track Unique Apps automatically
+                if (currentApp != "Unknown" && currentApp != "Unknown/Home" && currentApp != "Screen Off") {
+                    if (!state.savedApps) state.savedApps = [:]
+                    def savedList = state.savedApps["${i}"] ?: []
+                    if (!savedList.contains(currentApp)) {
+                        savedList.add(currentApp)
+                        if (savedList.size() > 15) savedList = savedList.drop(1)
+                        state.savedApps["${i}"] = savedList
+                    }
+                }
+                
+                def maxTv = settings["tvMaxLimitMins_${i}"]
+                def ext = state.tvTimeExtended?."${i}" ?: 0
+                def totalAllowedTv = maxTv ? (maxTv + ext) : null
+                def limitedApps = settings["appLimitList_${i}"]
+                
+                // Enforce App Limit
+                if (limitedApps && limitedApps.contains(currentApp)) {
+                    if (!state.appTimeWatched["${i}"]) state.appTimeWatched["${i}"] = [:]
+                    def appMins = (state.appTimeWatched["${i}"][currentApp] ?: 0) + 5
+                    state.appTimeWatched["${i}"][currentApp] = appMins
+                    
+                    def appLimit = settings["appLimitMins_${i}"]
+                    if (appLimit && appMins >= (appLimit + ext)) {
+                        enforceLimitAction(i, settings["appLimitAction_${i}"])
+                    }
+                }
+                
+                // Enforce TV Limit
+                if (totalAllowedTv && state.watchTimeToday["${i}"] >= totalAllowedTv) {
+                    enforceLimitAction(i, settings["tvLimitAction_${i}"])
+                }
+            }
             
             if (settings["enableSweeper_${i}"]) {
                 executeSweeper(i, true)
@@ -1595,6 +1743,8 @@ def midnightReset() {
     state.watchTimeToday = [:]
     state.costToday = [:]
     state.appStats = [:]
+    state.appTimeWatched = [:]
+    state.tvTimeExtended = [:]
 }
 
 def getMappedAppName(i, rawName) {
@@ -1780,7 +1930,7 @@ def muteActiveTVs() {
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def tv = getPrimaryDevice(i)
         if (isTvActuallyOn(tv, i)) {
-             def audioDevice = getAudioDevice(i)
+            def audioDevice = getAudioDevice(i)
             if (audioDevice.hasCommand("mute")) {
                 audioDevice.mute()
                 pauseExecution(300)
@@ -1855,6 +2005,31 @@ def appButtonHandler(btn) {
         def tNum = btn.split("_")[1] as Integer
         log.info "Evaluate Room triggered for TV ${tNum}"
         evaluateRoomLights(tNum)
+        
+    // --- NEW: Time Limit Buttons ---
+    } else if (btn?.startsWith("clearAppsBtn_")) {
+        def tNum = btn.split("_")[1] as Integer
+        state.savedApps["${tNum}"] = []
+        log.info "Cleared saved apps list for TV ${tNum}"
+    } else if (btn?.startsWith("confirmDeleteAppBtn_")) {
+        def tNum = btn.split("_")[1] as Integer
+        def appToDelete = settings["deleteApp_${tNum}"]
+        if (appToDelete) {
+            def saved = state.savedApps["${tNum}"] ?: []
+            saved.remove(appToDelete)
+            state.savedApps["${tNum}"] = saved
+            log.info "Deleted app ${appToDelete} for TV ${tNum}"
+        }
+    } else if (btn?.startsWith("extend30mBtn_")) {
+        def tNum = btn.split("_")[1] as Integer
+        if (!state.tvTimeExtended) state.tvTimeExtended = [:]
+        state.tvTimeExtended["${tNum}"] = (state.tvTimeExtended["${tNum}"] ?: 0) + 30
+        addToHistory("${getTvName(tNum)}: Time limit extended by 30 minutes.")
+    } else if (btn?.startsWith("extend1hrBtn_")) {
+        def tNum = btn.split("_")[1] as Integer
+        if (!state.tvTimeExtended) state.tvTimeExtended = [:]
+        state.tvTimeExtended["${tNum}"] = (state.tvTimeExtended["${tNum}"] ?: 0) + 60
+        addToHistory("${getTvName(tNum)}: Time limit extended by 1 hour.")
     }
 }
 
@@ -1878,7 +2053,7 @@ def stopMorningRoutineTest(i) {
 def testHvacBoost(i, isRunning) {
     def tv = getPrimaryDevice(i)
     if (isTvActuallyOn(tv, i)) {
-         def audioDevice = getAudioDevice(i)
+        def audioDevice = getAudioDevice(i)
         def boostAmount = settings["hvacVolumeBoost_${i}"] ?: 3
         def tvName = getTvName(i)
        
@@ -1944,7 +2119,7 @@ def cozyOvercastHandler(evt) {
                     if (cozyLights) {
                         cozyLights.each { bulb ->
                             if (targetCT != null && bulb.hasCommand("setColorTemperature")) bulb.setColorTemperature(targetCT, targetLevel)
-                             else bulb.setLevel(targetLevel)
+                            else bulb.setLevel(targetLevel)
                             pauseExecution(300)
                         }
                     }
