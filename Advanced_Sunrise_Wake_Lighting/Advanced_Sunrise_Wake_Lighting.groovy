@@ -252,7 +252,7 @@ def startFadeProcess(rNum) {
     
     def lights = settings["r${rNum}_lights"]
     def speakers = settings["r${rNum}_speaker"]
-    
+ 
     lights.each { light ->
         light.on()
         light.setLevel(1)
@@ -286,6 +286,18 @@ def fadeLoopProcess(rNum) {
         // FIX: Added a grace period. Only check for manual override if we are past the 2% mark.
         // This gives slow-reporting devices (like Hue bridges) a few minutes to sync status.
         if (expectedLevel > 2) {
+            
+            // --- NEW FIX: Check if the light was physically/manually turned off ---
+            def switchState = lights[0].currentValue("switch")
+            if (switchState == "off") {
+                addToHistory("MANUAL OVERRIDE: ${rName} lights were turned off. Aborting fade.")
+                state["r${rNum}_isFading"] = false
+                def stateSwitch = settings["r${rNum}_sunriseStateSwitch"]
+                if (stateSwitch) stateSwitch.off()
+                return
+            }
+            // ----------------------------------------------------------------------
+
             def actualLevel = lights[0].currentValue("level")?.toInteger() ?: expectedLevel
             // Increased tolerance from 10 to 15 to account for minor rounding differences
             if (actualLevel > expectedLevel + 15 || actualLevel < expectedLevel - 15) {
