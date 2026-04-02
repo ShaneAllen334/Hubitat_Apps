@@ -1,5 +1,7 @@
 /**
  * Advanced Shower Monitor
+ *
+ * Author: ShaneAllen
  */
 definition(
     name: "Advanced Shower Monitor",
@@ -88,6 +90,12 @@ def mainPage() {
             
             input "activeModes", "mode", title: "Active Modes (App only runs in these)", multiple: true, required: false
         }
+
+        // --- NEW: Data Management Section ---
+        section("Data Management") {
+            input "clearDataBtn", "button", title: "Clear All Shower & Financial Data", width: 4
+            paragraph "<i>Clicking the button above will instantly wipe the Financial Analytics and Application History logs. This is useful for clearing out test data.</i>"
+        }
         
         def count = settings["numShowers"] ?: 1
         for (int i = 1; i <= count; i++) {
@@ -97,11 +105,11 @@ def mainPage() {
                 input "showerName_${i}", "text", title: "Custom Name", required: false, defaultValue: "Shower ${i}", submitOnChange: true
                 input "motion_${i}", "capability.motionSensor", title: "Shower Motion Sensor", required: false
                 
-                // NEW: Optional Out-of-shower sensor
                 input "outMotion_${i}", "capability.motionSensor", title: "Out of Shower Motion Sensor (Optional)", required: false,
                     description: "If motion is detected here during the grace period, the shower session ends immediately."
                 
                 input "light_${i}", "capability.switch", title: "Bathroom Light to Flash", required: false
+                input "statusSwitch_${i}", "capability.switch", title: "Virtual Status Switch (Turns ON when shower is active)", required: false, description: "Use this to tell other apps (like Motion Lighting) that a shower is running."
                 
                 input "flowRate_${i}", "decimal", title: "Showerhead Flow Rate (GPM)", defaultValue: 2.5, required: true,
                     description: "Standard US showerheads are 2.5 GPM."
@@ -114,8 +122,25 @@ def mainPage() {
                 
                 input "gracePeriod_${i}", "number", title: "Empty Shower Grace Period (Minutes)", defaultValue: 2, required: true,
                     description: "Fixes 'chatty' sensors. This time is subtracted from final duration unless ended early by an 'Out' sensor."
+                
+                input "minDuration_${i}", "number", title: "Minimum Duration to Log (Seconds)", defaultValue: 60, required: true,
+                    description: "Ignores 'ghost' triggers like moving towels. Sessions under this time are discarded."
+                input "lockoutPeriod_${i}", "number", title: "Post-Shower Lockout (Minutes)", defaultValue: 2, required: true,
+                    description: "Prevents new sessions from starting immediately after one ends (e.g., retrieving a towel)."
             }
         }
+    }
+}
+
+// --- NEW: Button Handler ---
+def appButtonHandler(btn) {
+    if (btn == "clearDataBtn") {
+        state.historyLog = []
+        def showerCount = settings["numShowers"] ?: 1
+        for (int i = 1; i <= showerCount; i++) {
+            state["sessionLog_${i}"] = []
+        }
+        log.info "Advanced Shower Monitor: All tracked session data and history logs have been cleared by the user."
     }
 }
 
@@ -133,7 +158,6 @@ def initialize() {
     for (int i = 1; i <= showerCount; i++) {
         if (settings["motion_${i}"]) subscribe(settings["motion_${i}"], "motion", "motionHandler${i}")
         
-        // Only subscribe if the optional sensor is selected
         if (settings["outMotion_${i}"]) {
             subscribe(settings["outMotion_${i}"], "motion", "outMotionHandler${i}")
         }
@@ -197,12 +221,21 @@ def isModeAllowed() {
 def handleMotion(showerId, motionState) {
     def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
     def grace = settings["gracePeriod_${showerId}"] ?: 2
+    def lockout = settings["lockoutPeriod_${showerId}"] ?: 2
     
     if (motionState == "active") {
         unschedule("endShower${showerId}")
         if (!state["showerActive_${showerId}"]) {
             if (isSystemPaused() || !isModeAllowed()) return
+            
+            def lastEndTime = state["showerEndTime_${showerId}"] ?: 0
+            if (new Date().time - lastEndTime < (lockout * 60 * 1000)) {
+                log.debug "${sName}: Motion ignored due to ${lockout}-minute post-shower lockout."
+                return
+            }
+
             state["showerActive_${showerId}"] = true
+            settings["statusSwitch_${showerId}"]?.on()
             state["showerStartTime_${showerId}"] = new Date().time
             state["showerStatus_${showerId}"] = "Active (Timers Running)"
             addToHistory("${sName}: Shower started.")
@@ -221,7 +254,6 @@ def handleMotion(showerId, motionState) {
 }
 
 def handleOutMotion(showerId, motionState) {
-    // Only triggers if the user is in the grace period
     if (motionState == "active" && state["showerStatus_${showerId}"] == "Grace Period") {
         def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
         addToHistory("${sName}: Presence outside shower detected. Terminating session.")
@@ -233,9 +265,8 @@ def handleOutMotion(showerId, motionState) {
 def terminateShower(showerId, earlyTerminate = false) {
     def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
     def startTime = state["showerStartTime_${showerId}"] ?: new Date().time
+    def minDuration = settings["minDuration_${showerId}"] ?: 60
     
-    // Logic: If ended by 'Out' sensor, the end time is when the 'In' sensor stopped.
-    // If ended by timer, the end time is now, minus the grace period.
     def endTime = earlyTerminate ? (state["showerInactiveTime_${showerId}"] ?: new Date().time) : new Date().time
     def graceSecs = earlyTerminate ? 0 : ((settings["gracePeriod_${showerId}"] ?: 2) * 60)
     
@@ -247,23 +278,31 @@ def terminateShower(showerId, earlyTerminate = false) {
     def secs = totalSecs % 60
     def durationStr = "${mins}m ${secs}s"
     
-    def gpm = settings["flowRate_${showerId}"]?.toBigDecimal() ?: 2.5
-    def gallonsUsed = (totalSecs / 60.0) * gpm
-    def gallonsStr = "${gallonsUsed.setScale(1, BigDecimal.ROUND_HALF_UP)} gal"
-    
-    def costFactor = settings["costPerGallon_${showerId}"]?.toBigDecimal() ?: 0.03
-    def totalCost = gallonsUsed * costFactor
-    def costStr = "\$" + totalCost.setScale(2, BigDecimal.ROUND_HALF_UP)
-    
-    def entry = [time: new Date(startTime).format("MM/dd hh:mm a", location.timeZone), duration: durationStr, gallons: gallonsStr, cost: costStr]
-    def logs = state["sessionLog_${showerId}"] ?: []
-    logs.add(0, entry)
-    state["sessionLog_${showerId}"] = logs.take(10)
+    if (totalSecs < minDuration) {
+        addToHistory("${sName}: Session discarded (Under ${minDuration}s filter).")
+    } else {
+        def gpm = settings["flowRate_${showerId}"]?.toBigDecimal() ?: 2.5
+        def gallonsUsed = (totalSecs / 60.0) * gpm
+        def gallonsStr = "${gallonsUsed.setScale(1, BigDecimal.ROUND_HALF_UP)} gal"
+        
+        def costFactor = settings["costPerGallon_${showerId}"]?.toBigDecimal() ?: 0.03
+        def totalCost = gallonsUsed * costFactor
+        def costStr = "\$" + totalCost.setScale(2, BigDecimal.ROUND_HALF_UP)
+        
+        def entry = [time: new Date(startTime).format("MM/dd hh:mm a", location.timeZone), duration: durationStr, gallons: gallonsStr, cost: costStr]
+        def logs = state["sessionLog_${showerId}"] ?: []
+        logs.add(0, entry)
+        state["sessionLog_${showerId}"] = logs.take(10)
 
-    addToHistory("${sName}: Session Finished. Duration: ${durationStr} | ${gallonsStr} | ${costStr}")
+        addToHistory("${sName}: Session Finished. Duration: ${durationStr} | ${gallonsStr} | ${costStr}")
+    }
     
     state["showerActive_${showerId}"] = false
+    settings["statusSwitch_${showerId}"]?.off()
     state["showerStatus_${showerId}"] = "Idle"
+    
+    state["showerEndTime_${showerId}"] = new Date().time
+    
     unschedule("warnTierOne${showerId}")
     unschedule("warnTierTwo${showerId}")
     unschedule("warnTierThree${showerId}")
@@ -279,7 +318,17 @@ def triggerFlash(showerId, flashes) {
         runInMillis(i * 2000, "turnLightOff", [data: [showerId: showerId], overwrite: false])
         runInMillis((i * 2000) + 1000, "turnLightOn", [data: [showerId: showerId], overwrite: false])
     }
+    
+    runInMillis((flashes * 2000) + 1000, "refreshLight", [data: [showerId: showerId], overwrite: false])
 }
 
 def turnLightOff(data) { settings["light_${data.showerId}"]?.off() }
 def turnLightOn(data) { settings["light_${data.showerId}"]?.on() }
+
+def refreshLight(data) { 
+    try {
+        settings["light_${data.showerId}"]?.refresh() 
+    } catch (e) {
+        log.debug "Device does not support the refresh command"
+    }
+}
