@@ -20,13 +20,13 @@ preferences {
 
 def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced Motion Lighting Rule</b>", install: true, uninstall: true) {
-   
-        if (pauseApp || parent?.isSystemPaused()) {
-            def source = parent?.isSystemPaused() ? "System-Wide" : "Rule level"
-            paragraph "<div style='background-color: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold;'>⚠️ This rule is currently PAUSED (${source}). Automations will not execute.</div>"
-        }
 
         section("Live System Dashboard") {
+            if (pauseApp || parent?.isSystemPaused()) {
+                def source = parent?.isSystemPaused() ? "System-Wide" : "Rule level"
+                paragraph "<div style='background-color: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold;'>⚠️ This rule is currently PAUSED (${source}). Automations will not execute.</div>"
+            }
+            
             input "btnRefresh", "button", title: "Refresh Data"
             
             if (motionSensors || triggerSwitches) {
@@ -79,9 +79,9 @@ def mainPage() {
                     }
                     
                     if ((overcastSwitch && overcastSwitch.currentValue("switch") == "on") || luxOverrideActive) {
-                        overrides << "<span style='color: purple;'>Contact/Shade Override Active (Overcast/Lux)</span>"
+                        overrides << "<span style='color: purple;'>Window/Shade Override Active (Overcast/Lux)</span>"
                     } else {
-                        overrides << "<span style='color: orange;'>Blocked by Open Window/Door/Shades</span>"
+                        overrides << "<span style='color: orange;'>Blocked by Open Window/Shade</span>"
                
                     }
                 }
@@ -295,12 +295,13 @@ def mainPage() {
                 }
             }
             
-            paragraph "<b>Custom Contact, Shade & Lux Logic</b>"
-            input "contactSensors", "capability.contactSensor", title: "Do NOT turn on if these contacts are OPEN", multiple: true, required: false
-            input "shadeSensors", "capability.contactSensor", title: "Do NOT turn on if these shades (Contacts) are OPEN", multiple: true, required: false
-            input "overcastSwitch", "capability.switch", title: "Virtual Overcast Switch (Ignores open contacts/shades)", required: false
+            paragraph "<b>Window & Shade Logic</b>"
+            input "contactSensors", "capability.contactSensor", title: "Window Contacts (Do NOT turn on if OPEN)", multiple: true, required: false
+            input "shadeSensors", "capability.contactSensor", title: "Shade Contacts (Do NOT turn on if OPEN)", multiple: true, required: false
+            input "turnOffOnContactOpen", "bool", title: "Force Lights OFF if Window/Shade Contacts OPEN?", defaultValue: false, description: "If enabled, opening a window or shade while lights are ON (and Overcast/Lux is OFF) will instantly turn them off."
+            input "overcastSwitch", "capability.switch", title: "Virtual Overcast Switch (Ignores open windows/shades)", required: false
             
-            input "useLuxContactOverride", "bool", title: "Enable Lux Override for Open Contacts/Shades?", defaultValue: false, submitOnChange: true
+            input "useLuxContactOverride", "bool", title: "Enable Lux Override for Open Windows/Shades?", defaultValue: false, submitOnChange: true
             if (useLuxContactOverride) {
                 input "luxContactVar", "string", title: "Hub Variable for Lux Threshold (Optional)", required: false
                 input "luxContactThreshold", "number", title: "Static Lux Threshold", required: false
@@ -620,7 +621,48 @@ def evaluateKeepAliveOff() {
 
 def restrictionHandler(evt) {
     if (isPaused()) return
-    // If a shade closes, overcast turns on, or a contact closes while motion is active, evaluate turning the lights on immediately
+    
+    // NEW LOGIC: FORCE OFF ON CONTACT OPEN
+    if (turnOffOnContactOpen && evt.value == "open") {
+        def isContactEvent = contactSensors?.any { it.id == evt.device.id } || shadeSensors?.any { it.id == evt.device.id }
+        
+        if (isContactEvent) {
+            def overcastActive = (overcastSwitch?.currentValue("switch") == "on")
+            def luxOverrideActive = false
+            
+            // Respect the Lux Bypass if enabled
+            if (useLuxContactOverride && luxSensor) {
+                def curLux = luxSensor.currentValue("illuminance") ?: 0
+                def targetLux = luxContactThreshold ?: 0
+                if (luxContactVar) {
+                    def hVar = getGlobalVar(luxContactVar)
+                    if (hVar != null) targetLux = hVar.value.toInteger()
+                }
+                if (curLux < targetLux) luxOverrideActive = true
+            }
+            
+            // Only proceed if overrides are NOT active
+            if (!overcastActive && !luxOverrideActive) {
+                def isLightOn = (switches?.any { it.currentValue("switch") == "on" } || 
+                                 dimmers?.any { it.currentValue("switch") == "on" } || 
+                                 colorBulbs?.any { it.currentValue("switch") == "on" })
+                                 
+                if (isLightOn) {
+                    debugLog("Contact opened and overcast is off. Forcing lights OFF.")
+                    atomicState.appTurnedOn = false
+                    atomicState.manuallyTurnedOn = false
+                    atomicState.arrivalActive = false
+                    atomicState.warningPhase = false
+                    cancelAllTurnOffTimers()
+                    recordTurnOffTime()
+                    sendOffCommands()
+                    return // Abort further evaluation so they stay off
+                }
+            }
+        }
+    }
+
+    // Existing Logic: If a shade closes, overcast turns on, or a contact closes while motion is active, evaluate turning the lights on immediately
     if (isPrimaryActive()) evaluateTurnOn()
 }
 
@@ -731,6 +773,7 @@ def evaluateTurnOn() {
         }
     }
     
+    // THE BUILT-IN "DON'T TURN ON" LOGIC
     if (isOpen && overcastSwitch?.currentValue("switch") != "on" && !luxOverrideActive) {
         if (enableActiveLuxPolling && luxSensor) runIn(60, "pollLuxWhileActive")
         return
@@ -1201,9 +1244,9 @@ def getZoneStatus() {
             }
             
             if (overcastActive || luxOverrideActive) {
-                statusText = "Occupied (Contact/Shade Bypass Active)"
+                statusText = "Occupied (Window/Shade Bypass Active)"
             } else {
-                statusText = "<span style='color: orange;'>Blocked (Open Window/Door/Shades)</span>"
+                statusText = "<span style='color: orange;'>Blocked (Open Window/Shade)</span>"
             }
         }
         else if (atomicState.warningPhase) statusText = "<span style='color: orange;'>Warning Dim Phase</span>"
