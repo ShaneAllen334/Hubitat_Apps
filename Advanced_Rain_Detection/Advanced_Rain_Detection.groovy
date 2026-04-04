@@ -224,10 +224,12 @@ def renderTableHTML() {
 def renderRadarHTML() {
     def lat = settings.manualLat ?: (location.latitude ?: 39.8283)
     def lon = settings.manualLon ?: (location.longitude ?: -98.5795)
+    def radarWind = isMetric() ? "km%2Fh" : "mph"
+    def radarTemp = isMetric() ? "%C2%B0C" : "%C2%B0F"
 
     return """
     <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">Live Regional Radar</h4>
-    <iframe width="100%" height="350" src="https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=8&level=surface&overlay=radar&menu=&message=&marker=true&calendar=&pressure=&type=map&location=coordinates&detail=&detailLat=${lat}&detailLon=${lon}&metricWind=mph&metricTemp=%C2%B0F&radarRange=-1" frameborder="0" style="border-radius: 4px;"></iframe>
+    <iframe width="100%" height="350" src="https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=8&level=surface&overlay=radar&menu=&message=&marker=true&calendar=&pressure=&type=map&location=coordinates&detail=&detailLat=${lat}&detailLon=${lon}&metricWind=${radarWind}&metricTemp=${radarTemp}&radarRange=-1" frameborder="0" style="border-radius: 4px;"></iframe>
     """
 }
 
@@ -314,11 +316,14 @@ def mainPage() {
                 def reasoning = state.logicReasoning ?: "Waiting for initial sensor readings..."
 
                 // Formatting
+                def speedUnit = isMetric() ? "km/h" : "mph"
+                def distUnit = isMetric() ? "km" : "mi"
+
                 def envDisplay = "<b>Temp:</b> ${String.format('%.1f', t)}°<br><b>Humidity:</b> ${String.format('%.1f', h)}%<br><b>Pressure:</b> ${String.format('%.2f', p)}<br><b>Rain Rate:</b> ${r}/hr"
                 if (sensorLux) envDisplay += "<br><b>Solar/Lux:</b> ${lux}"
-                if (sensorWind) envDisplay += "<br><b>Wind:</b> ${wind} mph"
+                if (sensorWind) envDisplay += "<br><b>Wind:</b> ${wind} ${speedUnit}"
                 if (sensorWindDir) envDisplay += " @ ${windDir}°"
-                if (sensorLightning && strikes > 0) envDisplay += "<br><b>Lightning:</b> ${strikes} strikes (Closest: ${recentLightDistStr} mi)"
+                if (sensorLightning && strikes > 0) envDisplay += "<br><b>Lightning:</b> ${strikes} strikes (Closest: ${recentLightDistStr} ${distUnit})"
                 else if (sensorLightning) envDisplay += "<br><b>Lightning:</b> None recent"
        
                 def leakWetStr = "DRY"
@@ -397,7 +402,7 @@ def mainPage() {
                                 apiDisplay += "<div style='background:white; border:1px solid #ccc; padding:4px 8px; border-radius:3px; text-align:center; flex:1; min-width:60px;'>"
                                 apiDisplay += "<div style='font-size:11px; color:#555;'>${hr.time}</div>"
                                 apiDisplay += "<div style='font-weight:bold; color:${hrColor};'>${hr.prob}%</div>"
-                                apiDisplay += "<div style='font-size:10px; color:#888;'>${hr.rain}\"</div>"
+                                apiDisplay += "<div style='font-size:10px; color:#888;'>${hr.rain}</div>"
                                 apiDisplay += "</div>"
                             }
                         } else {
@@ -406,7 +411,7 @@ def mainPage() {
                         apiDisplay += "</div>"
                         def targetLat = settings.manualLat ?: location.latitude
                         def targetLon = settings.manualLon ?: location.longitude
-                        apiDisplay += "<span style='font-size: 11px; color: #666;'><i>Lat: ${targetLat}, Lon: ${targetLon} | Max Probability: ${omProb}% | Total Expected Vol: ${state.omRain ?: "0.00"} in/mm (Last sync: ${state.omLastSync ?: "Pending"})</i></span>"
+                        apiDisplay += "<span style='font-size: 11px; color: #666;'><i>Lat: ${targetLat}, Lon: ${targetLon} | Max Probability: ${omProb}% | Total Expected Vol: ${state.omRain ?: "0.00"} (Last sync: ${state.omLastSync ?: "Pending"})</i></span>"
                     }
  
                     apiDisplay += "</div>"
@@ -417,7 +422,7 @@ def mainPage() {
                 // --- Rainfall History, Graph & Record Banner ---
                 def recordInfo = state.recordRain ?: [date: "None", amount: 0.0]
                 def sevenDayList = state.sevenDayRain ?: []
-           
+            
                 def historyDisplay = "<div><b>🏆 All-Time Record:</b> <span style='color:blue; font-weight:bold; font-size: 15px;'>${recordInfo.amount}</span> <i style='color:#555;'>(${recordInfo.date})</i></div>"
                 historyDisplay += "<div style='margin-top:5px;'><b>Current Week:</b> ${rainWeek} | <b>Today's Total:</b> ${state.currentDayRain ?: 0.0}</div>"
                 
@@ -605,7 +610,7 @@ def configPage() {
             input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor (Detects frontal passages)", required: false
             input "sensorLightning", "capability.sensor", title: "Lightning Detector", required: false
             if (sensorLightning) {
-                input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
+                 input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
             }
         }
 
@@ -619,7 +624,7 @@ def configPage() {
 
         section("<b>Precipitation & Accumulation Sensors (Optional)</b>", hideable: true, hidden: true) {
             paragraph "<i>Select your physical rain gauges to track daily and weekly accumulation, and to provide hard confirmation when predicting rain.</i>"
-            input "sensorRain", "capability.sensor", title: "Rain Rate Sensor (in/hr or mm/hr)", required: false
+            input "sensorRain", "capability.sensor", title: "Rain Rate Sensor", required: false
             input "sensorRainDaily", "capability.sensor", title: "Daily Rain Accumulation Sensor", required: false
             input "sensorRainWeekly", "capability.sensor", title: "Weekly Rain Accumulation Sensor", required: false
         }
@@ -631,7 +636,7 @@ def configPage() {
             input "switchRaining", "capability.switch", title: "Heavy Rain Switch (Mutually Exclusive)", required: false
             
             input "debounceMins", "number", title: "State Debounce Time (Minutes)", required: true, defaultValue: 5, description: "Prevents rapidly flipping back and forth between states. Upgrading to worse weather is instant; downgrading or clearing will wait this long."
-            input "heavyRainThreshold", "decimal", title: "Heavy Rain Rate Threshold (in/hr or mm/hr)", required: true, defaultValue: 0.1
+            input "heavyRainThreshold", "decimal", title: "Heavy Rain Rate Threshold", required: true, defaultValue: 0.1
         }
         
         section("<b>Notifications & Setpoints</b>", hideable: true, hidden: true) {
@@ -728,6 +733,9 @@ def initialize() {
     subscribeMulti(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], "stdHandler")
     if (sensorLeak) subscribe(sensorLeak, "water", "stdHandler")
     
+    // Listen for mode changes to handle delayed audio alerts
+    subscribe(location, "mode", "modeChangeHandler")
+    
     // Polling Schedulers
     unschedule("pollSensors")
     if (enablePolling && pollInterval) {
@@ -751,6 +759,11 @@ def initialize() {
     evaluateWeather()
 }
 
+// === UNIT DETECTION HELPER ===
+def isMetric() {
+    return location.temperatureScale == "C"
+}
+
 // === OPEN-METEO API INTEGRATION (Smart Offline/Anti-Noise Logic) ===
 def fetchOpenMeteoData() {
     def targetLat = settings.manualLat ?: location.latitude
@@ -761,8 +774,10 @@ def fetchOpenMeteoData() {
         return
     }
 
+    def unitParams = isMetric() ? "" : "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+    
     def params = [
-        uri: "https://api.open-meteo.com/v1/forecast?latitude=${targetLat}&longitude=${targetLon}&hourly=precipitation_probability,rain&forecast_hours=6&timezone=auto",
+        uri: "https://api.open-meteo.com/v1/forecast?latitude=${targetLat}&longitude=${targetLon}&hourly=precipitation_probability,rain&forecast_hours=6&timezone=auto${unitParams}",
         timeout: 10
     ]
 
@@ -783,7 +798,7 @@ def openMeteoHandler(response, data) {
         def json = response.json
         if (json && json.hourly) {
             if (state.apiOffline) {
-                logAction("🌐 Open-Meteo API connection restored. Resuming online synergy.")
+                 logAction("🌐 Open-Meteo API connection restored. Resuming online synergy.")
             }
             state.apiConsecutiveFails = 0
             state.apiOffline = false
@@ -811,12 +826,13 @@ def openMeteoHandler(response, data) {
                 if (p > maxProb) maxProb = p
                 totalRain += r
                 
-                hourlyData << [time: shortTime, prob: p, rain: String.format("%.2f", r)]
+                def unitSuffix = isMetric() ? "mm" : "\""
+                hourlyData << [time: shortTime, prob: p, rain: "${String.format("%.2f", r)}${unitSuffix}"]
             }
             
             state.omHourlyData = hourlyData
             state.omProb = maxProb
-            state.omRain = String.format("%.2f", totalRain)
+            state.omRain = String.format("%.2f", totalRain) + (isMetric() ? " mm" : " in")
             state.omLastSync = new Date().format("h:mm a", location.timeZone)
             
             evaluateWeather()
@@ -905,12 +921,12 @@ void appButtonHandler(btn) {
         state.sevenDayRain = []
         state.recordRain = [date: "None", amount: 0.0]
         state.currentDayRain = 0.0
-       
+        
         state.notifiedProb = false
         state.confidenceScore = 0
         state.confidenceReasoning = "System reset."
         state.smoothedTemp = null
-     
+      
         safeOff(switchSprinkling)
         safeOff(switchRaining)
         safeOff(switchProbable)
@@ -977,24 +993,24 @@ def logProbabilityHistory() {
 }
 
 // === METEOROLOGICAL CALCULATIONS ===
-def calculateVPD(tF, rh) {
-    def tC = (tF - 32.0) * (5.0 / 9.0)
+def calculateVPD(tVal, rh) {
+    def tC = isMetric() ? tVal : (tVal - 32.0) * (5.0 / 9.0)
     def svp = 0.61078 * Math.exp((17.27 * tC) / (tC + 237.3))
     def avp = svp * (rh / 100.0)
     return svp - avp
 }
 
-def calculateDewPoint(tF, rh) {
-    def tC = (tF - 32.0) * (5.0 / 9.0)
+def calculateDewPoint(tVal, rh) {
+    def tC = isMetric() ? tVal : (tVal - 32.0) * (5.0 / 9.0)
     def gamma = Math.log(rh / 100.0) + ((17.62 * tC) / (243.12 + tC))
     def dpC = (243.12 * gamma) / (17.62 - gamma)
-    return (dpC * (9.0 / 5.0)) + 32.0
+    return isMetric() ? dpC : (dpC * (9.0 / 5.0)) + 32.0
 }
 
-def calculateWetBulb(tF, rh) {
-    def tC = (tF - 32.0) * (5.0 / 9.0)
+def calculateWetBulb(tVal, rh) {
+    def tC = isMetric() ? tVal : (tVal - 32.0) * (5.0 / 9.0)
     def twC = tC * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) + Math.atan(tC + rh) - Math.atan(rh - 1.676331) + 0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) - 4.686035
-    return (twC * (9.0 / 5.0)) + 32.0
+    return isMetric() ? twC : (twC * (9.0 / 5.0)) + 32.0
 }
 
 def getTrendData(hist, minTimeHr) {
@@ -1074,6 +1090,29 @@ def evaluateWeather() {
     if (t == null) t = 0.0
     if (h == null) h = 0.0
     if (p == null) p = 0.0
+    
+    // === DYNAMIC UNIT THRESHOLDS ===
+    def metric = isMetric()
+    def tDropAnomaly = metric ? 1.7 : 3.0
+    def spreadCrit = metric ? 0.8 : 1.5
+    def spreadTight = metric ? 2.2 : 4.0
+    def spreadDew = metric ? 1.7 : 3.0
+    def sTrendConv = metric ? -1.1 : -2.0
+    def sTrendRapid = metric ? -1.7 : -3.0
+    def tTrendRapid = metric ? -1.7 : -3.0
+    def tTrendSevere = metric ? -2.2 : -4.0
+    def wbDiff = metric ? 1.7 : 3.0
+    def pDropSevere = metric ? -1.35 : -0.04
+    def pDropMod = metric ? -0.68 : -0.02
+    def pRiseStrong = metric ? 1.0 : 0.03
+    def pDropMild = metric ? -0.34 : -0.01
+    def pRiseMild = metric ? 0.68 : 0.02
+    def windCalm = metric ? 4.8 : 3.0
+    def windSpike = metric ? 16.0 : 10.0
+    def windHigh = metric ? 24.0 : 15.0
+    def windMult = metric ? 0.0186 : 0.03
+    def lightNear = metric ? 16.0 : 10.0
+    def lightAppr = metric ? 40.0 : 25.0
 
     // --- Thermal Smoothing (Sun-Spike Protection) ---
     def smoothedAnomaly = false
@@ -1081,7 +1120,7 @@ def evaluateWeather() {
         def lastT = state.smoothedTemp != null ? state.smoothedTemp : t
         def delta = Math.abs(t - lastT)
         
-        if (delta > 3.0 && state.tempHistory?.size() > 0) {
+        if (delta > tDropAnomaly && state.tempHistory?.size() > 0) {
             t = lastT + ((t - lastT) * 0.3)
             smoothedAnomaly = true
         }
@@ -1140,8 +1179,8 @@ def evaluateWeather() {
     
     if (leakWet && settings.enableDewRejection != false) {
         def checkLux = sensorLux ? (luxVal < 100) : true
-        def checkWind = sensorWind ? (windVal < 3.0) : true
-        if (checkLux && checkWind && dpSpread <= 3.0) {
+        def checkWind = sensorWind ? (windVal < windCalm) : true
+        if (checkLux && checkWind && dpSpread <= spreadDew) {
             leakWet = false
             dewRejectionActive = true
         }
@@ -1149,7 +1188,7 @@ def evaluateWeather() {
     state.dewRejectionActive = dewRejectionActive
     
     def evapIndex = vpd
-    if (sensorWind) evapIndex += (windVal * 0.03) 
+    if (sensorWind) evapIndex += (windVal * windMult) 
     if (sensorLux) evapIndex += (luxVal / 80000.0)
   
     if (r > 0 || leakWet) state.dryingPotential = "<span style='color:blue;'>Raining (No Drying)</span>"
@@ -1190,12 +1229,12 @@ def evaluateWeather() {
 
         if (settings.enableDPLogic != false) {
             totalModelsEnabled++
-            if (dpSpread <= 1.5) { probability += 40; reasoning << "Critical: Dew Point spread near 0° (Air saturated)"; activeFactors++; activeFactorNames << "Dew Point" }
-            else if (dpSpread <= 4.0) { probability += 20; reasoning << "Dew Point spread tightening (<4°)"; activeFactors++; activeFactorNames << "Dew Point" }
-            if (sTrendData.rate <= -3.0) { probability += 30; reasoning << "Spread Velocity Convergence! Atmosphere saturating rapidly"; activeFactors++; activeFactorNames << "Squeeze Velocity" }
+            if (dpSpread <= spreadCrit) { probability += 40; reasoning << "Critical: Dew Point spread near 0° (Air saturated)"; activeFactors++; activeFactorNames << "Dew Point" }
+            else if (dpSpread <= spreadTight) { probability += 20; reasoning << "Dew Point spread tightening"; activeFactors++; activeFactorNames << "Dew Point" }
+            if (sTrendData.rate <= sTrendRapid) { probability += 30; reasoning << "Spread Velocity Convergence! Atmosphere saturating rapidly"; activeFactors++; activeFactorNames << "Squeeze Velocity" }
         }
         
-        // NEW: Fixed VPD Penalty Block
+        // Fixed VPD Penalty Block
         if (settings.enableVPDLogic != false) {
             totalModelsEnabled++
             if (vpd < 0.2) { probability += 20; reasoning << "VPD extremely low"; activeFactors++; activeFactorNames << "VPD" }
@@ -1210,14 +1249,14 @@ def evaluateWeather() {
         
         if (settings.enableWetBulbLogic != false) {
             totalModelsEnabled++
-            if (tTrendData.rate <= -4.0 && (t - wb) <= 3.0) { probability += 40; reasoning << "Rain Shaft Detected! Temp crashing toward Wet-Bulb"; activeFactors++; activeFactorNames << "Wet-Bulb Cooling" }
+            if (tTrendData.rate <= tTrendSevere && (t - wb) <= wbDiff) { probability += 40; reasoning << "Rain Shaft Detected! Temp crashing toward Wet-Bulb"; activeFactors++; activeFactorNames << "Wet-Bulb Cooling" }
         }
         
         if (settings.enablePressureLogic != false) {
             totalModelsEnabled++
-            if (pTrendData.rate <= -0.04) { probability += 30; reasoning << "Pressure dropping rapidly"; activeFactors++; activeFactorNames << "Barometric" }
-            else if (pTrendData.rate <= -0.02) { probability += 15; reasoning << "Pressure falling"; activeFactors++; activeFactorNames << "Barometric" }
-            else if (pTrendData.rate > 0.03) { probability -= 30; reasoning << "Pressure rising strongly (Clearing)" }
+            if (pTrendData.rate <= pDropSevere) { probability += 30; reasoning << "Pressure dropping rapidly"; activeFactors++; activeFactorNames << "Barometric" }
+            else if (pTrendData.rate <= pDropMod) { probability += 15; reasoning << "Pressure falling"; activeFactors++; activeFactorNames << "Barometric" }
+            else if (pTrendData.rate > pRiseStrong) { probability -= 30; reasoning << "Pressure rising strongly (Clearing)" }
         }
         
         if (settings.enableCloudLogic != false && sensorLux) {
@@ -1233,8 +1272,8 @@ def evaluateWeather() {
         
         if (settings.enableWindLogic != false && sensorWind) {
             totalModelsEnabled++
-            if (wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
-                probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
+            if (wTrendData.diff >= windSpike && state.windHistory.last()?.value > windHigh) {
+                 probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
             }
         }
 
@@ -1245,28 +1284,28 @@ def evaluateWeather() {
             }
         }
         
-        // NEW: Fixed Lightning Logic Block using closestLightning
+        // Fixed Lightning Logic Block
         if (settings.enableLightningLogic != false && sensorLightning && closestLightning != 999.0) {
             totalModelsEnabled++
             def reqStrikes = settings.lightningStrikeThreshold ?: 3
             if (strikeCount >= reqStrikes) {
-                if (closestLightning <= 10.0) { probability += 50; reasoning << "Critical: Lightning nearby (<= 10 miles)"; activeFactors++; activeFactorNames << "Lightning" }
-                else if (closestLightning <= 25.0) { probability += 25; reasoning << "Storms approaching (Lightning <= 25 miles)"; activeFactors++; activeFactorNames << "Lightning" }
+                if (closestLightning <= lightNear) { probability += 50; reasoning << "Critical: Lightning nearby"; activeFactors++; activeFactorNames << "Lightning" }
+                else if (closestLightning <= lightAppr) { probability += 25; reasoning << "Storms approaching"; activeFactors++; activeFactorNames << "Lightning" }
             }
         }
         
         // SYNERGY MULTIPLIERS
         if (settings.enableSynergyLogic != false) {
             totalModelsEnabled++
-            if (settings.enableDPLogic != false && settings.enablePressureLogic != false && sTrendData.rate <= -2.0 && pTrendData.rate <= -0.02) {
+            if (settings.enableDPLogic != false && settings.enablePressureLogic != false && sTrendData.rate <= sTrendConv && pTrendData.rate <= pDropMod) {
                 probability *= 1.3
                 reasoning << "SYNERGY: Squeeze Velocity + Barometric Drop (1.3x Multiplier)"
             }
-            if (settings.enableWetBulbLogic != false && settings.enableWindShiftLogic != false && tTrendData.rate <= -3.0 && sensorWindDir && state.windShiftDetected) {
+            if (settings.enableWetBulbLogic != false && settings.enableWindShiftLogic != false && tTrendData.rate <= tTrendRapid && sensorWindDir && state.windShiftDetected) {
                 probability *= 1.2
                 reasoning << "SYNERGY: Temp Drop + Wind Shift (1.2x Multiplier)"
             }
-            // NEW: Severe Squall Synergy
+            // Severe Squall Synergy
             if (settings.enableLightningLogic != false && settings.enableWindShiftLogic != false && sensorWindDir && state.windShiftDetected && strikeCount > 0) {
                 probability *= 1.3
                 reasoning << "SYNERGY: Lightning + Frontal Wind Shift (1.3x Multiplier)"
@@ -1285,7 +1324,7 @@ def evaluateWeather() {
         
         // --- Post-Rain / Dew Saturation Penalty ---
         // Prevents the "Rain Probable" switch from getting stuck ON after a storm due to ground evaporation
-        if (r == 0 && !leakWet && pTrendData.rate > -0.02 && dpSpread <= 4.0) {
+        if (r == 0 && !leakWet && pTrendData.rate > pDropMod && dpSpread <= spreadTight) {
             probability -= 25
             reasoning << "Evaporation Penalty (Stable Pressure + Saturated Air)"
         }
@@ -1364,8 +1403,8 @@ def evaluateWeather() {
         safeOn(switchProbable)
         if (!state.notifiedProb) {
             logAction("Probability threshold (${probThreshold}%) reached.")
-            if (notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(probability)}%.")
-            if (audioProbable) playAudioTrack(audioProbable)
+            if (settings.notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(probability)}%.")
+            if (settings.audioProbable) playAudioTrack(settings.audioProbable)
             state.notifiedProb = true
         }
     } else if (probability < (probThreshold - 15) || isStale) {
@@ -1386,7 +1425,7 @@ def evaluateWeather() {
             targetState = "Sprinkling"
             if (leakWet && r <= 0) reasoning << "Leak Sensor is WET (Instant detection)."
             else reasoning << "Rain Rate (${r}) indicates Sprinkling."
-        } else if (probability >= 90 && dpSpread <= 1.5) {
+        } else if (probability >= 90 && dpSpread <= spreadCrit) {
             targetState = "Sprinkling"
             reasoning << "Predictive Active: Total saturation and pressure drop indicate mist/drizzle before bucket tip."
         }
@@ -1395,9 +1434,9 @@ def evaluateWeather() {
     if (isStale) {
         state.expectedClearTime = "Unknown (Sensors Offline)"
     } else if (targetState != "Clear") {
-        if (pTrendData.rate > 0.02 || vpd > 0.4 || dpSpread > 4.0) {
+        if (pTrendData.rate > pRiseMild || vpd > 0.4 || dpSpread > spreadTight) {
             state.expectedClearTime = "~15-30 mins (Trends improving rapidly)"
-        } else if (pTrendData.rate < -0.01 || dpSpread < 1.0) {
+        } else if (pTrendData.rate < pDropMild || dpSpread < 1.0) {
             state.expectedClearTime = "1+ Hour (Conditions worsening/stagnant)"
         } else {
             state.expectedClearTime = "~45 mins (Stable rain profile)"
@@ -1434,19 +1473,19 @@ def evaluateWeather() {
         if (targetState == "Raining") {
             safeOff(switchSprinkling)
             safeOn(switchRaining)
-            if (notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%")
-            if (audioRaining) playAudioTrack(audioRaining)
+            if (settings.notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%")
+            if (settings.audioRaining) playAudioTrack(settings.audioRaining)
         } 
         else if (targetState == "Sprinkling") {
             safeOff(switchRaining)
             safeOn(switchSprinkling)
-            if (notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%")
-            if (audioSprinkling) playAudioTrack(audioSprinkling)
+            if (settings.notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%")
+            if (settings.audioSprinkling) playAudioTrack(settings.audioSprinkling)
         } 
         else if (targetState == "Clear") {
             safeOff(switchRaining)
             safeOff(switchSprinkling)
-            if (notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.")
+            if (settings.notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.")
         }
     }
 
@@ -1486,6 +1525,8 @@ def evaluateWeather() {
 def updateChildDevice() {
     def child = getChildDevice("RainDet-${app.id}")
     if (child) {
+        def distUnit = isMetric() ? "km" : "mi"
+        
         child.sendEvent(name: "weatherState", value: state.weatherState)
         child.sendEvent(name: "rainProbability", value: state.rainProbability, unit: "%")
         child.sendEvent(name: "confidenceScore", value: state.confidenceScore, unit: "%")
@@ -1496,7 +1537,7 @@ def updateChildDevice() {
         def rawDrying = state.dryingPotential?.replaceAll("<[^>]*>", "") ?: "N/A"
         child.sendEvent(name: "dryingPotential", value: rawDrying)
         child.sendEvent(name: "timeToDry", value: state.timeToDryStr ?: "N/A")
-       
+        
         child.sendEvent(name: "vpd", value: String.format("%.2f", state.currentVPD ?: 0.0), unit: "kPa")
         child.sendEvent(name: "wetBulb", value: String.format("%.1f", state.currentWetBulb ?: 0.0), unit: "°")
         child.sendEvent(name: "dewPoint", value: String.format("%.1f", state.currentDewPoint ?: 0.0), unit: "°")
@@ -1521,7 +1562,7 @@ def updateChildDevice() {
                 state.lightningHistory.each { if (it.value < closest) closest = it.value }
             }
             child.sendEvent(name: "lightningStrikeCount", value: strikes)
-            child.sendEvent(name: "lightningClosestDistance", value: closest, unit: "mi")
+            child.sendEvent(name: "lightningClosestDistance", value: closest, unit: distUnit)
         }
         
         child.sendEvent(name: "currentDayRain", value: state.currentDayRain ?: 0.0)
@@ -1545,21 +1586,28 @@ def safeOff(dev) {
 }
 
 def sendNotification(msg) {
-    if (notifyDevices) {
-        notifyDevices.each { it.deviceNotification(msg) }
+    if (settings.notifyDevices) {
+        settings.notifyDevices.each { it.deviceNotification(msg) }
         logAction("Notification Sent: ${msg}")
     }
 }
 
 // === AUDIO PLAYBACK LOGIC ===
 def playAudioTrack(trackNum) {
-    if (audioModes && !audioModes.contains(location.mode)) {
+    if (settings.audioModes && !settings.audioModes.contains(location.mode)) {
         logDebug("Audio playback skipped: Current mode (${location.mode}) is not in allowed audio modes.")
+        state.missedAudioTrack = trackNum 
         return
     }
 
-    if (audioDevices && trackNum) {
-        audioDevices.each { dev ->
+    state.missedAudioTrack = null 
+
+    if (settings.audioDevices && trackNum) {
+        def devList = settings.audioDevices instanceof List ? settings.audioDevices : [settings.audioDevices]
+        devList.eachWithIndex { dev, index ->
+            if (index > 0) {
+                pauseExecution(1000)
+            }
             try {
                 if (dev.hasCommand("playSound")) {
                     dev.playSound(trackNum as Integer)
@@ -1575,6 +1623,39 @@ def playAudioTrack(trackNum) {
             }
         }
         logAction("Audio Action: Played track ${trackNum} on selected siren/speaker devices.")
+    }
+}
+
+// === DELAYED ALERT LOGIC ===
+def modeChangeHandler(evt) {
+    def newMode = evt.value
+    // If the new mode allows audio and we missed an announcement previously
+    if (settings.audioModes && settings.audioModes.contains(newMode)) {
+        if (state.missedAudioTrack) {
+            logAction("Mode changed to ${newMode}. Scheduling missed weather alert in 5 minutes.")
+            runIn(300, "playDelayedMissedAlert") // 300 seconds = 5 minutes
+        }
+    }
+}
+
+def playDelayedMissedAlert() {
+    def threshold = settings.notifyProbThreshold != null ? settings.notifyProbThreshold.toInteger() : 75
+    def trackToPlay = state.missedAudioTrack
+    
+    // Clear the memory so it doesn't loop
+    state.missedAudioTrack = null 
+    
+    // Check if the rain threat is STILL active before scaring anyone
+    if (state.rainProbability >= (threshold - 15) && trackToPlay) {
+        logAction("Executing delayed missed audio track: ${trackToPlay}")
+        playAudioTrack(trackToPlay)
+        
+        // Optionally resend a text notification if desired
+        if (settings.notifyDevices) {
+            sendNotification("Delayed Alert: Rain probability is currently ${state.rainProbability}%.")
+        }
+    } else {
+        logAction("Skipping delayed alert: Weather threat has passed.")
     }
 }
 
