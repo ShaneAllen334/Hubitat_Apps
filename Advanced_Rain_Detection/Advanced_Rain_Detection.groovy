@@ -120,7 +120,7 @@ def renderChartHTML() {
                     }
                 }
             });
-            
+
             // Chart 2: Mixed Graph for Wind & Lightning
             var ctx2 = canvas2.getContext('2d');
             window.myWindChart = new Chart(ctx2, {
@@ -303,7 +303,9 @@ def mainPage() {
                 
                 def rainDay = getFloat(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], 0.0)
                 def rainWeek = getFloat(sensorRainWeekly, ["rainWeekly", "weeklyrainin", "weeklyWater"], 0.0)
-                def leakWet = sensorLeak ? (sensorLeak.currentValue("water") == "wet") : false
+                
+                // MULTI-LEAK SENSOR LOGIC
+                def leakWet = [sensorLeak, sensorLeak2, sensorLeak3].any { it?.currentValue("water") == "wet" }
                 
                 // Fetch calculated data
                 def vpd = state.currentVPD ?: 0.0
@@ -338,12 +340,12 @@ def mainPage() {
                 else if (sensorLightning) envDisplay += "<br><b>Lightning:</b> None recent"
        
                 def leakWetStr = "DRY"
-                if (sensorLeak) {
+                if (sensorLeak || sensorLeak2 || sensorLeak3) {
                     if (state.dewRejectionActive) leakWetStr = "<span style='color:orange; font-weight:bold;'>DEW/IGNORED</span>"
                     else if (leakWet) leakWetStr = "<span style='color:blue; font-weight:bold;'>WET</span>"
                     else leakWetStr = "DRY"
                 }
-                if (sensorLeak) envDisplay += "<br><b>Drop Sensor:</b> ${leakWetStr}"
+                if (sensorLeak || sensorLeak2 || sensorLeak3) envDisplay += "<br><b>Drop Sensor:</b> ${leakWetStr}"
                 
                 def vpdColor = vpd < 0.5 ? "red" : (vpd < 1.0 ? "orange" : "green")
                 def spreadColor = dpSpread < 3.0 ? "red" : (dpSpread < 6.0 ? "orange" : "green")
@@ -610,9 +612,11 @@ def configPage() {
             }
         }
      
-        section("<b>Instant 'First Drop' Sensor</b>", hideable: true, hidden: true) {
-            paragraph "<i>Map a standard Z-Wave/Zigbee leak sensor placed outside to bypass tipping-bucket delays. Provides an instant 'Sprinkling' state the moment rain begins.</i>"
-            input "sensorLeak", "capability.waterSensor", title: "Instant Rain Sensor (e.g., exposed leak sensor)", required: false
+        section("<b>Instant 'First Drop' Sensors</b>", hideable: true, hidden: true) {
+            paragraph "<i>Map up to 3 standard Z-Wave/Zigbee leak sensors placed outside to bypass tipping-bucket delays. Provides an instant 'Sprinkling' state the moment rain begins.</i>"
+            input "sensorLeak", "capability.waterSensor", title: "Instant Rain Sensor 1 (e.g., exposed leak sensor)", required: false
+            input "sensorLeak2", "capability.waterSensor", title: "Instant Rain Sensor 2", required: false
+            input "sensorLeak3", "capability.waterSensor", title: "Instant Rain Sensor 3", required: false
         }
 
         section("<b>Advanced Prediction Sensors (Optional)</b>", hideable: true, hidden: true) {
@@ -622,7 +626,7 @@ def configPage() {
             input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor (Detects frontal passages)", required: false
             input "sensorLightning", "capability.sensor", title: "Lightning Detector", required: false
             if (sensorLightning) {
-                 input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
+                input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
             }
         }
 
@@ -743,7 +747,11 @@ def initialize() {
     subscribeMulti(sensorLightning, ["lightningDistance", "distance"], "lightningHandler")
     subscribeMulti(sensorRain, ["rainRate", "hourlyrainin", "precipRate", "hourlyRain"], "stdHandler")
     subscribeMulti(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], "stdHandler")
-    if (sensorLeak) subscribe(sensorLeak, "water", "stdHandler")
+    
+    // Subscribing to multi-leak sensors safely
+    [sensorLeak, sensorLeak2, sensorLeak3].each { dev ->
+        if (dev) subscribe(dev, "water", "stdHandler")
+    }
     
     // Listen for mode changes to handle delayed audio alerts
     subscribe(location, "mode", "modeChangeHandler")
@@ -754,6 +762,7 @@ def initialize() {
         def safeInterval = pollInterval.toInteger()
         if (safeInterval < 1) safeInterval = 1
         if (safeInterval > 59) safeInterval = 59
+        
         schedule("0 */${safeInterval} * ? * *", "pollSensors")
         logAction("Active polling scheduled every ${safeInterval} minutes.")
     }
@@ -933,7 +942,7 @@ void appButtonHandler(btn) {
         state.sevenDayRain = []
         state.recordRain = [date: "None", amount: 0.0]
         state.currentDayRain = 0.0
-        
+       
         state.notifiedProb = false
         state.confidenceScore = 0
         state.confidenceReasoning = "System reset."
@@ -1052,7 +1061,7 @@ def evaluateWeather() {
  
         if (hist.size() > 7) hist = hist[0..6]
         state.sevenDayRain = hist
-        
+  
         def record = state.recordRain ?: [date: "None", amount: 0.0]
         if (yesterdayTotal > (record.amount ?: 0.0)) {
             state.recordRain = [date: state.currentDateStr, amount: yesterdayTotal]
@@ -1186,7 +1195,8 @@ def evaluateWeather() {
         if (shift >= 45.0) state.windShiftDetected = true
     }
     
-    def leakWet = sensorLeak ? (sensorLeak.currentValue("water") == "wet") : false
+    // Evaluate MULTI-LEAK status
+    def leakWet = [sensorLeak, sensorLeak2, sensorLeak3].any { it?.currentValue("water") == "wet" }
     def dewRejectionActive = false
     
     if (leakWet && settings.enableDewRejection != false) {
@@ -1285,7 +1295,7 @@ def evaluateWeather() {
         if (settings.enableWindLogic != false && sensorWind) {
             totalModelsEnabled++
             if (wTrendData.diff >= windSpike && state.windHistory.last()?.value > windHigh) {
-                 probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
+                  probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
             }
         }
 
@@ -1367,7 +1377,7 @@ def evaluateWeather() {
     if (sensorLux) conf += 5
     if (sensorWind) conf += 5
     if (sensorWindDir) conf += 5
-    if (sensorLeak) conf += 5
+    if (sensorLeak || sensorLeak2 || sensorLeak3) conf += 5
     if (sensorRain) conf += 5
     if (settings.enableOpenMeteo != false && !state.apiOffline) conf += 5
     
@@ -1627,7 +1637,7 @@ def playAudioTrack(trackNum) {
                     dev.playTrack(trackNum.toString())
                 } else if (dev.hasCommand("chime")) {
                     dev.chime(trackNum as Integer)
-                } else {
+                 } else {
                     log.error "${dev.displayName} does not support standard audio/siren commands (playSound, playTrack, or chime)."
                 }
             } catch (e) {
