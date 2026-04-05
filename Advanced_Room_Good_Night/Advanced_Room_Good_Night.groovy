@@ -21,8 +21,8 @@ def mainPage() {
         section("<b>Live System Dashboard</b>") {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a real-time, top-down view of your home's sleep status, blocking devices, and individual room environments.</div>"
             input "refreshDataBtn", "button", title: "🔄 Refresh Data"
+            input "forceEvalBtn", "button", title: "⚡ Force Global Sync Evaluation"
             
-            // --- INJECT CLIMATE APP CSS STYLING ---
             def cssHTML = """
             <style>
                 .dash-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 15px; }
@@ -34,7 +34,6 @@ def mainPage() {
             </style>
             """
             
-            // --- GLOBAL SYNC STATUS PANEL ---
             def syncExplanation = "Global Mode Sync is currently <b>Disabled</b>."
             if (settings.enableGlobalMode) {
                 def activeBlockers = []
@@ -47,25 +46,25 @@ def mainPage() {
                 }
                 
                 if (activeBlockers.size() > 0) {
-                    def bList = activeBlockers.join(", ")
-                    syncExplanation = "<span style='color:#d9534f;'><b>⚠️ Night Mode Blocked By:</b> ${bList}</span>"
+                    syncExplanation = "<span style='color:#d9534f;'><b>⚠️ Night Mode Blocked By:</b> ${activeBlockers.join(", ")}</span>"
                 } else {
                     syncExplanation = "<span style='color:#28a745;'><b>✅ No Blocking Devices Active</b></span>"
                 }
                 
-                // Timer 1: Global Night Mode Sync
                 if (state.nightModeScheduledTime) {
                     def globalTimeSecs = Math.round((state.nightModeScheduledTime - now()) / 1000.0)
-                    if (globalTimeSecs > 60) {
-                        syncExplanation += "<br><span style='color:#007bff; margin-top:4px; display:inline-block;'><b>⏳ Global Night Mode Countdown:</b> ~${Math.round(globalTimeSecs / 60.0)} min(s) until Good Night.</span>"
-                    } else if (globalTimeSecs > 0) {
-                        syncExplanation += "<br><span style='color:#007bff; margin-top:4px; display:inline-block;'><b>⏳ Global Night Mode Countdown:</b> ${globalTimeSecs} sec(s) until Good Night.</span>"
-                    } else {
-                        syncExplanation += "<br><span style='color:#007bff; margin-top:4px; display:inline-block;'><b>⏳ Global Night Mode Countdown:</b> Executing...</span>"
-                    }
+                    syncExplanation += "<br><span style='color:#007bff; margin-top:4px; display:inline-block;'><b>⏳ Global Night Mode Countdown:</b> ${globalTimeSecs > 60 ? '~' + Math.round(globalTimeSecs / 60.0) + ' min(s)' : globalTimeSecs + ' sec(s)'} until Good Night.</span>"
+                } else {
+                    syncExplanation += "<br><span style='color:#007bff; margin-top:4px; display:inline-block;'><b>⏳ Global Night Mode Countdown:</b> Not Available</span>"
                 }
 
-                // Timer 2: Lead Room(s) Override
+                if (state.wakeModeScheduledTime) {
+                    def wakeTimeSecs = Math.round((state.wakeModeScheduledTime - now()) / 1000.0)
+                    syncExplanation += "<br><span style='color:#28a745; margin-top:4px; display:inline-block;'><b>⏳ Morning Wake Mode Countdown:</b> ${wakeTimeSecs > 60 ? '~' + Math.round(wakeTimeSecs / 60.0) + ' min(s)' : wakeTimeSecs + ' sec(s)'} until Wake Up.</span>"
+                } else {
+                    syncExplanation += "<br><span style='color:#28a745; margin-top:4px; display:inline-block;'><b>⏳ Morning Wake Mode Countdown:</b> Not Available</span>"
+                }
+
                 if (settings.enableLeadRoomOverride && state.overrideScheduledTime) {
                     def timeLeft = Math.round((state.overrideScheduledTime - now()) / 60000.0)
                     if (timeLeft > 0) {
@@ -74,13 +73,12 @@ def mainPage() {
                         syncExplanation += "<br><span style='color:#f39c12; margin-top:4px; display:inline-block;'><b>⏳ Lead Room(s) Timer:</b> Evaluation Pending...</span>"
                     }
                 } else if (settings.enableLeadRoomOverride) {
-                    syncExplanation += "<br><span style='color:#6c757d; margin-top:4px; display:inline-block;'><b>⏳ Lead Room(s) Timer:</b> Not Active</span>"
+                    syncExplanation += "<br><span style='color:#6c757d; margin-top:4px; display:inline-block;'><b>⏳ Lead Room(s) Timer:</b> Not Available</span>"
                 }
             }
             
             def dashHTML = cssHTML + "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff; margin-bottom: 15px; font-size: 13px;'><b>Global Sleep Sync:</b><br>${syncExplanation}</div>"
             
-            // --- INDIVIDUAL ROOM PANELS ---
             def hasConfiguredRooms = false
             for (int i = 1; i <= 4; i++) {
                 if (settings["enableRoom${i}"]) {
@@ -93,7 +91,6 @@ def mainPage() {
                     def cHum = hSensor ? hSensor.currentValue("humidity") : null
                     def sleepQuality = calculateSleepSuitability(cTemp, cHum)
                     
-                    // TONIGHT'S TRACK LOGIC
                     def tonightTrack = "Not Generated Yet"
                     def aType = settings["audioSourceType${i}"] ?: "uri"
                     if (aType == "uri" && state."nextUri${i}") {
@@ -107,7 +104,14 @@ def mainPage() {
                     }
                     
                     def sw = settings["roomSwitch${i}"]
-                    def isAsleep = sw?.currentValue("switch") == "on"
+                    def isAsleep = false
+                    if (settings["enableDualOccupant${i}"]) {
+                        def pSw = settings["partnerSwitch${i}"]
+                        isAsleep = (sw?.currentValue("switch") == "on" && pSw?.currentValue("switch") == "on")
+                    } else {
+                        isAsleep = (sw?.currentValue("switch") == "on")
+                    }
+                    
                     def titleColor = isAsleep ? "#2e154f" : "#007bff"
                     
                     def expCeiling = "App Released"
@@ -117,9 +121,9 @@ def mainPage() {
                     def targetSpeedDisp = "N/A"
                     
                     if (isAsleep) {
-                        def hasOnLights = settings["roomLightsOn${i}"] ? true : false
-                        expLights = hasOnLights ? "OFF / Bedtime Plugs ON" : "OFF"
-                        expAudio = "PLAYING (Unless Timer Ended)"
+                        def isWindingDown = state."windDownActive${i}"
+                        expLights = isWindingDown ? "Fading Out (Wind Down Active)" : (settings["roomLightsOn${i}"] ? "OFF / Bedtime Plugs ON" : "OFF")
+                        expAudio = isWindingDown ? "Fading Out (Wind Down Active)" : "PLAYING (Unless Timer Ended)"
                         
                         if (cTemp != null) {
                             def stdSet = settings["fanSetpoint${i}"]
@@ -167,7 +171,10 @@ def mainPage() {
                     </table>
                     
                     <table class="dash-table" style="margin-top: 0;">
-                        <thead><tr><th>Date</th><th>Recorded Sleep Duration</th></tr></thead>
+                        <thead>
+                            <tr><th colspan='2' style="background-color:#5a6268;">Sleep Analytics & History</th></tr>
+                            <tr><th>Date</th><th>Duration (Consistency Score: ${calculateConsistencyScore(state."sleepHistory${i}")})</th></tr>
+                        </thead>
                         <tbody>
                     """
                     
@@ -216,6 +223,15 @@ def mainPage() {
                 input "syncRooms", "enum", title: "Require these rooms to be Asleep", options: ["1":"Room 1", "2":"Room 2", "3":"Room 3", "4":"Room 4"], multiple: true, required: true
                 input "syncMotion", "capability.motionSensor", title: "Require NO motion on these sensors", multiple: true, required: false
                 input "blockingSwitches", "capability.switch", title: "Blocking Devices: Prevent Night Mode if ANY of these are ON (e.g. TV, Pinball)", multiple: true, required: false
+                
+                paragraph "<b>Safety Sweep (Optional Security Verification)</b>"
+                input "enableSafetySweep", "bool", title: "Verify Security before entering Night Mode", submitOnChange: true
+                if (enableSafetySweep) {
+                    input "sweepContacts", "capability.contactSensor", title: "Require these Doors/Windows to be CLOSED", multiple: true, required: false
+                    input "sweepLocks", "capability.lock", title: "Require these Doors to be LOCKED", multiple: true, required: false
+                    input "sweepSpeaker", "capability.speechSynthesis", title: "TTS Speaker for Warning Broadcasts", required: false
+                }
+                
                 input "nightStartTime", "time", title: "Between Start Time", required: true
                 input "nightEndTime", "time", title: "And End Time", required: true
                 input "targetNightMode", "mode", title: "Change House Mode to", required: true
@@ -249,6 +265,12 @@ def mainPage() {
                     input "roomName${i}", "text", title: "Custom Room Name", defaultValue: "Room ${i}", submitOnChange: true
                     input "roomSwitch${i}", "capability.switch", title: "${rName} Good Night Virtual Switch", required: true
                     
+                    input "enableDualOccupant${i}", "bool", title: "<b>Enable Multi-Occupant (Partner Sync)</b>", submitOnChange: true
+                    if (settings["enableDualOccupant${i}"]) {
+                        paragraph "<i>Room will only go to sleep when BOTH switches are ON, and will wake up if EITHER is turned OFF.</i>"
+                        input "partnerSwitch${i}", "capability.switch", title: "Partner Good Night Switch", required: true
+                    }
+                    
                     paragraph "<b>Good Night Toggle Button</b>"
                     input "gnButton${i}", "capability.pushableButton", title: "Toggle Button Device", required: false
                     input "gnButtonNum${i}", "number", title: "Button Number", required: false, defaultValue: 1
@@ -271,15 +293,16 @@ def mainPage() {
                     input "ceilingFanSpeed${i}", "capability.fanControl", title: "Ceiling Fan Speed Control", required: false
                     input "ceilingFanSetpoint${i}", "decimal", title: "Ceiling Fan Base Setpoint (°F)", required: false
                     input "fanSpeedDelta${i}", "decimal", title: "Degrees above setpoint to step up speed (Default: 1.0)", required: false, defaultValue: 1.0
-                    input "enableWiggle${i}", "bool", title: "Enable Hourly Wiggle for this specific fan (Requires Master Wiggle enabled globally)", defaultValue: true
+                    input "enableWiggle${i}", "bool", title: "Enable Hourly Wiggle for this specific fan", defaultValue: true
                     
                     paragraph "<b>2. Lighting & Shades</b>"
                     input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF", multiple: true, required: false
                     input "roomLightsOn${i}", "capability.switch", title: "Lights/Plugs to Turn ON (Turns OFF when waking)", multiple: true, required: false
-                    input "pauseLightingEnforcement${i}", "capability.switch", title: "Pause Lighting Enforcement Switch (Syncs with Sunrise App)", required: false
+                    input "pauseLightingEnforcement${i}", "capability.switch", title: "Pause Lighting Enforcement Switch", required: false
+                    input "romanceSwitch${i}", "capability.switch", title: "Romance / Override Switch (Stops 10-min cycle)", required: false
                     input "shadeContact${i}", "capability.contactSensor", title: "Shade Open/Close Contact Sensor", required: false
                     input "roomShade${i}", "capability.windowShade", title: "Window Shade to Close", required: false
-                    input "shadeHoldRelease${i}", "capability.switch", title: "Manual Hold Release Switch (Signals Shade Controller)", required: false
+                    input "shadeHoldRelease${i}", "capability.switch", title: "Manual Hold Release Switch", required: false
                     
                     paragraph "<b>Reading Light 1</b>"
                     input "enableReadingLight1_${i}", "bool", title: "Enable Reading Light 1?", submitOnChange: true
@@ -307,7 +330,7 @@ def mainPage() {
                     input "roomSpeakerPower${i}", "capability.switch", title: "Sonos Speaker Power Plug (Optional)", required: false
                     input "roomSpeaker${i}", "capability.musicPlayer", title: "Sonos Speaker", required: false
                     input "audioVolume${i}", "number", title: "Fixed Nighttime Volume (1-100)", required: false, defaultValue: 15
-                    input "audioTimer${i}", "number", title: "Sleep Timer: Stop audio after X minutes (Leave blank for continuous)", required: false
+                    input "audioTimer${i}", "number", title: "Sleep Timer: Stop audio after X minutes", required: false
                     
                     input "audioSourceType${i}", "enum", title: "Audio Source Type", options: ["uri":"Direct Audio URIs", "switch":"Sonos Favorite Virtual Switches"], defaultValue: "uri", submitOnChange: true
                     
@@ -323,6 +346,14 @@ def mainPage() {
                         input "audioSwitch${i}_3", "capability.switch", title: "Favorite Switch 3", required: false
                         input "audioSwitch${i}_4", "capability.switch", title: "Favorite Switch 4", required: false
                         input "audioSwitch${i}_5", "capability.switch", title: "Favorite Switch 5", required: false
+                    }
+                    
+                    paragraph "<b>4. Adaptive Wind Down (Fade Out)</b>"
+                    input "enableWindDown${i}", "bool", title: "<b>Enable Smooth Wind Down Transition</b>", submitOnChange: true
+                    if (settings["enableWindDown${i}"]) {
+                        paragraph "<i>Slowly fades audio volume and dims lights to zero over the specified timeframe when going to sleep.</i>"
+                        input "windDownDuration${i}", "number", title: "Wind Down Duration (Minutes)", defaultValue: 15, required: true
+                        input "windDownStartVol${i}", "number", title: "Starting Audio Volume (%)", defaultValue: 30, required: true
                     }
                 }
             }
@@ -340,6 +371,9 @@ def appButtonHandler(btn) {
     } else if (btn == "clearLogBtn") {
         state.eventLog = []
         logInfo("User manually cleared the command history log.")
+    } else if (btn == "forceEvalBtn") {
+        logInfo("User manually forced a Global Mode Sync re-evaluation.")
+        evaluateGlobalMode(null)
     }
 }
 
@@ -392,15 +426,12 @@ def updated() {
 def initialize() {
     if (!state.eventLog) state.eventLog = []
     
-    // Subscribe to hub system events for power failure recovery
     subscribe(location, "systemStart", hubRebootHandler)
     
-    // Schedule Periodic Enforcement
     if (enablePeriodicEnforcement) {
         runEvery10Minutes("periodicEnforcementHandler")
     }
 
-    // Schedule Hourly Wiggle
     if (settings.enableWiggle) {
         runEvery1Hour("doHourlyWiggle")
     }
@@ -410,17 +441,17 @@ def initialize() {
             if (settings["roomSwitch${i}"]) {
                 subscribe(settings["roomSwitch${i}"], "switch", roomSwitchHandler)
             }
+            if (settings["enableDualOccupant${i}"] && settings["partnerSwitch${i}"]) {
+                subscribe(settings["partnerSwitch${i}"], "switch", roomSwitchHandler)
+            }
             if (settings["tempSensor${i}"]) {
                 subscribe(settings["tempSensor${i}"], "temperature", tempHandler)
             }
-            
-            // Good Night Toggle Button Subscription
             if (settings["gnButton${i}"]) {
                 def action = settings["gnButtonAction${i}"] ?: "pushed"
                 subscribe(settings["gnButton${i}"], action, goodNightButtonHandler)
             }
             
-            // Reading Buttons Subscription
             if (settings["enableReadingLight1_${i}"] && settings["readingButton1_${i}"]) {
                 subscribe(settings["readingButton1_${i}"], "pushed", readingButtonHandler)
             }
@@ -466,10 +497,10 @@ def goodNightButtonHandler(evt) {
             def sw = settings["roomSwitch${i}"]
             if (sw) {
                 if (sw.currentValue("switch") == "on") {
-                    logInfo("${rName}: Toggle button pressed. Turning Good Night OFF.")
+                    logInfo("${rName}: Toggle button pressed. Turning Primary Good Night OFF.")
                     sw.off()
                 } else {
-                    logInfo("${rName}: Toggle button pressed. Turning Good Night ON.")
+                    logInfo("${rName}: Toggle button pressed. Turning Primary Good Night ON.")
                     sw.on()
                 }
             }
@@ -560,20 +591,43 @@ def isReadingLightActive(roomNum, lightDeviceId) {
     return false
 }
 
-// --- UPDATED HOURLY FAN WIGGLE (TARGET ENFORCEMENT) ---
+// --- SLEEP ANALYTICS MATH ---
+def calculateConsistencyScore(histList) {
+    if (!histList) return "Data needed"
+    
+    // Filter out old legacy history entries that don't have the new startMins data point
+    def validEntries = histList.findAll { it.startMins != null }
+    
+    if (validEntries.size() < 3) return "Data needed"
+    
+    def sum = 0
+    validEntries.each { sum += it.startMins }
+    def mean = sum / validEntries.size()
+    
+    def sumSqDev = 0
+    validEntries.each { sumSqDev += Math.pow((it.startMins - mean), 2) }
+    def stdDev = Math.sqrt(sumSqDev / validEntries.size())
+    
+    if (stdDev < 30) return "<span style='color:green; font-weight:bold;'>A+</span>"
+    if (stdDev < 45) return "<span style='color:green;'>A</span>"
+    if (stdDev < 60) return "<span style='color:orange;'>B</span>"
+    if (stdDev < 90) return "<span style='color:orange;'>C</span>"
+    return "<span style='color:red;'>D (Irregular)</span>"
+}
+
+// --- HOURLY FAN WIGGLE ---
 def doHourlyWiggle() {
     if (!settings.enableWiggle) return 
     
     logInfo("Executing Hourly RF Fan Wiggle to actively enforce target speeds...")
     
     for (int i = 1; i <= 4; i++) {
-        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on" && settings["enableWiggle${i}"]) {
+        if (settings["enableRoom${i}"] && state."roomAsleepStatus${i}" && settings["enableWiggle${i}"]) {
             def cFanSpeed = settings["ceilingFanSpeed${i}"]
             def rName = settings["roomName${i}"] ?: "Room ${i}"
             def fType = settings["fanType${i}"] ?: "3_speed"
             
             if (cFanSpeed && fType != "on_off") {
-                // Determine what the fan SHOULD be at based on current temperature
                 def sensor = settings["tempSensor${i}"]
                 def currentTemp = sensor ? sensor.currentValue("temperature") : null
                 def cFanSetpoint = settings["ceilingFanSetpoint${i}"]
@@ -591,21 +645,18 @@ def doHourlyWiggle() {
                         cFanSpeed.setSpeed(dropSpeed)
                     }
                 } else {
-                    // NEW LOW-OFF WIGGLE LOGIC FOR BOND BRIDGES
                     logInfo("${rName}: Wiggle - Target speed is OFF. Bumping to LOW to force Bond Bridge reset.")
                     cFanSpeed.setSpeed("low")
                 }
             }
         }
     }
-    
-    // Evaluate runs 10 seconds later, notices the fan is now below its calculated target, and securely bumps it back to what it should be.
     runIn(10, "evaluateAllSleepingFans")
 }
 
 def evaluateAllSleepingFans() {
     for (int i = 1; i <= 4; i++) {
-        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on") {
+        if (settings["enableRoom${i}"] && state."roomAsleepStatus${i}") {
             evaluateFans(i)
         }
     }
@@ -615,8 +666,8 @@ def evaluateAllSleepingFans() {
 def periodicEnforcementHandler() {
     def anyoneAsleep = false
     for (int i = 1; i <= 4; i++) {
-        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.currentValue("switch") == "on") {
-            anyoneAsleep = true
+        if (state."roomAsleepStatus${i}") {
+             anyoneAsleep = true
             break
         }
     }
@@ -628,58 +679,59 @@ def periodicEnforcementHandler() {
         
         for (int i = 1; i <= 4; i++) {
             if (settings["enableRoom${i}"]) {
-                def sw = settings["roomSwitch${i}"]
                 def rName = settings["roomName${i}"] ?: "Room ${i}"
                 
-                if (sw && sw.currentValue("switch") == "on") {
+                if (state."roomAsleepStatus${i}") {
                     
-                    // --- UPDATED AND FORTIFIED PAUSE CHECK ---
+                    if (state."windDownActive${i}") {
+                        if (txtLogEnable) log.debug "ENFORCEMENT: Skipping ${rName} (Wind Down Active)."
+                        continue
+                    }
+                    
                     def pauseEnforce = settings["pauseLightingEnforcement${i}"]
-                    def pauseState = pauseEnforce ? pauseEnforce.currentValue("switch") : "unconfigured"
-                    def isPaused = (pauseState == "on")
+                    def romanceSw = settings["romanceSwitch${i}"]
+                    
+                    def isPaused = (pauseEnforce?.currentValue("switch") == "on") || (romanceSw?.currentValue("switch") == "on")
                     
                     if (!isPaused) {
-                        if (txtLogEnable) {
-                            def pName = pauseEnforce ? pauseEnforce.displayName : "No Switch Configured"
-                            log.debug "ENFORCEMENT: Pause switch [${pName}] is currently [${pauseState}]. Proceeding with forced light shutdown."
-                        }
+                        if (txtLogEnable) log.debug "ENFORCEMENT: No overrides active. Proceeding with forced light shutdown for ${rName}."
                         
                         def lights = settings["roomLights${i}"]
                         if (lights) {
-                            lights.each { lgt -> 
+                             lights.each { lgt -> 
                                 if (lgt.currentValue("switch") == "on") {
                                     if (isReadingLightActive(i, lgt.id)) {
-                                        if (txtLogEnable) log.debug "ENFORCEMENT: Skipping [${lgt.displayName}] as Reading Mode is active."
-                                        return 
+                                         if (txtLogEnable) log.debug "ENFORCEMENT: Skipping [${lgt.displayName}] as Reading Mode is active."
+                                         return 
                                     }
                                     if (lgt.hasCommand("setLevel")) {
-                                        lgt.setLevel(1)
+                                         lgt.setLevel(1)
                                         pauseExecution(400)
                                     }
-                                    lgt.off()
+                                     lgt.off()
                                     logInfo("ENFORCEMENT: ${rName} is asleep but light [${lgt.displayName}] was ON. Forced OFF.")
-                                }
+                                 }
                             }
                         }
                         
-                        def lightsOn = settings["roomLightsOn${i}"]
+                         def lightsOn = settings["roomLightsOn${i}"]
                         if (lightsOn) {
                             lightsOn.each { lgt ->
                                 if (lgt.currentValue("switch") == "off") {
                                     lgt.on()
                                     logInfo("ENFORCEMENT: ${rName} is asleep but bedtime light/plug [${lgt.displayName}] was OFF. Forced ON.")
-                                }
+                                 }
                             }
                         }
                         
-                    } else {
-                        if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks successfully paused for ${rName} (Sunrise Active)."
+                     } else {
+                        if (txtLogEnable) log.debug "ENFORCEMENT: Lighting checks successfully paused for ${rName} (Sunrise or Romance Active)."
                     }
                     
                     def shadeContact = settings["shadeContact${i}"]
                     def shade = settings["roomShade${i}"]
                     if (shadeContact && shade && shadeContact.currentValue("contact") == "open") {
-                        shade.close()
+                         shade.close()
                         logInfo("ENFORCEMENT: ${rName} is asleep but shade contact was OPEN. Forced CLOSE.")
                     }
 
@@ -690,14 +742,12 @@ def periodicEnforcementHandler() {
     }
 }
 
-// --- SYSTEM BOOT RECOVERY ENGINE ---
 def hubRebootHandler(evt) {
     logInfo("SYSTEM BOOT: Hub reboot or power failure detected. Running nighttime recovery scan...")
     
     for (int i = 1; i <= 4; i++) {
         if (settings["enableRoom${i}"]) {
-            def sw = settings["roomSwitch${i}"]
-            if (sw && sw.currentValue("switch") == "on") {
+             if (state."roomAsleepStatus${i}") {
                 def rName = settings["roomName${i}"] ?: "Room ${i}"
                 logInfo("RECOVERY: ${rName} is still ASLEEP. Re-applying Good Night environment...")
                 executeRoomGoodNight(i)
@@ -738,8 +788,7 @@ def areRequiredRoomsAsleep() {
     for (int i = 1; i <= 4; i++) {
         if (settings.syncRooms.contains(i.toString())) {
             roomsChecked++
-            def sw = settings["roomSwitch${i}"]
-            if (!sw || sw.currentValue("switch") != "on") {
+            if (!state."roomAsleepStatus${i}") {
                 allAsleep = false
                 break
             }
@@ -753,8 +802,7 @@ def areAllLeadRoomsAsleep() {
     def allAsleep = true
     def roomsList = settings.leadRooms as List
     roomsList.each { rNum ->
-        def sw = settings["roomSwitch${rNum}"]
-        if (!sw || sw.currentValue("switch") != "on") {
+        if (!state."roomAsleepStatus${rNum}") {
             allAsleep = false
         }
     }
@@ -762,37 +810,50 @@ def areAllLeadRoomsAsleep() {
 }
 
 def globalMotionHandler(evt) {
-    if (evt.value == "inactive") {
-        if (areRequiredRoomsAsleep()) {
-            logInfo("GLOBAL SYNC: Motion stopped on ${evt.device.displayName}. Re-evaluating sleep criteria...")
-            evaluateGlobalMode(evt)
-        }
-    }
+    logInfo("GLOBAL SYNC: Motion state changed to [${evt.value}] on ${evt.device.displayName}. Re-evaluating...")
+    evaluateGlobalMode(evt)
 }
 
 def blockingSwitchHandler(evt) {
-    if (evt.value == "off") {
-        if (areRequiredRoomsAsleep()) {
-            logInfo("GLOBAL SYNC: Blocking device [${evt.device.displayName}] turned OFF. Re-evaluating sleep criteria...")
-            evaluateGlobalMode(evt)
-        }
-    }
+    logInfo("GLOBAL SYNC: Blocking device state changed to [${evt.value}] on ${evt.device.displayName}. Re-evaluating...")
+    evaluateGlobalMode(evt)
 }
 
 def roomSwitchHandler(evt) {
     def roomNum = null
     for (int i = 1; i <= 4; i++) {
-        if (settings["enableRoom${i}"] && settings["roomSwitch${i}"]?.id == evt.device.id) {
-            roomNum = i
-            break
+        if (settings["enableRoom${i}"]) {
+            if (settings["roomSwitch${i}"]?.id == evt.device.id || (settings["enableDualOccupant${i}"] && settings["partnerSwitch${i}"]?.id == evt.device.id)) {
+                roomNum = i
+                break
+            }
         }
     }
     if (!roomNum) return
-    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     
-    if (evt.value == "on") {
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    def sw1 = settings["roomSwitch${roomNum}"]
+    def sw2 = settings["partnerSwitch${roomNum}"]
+    
+    def isNowAsleep = false
+    if (settings["enableDualOccupant${roomNum}"]) {
+        isNowAsleep = (sw1?.currentValue("switch") == "on" && sw2?.currentValue("switch") == "on")
+    } else {
+        isNowAsleep = (sw1?.currentValue("switch") == "on")
+    }
+    
+    def wasAsleep = state."roomAsleepStatus${roomNum}" ?: false
+    
+    if (isNowAsleep && !wasAsleep) {
+        state."roomAsleepStatus${roomNum}" = true
         state."sleepStartTime${roomNum}" = now()
-        logInfo("${rName}: Good Night Switch ON. Engaging Routine.")
+        
+        def dt = new Date()
+        def minsSinceMidnight = (dt.getHours() * 60) + dt.getMinutes()
+        if (dt.getHours() < 12) minsSinceMidnight += 1440 
+        state."sleepStartMinsOfDay${roomNum}" = minsSinceMidnight
+        
+        logInfo("${rName}: Good Night Triggered (Multi-Occupant Sync Met if enabled). Engaging Routine.")
         executeRoomGoodNight(roomNum)
         
         if (settings.enableLeadRoomOverride && settings.leadRooms?.contains(roomNum.toString())) {
@@ -804,22 +865,25 @@ def roomSwitchHandler(evt) {
             }
         }
         
-    } else {
+    } else if (!isNowAsleep && wasAsleep) {
+        state."roomAsleepStatus${roomNum}" = false
         def startTime = state."sleepStartTime${roomNum}"
         if (startTime) {
             def totalMins = Math.round((now() - startTime) / 60000.0).toInteger()
             def hours = (totalMins / 60).toInteger()
             def mins = totalMins % 60
             
-            logInfo("${rName}: Good Night Switch OFF. Sleep Duration Logged: ${hours}h ${mins}m.")
+            logInfo("${rName}: Good Night Wake Up Triggered. Sleep Duration Logged: ${hours}h ${mins}m.")
             
             def hist = state."sleepHistory${roomNum}" ?: []
+            def startMins = state."sleepStartMinsOfDay${roomNum}" ?: 0
             def todayDate = new Date().format("MM/dd", location.timeZone)
-            hist.add(0, [date: todayDate, duration: "${hours}h ${mins}m"])
+            hist.add(0, [date: todayDate, duration: "${hours}h ${mins}m", startMins: startMins])
             if (hist.size() > 7) hist = hist.take(7)
             state."sleepHistory${roomNum}" = hist
             
             state.remove("sleepStartTime${roomNum}")
+            state.remove("sleepStartMinsOfDay${roomNum}")
         }
         endRoomGoodNight(roomNum)
         
@@ -844,8 +908,7 @@ def evaluateLeadRoomOverride() {
     
     for (int i = 1; i <= 4; i++) {
         if (!lRooms.contains(i.toString()) && settings["enableRoom${i}"]) {
-            def sw = settings["roomSwitch${i}"]
-            if (sw && sw.currentValue("switch") != "on") {
+            if (!state."roomAsleepStatus${i}") {
                 otherRoomAwake = true
                 break
             }
@@ -860,7 +923,7 @@ def evaluateLeadRoomOverride() {
                     motionActive = true
                 }
             }
-        }
+         }
 
         if (!motionActive) {
             logInfo("GOOD NIGHT OVERRIDE: Other rooms are awake but no motion detected. Forcing mode to ${settings.targetOverrideMode}.")
@@ -889,9 +952,13 @@ def evaluateGlobalMode(evt = null) {
             isNightWindow = (now.time >= nightStart.time || now.time <= nightEnd.time)
         }
         
+        if (txtLogEnable) log.debug "EVAL DEBUG: isNightWindow=${isNightWindow} | currentMode=${currentMode} | targetMode=${targetNightMode}"
+        
         if (isNightWindow && currentMode != targetNightMode) {
             def isAllowedMode = true
             if (allowedNightModes) isAllowedMode = (allowedNightModes as List).contains(currentMode)
+            
+            if (txtLogEnable) log.debug "EVAL DEBUG: isAllowedMode=${isAllowedMode}"
             
             if (isAllowedMode) {
                 def allAsleep = true
@@ -899,72 +966,44 @@ def evaluateGlobalMode(evt = null) {
                 for (int i = 1; i <= 4; i++) {
                     if (syncRooms && syncRooms.contains(i.toString())) {
                         roomsChecked++
-                        def sw = settings["roomSwitch${i}"]
-                        if (sw) {
-                            def swVal = (evt && evt.device.id == sw.id) ? evt.value : sw.currentValue("switch")
-                            if (swVal != "on") allAsleep = false
-                        } else {
-                            allAsleep = false
-                        }
+                        if (!state."roomAsleepStatus${i}") allAsleep = false
                     }
                 }
                 if (roomsChecked == 0) allAsleep = false
                 
+                if (txtLogEnable) log.debug "EVAL DEBUG: allAsleep=${allAsleep} (Rooms Checked: ${roomsChecked})"
+                
                 if (allAsleep) {
-                    if (txtLogEnable) log.debug "EVALUATING NIGHT MODE: Required Rooms Asleep. Checking Motion & Blocking Devices..."
-                    
-                    def noMotion = true
-                    if (syncMotion) {
-                        syncMotion.each { mSens ->
-                            def mVal = (evt && evt.device.id == mSens.id) ? evt.value : mSens.currentValue("motion")
-                            if (txtLogEnable) log.debug "EVALUATING NIGHT MODE: Motion Sensor [${mSens.displayName}] is [${mVal}]"
-                            if (mVal == "active") noMotion = false
-                        }
-                    }
-                    
-                    def noBlockingDevices = true
-                    if (blockingSwitches) {
-                        blockingSwitches.each { bSw ->
-                            def bVal = (evt && evt.device.id == bSw.id) ? evt.value : bSw.currentValue("switch")
-                            if (txtLogEnable) log.debug "EVALUATING NIGHT MODE: Blocking Switch [${bSw.displayName}] is [${bVal}]"
-                            if (bVal == "on") noBlockingDevices = false
-                        }
-                    }
-                    
-                    if (txtLogEnable) log.debug "EVALUATING NIGHT MODE: AllAsleep=${allAsleep} | NoMotion=${noMotion} | NoBlockingDevices=${noBlockingDevices}"
-                    
-                    if (noMotion && noBlockingDevices) {
-                        def nDelay = settings.nightModeDelay != null ? settings.nightModeDelay : 60
-                        if (!state.nightModeScheduledTime) {
-                            state.nightModeScheduledTime = now() + (nDelay * 1000)
-                            logInfo("GLOBAL SYNC: Required rooms asleep, house is quiet, and no blocking devices are ON. Scheduling Night Mode (${targetNightMode}) in ${nDelay} seconds.")
-                            runIn(nDelay, "executeNightModeChange")
-                        }
-                    } else {
-                        if (state.nightModeScheduledTime) {
-                            logInfo("GLOBAL SYNC: Waiting on motion sensors to clear or blocking devices to turn OFF before shifting mode. (Timer Paused)")
-                            unschedule("executeNightModeChange")
-                            state.remove("nightModeScheduledTime")
-                        }
+                    def nDelay = settings.nightModeDelay != null ? settings.nightModeDelay.toInteger() : 60
+                    if (!state.nightModeScheduledTime) {
+                        state.nightModeScheduledTime = now.time + (nDelay * 1000)
+                        logInfo("GLOBAL SYNC: Required rooms asleep. Scheduling Night Mode evaluation in ${nDelay} seconds.")
+                        runIn(nDelay, "executeNightModeChange")
                     }
                 } else {
                     if (state.nightModeScheduledTime) {
-                        logInfo("GLOBAL SYNC: A required room woke up. (Timer Canceled)")
+                        logInfo("GLOBAL SYNC: Timer Canceled. A required room is awake.")
                         unschedule("executeNightModeChange")
                         state.remove("nightModeScheduledTime")
                     }
                 }
+            } else {
+                if (state.nightModeScheduledTime) {
+                    logInfo("GLOBAL SYNC: Timer Canceled. Hub mode shifted out of the Safety Whitelist.")
+                    unschedule("executeNightModeChange")
+                    state.remove("nightModeScheduledTime")
+                }
             }
         } else {
             if (state.nightModeScheduledTime) {
-                 unschedule("executeNightModeChange")
-                 state.remove("nightModeScheduledTime")
+                unschedule("executeNightModeChange")
+                state.remove("nightModeScheduledTime")
             }
         }
     }
     
     if (wakeStartTime && wakeEndTime && requireNightMode && targetWakeMode) {
-        def wakeStart = timeToday(wakeStartTime, location.timeZone)
+         def wakeStart = timeToday(wakeStartTime, location.timeZone)
         def wakeEnd = timeToday(wakeEndTime, location.timeZone)
         
         def isWakeWindow = false
@@ -980,22 +1019,25 @@ def evaluateGlobalMode(evt = null) {
             for (int i = 1; i <= 4; i++) {
                 if (settings["enableRoom${i}"]) {
                     anyRoomConfigured = true
-                    def sw = settings["roomSwitch${i}"]
-                    if (sw) {
-                        def swVal = (evt && evt.device.id == sw.id) ? evt.value : sw.currentValue("switch")
-                        if (swVal == "on") allAwake = false
-                    }
+                    if (state."roomAsleepStatus${i}") allAwake = false
                 }
             }
             if (anyRoomConfigured && allAwake) {
-                def wDelay = settings.wakeModeDelay != null ? settings.wakeModeDelay : 60
-                logInfo("GLOBAL SYNC: All Good Night switches are OFF. Scheduling Wake Mode (${targetWakeMode}) in ${wDelay} seconds.")
-                runIn(wDelay, "executeWakeModeChange")
+                 def wDelay = settings.wakeModeDelay != null ? settings.wakeModeDelay.toInteger() : 60
+                if (!state.wakeModeScheduledTime) {
+                    logInfo("GLOBAL SYNC: All Good Night switches are OFF. Scheduling Wake Mode (${targetWakeMode}) in ${wDelay} seconds.")
+                    state.wakeModeScheduledTime = now.time + (wDelay * 1000)
+                    runIn(wDelay, "executeWakeModeChange")
+                }
             } else {
                 unschedule("executeWakeModeChange")
+                state.remove("wakeModeScheduledTime")
             }
+        } else {
+             unschedule("executeWakeModeChange")
+             state.remove("wakeModeScheduledTime")
         }
-    }
+     }
 }
 
 def executeRoomGoodNight(roomNum) {
@@ -1006,20 +1048,44 @@ def executeRoomGoodNight(roomNum) {
     unschedule("fanOffThreeRoom${roomNum}")
     unschedule("fanPowerOffRoom${roomNum}")
 
+    def doWindDown = settings["enableWindDown${roomNum}"]
     def lights = settings["roomLights${roomNum}"]
-    if (lights) { 
-        lights.each { lgt ->
-            if (isReadingLightActive(roomNum, lgt.id)) {
-                logInfo("${rName}: Skipping light [${lgt.displayName}] during Good Night sweep (Reading Mode active).")
-                return // skip
+    
+    if (doWindDown) {
+        def durMins = settings["windDownDuration${roomNum}"] ?: 15
+        logInfo("${rName}: Initiating Adaptive Wind Down for ${durMins} minutes.")
+        state."windDownActive${roomNum}" = true
+        state."windDownStep${roomNum}" = 0
+        state."windDownMaxSteps${roomNum}" = durMins
+        
+        if (lights) {
+            lights.each { lgt ->
+                if (isReadingLightActive(roomNum, lgt.id)) {
+                    logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
+                    return 
+                }
+                if (lgt.hasCommand("setLevel")) {
+                    lgt.setLevel(0, durMins * 60)
+                } else {
+                    lgt.off()
+                }
             }
-            if (lgt.hasCommand("setLevel")) {
-                lgt.setLevel(1)
-                pauseExecution(400)
-            }
-            lgt.off()
         }
-        logInfo("${rName}: Lights turned OFF (w/ 1% flashbang protection if applicable).") 
+    } else {
+        if (lights) { 
+            lights.each { lgt ->
+                if (isReadingLightActive(roomNum, lgt.id)) {
+                    logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
+                    return 
+                }
+                if (lgt.hasCommand("setLevel")) {
+                    lgt.setLevel(1)
+                    pauseExecution(400)
+                }
+                 lgt.off()
+            }
+            logInfo("${rName}: Lights turned OFF (w/ 1% flashbang protection if applicable).") 
+        }
     }
     
     def lightsOn = settings["roomLightsOn${roomNum}"]
@@ -1037,34 +1103,77 @@ def executeRoomGoodNight(roomNum) {
         logInfo("${rName}: Shade contact is open. Closing shade.")
     }
     
-    // --- UPDATED AUDIO EXECUTION LOGIC (WITH SMART PLUG DELAY) ---
-    def speakerPower = settings["roomSpeakerPower${roomNum}"]
-    def speaker = settings["roomSpeaker${roomNum}"]
-    def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
-    
-    if (speaker || audioType == "switch") {
-        if (speakerPower) {
-            if (speakerPower.hasCommand("refresh")) {
-                speakerPower.refresh()
-                logInfo("${rName}: Refreshed speaker power plug state.")
-                pauseExecution(1000) 
-            }
-            if (speakerPower.currentValue("switch") == "off") {
-                logInfo("${rName}: Speaker power plug is OFF. Turning ON and waiting 120s before initiating audio play.")
-                speakerPower.on()
-                runIn(120, "playDelayedAudioRoom${roomNum}")
+    if (doWindDown) {
+        def startVol = settings["windDownStartVol${roomNum}"] ?: 30
+        def speaker = settings["roomSpeaker${roomNum}"]
+        if (speaker) {
+            speaker.setVolume(startVol)
+            logInfo("${rName}: Setting starting Wind Down volume to ${startVol}%.")
+        }
+        runIn(60, "executeWindDownLoopRoom${roomNum}")
+        executeAudioPlay(roomNum)
+    } else {
+        def speakerPower = settings["roomSpeakerPower${roomNum}"]
+        def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
+        
+        if (settings["roomSpeaker${roomNum}"] || audioType == "switch") {
+            if (speakerPower) {
+                if (speakerPower.hasCommand("refresh")) {
+                    speakerPower.refresh()
+                    logInfo("${rName}: Refreshed speaker power plug state.")
+                    pauseExecution(1000) 
+                }
+                if (speakerPower.currentValue("switch") == "off") {
+                    logInfo("${rName}: Speaker power plug is OFF. Turning ON and waiting 120s before initiating audio play.")
+                     speakerPower.on()
+                    runIn(120, "playDelayedAudioRoom${roomNum}")
+                } else {
+                    executeAudioPlay(roomNum)
+                }
             } else {
                 executeAudioPlay(roomNum)
-            }
-        } else {
-            executeAudioPlay(roomNum)
+             }
         }
     }
     
     evaluateFans(roomNum)
 }
 
-// --- DELAYED AUDIO WRAPPERS ---
+def executeWindDownLoopRoom1() { windDownStepHandler(1) }
+def executeWindDownLoopRoom2() { windDownStepHandler(2) }
+def executeWindDownLoopRoom3() { windDownStepHandler(3) }
+def executeWindDownLoopRoom4() { windDownStepHandler(4) }
+
+def windDownStepHandler(roomNum) {
+    if (!state."windDownActive${roomNum}") return
+    
+    def step = state."windDownStep${roomNum}" + 1
+    def maxSteps = state."windDownMaxSteps${roomNum}"
+    def endVol = settings["audioVolume${roomNum}"] ?: 15
+    def speaker = settings["roomSpeaker${roomNum}"]
+    
+    if (step >= maxSteps) {
+        state.remove("windDownActive${roomNum}")
+        if (speaker) speaker.setVolume(endVol)
+        def lights = settings["roomLights${roomNum}"]
+        if (lights) {
+            lights.each { lgt ->
+                if (isReadingLightActive(roomNum, lgt.id)) return 
+                if (lgt.currentValue("switch") != "off") lgt.off()
+            }
+        }
+        logInfo("Room ${roomNum}: Wind Down Complete. Reached target sleep levels.")
+        return
+    }
+    
+    state."windDownStep${roomNum}" = step
+    def startVol = settings["windDownStartVol${roomNum}"] ?: 30
+    def currentVol = startVol - (((startVol - endVol) / maxSteps) * step).toInteger()
+    
+    if (speaker) speaker.setVolume(currentVol)
+    runIn(60, "executeWindDownLoopRoom${roomNum}")
+}
+
 def playDelayedAudioRoom1() { executeAudioPlay(1) }
 def playDelayedAudioRoom2() { executeAudioPlay(2) }
 def playDelayedAudioRoom3() { executeAudioPlay(3) }
@@ -1076,17 +1185,19 @@ def executeAudioPlay(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
 
     if (speaker) {
-        def setVol = settings["audioVolume${roomNum}"]
-        if (setVol != null) {
-            speaker.setVolume(setVol)
-            logInfo("${rName}: Speaker volume forced to ${setVol}%.")
+        if (!state."windDownActive${roomNum}") {
+            def setVol = settings["audioVolume${roomNum}"]
+            if (setVol != null) {
+                 speaker.setVolume(setVol)
+                logInfo("${rName}: Speaker volume forced to ${setVol}%.")
+            }
         }
 
         if (audioType == "uri") {
             def trackToPlay = state."nextUri${roomNum}"
             if (trackToPlay) {
                 speaker.playTrack(trackToPlay)
-                logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
+                 logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
                 state."lastUri${roomNum}" = trackToPlay
             }
         } else if (audioType == "switch") {
@@ -1097,17 +1208,17 @@ def executeAudioPlay(roomNum) {
                     def sw = settings["audioSwitch${roomNum}_${u}"]
                     if (sw?.id == switchToTurnOnId) {
                         targetSw = sw
-                        break
+                         break
                     }
                 }
                 
                 if (targetSw) {
                     targetSw.on()
-                    logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
+                     logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
                     state."lastSwitchId${roomNum}" = switchToTurnOnId
                     
-                    if (setVol != null) {
-                        runIn(30, "applyDelayedVolumeRoom${roomNum}")
+                    if (settings["audioVolume${roomNum}"] != null && !state."windDownActive${roomNum}") {
+                         runIn(30, "applyDelayedVolumeRoom${roomNum}")
                     }
                 }
             }
@@ -1115,7 +1226,7 @@ def executeAudioPlay(roomNum) {
         
         def sTimer = settings["audioTimer${roomNum}"]
         if (sTimer) {
-            logInfo("${rName}: Sleep timer set for ${sTimer} minutes.")
+             logInfo("${rName}: Sleep timer set for ${sTimer} minutes.")
             runIn(sTimer * 60, "stopAudioRoom${roomNum}") 
         }
     }
@@ -1155,6 +1266,8 @@ def endRoomGoodNight(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     logInfo("${rName}: Executing Wake-Up routine (shutting down fans and audio).")
     
+    state.remove("windDownActive${roomNum}")
+    unschedule("executeWindDownLoopRoom${roomNum}")
     unschedule("playDelayedAudioRoom${roomNum}")
     unschedule("stopAudioRoom${roomNum}")
     unschedule("applyDelayedFanSpeedRoom${roomNum}")
@@ -1172,17 +1285,16 @@ def endRoomGoodNight(roomNum) {
         logInfo("${rName}: Bedtime Lights/Plugs turned OFF (Wake-up).")
     }
     
-    // --- 3x REDUNDANT CEILING FAN SHUTDOWN (W/ LOW-OFF WIGGLE FIX) ---
     def cFanSwitch = settings["ceilingFanSwitch${roomNum}"]
     def cFanSpeed = settings["ceilingFanSpeed${roomNum}"]
     def fType = settings["fanType${roomNum}"] ?: "3_speed"
     
     if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") {
-        cFanSpeed.setSpeed("low") // Pulse 1 (Wiggle trigger)
-        logInfo("${rName}: Applying Low-Off Wiggle fix. Initiating 3x redundant shutdown sequence before cutting power.")
-        runIn(2, "fanOffTwoRoom${roomNum}") // Cascades to Pulse 2, Pulse 3, then Power OFF
+        cFanSpeed.setSpeed("low") 
+         logInfo("${rName}: Applying Low-Off Wiggle fix. Initiating 3x redundant shutdown sequence before cutting power.")
+        runIn(2, "fanOffTwoRoom${roomNum}") 
     } else if (cFanSwitch) {
-        cFanSwitch.off() // Fallback or direct control for On/Off fans
+        cFanSwitch.off() 
     }
 
     def speaker = settings["roomSpeaker${roomNum}"]
@@ -1212,7 +1324,6 @@ def executeHoldReleaseOff(roomNum) {
     }
 }
 
-// --- REDUNDANT FAN SHUTDOWN CASCADES ---
 def fanOffTwoRoom1() { executeFanOffTwo(1) }
 def fanOffTwoRoom2() { executeFanOffTwo(2) }
 def fanOffTwoRoom3() { executeFanOffTwo(3) }
@@ -1221,7 +1332,7 @@ def fanOffTwoRoom4() { executeFanOffTwo(4) }
 def executeFanOffTwo(roomNum) {
     def cFanSpeed = settings["ceilingFanSpeed${roomNum}"]
     def fType = settings["fanType${roomNum}"] ?: "3_speed"
-    if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") cFanSpeed.setSpeed("off") // Pulse 2
+    if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") cFanSpeed.setSpeed("off")
     runIn(2, "fanOffThreeRoom${roomNum}")
 }
 
@@ -1233,7 +1344,7 @@ def fanOffThreeRoom4() { executeFanOffThree(4) }
 def executeFanOffThree(roomNum) {
     def cFanSpeed = settings["ceilingFanSpeed${roomNum}"]
     def fType = settings["fanType${roomNum}"] ?: "3_speed"
-    if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") cFanSpeed.setSpeed("off") // Pulse 3
+    if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") cFanSpeed.setSpeed("off") 
     runIn(2, "fanPowerOffRoom${roomNum}")
 }
 
@@ -1253,7 +1364,7 @@ def executeFanPowerOff(roomNum) {
 def tempHandler(evt) {
     for (int i = 1; i <= 4; i++) {
         if (settings["enableRoom${i}"] && settings["tempSensor${i}"]?.id == evt.device.id) {
-            if (settings["roomSwitch${i}"]?.currentValue("switch") == "on") {
+            if (state."roomAsleepStatus${i}") {
                 evaluateFans(i)
             }
         }
@@ -1324,7 +1435,6 @@ def executeDelayedFanSpeed(roomNum) {
     }
 }
 
-// --- UPDATED AUDIO ROTATION ENGINE ---
 def prepNextAudio(roomNum) {
     def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
     
@@ -1341,7 +1451,7 @@ def prepNextAudio(roomNum) {
             if (uris.size() == 1) {
                 state."nextUri${roomNum}" = uris[0]
             } else {
-                def lastPlayed = state."lastUri${roomNum}"
+                 def lastPlayed = state."lastUri${roomNum}"
                 def availableUris = uris.findAll { it != lastPlayed }
                 if (availableUris.size() == 0) availableUris = uris 
                 def chosen = availableUris[new Random().nextInt(availableUris.size())]
@@ -1363,12 +1473,12 @@ def prepNextAudio(roomNum) {
         if (switches.size() > 0) {
             if (switches.size() == 1) {
                 state."nextSwitchId${roomNum}" = switches[0]
-            } else {
+             } else {
                 def lastPlayed = state."lastSwitchId${roomNum}"
                 def availableSwitches = switches.findAll { it != lastPlayed }
                 if (availableSwitches.size() == 0) availableSwitches = switches 
                 def chosen = availableSwitches[new Random().nextInt(availableSwitches.size())]
-                state."nextSwitchId${roomNum}" = chosen
+                 state."nextSwitchId${roomNum}" = chosen
             }
         } else {
             state.remove("nextSwitchId${roomNum}")
@@ -1389,13 +1499,52 @@ def logInfo(msg) {
 
 def executeNightModeChange() {
     state.remove("nightModeScheduledTime")
-    if (targetNightMode) {
-        logInfo("GLOBAL SYNC: Delay complete. Changing mode to ${targetNightMode}.")
+    if (!targetNightMode) return
+
+    def noMotion = true
+    if (syncMotion) {
+        syncMotion.each { mSens ->
+            if (mSens.currentValue("motion") == "active") noMotion = false
+        }
+    }
+    
+    def noBlockingDevices = true
+    if (blockingSwitches) {
+        blockingSwitches.each { bSw ->
+            if (bSw.currentValue("switch") == "on") noBlockingDevices = false
+        }
+    }
+
+    if (noMotion && noBlockingDevices) {
+        
+        // --- SAFETY SWEEP HANDSHAKE ---
+        if (enableSafetySweep) {
+            def failedDevs = []
+            if (sweepContacts) {
+                sweepContacts.each { if (it.currentValue("contact") == "open") failedDevs << it.displayName }
+            }
+            if (sweepLocks) {
+                sweepLocks.each { if (it.currentValue("lock") == "unlocked") failedDevs << it.displayName }
+            }
+            
+            if (failedDevs.size() > 0) {
+                def msg = "Night mode paused. Please check the ${failedDevs.join(', ')}."
+                logInfo("SAFETY SWEEP FAILED: ${msg}")
+                if (sweepSpeaker) sweepSpeaker.speak(msg)
+                return 
+            }
+        }
+        // ------------------------------
+        
+        logInfo("GLOBAL SYNC: Countdown complete. House is quiet and ready. Changing mode to ${targetNightMode}.")
         setLocationMode(targetNightMode)
+    } else {
+        logInfo("GLOBAL SYNC: Countdown complete, but Motion or Blockers are active. Waiting for them to clear...")
     }
 }
 
 def executeWakeModeChange() {
+    state.remove("wakeModeScheduledTime")
     if (targetWakeMode) {
         logInfo("GLOBAL SYNC: Delay complete. Changing mode to ${targetWakeMode}.")
         setLocationMode(targetWakeMode)
