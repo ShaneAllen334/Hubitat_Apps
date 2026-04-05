@@ -1,13 +1,13 @@
 /**
- * Advanced Rain Detection
+ * Advanced Severe Weather Detector
  */
 
 definition(
-    name: "Advanced Rain Detection",
+    name: "Advanced Severe Weather Detector",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Multi-sensor weather logic engine calculating VPD, Wet-Bulb, Dew Point Convergence, Pressure Trends, Synergistic Algorithms, and Evaporation to predict and track precipitation.",
-    category: "Green Living",
+    description: "BMS-Grade multi-dimensional predictive hazard detection engine featuring Event Forensics, Overall NOAA Alert Reports, DEFCON Watchdog polling, Daily Forecasts, and MSLP calibration.",
+    category: "Safety & Security",
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: ""
@@ -16,652 +16,373 @@ definition(
 preferences {
     page(name: "mainPage")
     page(name: "configPage")
-}
-
-def renderChartHTML() {
-    def buildJsArray = { hist ->
-        if (!hist) return "[]"
-        return "[" + hist.collect { "{ x: ${it.time}, y: ${it.value} }" }.join(",") + "]"
-    }
-
-    def tempJs = buildJsArray(state.tempHistory)
-    def pressJs = buildJsArray(state.pressureHistory)
-    def spreadJs = buildJsArray(state.spreadHistory)
-    def probJs = buildJsArray(state.probHistory)
-
-    return """
-    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">24-Hour Timeline</h4>
-    <div id="chartWrapper" style="position: relative; height: 350px; width: 100%; background: #fdfdfd; border: 1px solid #eee; border-radius: 4px;">
-        <div id="chartLoadingText" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-family: sans-serif; color: #555; font-weight: bold; font-size: 14px;">
-            Loading chart data...
-        </div>
-        <canvas id="weatherChart" style="opacity: 0; transition: opacity 0.4s ease-in-out;"></canvas>
-    </div>
-    
-    <script>
-    (function() {
-        var chartLibs = [
-            "https://cdn.jsdelivr.net/npm/chart.js",
-            "https://cdn.jsdelivr.net/npm/luxon",
-            "https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"
-        ];
-        
-        function loadScript(url, callback) {
-            if (document.querySelector('script[src="' + url + '"]')) {
-                if (callback) callback();
-                return;
-            }
-            var s = document.createElement('script');
-            s.type = 'text/javascript';
-            s.src = url;
-            s.onload = callback;
-            document.head.appendChild(s);
-        }
-
-        function initChart() {
-            var canvas = document.getElementById('weatherChart');
-            var loading = document.getElementById('chartLoadingText');
-            
-            if (!canvas || typeof Chart === 'undefined' || typeof luxon === 'undefined') {
-                setTimeout(initChart, 100);
-                return;
-            }
-            
-            if (window.myWeatherChart) {
-                window.myWeatherChart.destroy();
-            }
-            
-            var ctx = canvas.getContext('2d');
-            window.myWeatherChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    datasets: [
-                        {
-                            label: 'Temperature (°)',
-                            data: ${tempJs},
-                            borderColor: 'rgb(255, 99, 132)',
-                            yAxisID: 'yTemp',
-                            tension: 0.3,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Dew Point Spread (°)',
-                            data: ${spreadJs},
-                            borderColor: 'rgb(54, 162, 235)',
-                            yAxisID: 'yTemp',
-                            borderDash: [5, 5],
-                            tension: 0.3,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Pressure',
-                            data: ${pressJs},
-                            borderColor: 'rgb(75, 192, 192)',
-                            yAxisID: 'yPress',
-                            tension: 0.3,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Rain Probability (%)',
-                            data: ${probJs},
-                            backgroundColor: 'rgba(153, 102, 255, 0.2)',
-                            borderColor: 'rgb(153, 102, 255)',
-                            yAxisID: 'yProb',
-                            fill: true,
-                            stepped: true,
-                            pointRadius: 0
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'hour' },
-                            title: { display: false }
-                        },
-                        yTemp: {
-                            type: 'linear',
-                            display: true,
-                            position: 'left',
-                            title: { display: true, text: 'Temp / Spread' }
-                        },
-                        yPress: {
-                            type: 'linear',
-                            display: true,
-                            position: 'right',
-                            title: { display: true, text: 'Pressure' },
-                            grid: { drawOnChartArea: false }
-                        },
-                        yProb: {
-                            type: 'linear',
-                            display: true,
-                            position: 'right',
-                            min: 0,
-                            max: 100,
-                            title: { display: true, text: 'Probability %' },
-                            grid: { drawOnChartArea: false }
-                        }
-                    }
-                }
-            });
-            if (loading) loading.style.display = 'none';
-            if (canvas) canvas.style.opacity = '1';
-        }
-
-        loadScript(chartLibs[0], function() {
-            loadScript(chartLibs[1], function() {
-                loadScript(chartLibs[2], function() {
-                    initChart();
-                });
-            });
-        });
-    })();
-    </script>
-    """
-}
-
-def renderTableHTML() {
-    if (!state.tempHistory || state.tempHistory.size() == 0) {
-        return "<h4 style='margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;'>24-Hour Timeline</h4><div>Gathering history data... check back in a few minutes.</div>"
-    }
-    
-    def reversedHist = state.tempHistory.reverse()
-    
-    def tableHTML = """
-    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">24-Hour Local Data Table</h4>
-    <div style="height: 350px; overflow-y: auto; border: 1px solid #eee;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; font-family: monospace;">
-            <thead style="background: #eee; position: sticky; top: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                <tr>
-                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Time</th>
-                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Temp</th>
-                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Pressure</th>
-                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">DP Spread</th>
-                    <th style="padding: 8px; border-bottom: 1px solid #ccc;">Rain Prob</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-    
-    reversedHist.each { entry ->
-        def timeStr = new Date((long)entry.time).format("MM/dd HH:mm", location.timeZone)
-        def tVal = String.format('%.1f', entry.value)
-        
-        def findMatch = { hist -> 
-            def match = hist?.find { Math.abs(it.time - entry.time) < 120000 }
-            return match ? String.format('%.2f', match.value) : "--"
-        }
-        
-        def pVal = findMatch(state.pressureHistory)
-        def sVal = findMatch(state.spreadHistory)
-        
-        def probMatch = state.probHistory?.find { Math.abs(it.time - entry.time) < 120000 }
-        def probVal = probMatch ? "${Math.round(probMatch.value)}%" : "--"
-        
-        tableHTML += """
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 6px 8px; color: #555;">${timeStr}</td>
-                <td style="padding: 6px 8px;">${tVal}°</td>
-                <td style="padding: 6px 8px;">${pVal}</td>
-                <td style="padding: 6px 8px;">${sVal != "--" ? sVal + "°" : "--"}</td>
-                <td style="padding: 6px 8px; font-weight: bold; color: ${probMatch && probMatch.value > 50 ? 'red' : 'black'};">${probVal}</td>
-            </tr>
-        """
-    }
-    
-    tableHTML += """
-            </tbody>
-        </table>
-    </div>
-    """
-    return tableHTML
-}
-
-def renderRadarHTML() {
-    def lat = settings.manualLat ?: (location.latitude ?: 39.8283)
-    def lon = settings.manualLon ?: (location.longitude ?: -98.5795)
-
-    return """
-    <h4 style="margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:5px; color:#333;">Live Regional Radar</h4>
-    <iframe width="100%" height="350" src="https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=8&level=surface&overlay=radar&menu=&message=&marker=true&calendar=&pressure=&type=map&location=coordinates&detail=&detailLat=${lat}&detailLon=${lon}&metricWind=mph&metricTemp=%C2%B0F&radarRange=-1" frameborder="0" style="border-radius: 4px;"></iframe>
-    """
+    page(name: "dnaConfigPage")
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "<b>Advanced Rain Detection</b>", install: true, uninstall: true) {
+    return dynamicPage(name: "mainPage", title: "<b>Advanced Severe Weather Detector</b>", install: true, uninstall: true) {
      
-        section("<b>Live Weather & Logic Dashboard</b>") {
-            if (app.id) {
+        if (app.id) {
+            section() {
                 input "refreshDashboardBtn", "button", title: "🔄 Refresh Live Data"
             }
- 
-            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Analyzes real-time environmental thermodynamics (VPD, Wet-Bulb, Spread Convergence Velocity, Synergy Multipliers) to predict precipitation with near-perfect accuracy.</div>"
-    
-            if (sensorTemp && sensorHum && sensorPress) {
-                def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
-                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Current Environment</th><th style='padding: 8px;'>Calculated Metrics & Trends</th><th style='padding: 8px;'>System State & Logic</th></tr>"
+        }
 
-                // Fetch raw data using multi-attribute fallback
-                def tP = getFloat(sensorTemp, ["temperature", "tempf"])
-                def hP = getFloat(sensorHum, ["humidity"])
-                def pP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
-                
-                def t = tP ?: 0.0
-                def h = hP ?: 0.0
-                def p = pP ?: 0.0
-               
-                def redundancyActive = false
-                
-                if (settings.enableRedundancy != false) {
-                    def tB = getFloat(sensorTempBackup, ["temperature", "tempf"])
-                    def hB = getFloat(sensorHumBackup, ["humidity"])
-                    def pB = getFloat(sensorPressBackup, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
-                    
-                    if (tP != null && tB != null) t = (tP + tB) / 2.0
-                    else if (tP == null && tB != null) { t = tB; redundancyActive = true }
-                    
-                    if (hP != null && hB != null) h = (hP + hB) / 2.0
-                    else if (hP == null && hB != null) { h = hB; redundancyActive = true }
-                    
-                    if (pP != null && pB != null) p = (pP + pB) / 2.0
-                    else if (pP == null && pB != null) { p = pB; redundancyActive = true }
-                }
-
-                // Thermal Smoothing Override
-                if (settings.enableThermalSmoothing != false && state.smoothedTemp != null) {
-                    t = state.smoothedTemp
-                }
-
-                def r = getFloat(sensorRain, ["rainRate", "hourlyrainin", "precipRate", "hourlyRain"], 0.0)
-                def lux = getFloat(sensorLux, ["illuminance", "solarradiation", "solarRadiation"], "N/A")
-                def wind = getFloat(sensorWind, ["windSpeed", "windspeedmph", "wind"], "N/A")
-                def windDir = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], "N/A")
-       
-                def strikes = state.lightningHistory?.size() ?: 0
-                def recentLightDist = 999.0
-                if (strikes > 0) {
-                    state.lightningHistory.each { if (it.value < recentLightDist) recentLightDist = it.value }
-                }
-                def recentLightDistStr = strikes > 0 ? recentLightDist : "N/A"
-                
-                def rainDay = getFloat(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], 0.0)
-                def rainWeek = getFloat(sensorRainWeekly, ["rainWeekly", "weeklyrainin", "weeklyWater"], 0.0)
-                def leakWet = sensorLeak ? (sensorLeak.currentValue("water") == "wet") : false
-                
-                // Fetch calculated data
-                def vpd = state.currentVPD ?: 0.0
-                def dp = state.currentDewPoint ?: 0.0
-                def wb = state.currentWetBulb ?: 0.0
-                def dpSpread = state.dewPointSpread ?: 0.0
-                def pTrend = state.pressureTrendStr ?: "Stable"
-                def tTrend = state.tempTrendStr ?: "Stable"
-                def sTrend = state.spreadTrendStr ?: "Stable"
-                def luxTrend = state.luxTrendStr ?: "N/A"
-                def windTrend = state.windTrendStr ?: "N/A"
-                def dryingRate = state.dryingPotential ?: "N/A"
-                def ttd = state.timeToDryStr ?: "N/A"
-                def isStale = state.isStale ?: false
-         
-                def prob = state.rainProbability ?: 0
-                def confScore = state.confidenceScore ?: 0
-                def confReason = state.confidenceReasoning ?: "Gathering logic consensus..."
-                def activeState = state.weatherState ?: "Clear"
-                def clearTime = state.expectedClearTime ?: "N/A"
-                def reasoning = state.logicReasoning ?: "Waiting for initial sensor readings..."
-
-                // Formatting
-                def envDisplay = "<b>Temp:</b> ${String.format('%.1f', t)}°<br><b>Humidity:</b> ${String.format('%.1f', h)}%<br><b>Pressure:</b> ${String.format('%.2f', p)}<br><b>Rain Rate:</b> ${r}/hr"
-                if (sensorLux) envDisplay += "<br><b>Solar/Lux:</b> ${lux}"
-                if (sensorWind) envDisplay += "<br><b>Wind:</b> ${wind} mph"
-                if (sensorWindDir) envDisplay += " @ ${windDir}°"
-                if (sensorLightning && strikes > 0) envDisplay += "<br><b>Lightning:</b> ${strikes} strikes (Closest: ${recentLightDistStr} mi)"
-                else if (sensorLightning) envDisplay += "<br><b>Lightning:</b> None recent"
-       
-                def leakWetStr = "DRY"
-                if (sensorLeak) {
-                    if (state.dewRejectionActive) leakWetStr = "<span style='color:orange; font-weight:bold;'>DEW/IGNORED</span>"
-                    else if (leakWet) leakWetStr = "<span style='color:blue; font-weight:bold;'>WET</span>"
-                    else leakWetStr = "DRY"
-                }
-                if (sensorLeak) envDisplay += "<br><b>Drop Sensor:</b> ${leakWetStr}"
-                
-                def vpdColor = vpd < 0.5 ? "red" : (vpd < 1.0 ? "orange" : "green")
-                def spreadColor = dpSpread < 3.0 ? "red" : (dpSpread < 6.0 ? "orange" : "green")
-                def calcDisplay = "<b>VPD:</b> <span style='color:${vpdColor};'>${String.format('%.2f', vpd)} kPa</span><br>"
-                calcDisplay += "<b>Wet-Bulb:</b> ${String.format('%.1f', wb)}°<br>"
-                calcDisplay += "<b>Dew Point:</b> ${String.format('%.1f', dp)}° <span style='color:${spreadColor}; font-size:11px;'>(Spread: ${String.format('%.1f', dpSpread)}°)</span><br>"
-                calcDisplay += "<b>Drying Rate:</b> ${dryingRate}<br>"
-                if (settings.enableTimeToDry != false) calcDisplay += "<b>Est. Dry Time:</b> ${ttd}<br>"
-                
-                calcDisplay += "<br><span style='font-size:11px;'><b>P-Trend:</b> ${pTrend}<br><b>T-Trend:</b> ${tTrend}<br><b>Spread Vel:</b> ${sTrend}"
-  
-                if (sensorLux) calcDisplay += "<br><b>L-Trend:</b> ${luxTrend}"
-                if (sensorWind) calcDisplay += "<br><b>W-Trend:</b> ${windTrend}"
-                if (sensorWindDir) calcDisplay += "<br><b>Dir-Shift:</b> ${state.windShiftDetected ? "<span style='color:red;'>Active Front</span>" : "Stable"}"
-                calcDisplay += "</span>"
-                
-                // Active Algorithms List
-                def algos = []
-                
-                if (settings.enableDPLogic != false) algos << "Convergence"
-                if (settings.enableVPDLogic != false) algos << "VPD"
-                if (settings.enablePressureLogic != false) algos << "Pressure"
-                if (settings.enableWetBulbLogic != false) algos << "Wet-Bulb"
-                if (settings.enableSynergyLogic != false) algos << "Synergy"
-                if (settings.enableCloudLogic != false) algos << "Clouds"
-                if (settings.enableWindLogic != false) algos << "Wind"
-                if (settings.enableWindShiftLogic != false && sensorWindDir) algos << "Shift"
-                if (settings.enableLightningLogic != false && sensorLightning) algos << "Lightning"
-                if (settings.enableThermalSmoothing != false) algos << "Smoothing"
-                if (settings.enableRedundancy != false && (sensorTempBackup || sensorHumBackup || sensorPressBackup)) algos << "Redundancy"
-                if (settings.enableOpenMeteo != false && !state.apiOffline) algos << "External API Synergy"
-                
-                calcDisplay += "<br><br><span style='font-size:10px; color:#555;'><b>Active Models:</b> ${algos.join(", ")}</span>"
-                
-                def probColor = prob > 70 ? "red" : (prob > 40 ? "orange" : "black")
-                def confColor = confScore < 50 ? "red" : (confScore < 80 ? "orange" : "green")
-                def stateColor = isStale ? "red" : (activeState == "Clear" ? "green" : "blue")
-                def displayState = isStale ? "OFFLINE ⚠" : activeState.toUpperCase()
-                
-                def stateDisplay = "<b>State: <span style='color:${stateColor};'>${displayState}</span></b><br>"
-                if (!isStale) {
-                    stateDisplay += "<b>Rain Chance:</b> <span style='color:${probColor}; font-weight:bold;'>${prob}%</span><br>"
-                    stateDisplay += "<b>Confidence: <span style='color:${confColor};'>${confScore}%</span></b><br>"
-                    stateDisplay += "<b>Est. Clear:</b> ${clearTime}<br><br>"
-                }
-                stateDisplay += "<span style='font-size:11px; color:#555;'><i>${reasoning}</i><br><br><span style='color:#333;'><b>Confidence Reasoning:</b> ${confReason}</span></span>"
-
-                statusText += "<tr><td style='padding: 8px; vertical-align:top; border-right:1px solid #ddd;'>${envDisplay}</td><td style='padding: 8px; vertical-align:top; border-right:1px solid #ddd;'>${calcDisplay}</td><td style='padding: 8px; vertical-align:top;'>${stateDisplay}</td></tr>"
-                
-                // --- Live Hour-by-Hour API Banner ---
-                if (settings.enableOpenMeteo != false) {
-                    def apiDisplay = "<div style='background: #e6f7ff; border: 1px solid #91d5ff; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 13px;'>"
-                    
-                    if (state.apiOffline) {
-                        apiDisplay += "<b>🌐 External Forecast (Open-Meteo)</b><br>"
-                        apiDisplay += "<span style='color:red; font-weight:bold;'>⚠ Connection Offline - System running strictly on local sensors to prevent hub noise.</span>"
-                    } else {
-                        def omProb = state.omProb ?: 0
-                        def omColor = omProb > 50 ? "red" : (omProb > 20 ? "orange" : "green")
-                        
-                        apiDisplay += "<b>🌐 Expert Forecast (Open-Meteo) - Live Hour-by-Hour</b><br>"
-                        apiDisplay += "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-top:5px; margin-bottom:5px;'>"
-                        
-                        if (state.omHourlyData) {
-                            state.omHourlyData.each { hr ->
-                                def hrColor = hr.prob > 50 ? "red" : (hr.prob > 20 ? "orange" : "black")
-                                apiDisplay += "<div style='background:white; border:1px solid #ccc; padding:4px 8px; border-radius:3px; text-align:center; flex:1; min-width:60px;'>"
-                                apiDisplay += "<div style='font-size:11px; color:#555;'>${hr.time}</div>"
-                                apiDisplay += "<div style='font-weight:bold; color:${hrColor};'>${hr.prob}%</div>"
-                                apiDisplay += "<div style='font-size:10px; color:#888;'>${hr.rain}\"</div>"
-                                apiDisplay += "</div>"
-                            }
-                        } else {
-                            apiDisplay += "<i>Awaiting first API sync...</i>"
-                        }
-                        apiDisplay += "</div>"
-                        def targetLat = settings.manualLat ?: location.latitude
-                        def targetLon = settings.manualLon ?: location.longitude
-                        apiDisplay += "<span style='font-size: 11px; color: #666;'><i>Lat: ${targetLat}, Lon: ${targetLon} | Max Probability: ${omProb}% | Total Expected Vol: ${state.omRain ?: "0.00"} in/mm (Last sync: ${state.omLastSync ?: "Pending"})</i></span>"
-                    }
- 
-                    apiDisplay += "</div>"
-                    
-                    statusText += "<tr><td colspan='3' style='padding: 10px;'>${apiDisplay}</td></tr>"
-                }
-
-                // --- Rainfall History, Graph & Record Banner ---
-                def recordInfo = state.recordRain ?: [date: "None", amount: 0.0]
-                def sevenDayList = state.sevenDayRain ?: []
-           
-                def historyDisplay = "<div><b>🏆 All-Time Record:</b> <span style='color:blue; font-weight:bold; font-size: 15px;'>${recordInfo.amount}</span> <i style='color:#555;'>(${recordInfo.date})</i></div>"
-                historyDisplay += "<div style='margin-top:5px;'><b>Current Week:</b> ${rainWeek} | <b>Today's Total:</b> ${state.currentDayRain ?: 0.0}</div>"
-                
-                if (sevenDayList.size() > 0) {
-                    def maxRain = 0.5 
-                    sevenDayList.each { if (it.amount > maxRain) maxRain = it.amount }
-       
-                    historyDisplay += "<div style='margin-top:15px; font-weight:bold;'>7-Day History:</div>"
-                    historyDisplay += "<div style='display:flex; align-items:flex-end; height:100px; gap:8px; margin-top:5px; border-bottom:2px solid #aaa; padding-bottom:2px;'>"
-                    
-                    sevenDayList.reverse().each { item ->
-                        def barHeight = (item.amount / maxRain) * 80
-                        if (item.amount > 0 && barHeight < 2) barHeight = 2
-                        
-                        def dateSplit = item.date.split("-")
-                        def shortDate = dateSplit.size() == 3 ? "${dateSplit[1]}/${dateSplit[2]}" : item.date
- 
-                        historyDisplay += "<div style='display:flex; flex-direction:column; align-items:center; flex:1;'>"
-                        historyDisplay += "<div style='font-size:10px; color:#555; margin-bottom:2px;'>${item.amount}</div>"
-                        historyDisplay += "<div style='width:80%; max-width:35px; background-color:#4a90e2; height:${barHeight}px; border-radius:3px 3px 0 0;'></div>"
-                        historyDisplay += "<div style='font-size:10px; margin-top:2px;'>${shortDate}</div>"
-                        historyDisplay += "</div>"
-                    }
-                    historyDisplay += "</div>"
+        section("<b>Live Threat Assessment Matrix</b>") {
+            
+            def isWatchdog = state.watchdogActive ?: false
+            def wdHtml = isWatchdog ? "<span style='color:#d9534f; font-weight:bold;'>[🚨 DEFCON WATCHDOG ACTIVE: Overdrive Polling Engaged]</span>" : "<span style='color:#5cb85c;'>[Standard Local Polling]</span>"
+            
+            def cloudHtml = ""
+            if (settings.enableNOAA) {
+                if (state.cloudOffline) {
+                    cloudHtml = " <span style='color:#d9534f; font-weight:bold;'>[☁️ CLOUD OFFLINE: NOAA Suspended]</span>"
                 } else {
-                    historyDisplay += "<div style='margin-top:15px; font-size:11px; color:#888;'><i>7-Day Graph will generate after the first midnight rollover...</i></div>"
+                    cloudHtml = " <span style='color:#0275d8; font-weight:bold;'>[☁️ NOAA Sync Active]</span>"
+                }
+            }
+            
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Runs predictive thermodynamic models for six severe weather profiles. Features DNA event forensics and cross-references data with official US Government NWS API alerts. ${wdHtml}${cloudHtml}</div>"
+            
+            if (sensorTemp && sensorHum && sensorPress) {
+                def matrix = state.threatMatrix ?: [:]
+                def noaaMap = state.noaaAlertsMap ?: [:]
+                def hazards = [
+                    [id: "Tornado", icon: "🌪️"],
+                    [id: "Thunderstorm", icon: "⛈️"],
+                    [id: "Flood", icon: "🌊"],
+                    [id: "Freeze", icon: "❄️"],
+                    [id: "SevereHeat", icon: "🔥"],
+                    [id: "Tropical", icon: "🌀"]
+                ]
+                
+                hazards.each { hazMap ->
+                    def haz = hazMap.id
+                    def icon = hazMap.icon
+                    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Gathering sensor data...", mathEx: "Awaiting math cycle...", lastTrig: 0, history: []]
+
+                    def noaaStatus = noaaMap[haz] ?: "Clear"
+                    def noaaRaw = noaaMap["Raw_${haz}"] ?: "No official alerts for this sector."
+                    def noaaColor = noaaStatus == "ALARM" ? "#d9534f" : (noaaStatus == "WARNING" ? "#f0ad4e" : "#5cb85c")
+                    def noaaBg = noaaStatus == "Clear" ? "#f4f8f4" : (noaaStatus == "WARNING" ? "#fcf6ec" : "#fdf0f0")
+                    
+                    def stateColor = data.state == "ALARM" ? "#d9534f" : (data.state == "WARNING" ? "#f0ad4e" : "#5cb85c")
+                    def headerBg = data.state == "ALARM" ? "#fdf0f0" : (data.state == "WARNING" ? "#fcf6ec" : "#f4f8f4")
+                    
+                    def tColor = data.threat > 75 ? "#d9534f" : (data.threat > 40 ? "#f0ad4e" : "#5bc0de")
+                    def pColor = data.prob > 75 ? "#d9534f" : (data.prob > 40 ? "#f0ad4e" : "#5bc0de")
+                    def cColor = data.conf > 75 ? "#5cb85c" : (data.conf > 40 ? "#f0ad4e" : "#d9534f")
+
+                    // Build History HTML
+                    def histHtml = "<div style='margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 8px;'><b style='font-size:12px; color:#222;'>Recent Event History:</b><br>"
+                    if (data.history && data.history.size() > 0) {
+                        data.history.each { h ->
+                            def c = h.type == 'ALARM' ? '#d9534f' : '#f0ad4e'
+                            histHtml += "<div style='font-size:11px; color:#555;'>• <span style='color:${c}; font-weight:bold;'>${h.type}</span> | Initiated: ${h.start} | Duration: <b>${h.dur}</b></div>"
+                        }
+                    } else {
+                        histHtml += "<div style='font-size:11px; color:#888; font-style:italic;'>No recent events recorded.</div>"
+                    }
+                    histHtml += "</div>"
+
+                    def sectionTitle = "${icon} ${haz == 'SevereHeat' ? 'Severe Heat' : haz} DNA &nbsp;|&nbsp; Threat: ${data.threat}% &nbsp;|&nbsp; Conf: ${data.conf}% &nbsp;|&nbsp; State: ${data.state}"
+                    def isHidden = (data.state == "Clear" && noaaStatus == "Clear")
+
+                    section("<b>${sectionTitle}</b>", hideable: true, hidden: isHidden) {
+                        def dashboardHtml = """
+                        <div style="border: 1px solid #e0e0e0; margin-bottom: 5px; border-radius: 8px; background: #ffffff; overflow: hidden; font-family: 'Segoe UI', Tahoma, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                            
+                            <div style="display: flex; flex-wrap: wrap; padding: 15px; gap: 15px; border-bottom: 1px solid #eee;">
+                                <div style="flex: 1; min-width: 200px;">
+                                    <div style="display: inline-block; padding: 3px 10px; background: ${headerBg}; color: ${stateColor}; border: 1px solid ${stateColor}; font-weight: bold; border-radius: 12px; font-size: 11px; margin-bottom: 12px; letter-spacing: 0.5px; text-transform: uppercase;">
+                                        LOCAL SYSTEM: ${data.state}
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <div style="font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 4px; color: #444;"><b>Threat Intensity</b><b>${data.threat}%</b></div>
+                                        <div style="width: 100%; height: 8px; background: #eaecf0; border-radius: 4px;"><div style="width: ${data.threat}%; height: 100%; background: ${tColor}; border-radius: 4px; transition: width 0.5s ease;"></div></div>
+                                    </div>
+                                    <div style="margin-bottom: 10px;">
+                                        <div style="font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 4px; color: #444;"><b>Probability Score</b><b>${data.prob}%</b></div>
+                                        <div style="width: 100%; height: 8px; background: #eaecf0; border-radius: 4px;"><div style="width: ${data.prob}%; height: 100%; background: ${pColor}; border-radius: 4px; transition: width 0.5s ease;"></div></div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 4px; color: #444;"><b>System Confidence</b><b>${data.conf}%</b></div>
+                                        <div style="width: 100%; height: 8px; background: #eaecf0; border-radius: 4px;"><div style="width: ${data.conf}%; height: 100%; background: ${cColor}; border-radius: 4px; transition: width 0.5s ease;"></div></div>
+                                    </div>
+                                </div>
+                                <div style="flex: 1.2; min-width: 250px; font-size: 13px; color: #444; background: #f8f9fa; border-radius: 6px; padding: 12px; border-left: 4px solid ${stateColor}; display: flex; flex-direction: column; justify-content: flex-start;">
+                                    <b style="color:#222; margin-bottom: 6px; font-size: 14px;">Diagnostic Report:</b>
+                                    <span style="line-height: 1.4;">${data.howWhy}</span>
+                                    ${histHtml}
+                                </div>
+                                <div style="flex: 1.2; min-width: 200px; font-size: 11px; color: #333; background: #eef2f5; border-radius: 6px; padding: 12px; border-left: 4px solid #8e9eab; display: flex; flex-direction: column; justify-content: flex-start; font-family: 'Courier New', Courier, monospace;">
+                                    <b style="color:#222; margin-bottom: 6px; font-size: 12px; font-family: 'Segoe UI', sans-serif;">Algorithmic Engine:</b>
+                                    <span style="line-height: 1.5;">${data.mathEx}</span>
+                                </div>
+                            </div>
+                            
+                            """
+                            
+                            if (settings.enableNOAA) {
+                                dashboardHtml += """
+                                <div style="padding: 12px 15px; background: ${noaaBg}; font-size: 13px; color: #333; display: flex; align-items: center; gap: 15px;">
+                                    <div style="padding: 3px 10px; background: #fff; color: ${noaaColor}; border: 1px solid ${noaaColor}; font-weight: bold; border-radius: 12px; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap;">
+                                        NOAA: ${noaaStatus}
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <b>Official NWS Report:</b> ${noaaRaw}
+                                    </div>
+                                </div>
+                                """
+                            } else {
+                                dashboardHtml += """
+                                <div style="padding: 8px 15px; background: #f9f9f9; font-size: 11px; color: #888; font-style: italic;">
+                                    NOAA External Cloud Polling is currently disabled.
+                                </div>
+                                """
+                            }
+                            
+                        dashboardHtml += "</div>"
+                        paragraph dashboardHtml
+                    }
                 }
                 
-                statusText += "<tr style='border-top: 1px solid #ccc; background-color: #f9f9f9;'><td colspan='3' style='padding: 15px;'>${historyDisplay}</td></tr>"
-                statusText += "</table>"
-                
-                // --- Predictive Logic & Explanation Panel ---
-                def logicPanel = "<div style='margin-top: 15px; padding: 15px; background: #fff3cd; border-left: 5px solid #ffecb5; font-size: 13px; color: #856404;'>"
-                logicPanel += "<h4 style='margin-top:0; border-bottom:1px solid #ffeeba; padding-bottom:5px;'>Engine Diagnostics: Why is this happening?</h4>"
-                logicPanel += "<b>Active Logic Triggers:</b><br> " + (state.logicReasoning ?: "Gathering sensor data...") + "<br><br>"
-                logicPanel += "<b>Consensus & Confidence:</b><br> " + (state.confidenceReasoning ?: "Waiting for consensus...")
-                logicPanel += "</div>"
+                // --- NEW FORECAST SECTION ---
+                if (settings.enableNOAA && state.noaaForecastText) {
+                    section("<b>⛅ Official NOAA Weather Forecast</b>", hideable: true, hidden: false) {
+                        def fHtml = """
+                        <div style="border: 1px solid #4a90e2; border-radius: 8px; background: #f4f9ff; padding: 15px; font-family: 'Segoe UI', Tahoma, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05); color: #333;">
+                            <div style="font-size: 14px; font-weight: bold; color: #0275d8; margin-bottom: 8px; border-bottom: 1px solid #cce0ff; padding-bottom: 6px;">NWS Local Area Forecast Matrix</div>
+                            <div style="margin-bottom: 10px; font-size: 13px;">
+                                <b style="color: #444; font-size: 14px;">${state.noaaCurrentPeriod}:</b> ${state.noaaForecastText}
+                            </div>
+                            <div style="font-size: 12px; color: #555; background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px;">
+                                <b style="color: #444;">${state.noaaNextPeriodName}:</b> ${state.noaaNextForecastText}
+                            </div>
+                        </div>
+                        """
+                        paragraph fHtml
+                    }
+                }
 
-                statusText += logicPanel
-
-                // --- CSS Flexbox Layout for Chart & Radar ---
-                def visualWidgets = "<div style='display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px; align-items: stretch;'>"
-                
-                def dispMode = settings.historyDisplayMode ?: "Chart (Chart.js)"
-                if (dispMode == "Chart (Chart.js)") {
-                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
-                    visualWidgets += renderChartHTML()
-                    visualWidgets += "</div>"
-                } else if (dispMode == "Data Table") {
-                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
-                    visualWidgets += renderTableHTML()
-                    visualWidgets += "</div>"
+                // --- NEW OVERALL NOAA ALERTS SECTION ---
+                if (settings.enableNOAA) {
+                    section("<b>📡 Official NOAA Active Alerts Report</b>", hideable: true, hidden: false) {
+                        def reportHtml = """
+                        <div style="border: 1px solid #d9534f; border-radius: 8px; background: #fffcfc; padding: 15px; font-family: 'Segoe UI', Tahoma, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05); color: #333;">
+                            <div style="font-size: 14px; font-weight: bold; color: #c9302c; margin-bottom: 8px; border-bottom: 1px solid #f2dede; padding-bottom: 6px;">Unabridged NWS Broadcasts</div>
+                            <div style="font-size: 13px; line-height: 1.5; color: #444;">
+                                ${state.noaaGlobalAlerts ?: "<i>No active national weather alerts for your area.</i>"}
+                            </div>
+                        </div>
+                        """
+                        paragraph reportHtml
+                    }
                 }
                 
-                if (settings.enableRadar != false) {
-                    visualWidgets += "<div style='flex: 1 1 48%; min-width: 350px; background: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'>"
-                    visualWidgets += renderRadarHTML()
-                    visualWidgets += "</div>"
+                section("<b>Core Physics Data Stream</b>", hideable: true, hidden: true) {
+                    def pTrend = state.pressureTrendStr ?: "Stable"
+                    def tTrend = state.tempTrendStr ?: "Stable"
+                    def wTrend = state.windTrendStr ?: "Stable"
+                    def sTrend = state.spreadTrendStr ?: "Stable"
+                    
+                    def rawP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], 0.0)
+                    def p = rawP + (settings.pressOffset ?: 0.0)
+                    
+                    def windDir = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], "N/A")
+                    def strikes = state.lightningHistory?.size() ?: 0
+                    
+                    def physicsDisplay = "<div style='padding: 12px; background: #f0f2f5; border-radius: 6px; font-size: 13px; border: 1px solid #dcdfe3; color: #555; line-height: 1.6;'>"
+                    physicsDisplay += "<b>Calibrated MSLP Baro:</b> ${String.format('%.2f', p)} inHg (${pTrend})<br>"
+                    physicsDisplay += "<b>Temp Velocity:</b> ${tTrend} &nbsp;|&nbsp; <b>Squeeze Vel:</b> ${sTrend}<br>"
+                    physicsDisplay += "<b>Wind:</b> ${wTrend} @ ${windDir}° &nbsp;|&nbsp; <b>Lightning (30m):</b> ${strikes} strikes<br>"
+                    physicsDisplay += "<b>Hub Coordinates:</b> ${location.latitude ?: 'MISSING'}, ${location.longitude ?: 'MISSING'}</div>"
+                    paragraph physicsDisplay
                 }
-                visualWidgets += "</div>"
                 
-                statusText += visualWidgets
-                
-                // Switch Status
-                def rainSw = switchRaining?.currentValue("switch") == "on" ? "<span style='color:blue; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
-                def sprinkSw = switchSprinkling?.currentValue("switch") == "on" ? "<span style='color:blue; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
-                def probSw = switchProbable?.currentValue("switch") == "on" ? "<span style='color:orange; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
-                
-                statusText += "<div style='margin-top: 15px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 15px; border: 1px solid #ccc;'>"
-                statusText += "<div><b>Virtual Switches:</b> Probable Threat: [${probSw}] | Sprinkling: [${sprinkSw}] | Heavy Rain: [${rainSw}]</div>"
-                statusText += "</div>"
-
-                paragraph statusText
             } else {
-                paragraph "<i>Primary sensors missing. Click configuration below to assign weather devices.</i>"
+                paragraph "<i>Primary sensors missing. Click Configuration below to assign devices.</i>"
             }
         }
 
         section("<b>System Configuration</b>") {
-            href(name: "configPageLink", page: "configPage", title: "▶ Configure Sensors, Logic & Switches", description: "Set up Weather Station sensors, tune predictive logic algorithms, and map outputs.")
+            href(name: "configPageLink", page: "configPage", title: "▶ Base Hardware & BMS Engine Tuning", description: "Set up local sensors, NOAA Cloud Integration, calibration offsets, DEFCON Watchdog, and master hardware outputs.")
+            href(name: "dnaConfigPageLink", page: "dnaConfigPage", title: "▶ Threat DNA Granular Mapping", description: "Configure Probability thresholds, specific Mode restrictions, and custom granular Audio/Siren routing per threat.")
         }
         
         section("<b>Child Device Integration</b>") {
-            paragraph "<i>Create a single virtual device that exposes all advanced meteorological data and states calculated by this app to your dashboards or rules.</i>"
+            paragraph "<i>Create a single virtual device that exposes the entire Threat Matrix to your dashboards.</i>"
             if (app.id) {
-                input "createDeviceBtn", "button", title: "➕ Create Rain Detector Information Device"
+                input "createDeviceBtn", "button", title: "➕ Create Severe Weather Information Device"
             } else {
                 paragraph "<b>⚠ Please click 'Done' to fully install the app before creating the child device.</b>"
-            }
-            if (getChildDevice("RainDet-${app.id}")) {
-                paragraph "<span style='color:green; font-weight:bold;'>✅ Child Device is Active.</span>"
-                
-                input "enableSmartSync", "bool", title: "Enable Smart Sync (Instantly pushes updates when data changes)", defaultValue: true, submitOnChange: true
-                input "enableChildSync", "bool", title: "Enable Scheduled Data Sync (Routine heartbeat backup)", defaultValue: true, submitOnChange: true
-                if (enableChildSync != false) {
-                    input "childSyncInterval", "enum", title: "Scheduled Sync Interval (Minutes)", options: ["5", "10", "15", "30", "60"], defaultValue: "15", required: true, submitOnChange: true
-                }
             }
         }
         
         if (app.id) {
-            section("<b>Global Actions & Overrides</b>", hideable: true, hidden: true) {
-                paragraph "<i>Manual controls to force evaluations, reset records, or clear stuck states. Use with caution.</i>"
-                input "forceEvalBtn", "button", title: "⚙️ Force Logic Evaluation"
-                input "resetRecordBtn", "button", title: "🗑️ Reset All-Time Rain Record"
-                input "clearStateBtn", "button", title: "⚠ Reset Internal State & History"
-                input "forceApiBtn", "button", title: "🌐 Force Open-Meteo API Sync"
+            section("<b>Global Actions & Debugging</b>", hideable: true, hidden: true) {
+                input "forceEvalBtn", "button", title: "⚙️ Force Matrix Evaluation"
+                input "clearStateBtn", "button", title: "⚠ Reset Internal Matrix & Hardware"
+                input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
+                input "debugEnable", "bool", title: "Enable Debug Logging", defaultValue: false
             }
         }
 
-        section("<b>Action History & Debugging</b>") {
-            input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
-            input "debugEnable", "bool", title: "Enable Debug Logging", defaultValue: false, submitOnChange: true
-            
-            if (state.actionHistory) {
-                paragraph "<span style='font-size: 13px; font-family: monospace;'>${state.actionHistory.join("<br>")}</span>"
-            }
+        section() {
+            paragraph "<hr><div style='font-size:11px; color:#777; text-align:center; padding: 10px; background: #f9f9f9; border-radius: 6px; border: 1px solid #eee;'><b>DISCLAIMER:</b> This application is a localized predictive thermodynamic engine designed for home automation. It <b>DOES NOT</b> replace official NOAA broadcasts, National Weather Service alerts, or Emergency Alert System (EAS) activations. It should never be relied upon as a primary life-saving tool or safety device. The author and distributor assume no liability for missed meteorological events, false alarms, property damage, or injury.</div>"
         }
     }
 }
 
 def configPage() {
-    dynamicPage(name: "configPage", title: "<b>Configuration</b>", install: false, uninstall: false) {
+    return dynamicPage(name: "configPage", title: "<b>Base Hardware & BMS Engine Tuning</b>", install: false, uninstall: false) {
         
-        section("<b>Dashboard UI Preferences</b>", hideable: true, hidden: true) {
-            paragraph "<i>Customize how data is visualized on your main application page.</i>"
-            input "historyDisplayMode", "enum", title: "24-Hour History Display", options: ["Chart (Chart.js)", "Data Table", "Hidden"], defaultValue: "Chart (Chart.js)", required: true, submitOnChange: true
-            input "enableRadar", "bool", title: "Enable Live NOAA Radar Map", defaultValue: true, submitOnChange: true
-        }
-
-        section("<b>Primary Environment Sensors (Required)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Select the core sensors required for basic weather state and thermodynamic calculations. Temperature, Humidity, and Pressure form the baseline of the prediction engine.</i>"
+        section("<b>Primary Thermodynamic Sensors (Required)</b>") {
             input "sensorTemp", "capability.sensor", title: "Outdoor Temperature Sensor", required: true
             input "sensorHum", "capability.sensor", title: "Outdoor Humidity Sensor", required: true
             input "sensorPress", "capability.sensor", title: "Barometric Pressure Sensor", required: true
         }
 
-        section("<b>Redundancy & Backup Sensors (Optional)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Select secondary sensors to automatically average data or failover if your primary weather station drops offline.</i>"
-            input "sensorTempBackup", "capability.sensor", title: "Backup Temperature Sensor", required: false
-            input "sensorHumBackup", "capability.sensor", title: "Backup Humidity Sensor", required: false
-            input "sensorPressBackup", "capability.sensor", title: "Backup Barometric Pressure Sensor", required: false
-        }
-        
-        section("<b>Algorithm Tuning & Toggles</b>", hideable: true, hidden: true) {
-            paragraph "<i>Enable or disable specific mathematical models to fine-tune the engine's sensitivity to your specific microclimate.</i>"
-            
-            input "enableDPLogic", "bool", title: "Dew Point Convergence Velocity", defaultValue: true, description: "Monitors the gap between air temp and dew point. Rapidly closing spreads indicate imminent atmospheric saturation and rain."
-            input "enableVPDLogic", "bool", title: "VPD (Vapor Pressure Deficit)", defaultValue: true, description: "Calculates the drying power of the air. Extremely low VPD means the air cannot hold more moisture, leading to precipitation."
-            input "enableWetBulbLogic", "bool", title: "Wet-Bulb Cooling (Rain Shafts)", defaultValue: true, description: "Detects sudden temperature drops toward the Wet-Bulb point, indicating rain is physically falling through the air column above your sensors."
-            input "enablePressureLogic", "bool", title: "Barometric Pressure Trends", defaultValue: true, description: "Tracks rapid drops in barometric pressure, a classic indicator of approaching storm fronts and low-pressure systems."
-            input "enableSynergyLogic", "bool", title: "Algorithmic Synergy (Multipliers)", defaultValue: true, description: "Multiplies rain probability when multiple critical events (e.g., rapid pressure drop + wind shift) happen simultaneously. Highly recommended."
-            input "enableCloudLogic", "bool", title: "Cloud Cover / Solar Drop Logic", defaultValue: true, description: "Monitors sudden plummets in solar radiation (lux) to detect thick cloud cover moving in before rain starts."
-            input "enableWindLogic", "bool", title: "Wind Gust Fronts", defaultValue: true, description: "Detects sudden spikes in wind speed, often associated with gust fronts leading a thunderstorm."
-            input "enableWindShiftLogic", "bool", title: "Wind Direction Shift Logic", defaultValue: true, description: "Tracks sharp changes in wind direction (45°+), which strongly correlates with frontal passages and squall lines."
-            input "enableLightningLogic", "bool", title: "Lightning Proximity Logic", defaultValue: false, description: "Uses lightning strike distance and frequency to predict approaching storms."
-            
-            input "enableThermalSmoothing", "bool", title: "Thermal Smoothing (Sun-Spike Protection)", defaultValue: true, description: "Applies an Exponentially Weighted Moving Average (EWMA) filter to temperature. Prevents the app from panicking if the sun hits your sensor and artificially spikes the temp."
-            input "enableTimeToDry", "bool", title: "Time-to-Dry Estimator", defaultValue: true, description: "Divides daily accumulated rainfall by real-time evapotranspiration physics to generate a live countdown of when the ground will be dry."
-            input "enableRedundancy", "bool", title: "Sensor Redundancy & Failover", defaultValue: true, description: "Averages primary and backup sensors, or instantly fails-over to the backup if your primary sensor goes offline."
-            input "enableDewRejection", "bool", title: "Dew & Frost Rejection", defaultValue: true, description: "Ignores the instant leak sensor on cold/calm mornings to prevent false 'Sprinkling' states from morning dew."
-            input "enableStaleCheck", "bool", title: "Stale Data Protection", defaultValue: true, description: "Flags the system offline and clears active states if sensor data stops updating."
-            input "staleDataTimeout", "number", title: "Stale Data Timeout (Minutes)", defaultValue: 30
-        }
-
-        section("<b>External API (Open-Meteo)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Pull free regional forecasting data based on your hub's coordinates (No sign-up or API key required). This provides an expert comparison on the dashboard.</i>"
-            input "enableOpenMeteo", "bool", title: "Enable Free Open-Meteo API Sync", defaultValue: true, submitOnChange: true
-            if (enableOpenMeteo) {
-                input "enableOpenMeteoSynergy", "bool", title: "Allow API to Influence Probability", defaultValue: false, description: "If enabled, local probability will be slightly boosted if the external API expects heavy rain, creating a synergistic prediction."
-                input "manualLat", "decimal", title: "Manual Latitude Override", required: false, description: "Pinpoint your exact house. Leave blank to use Hub location."
-                input "manualLon", "decimal", title: "Manual Longitude Override", required: false, description: "Pinpoint your exact house. Leave blank to use Hub location."
-            }
-        }
-     
-        section("<b>Instant 'First Drop' Sensor</b>", hideable: true, hidden: true) {
-            paragraph "<i>Map a standard Z-Wave/Zigbee leak sensor placed outside to bypass tipping-bucket delays. Provides an instant 'Sprinkling' state the moment rain begins.</i>"
-            input "sensorLeak", "capability.waterSensor", title: "Instant Rain Sensor (e.g., exposed leak sensor)", required: false
-        }
-
-        section("<b>Advanced Prediction Sensors (Optional)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Add Solar Radiation, Wind Speed, Wind Direction, and Lightning sensors to unlock advanced storm front detection, increasing prediction accuracy.</i>"
-            input "sensorLux", "capability.illuminanceMeasurement", title: "Solar Radiation / Lux Sensor (Detects incoming cloud fronts)", required: false
-            input "sensorWind", "capability.sensor", title: "Wind Speed Sensor (Detects storm gust fronts)", required: false
-            input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor (Detects frontal passages)", required: false
+        section("<b>Kinetic & Precipitation Sensors (Required for Full Matrix)</b>") {
+            input "sensorWind", "capability.sensor", title: "Wind Speed / Gust Sensor", required: false
+            input "sensorWindDir", "capability.sensor", title: "Wind Direction Sensor", required: false
             input "sensorLightning", "capability.sensor", title: "Lightning Detector", required: false
-            if (sensorLightning) {
-                input "lightningStrikeThreshold", "number", title: "Minimum Lightning Strikes", defaultValue: 3, description: "Wait for this many strikes within 30 minutes before increasing probability."
-            }
-        }
-
-        section("<b>Local Polling Override</b>", hideable: true, hidden: true) {
-            paragraph "<i>Force a refresh command to your sensors at a set interval. <b>WARNING:</b> Only use this for local LAN devices. Cloud APIs will rate-limit or ban you for polling too fast.</i>"
-            input "enablePolling", "bool", title: "Enable Active Device Polling", defaultValue: false, submitOnChange: true
-            if (enablePolling) {
-                input "pollInterval", "number", title: "Polling Interval (Minutes: 1-59)", required: true, defaultValue: 1
-            }
-        }
-
-        section("<b>Precipitation & Accumulation Sensors (Optional)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Select your physical rain gauges to track daily and weekly accumulation, and to provide hard confirmation when predicting rain.</i>"
             input "sensorRain", "capability.sensor", title: "Rain Rate Sensor (in/hr or mm/hr)", required: false
             input "sensorRainDaily", "capability.sensor", title: "Daily Rain Accumulation Sensor", required: false
-            input "sensorRainWeekly", "capability.sensor", title: "Weekly Rain Accumulation Sensor", required: false
         }
         
-        section("<b>Virtual Output Switches</b>", hideable: true, hidden: true) {
-            paragraph "<i>Map the virtual switches the application will turn on/off based on the current weather state. 'Debounce' prevents the switches from rapid-cycling during variable weather.</i>"
-            input "switchProbable", "capability.switch", title: "Rain Probable Switch (Turns ON when probability reaches setpoint)", required: false
-            input "switchSprinkling", "capability.switch", title: "Sprinkling / Light Rain Switch (Mutually Exclusive)", required: false
-            input "switchRaining", "capability.switch", title: "Heavy Rain Switch (Mutually Exclusive)", required: false
-            
-            input "debounceMins", "number", title: "State Debounce Time (Minutes)", required: true, defaultValue: 5, description: "Prevents rapidly flipping back and forth between states. Upgrading to worse weather is instant; downgrading or clearing will wait this long."
-            input "heavyRainThreshold", "decimal", title: "Heavy Rain Rate Threshold (in/hr or mm/hr)", required: true, defaultValue: 0.1
+        section("<b>☁️ External Cloud Integration (100% Free / No API Key)</b>") {
+            paragraph "<i>Connects directly to the United States National Weather Service via your Hub's latitude and longitude. Automatically pulls grid-based text forecasts and local alerts.</i>"
+            input "enableNOAA", "bool", title: "Enable NOAA / NWS Forecasts & Alerts", defaultValue: true, submitOnChange: true
+            if (enableNOAA) {
+                input "noaaTriggersHardware", "bool", title: "Allow NOAA Alerts to trigger your physical Warning & Alarm switches", defaultValue: false, description: "If enabled, an official NWS Warning will force the local DNA into ALARM mode, executing your hardware routines."
+            }
         }
         
-        section("<b>Notifications & Setpoints</b>", hideable: true, hidden: true) {
-            paragraph "<i>Configure which devices receive alerts and the specific probability thresholds that trigger them.</i>"
-            input "notifyDevices", "capability.notification", title: "Notification Devices", multiple: true, required: false
-            input "notifyProbThreshold", "number", title: "Rain Probability Setpoint (%)", required: true, defaultValue: 75, description: "Turns on the 'Rain Probable' switch and sends a notification when calculated probability hits this threshold."
-            input "notifyOnSprinkle", "bool", title: "Notify when Sprinkling starts", defaultValue: true
-            input "notifyOnRain", "bool", title: "Notify when Heavy Rain starts", defaultValue: true
-            input "notifyOnClear", "bool", title: "Notify when weather clears", defaultValue: false
+        section("<b>BMS Engine Integrity & Calibration</b>") {
+            input "pressOffset", "decimal", title: "Barometric MSLP Offset (inHg)", defaultValue: 0.0, description: "Crucial for Tropical DNA accuracy. If your station pressure reads 29.00 but your local weather station reports 29.90 (due to elevation), enter 0.90 here."
+            input "enableHardwareFilter", "bool", title: "Enable Hardware Anomaly Rejection", defaultValue: true, description: "Filters out impossible data spikes (e.g. 10 degree jump in 1 minute) caused by sensor glitches or dead batteries."
+            input "enableThermalSmoothing", "bool", title: "Thermal Smoothing (Sun-Spike Protection)", defaultValue: true
+            input "staleDataTimeout", "number", title: "Stale Data Timeout (Minutes)", defaultValue: 30
         }
+        
+        section("<b>DEFCON Watchdog Polling</b>") {
+            paragraph "<i>When a threat probability begins climbing locally, the engine can override standard polling schedules to acquire data rapidly.</i>"
+            input "enablePolling", "bool", title: "Enable Standard Active Device Polling", defaultValue: true, submitOnChange: true
+            if (enablePolling) {
+                input "pollInterval", "number", title: "Standard Polling Interval (Minutes)", required: true, defaultValue: 5
+            }
+            input "enableDefcon", "bool", title: "Enable DEFCON Watchdog Overdrive", defaultValue: true, submitOnChange: true
+            if (enableDefcon) {
+                input "defconThresh", "number", title: "DEFCON Activation Threshold (Probability %)", required: true, defaultValue: 25, description: "Watchdog engages when any DNA hits this probability."
+                input "defconMins", "enum", title: "DEFCON Overdrive Polling Rate (Minutes)", required: true, defaultValue: "1", options: ["1", "2", "3", "4", "5"]
+            }
+        }
+        
+        section("<b>Global Master Output Hardware</b>") {
+            paragraph "<i>Select your master default devices here. If you do not assign specific overrides inside the DNA pages, the system will fall back to these global devices.</i>"
+            input "audioDevices", "capability.speechSynthesis", title: "Global TTS Audio Devices (e.g., Sonos/Echo)", multiple: true, required: false
+            input "soundDevices", "capability.audioNotification", title: "Global Sound File/MP3 Players", multiple: true, required: false
+            input "sirenDevices", "capability.alarm", title: "Global Sirens & Strobes", multiple: true, required: false
+            input "notifyDevices", "capability.notification", title: "Global Push Notification Devices", multiple: true, required: false
+            input "audioVolume", "number", title: "Master Announcement Volume Level (%)", defaultValue: 65, range: "1..100"
+        }
+    }
+}
 
-        section("<b>Audio Alerts (Zooz Sirens/Speakers)</b>", hideable: true, hidden: true) {
-            paragraph "<i>Select Zooz sirens or audio players to play specific audio files/track numbers when weather states change. Supports standard track numbers depending on your device driver (1, 2, 3, etc.).</i>"
-            input "audioDevices", "capability.actuator", title: "Select Audio/Siren Devices", multiple: true, required: false
-            input "audioModes", "mode", title: "Only play audio in these modes (Leave blank for all)", multiple: true, required: false
-            
-            input "audioProbable", "number", title: "Track/File Number for Rain Probable", required: false, description: "e.g., 1", submitOnChange: true
-            if (audioProbable) {
-                input "testProbableBtn", "button", title: "🔊 Test Rain Probable Audio"
+def dnaConfigPage() {
+    return dynamicPage(name: "dnaConfigPage", title: "<b>Threat DNA Granular Mapping</b>", install: false, uninstall: false) {
+        
+        section() {
+            paragraph "<i>Fine-tune predictive thresholds, map physical switches, restrict alerts by Hub Mode, and configure specific speakers or sirens to be used per-threat.</i>"
+        }
+        
+        def dnas = [
+            [id: "Tornado", icon: "🌪️", wTTS: "Warning. Elevated probability of tornado conditions.", aTTS: "Critical Alert. Tornado conditions detected locally. Take immediate action."],
+            [id: "Thunderstorm", icon: "⛈️", wTTS: "Warning. Elevated probability of severe thunderstorms.", aTTS: "Critical Alert. Severe thunderstorm conditions actively detected."],
+            [id: "Flood", icon: "🌊", wTTS: "Warning. Elevated probability of flash flood conditions.", aTTS: "Critical Alert. Flash flood conditions detected locally."],
+            [id: "Freeze", icon: "❄️", wTTS: "Warning. Rapid trajectory towards hard freeze detected.", aTTS: "Alert. Hard freeze actively occurring."],
+            [id: "SevereHeat", icon: "🔥", wTTS: "Warning. High heat index detected. Caution advised.", aTTS: "Critical Alert. Severe heat index conditions detected locally."],
+            [id: "Tropical", icon: "🌀", wTTS: "Warning. Tropical cyclone signatures detected.", aTTS: "Critical Alert. Deep tropical cyclone conditions actively impacting location."]
+        ]
+        
+        dnas.each { dna ->
+            def id = dna.id
+            def lName = id.toLowerCase()
+            section("<b>${dna.icon} ${id == 'SevereHeat' ? 'Severe Heat' : id} DNA Configuration</b>", hideable: true, hidden: true) {
+                input "enable${id}", "bool", title: "Enable ${id} Engine", defaultValue: true, submitOnChange: true
+                if (settings["enable${id}"] != false) {
+                    input "${lName}WarnThresh", "number", title: "WARNING Probability Threshold (%)", defaultValue: 50, required: true
+                    input "${lName}AlarmThresh", "number", title: "ALARM Probability Threshold (%)", defaultValue: 80, required: true
+                    input "switch${id}Warn", "capability.switch", title: "Map WARNING Virtual Switch", required: false
+                    input "switch${id}Alarm", "capability.switch", title: "Map ALARM Virtual Switch", required: false
+                    
+                    // --- WARNING ROUTING ---
+                    paragraph "<b>▶ Warning Output Routing</b>"
+                    input "${lName}WarnModes", "mode", title: "<b>Restrict WARNING Alerts to these Modes</b> (Leave blank for all)", multiple: true, required: false
+                    
+                    input "${lName}WarnNotify", "bool", title: "Send Push Notification", defaultValue: true, submitOnChange: true
+                    if (settings["${lName}WarnNotify"]) {
+                        input "${lName}WarnNotifyDevs", "capability.notification", title: "  ↳ Specific Push Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}WarnTTS", "bool", title: "Broadcast TTS", defaultValue: true, submitOnChange: true
+                    if (settings["${lName}WarnTTS"]) {
+                        input "tts${id}Warn", "text", title: "  ↳ TTS String", required: false, defaultValue: dna.wTTS
+                        input "${lName}WarnTTSDevs", "capability.speechSynthesis", title: "  ↳ Specific TTS Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}WarnSiren", "bool", title: "Trigger Siren Device", defaultValue: false, submitOnChange: true
+                    if (settings["${lName}WarnSiren"]) {
+                        input "${lName}WarnSirenDevs", "capability.alarm", title: "  ↳ Specific Sirens (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}WarnSound", "bool", title: "Play Sound File", defaultValue: false, submitOnChange: true
+                    if (settings["${lName}WarnSound"]) {
+                        input "url${id}Warn", "text", title: "  ↳ Sound File URL", required: true
+                        input "${lName}WarnSoundDevs", "capability.audioNotification", title: "  ↳ Specific Sound Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    input "testWarnBtn_${id}", "button", title: "🔊 Test Warning Outputs"
+
+                    // --- ALARM ROUTING ---
+                    paragraph "<b>▶ Alarm Output Routing</b>"
+                    input "${lName}AlarmModes", "mode", title: "<b>Restrict ALARM Alerts to these Modes</b> (Leave blank for all)", multiple: true, required: false
+                    
+                    input "${lName}AlarmNotify", "bool", title: "Send Push Notification", defaultValue: true, submitOnChange: true
+                    if (settings["${lName}AlarmNotify"]) {
+                        input "${lName}AlarmNotifyDevs", "capability.notification", title: "  ↳ Specific Push Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}AlarmTTS", "bool", title: "Broadcast TTS", defaultValue: true, submitOnChange: true
+                    if (settings["${lName}AlarmTTS"]) {
+                        input "tts${id}Alarm", "text", title: "  ↳ TTS String", required: false, defaultValue: dna.aTTS
+                        input "${lName}AlarmTTSDevs", "capability.speechSynthesis", title: "  ↳ Specific TTS Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}AlarmSiren", "bool", title: "Trigger Siren Device", defaultValue: (id == "Tornado" || id == "Thunderstorm"), submitOnChange: true
+                    if (settings["${lName}AlarmSiren"]) {
+                        input "${lName}AlarmSirenDevs", "capability.alarm", title: "  ↳ Specific Sirens (Overrides Global)", multiple: true, required: false
+                    }
+                    
+                    input "${lName}AlarmSound", "bool", title: "Play Sound File", defaultValue: false, submitOnChange: true
+                    if (settings["${lName}AlarmSound"]) {
+                        input "url${id}Alarm", "text", title: "  ↳ Sound File URL", required: true
+                        input "${lName}AlarmSoundDevs", "capability.audioNotification", title: "  ↳ Specific Sound Devices (Overrides Global)", multiple: true, required: false
+                    }
+                    input "testAlarmBtn_${id}", "button", title: "🚨 Test Alarm Outputs"
+                }
             }
-            
-            input "audioSprinkling", "number", title: "Track/File Number for Sprinkling", required: false, description: "e.g., 2", submitOnChange: true
-            if (audioSprinkling) {
-                input "testSprinklingBtn", "button", title: "🔊 Test Sprinkling Audio"
+        }
+ 
+        section("<b>System-Wide Alert Latching & Hold Times</b>") {
+            input "enableLatching", "bool", title: "Enable Post-Event Latching", defaultValue: true, submitOnChange: true, description: "Keeps warnings and alarms active for a set duration after the threat probability falls below the threshold."
+            if (settings.enableLatching != false) {
+                input "latchMins", "number", title: "Latching Duration (Minutes)", required: true, defaultValue: 60, description: "How long an alert stays active after the threat has passed. Allows escalation (Warning -> Alarm) but prevents premature clearing."
             }
-            
-            input "audioRaining", "number", title: "Track/File Number for Heavy Rain", required: false, description: "e.g., 3", submitOnChange: true
-            if (audioRaining) {
-                input "testRainingBtn", "button", title: "🔊 Test Heavy Rain Audio"
-            }
+        }
+        
+        section("<b>Recurring Audio Alerts</b>") {
+            input "enableRepeatAudio", "bool", title: "Repeat Active Alerts Audio Every 60 Minutes", defaultValue: false, description: "If a Warning or Alarm remains active, the system will re-broadcast the TTS and replay Sound Files every 60 minutes."
         }
     }
 }
@@ -676,187 +397,63 @@ def updated() { logInfo("Updated"); unsubscribe(); initialize() }
 def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     
-    // Reset core states if missing
-    if (!state.weatherState) state.weatherState = "Clear"
-    if (!state.lastStateChange) state.lastStateChange = now()
+    // Ensure matrix exists without wiping history on update
+    def m = state.threatMatrix ?: [:]
+    ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"].each { haz ->
+        if (!m[haz]) {
+            m[haz] = [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0, lastWarnTime: 0, lastAlarmTime: 0, lastAnnounceTime: 0, history: [], currentEvent: null]
+        } else if (m[haz].lastAnnounceTime == null) {
+            m[haz].lastAnnounceTime = 0
+        }
+    }
+    state.threatMatrix = m
+    
+    state.watchdogActive = false
+    state.cloudOffline = false
+    state.noaaFailCount = 0
+    state.noaaAlertsMap = [:]
+    if (!state.noaaGlobalAlerts) state.noaaGlobalAlerts = "Initializing broadcast listener..."
+    
     if (!state.lastHeartbeat) state.lastHeartbeat = now()
-    if (!state.lastChildPayload) state.lastChildPayload = ""
-    if (!state.confidenceScore) state.confidenceScore = 0
-    if (!state.confidenceReasoning) state.confidenceReasoning = "Initializing..."
     if (!state.smoothedTemp) state.smoothedTemp = null
     
-    // Initialize API tracking & Anti-Noise
-    if (!state.omHourlyData) state.omHourlyData = []
-    if (!state.omProb) state.omProb = 0
-    if (!state.omRain) state.omRain = 0.0
-    if (!state.apiConsecutiveFails) state.apiConsecutiveFails = 0
-    state.apiOffline = false
-    
-    // Initialize History Maps
     if (!state.pressureHistory) state.pressureHistory = []
     if (!state.tempHistory) state.tempHistory = []
-    if (!state.luxHistory) state.luxHistory = []
+    if (!state.spreadHistory) state.spreadHistory = []
     if (!state.windHistory) state.windHistory = []
     if (!state.windDirHistory) state.windDirHistory = []
-    if (!state.spreadHistory) state.spreadHistory = []
     if (!state.lightningHistory) state.lightningHistory = []
-    if (!state.probHistory) state.probHistory = []
    
-    // Initialize Accumulation Tracking
-    if (!state.sevenDayRain) state.sevenDayRain = []
-    if (!state.recordRain) state.recordRain = [date: "None", amount: 0.0]
     if (!state.currentDayRain) state.currentDayRain = 0.0
     if (!state.currentDateStr) state.currentDateStr = new Date().format("yyyy-MM-dd", location.timeZone)
     
-    // Multi-Attribute Subscriptions
     subscribeMulti(sensorTemp, ["temperature", "tempf"], "tempHandler")
     subscribeMulti(sensorHum, ["humidity"], "stdHandler")
     subscribeMulti(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], "pressureHandler")
-    
-    // Backup Subscriptions
-    if (settings.enableRedundancy != false) {
-        subscribeMulti(sensorTempBackup, ["temperature", "tempf"], "tempHandler")
-        subscribeMulti(sensorHumBackup, ["humidity"], "stdHandler")
-        subscribeMulti(sensorPressBackup, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], "pressureHandler")
-    }
-
-    subscribeMulti(sensorLux, ["illuminance", "solarradiation", "solarRadiation"], "luxHandler")
     subscribeMulti(sensorWind, ["windSpeed", "windspeedmph", "wind"], "windHandler")
     subscribeMulti(sensorWindDir, ["windDirection", "winddir", "windDir"], "windDirHandler")
     subscribeMulti(sensorLightning, ["lightningDistance", "distance"], "lightningHandler")
     subscribeMulti(sensorRain, ["rainRate", "hourlyrainin", "precipRate", "hourlyRain"], "stdHandler")
     subscribeMulti(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], "stdHandler")
-    if (sensorLeak) subscribe(sensorLeak, "water", "stdHandler")
     
-    // Polling Schedulers
-    unschedule("pollSensors")
+    unschedule()
     if (enablePolling && pollInterval) {
-        def safeInterval = pollInterval.toInteger()
-        if (safeInterval < 1) safeInterval = 1
-        if (safeInterval > 59) safeInterval = 59
-        schedule("0 */${safeInterval} * ? * *", "pollSensors")
-        logAction("Active polling scheduled every ${safeInterval} minutes.")
+        def safeInterval = Math.max(1, Math.min(59, pollInterval.toInteger()))
+        schedule("0 */${safeInterval} * ? * *", "standardPoll")
     }
     
-    unschedule("fetchOpenMeteoData")
-    if (settings.enableOpenMeteo != false) {
-        runEvery30Minutes("fetchOpenMeteoData")
-        runIn(5, "fetchOpenMeteoData") // Initial fetch
+    if (settings.enableNOAA) {
+        runEvery5Minutes("pollNOAA")
+        pollNOAA()
+        
+        runEvery30Minutes("pollNOAAForecast")
+        pollNOAAForecast()
     }
     
-    runEvery5Minutes("evaluateWeather")
-    scheduleChildSync()
+    runEvery1Minute("evaluateMatrix") 
     
-    logAction("Advanced Rain Detection Initialized.")
-    evaluateWeather()
-}
-
-// === OPEN-METEO API INTEGRATION (Smart Offline/Anti-Noise Logic) ===
-def fetchOpenMeteoData() {
-    def targetLat = settings.manualLat ?: location.latitude
-    def targetLon = settings.manualLon ?: location.longitude
-
-    if (!targetLat || !targetLon) {
-        if (!state.apiOffline) log.warn "Cannot fetch Open-Meteo data: Hub Latitude/Longitude are missing."
-        return
-    }
-
-    def params = [
-        uri: "https://api.open-meteo.com/v1/forecast?latitude=${targetLat}&longitude=${targetLon}&hourly=precipitation_probability,rain&forecast_hours=6&timezone=auto",
-        timeout: 10
-    ]
-
-    try {
-        asynchttpGet("openMeteoHandler", params)
-    } catch (e) {
-        handleApiError(e.toString())
-    }
-}
-
-def openMeteoHandler(response, data) {
-    if (response.hasError()) {
-        handleApiError(response.getErrorMessage())
-        return
-    }
-
-    try {
-        def json = response.json
-        if (json && json.hourly) {
-            if (state.apiOffline) {
-                logAction("🌐 Open-Meteo API connection restored. Resuming online synergy.")
-            }
-            state.apiConsecutiveFails = 0
-            state.apiOffline = false
-            
-            def hourlyData = []
-            def maxProb = 0
-            def totalRain = 0.0
-            
-            // Loop through the next 6 hours to build the dynamic live breakdown
-            for (int i = 0; i < 6; i++) {
-                def rawTime = json.hourly.time[i]
-                if (!rawTime) continue
-                
-                // Parse "YYYY-MM-DDTHH:00" string safely into dynamic 12-hour format
-                def timeStr = rawTime.split("T")[1]
-                def hour = timeStr.split(":")[0].toInteger()
-                def ampm = hour >= 12 ? "PM" : "AM"
-                def displayHour = hour % 12
-                if (displayHour == 0) displayHour = 12
-                def shortTime = "${displayHour} ${ampm}"
-                
-                def p = json.hourly.precipitation_probability[i] ?: 0
-                def r = json.hourly.rain[i] ?: 0.0
-                
-                if (p > maxProb) maxProb = p
-                totalRain += r
-                
-                hourlyData << [time: shortTime, prob: p, rain: String.format("%.2f", r)]
-            }
-            
-            state.omHourlyData = hourlyData
-            state.omProb = maxProb
-            state.omRain = String.format("%.2f", totalRain)
-            state.omLastSync = new Date().format("h:mm a", location.timeZone)
-            
-            evaluateWeather()
-        }
-    } catch (e) {
-        handleApiError("Parsing error: ${e}")
-    }
-}
-
-def handleApiError(msg) {
-    state.apiConsecutiveFails = (state.apiConsecutiveFails ?: 0) + 1
-    
-    if (state.apiConsecutiveFails >= 2) {
-        if (!state.apiOffline) {
-            logAction("⚠ Open-Meteo API connection failed. System flagged OFFLINE. Reverting strictly to local sensors to prevent hub error noise.")
-            state.apiOffline = true
-        }
-    } else {
-        log.warn "Open-Meteo API fetch failed (Attempt 1): ${msg}"
-    }
-    
-    // Clear the active data so the dashboard reflects the outage
-    state.omHourlyData = []
-    evaluateWeather()
-}
-
-def scheduleChildSync() {
-    unschedule("updateChildDevice")
-    if (getChildDevice("RainDet-${app.id}") && settings.enableChildSync != false) {
-        def interval = settings.childSyncInterval ? settings.childSyncInterval.toInteger() : 15
-        switch(interval) {
-            case 5: runEvery5Minutes("updateChildDevice"); break;
-            case 10: runEvery10Minutes("updateChildDevice"); break;
-            case 15: runEvery15Minutes("updateChildDevice"); break;
-            case 30: runEvery30Minutes("updateChildDevice"); break;
-            case 60: runEvery1Hour("updateChildDevice"); break;
-            default: runEvery15Minutes("updateChildDevice"); break;
-        }
-        logAction("Child device periodic sync scheduled every ${interval} minutes.")
-    }
+    logAction("BMS Advanced Severe Weather Matrix Initialized.")
+    evaluateMatrix()
 }
 
 def subscribeMulti(device, attrs, handler) {
@@ -875,113 +472,349 @@ def getFloat(device, attrs, fallbackStr = null) {
     return fallbackStr
 }
 
+def standardPoll() {
+    if (!state.watchdogActive) pollSensors()
+}
+
+def watchdogPoll() {
+    if (state.watchdogActive) {
+        pollSensors()
+        def mins = (settings.defconMins ?: 1).toInteger()
+        runIn(mins * 60, "watchdogPoll")
+    }
+}
+
 def pollSensors() {
-    [sensorTemp, sensorHum, sensorPress, sensorTempBackup, sensorHumBackup, sensorPressBackup, sensorRain, sensorLux, sensorWind, sensorWindDir, sensorLightning].each { dev ->
+    [sensorTemp, sensorHum, sensorPress, sensorRain, sensorWind, sensorWindDir, sensorLightning].each { dev ->
         if (dev && dev.hasCommand("refresh")) { try { dev.refresh() } catch (e) {} }
     }
 }
 
+// === ASYNC NOAA CLOUD POLLING (ALERTS) ===
+def pollNOAA() {
+    if (settings.enableNOAA != true) return
+    
+    if (state.cloudOffline && state.cloudRetryTime && now() < state.cloudRetryTime) return 
+
+    def lat = location.latitude
+    def lon = location.longitude
+    
+    if (!lat || !lon) {
+        logAction("CLOUD ERROR: Cannot poll NOAA. Hub latitude and longitude are not set in Hubitat Settings.")
+        state.cloudOffline = true
+        state.cloudRetryTime = now() + 3600000 // Retry in an hour
+        return
+    }
+
+    def params = [
+        uri: "https://api.weather.gov/alerts/active?point=${lat},${lon}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        timeout: 10,
+        headers: ["User-Agent": "Hubitat-AdvancedSevereWeatherApp/2.0", "Accept": "application/geo+json"]
+    ]
+    
+    try { asynchttpGet("noaaResponseHandler", params) } catch (e) { log.error "Async HTTP Get failed: ${e}" }
+}
+
+def noaaResponseHandler(response, data) {
+    if (response.hasError()) {
+        state.noaaFailCount = (state.noaaFailCount ?: 0) + 1
+        if (state.noaaFailCount >= 3) {
+            logAction("CLOUD OFFLINE: NOAA API Unreachable. Suspending cloud sync for 30 minutes to prevent network flooding.")
+            state.cloudOffline = true
+            state.cloudRetryTime = now() + 1800000 // 30 min backoff
+        }
+        return
+    }
+    
+    if (state.cloudOffline) logAction("☁️ CLOUD RESTORED: NOAA API connection successfully re-established.")
+    state.cloudOffline = false
+    state.noaaFailCount = 0
+    
+    def json = null
+    try { json = response.getJson() } catch (e) { return }
+    
+    def alerts = json?.features ?: []
+    def parsedAlerts = [
+        "Tornado": "Clear", "Raw_Tornado": "",
+        "Thunderstorm": "Clear", "Raw_Thunderstorm": "",
+        "Flood": "Clear", "Raw_Flood": "",
+        "Freeze": "Clear", "Raw_Freeze": "",
+        "SevereHeat": "Clear", "Raw_SevereHeat": "",
+        "Tropical": "Clear", "Raw_Tropical": ""
+    ]
+    
+    def globalAlertsHtml = ""
+    
+    alerts.each { alert ->
+        def event = alert.properties?.event ?: ""
+        def headline = alert.properties?.headline ?: event
+        
+        globalAlertsHtml += "<b>${event}</b>: ${headline}<br><br>"
+        
+        if (event.contains("Tornado Warning")) { parsedAlerts["Tornado"] = "ALARM"; parsedAlerts["Raw_Tornado"] += "${event} | " }
+        else if (event.contains("Tornado Watch") && parsedAlerts["Tornado"] != "ALARM") { parsedAlerts["Tornado"] = "WARNING"; parsedAlerts["Raw_Tornado"] += "${event} | " }
+        
+        if (event.contains("Severe Thunderstorm Warning")) { parsedAlerts["Thunderstorm"] = "ALARM"; parsedAlerts["Raw_Thunderstorm"] += "${event} | " }
+        else if (event.contains("Severe Thunderstorm Watch") && parsedAlerts["Thunderstorm"] != "ALARM") { parsedAlerts["Thunderstorm"] = "WARNING"; parsedAlerts["Raw_Thunderstorm"] += "${event} | " }
+        
+        if (event.contains("Flash Flood Warning") || event.contains("Flood Warning")) { parsedAlerts["Flood"] = "ALARM"; parsedAlerts["Raw_Flood"] += "${event} | " }
+        else if ((event.contains("Flood Watch") || event.contains("Flash Flood Watch") || event.contains("Flood Advisory")) && parsedAlerts["Flood"] != "ALARM") { parsedAlerts["Flood"] = "WARNING"; parsedAlerts["Raw_Flood"] += "${event} | " }
+        
+        if (event.contains("Hard Freeze Warning") || event.contains("Freeze Warning")) { parsedAlerts["Freeze"] = "ALARM"; parsedAlerts["Raw_Freeze"] += "${event} | " }
+        else if ((event.contains("Freeze Watch") || event.contains("Frost Advisory")) && parsedAlerts["Freeze"] != "ALARM") { parsedAlerts["Freeze"] = "WARNING"; parsedAlerts["Raw_Freeze"] += "${event} | " }
+        
+        if (event.contains("Excessive Heat Warning")) { parsedAlerts["SevereHeat"] = "ALARM"; parsedAlerts["Raw_SevereHeat"] += "${event} | " }
+        else if ((event.contains("Heat Advisory") || event.contains("Excessive Heat Watch")) && parsedAlerts["SevereHeat"] != "ALARM") { parsedAlerts["SevereHeat"] = "WARNING"; parsedAlerts["Raw_SevereHeat"] += "${event} | " }
+        
+        if (event.contains("Hurricane Warning") || event.contains("Tropical Storm Warning") || event.contains("Storm Surge Warning")) { parsedAlerts["Tropical"] = "ALARM"; parsedAlerts["Raw_Tropical"] += "${event} | " }
+        else if ((event.contains("Hurricane Watch") || event.contains("Tropical Storm Watch") || event.contains("Storm Surge Watch")) && parsedAlerts["Tropical"] != "ALARM") { parsedAlerts["Tropical"] = "WARNING"; parsedAlerts["Raw_Tropical"] += "${event} | " }
+    }
+    
+    if (globalAlertsHtml == "") {
+        globalAlertsHtml = "<i>No active national weather alerts for your area at this time.</i>"
+    }
+    state.noaaGlobalAlerts = globalAlertsHtml
+    
+    def keys = ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"]
+    keys.each { k -> 
+        if (parsedAlerts["Raw_${k}"] != "") parsedAlerts["Raw_${k}"] = parsedAlerts["Raw_${k}"].substring(0, parsedAlerts["Raw_${k}"].length() - 3)
+        else parsedAlerts["Raw_${k}"] = "No active advisories."
+    }
+    
+    state.noaaAlertsMap = parsedAlerts
+    runIn(2, "evaluateMatrix")
+}
+
+// === ASYNC NOAA CLOUD POLLING (DAILY FORECAST) ===
+def pollNOAAForecastURL() {
+    def lat = location.latitude
+    def lon = location.longitude
+    if (!lat || !lon) return
+    
+    def params = [
+        uri: "https://api.weather.gov/points/${lat},${lon}",
+        timeout: 10,
+        headers: ["User-Agent": "Hubitat-AdvancedSevereWeatherApp/2.0", "Accept": "application/geo+json"]
+    ]
+  
+    try { asynchttpGet("noaaPointResponseHandler", params) } catch (e) { log.error "NOAA Point fetch failed: ${e}" }
+}
+
+def noaaPointResponseHandler(response, data) {
+    if (response.hasError()) return
+    def json = null
+    try { json = response.getJson() } catch (e) { return }
+    
+    if (json?.properties?.forecast) {
+        state.noaaForecastUrl = json.properties.forecast
+        pollNOAAForecast()
+    }
+}
+
+def pollNOAAForecast() {
+    if (!settings.enableNOAA) return
+    if (!state.noaaForecastUrl) {
+        pollNOAAForecastURL()
+        return
+    }
+    
+    def params = [
+        uri: state.noaaForecastUrl,
+        timeout: 10,
+        headers: ["User-Agent": "Hubitat-AdvancedSevereWeatherApp/2.0", "Accept": "application/geo+json"]
+    ]
+    try { asynchttpGet("noaaForecastResponseHandler", params) } catch (e) { log.error "NOAA Forecast fetch failed: ${e}" }
+}
+
+def noaaForecastResponseHandler(response, data) {
+    if (response.hasError()) {
+        log.warn "NOAA Forecast text retrieval failed. Rate limited or API down."
+        return
+    }
+    
+    def json = null
+    try { json = response.getJson() } catch (e) { return }
+    
+    def periods = json?.properties?.periods
+    if (periods && periods.size() > 0) {
+        def currentPeriod = periods[0]
+        state.noaaCurrentPeriod = currentPeriod.name ?: "Current"
+        state.noaaForecastText = currentPeriod.detailedForecast ?: "Forecast data missing from NWS."
+        
+        if (periods.size() > 1) {
+            state.noaaNextPeriodName = periods[1].name ?: "Next Period"
+            state.noaaNextForecastText = periods[1].detailedForecast ?: ""
+        }
+        
+        updateChildDevice()
+    }
+}
+
+// Strict void declaration to prevent HTTP response bugs in UI
 void appButtonHandler(btn) {
     if (btn == "refreshDashboardBtn") return
     if (btn == "createDeviceBtn") { createChildDevice(); return }
-    if (btn == "forceEvalBtn") { logAction("MANUAL OVERRIDE: Forcing logic evaluation."); evaluateWeather() }
-    if (btn == "forceApiBtn") { logAction("MANUAL OVERRIDE: Forcing Open-Meteo Sync."); fetchOpenMeteoData() }
-    if (btn == "resetRecordBtn") {
-        logAction("MANUAL OVERRIDE: All-Time Rain Record Reset.")
-        state.recordRain = [date: "None", amount: 0.0]
-        evaluateWeather()
-    }
-    if (btn == "clearStateBtn") {
-        logAction("EMERGENCY RESET: Purging history, records, and resetting switches.")
-        state.weatherState = "Clear"
-        state.pressureHistory = []
-        state.tempHistory = []
-        state.luxHistory = []
-        state.windHistory = []
-        state.windDirHistory = []
-        state.spreadHistory = []
-        state.lightningHistory = []
-        state.probHistory = []
-        state.sevenDayRain = []
-        state.recordRain = [date: "None", amount: 0.0]
-        state.currentDayRain = 0.0
-       
-        state.notifiedProb = false
-        state.confidenceScore = 0
-        state.confidenceReasoning = "System reset."
-        state.smoothedTemp = null
-     
-        safeOff(switchSprinkling)
-        safeOff(switchRaining)
-        safeOff(switchProbable)
-        evaluateWeather()
+    if (btn == "forceEvalBtn") { logAction("MANUAL OVERRIDE: Forcing matrix evaluation."); evaluateMatrix(); return }
+    
+    if (btn.startsWith("testWarnBtn_")) {
+        def haz = btn.replace("testWarnBtn_", "")
+        testOutputs(haz, "Warn")
+        return
     }
     
-    // --- AUDIO TEST BUTTON HANDLERS ---
-    if (btn == "testProbableBtn") {
-        logAction("MANUAL OVERRIDE: Testing Rain Probable Audio Track ${settings.audioProbable}")
-        playAudioTrack(settings.audioProbable)
+    if (btn.startsWith("testAlarmBtn_")) {
+        def haz = btn.replace("testAlarmBtn_", "")
+        testOutputs(haz, "Alarm")
+        return
     }
-    if (btn == "testSprinklingBtn") {
-        logAction("MANUAL OVERRIDE: Testing Sprinkling Audio Track ${settings.audioSprinkling}")
-        playAudioTrack(settings.audioSprinkling)
+    
+    if (btn == "clearStateBtn") {
+        logAction("EMERGENCY RESET: Purging matrix, history, and hardware outputs.")
+        state.pressureHistory = []
+        state.tempHistory = []
+        state.spreadHistory = []
+        state.windHistory = []
+        state.windDirHistory = []
+        state.lightningHistory = []
+        state.currentDayRain = 0.0
+        state.smoothedTemp = null
+        state.watchdogActive = false
+        state.noaaFailCount = 0
+        state.cloudOffline = false
+        state.noaaAlertsMap = [:]
+        state.noaaForecastText = null
+        state.noaaGlobalAlerts = "System reset. Awaiting next poll."
+        state.threatMatrix = null // Force complete structural reset on next init
+        
+        initialize()
+        stopAllSirens()
+        
+        def hazards = ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"]
+        hazards.each { haz -> 
+            safeOff(settings["switch${haz}Warn"])
+            safeOff(settings["switch${haz}Alarm"])
+        }
+        evaluateMatrix()
     }
-    if (btn == "testRainingBtn") {
-        logAction("MANUAL OVERRIDE: Testing Heavy Rain Audio Track ${settings.audioRaining}")
-        playAudioTrack(settings.audioRaining)
+}
+
+def testOutputs(haz, level) {
+    def lName = haz.toLowerCase()
+    logAction("TESTING: Initiating manual test of ${haz} ${level.toUpperCase()} outputs.")
+    
+    def dnas = [
+        "Tornado": [wTTS: "Warning. Elevated probability of tornado conditions.", aTTS: "Critical Alert. Tornado conditions detected locally. Take immediate action."],
+        "Thunderstorm": [wTTS: "Warning. Elevated probability of severe thunderstorms.", aTTS: "Critical Alert. Severe thunderstorm conditions actively detected."],
+        "Flood": [wTTS: "Warning. Elevated probability of flash flood conditions.", aTTS: "Critical Alert. Flash flood conditions detected locally."],
+        "Freeze": [wTTS: "Warning. Rapid trajectory towards hard freeze detected.", aTTS: "Alert. Hard freeze actively occurring."],
+        "SevereHeat": [wTTS: "Warning. High heat index detected. Caution advised.", aTTS: "Critical Alert. Severe heat index conditions detected locally."],
+        "Tropical": [wTTS: "Warning. Tropical cyclone signatures detected.", aTTS: "Critical Alert. Deep tropical cyclone conditions actively impacting location."]
+    ]
+    
+    if (level == "Warn") {
+        if (settings["${lName}WarnNotify"]) sendNotification("⚠ TEST WARNING: Elevated ${haz} Conditions.", settings["${lName}WarnNotifyDevs"])
+        if (settings["${lName}WarnTTS"]) {
+            def msg = settings["tts${haz}Warn"] ?: dnas[haz].wTTS
+            playAudio("[TESTING] " + msg, settings["${lName}WarnTTSDevs"])
+        }
+        if (settings["${lName}WarnSound"]) playSoundFile(settings["url${haz}Warn"], settings["${lName}WarnSoundDevs"])
+        if (settings["${lName}WarnSiren"]) {
+            triggerSiren(settings["${lName}WarnSirenDevs"])
+            runIn(5, "stopAllSirens") // Automatically shut off after 5 seconds to preserve sanity during testing
+        }
+    } else if (level == "Alarm") {
+        if (settings["${lName}AlarmNotify"]) sendNotification("🚨 TEST CRITICAL: ${haz} ALARM Conditions Detected!", settings["${lName}AlarmNotifyDevs"])
+        if (settings["${lName}AlarmTTS"]) {
+            def msg = settings["tts${haz}Alarm"] ?: dnas[haz].aTTS
+            playAudio("[TESTING] " + msg, settings["${lName}AlarmTTSDevs"])
+        }
+        if (settings["${lName}AlarmSound"]) playSoundFile(settings["url${haz}Alarm"], settings["${lName}AlarmSoundDevs"])
+        if (settings["${lName}AlarmSiren"]) {
+            triggerSiren(settings["${lName}AlarmSirenDevs"])
+            runIn(5, "stopAllSirens") // Automatically shut off after 5 seconds
+        }
     }
 }
 
 def createChildDevice() {
-    def deviceId = "RainDet-${app.id}"
+    def deviceId = "SevWeather-${app.id}"
     if (!getChildDevice(deviceId)) {
         try {
-            addChildDevice("ShaneAllen", "Advanced Rain Detector Information Device", deviceId, null, [name: "Advanced Rain Detector Information Device", label: "Advanced Rain Detector Information Device", isComponent: false])
+            addChildDevice("ShaneAllen", "Advanced Severe Weather Device", deviceId, null, [name: "Advanced Severe Weather Device", label: "Advanced Severe Weather Information Device", isComponent: false])
             logAction("Child device successfully created.")
-            scheduleChildSync()
-            updateChildDevice()
         } catch (e) { log.error "Failed to create child device. ${e}" }
     }
 }
 
-// === HISTORY & HEARTBEAT WRAPPERS ===
+// === HISTORY & HEARTBEAT ===
 def markActive() { state.lastHeartbeat = now() }
 
 def updateHistory(historyName, val, maxAgeMs) {
     markActive()
     if (val == null) return
+    
+    // --- NEW: 60-Second Throttle to prevent database write-storms ---
+    def lastUpdateVar = "lastHist_${historyName}"
+    if (state."${lastUpdateVar}" && (now() - state."${lastUpdateVar}" < 60000)) {
+        return // Skip writing to DB if we just updated this specific history array less than 60 seconds ago
+    }
+    state."${lastUpdateVar}" = now()
+    // ---------------------------------------------------------------
+
     def cleanVal
     try { cleanVal = val.toString().replaceAll("[^\\d.-]", "").toFloat() } catch(e) { return }
     
+    // ANOMALY FILTERING
+    if (settings.enableHardwareFilter != false) {
+        def hist = state."${historyName}" ?: []
+        if (hist.size() > 0) {
+            def lastVal = hist.last().value
+            def timeDiffSecs = (now() - hist.last().time) / 1000.0
+            def delta = Math.abs(cleanVal - lastVal)
+            
+            if (timeDiffSecs < 120) {
+                if (historyName == "tempHistory" && delta > 8.0) return 
+                if (historyName == "pressureHistory" && delta > 0.3) return
+            }
+        }
+    }
+    
     def hist = state."${historyName}" ?: []
     hist.add([time: now(), value: cleanVal])
-    
     def cutoff = now() - maxAgeMs
     hist = hist.findAll { it.time >= cutoff }
-    
-    if (hist.size() > 300) hist = hist.drop(hist.size() - 300)
+    if (hist.size() > 60) hist = hist.drop(hist.size() - 60)
     state."${historyName}" = hist
 }
 
-def sensorHandler(evt) { stdHandler(evt) }
-def stdHandler(evt) { markActive(); runIn(2, "evaluateWeather") }
-def tempHandler(evt) { updateHistory("tempHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def pressureHandler(evt) { updateHistory("pressureHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def luxHandler(evt) { updateHistory("luxHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def windHandler(evt) { updateHistory("windHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def lightningHandler(evt) { updateHistory("lightningHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
+def stdHandler(evt) { markActive(); runIn(5, "evaluateMatrix", [overwrite: true]) }
+def tempHandler(evt) { updateHistory("tempHistory", evt.value, 3600000); runIn(60, "evaluateMatrix", [overwrite: true]) }
 
-def logProbabilityHistory() {
-    updateHistory("probHistory", state.rainProbability ?: 0, 86400000)
-}
+// FIXED: pressureHandler now extracts value directly from evt
+def pressureHandler(evt) { 
+    def raw = 0.0
+    try { raw = evt.value.toString().replaceAll("[^\\d.-]", "").toFloat() } catch(e) {}
+    def cal = raw + (settings.pressOffset ?: 0.0)
+    updateHistory("pressureHistory", cal, 10800000)
+    runIn(60, "evaluateMatrix", [overwrite: true]) 
+} 
 
-// === METEOROLOGICAL CALCULATIONS ===
-def calculateVPD(tF, rh) {
-    def tC = (tF - 32.0) * (5.0 / 9.0)
-    def svp = 0.61078 * Math.exp((17.27 * tC) / (tC + 237.3))
-    def avp = svp * (rh / 100.0)
-    return svp - avp
+def windHandler(evt) { updateHistory("windHistory", evt.value, 3600000); runIn(60, "evaluateMatrix", [overwrite: true]) }
+def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 3600000); runIn(60, "evaluateMatrix", [overwrite: true]) }
+def lightningHandler(evt) { updateHistory("lightningHistory", evt.value, 1800000); runIn(60, "evaluateMatrix", [overwrite: true]) }
+
+// === THERMODYNAMIC MATH ===
+def getTrendData(hist, minTimeHr) {
+    if (!hist || hist.size() < 2) return [rate: 0.0, diff: 0.0, str: "Gathering Data"]
+    def oldest = hist.first()
+    def newest = hist.last()
+    def diff = newest.value - oldest.value
+    def timeSpanHr = (newest.time - oldest.time) / 3600000.0
+    if (timeSpanHr < minTimeHr) return [rate: 0.0, diff: diff, str: "Stable"]
+    def ratePerHour = diff / timeSpanHr
+    return [rate: ratePerHour, diff: diff, str: "${diff > 0 ? '+' : ''}${String.format('%.2f', ratePerHour)}/hr"]
 }
 
 def calculateDewPoint(tF, rh) {
@@ -991,53 +824,32 @@ def calculateDewPoint(tF, rh) {
     return (dpC * (9.0 / 5.0)) + 32.0
 }
 
-def calculateWetBulb(tF, rh) {
-    def tC = (tF - 32.0) * (5.0 / 9.0)
-    def twC = tC * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) + Math.atan(tC + rh) - Math.atan(rh - 1.676331) + 0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) - 4.686035
-    return (twC * (9.0 / 5.0)) + 32.0
-}
-
-def getTrendData(hist, minTimeHr) {
-    if (!hist || hist.size() < 2) return [rate: 0.0, diff: 0.0, str: "Gathering Data"]
-    def oldest = hist.first()
-    def newest = hist.last()
-    def diff = newest.value - oldest.value
-    def timeSpanHr = (newest.time - oldest.time) / 3600000.0
-    if (timeSpanHr < minTimeHr) return [rate: 0.0, diff: diff, str: "Stable (<${Math.round(minTimeHr*60)}m data)"]
-    def ratePerHour = diff / timeSpanHr
-    return [rate: ratePerHour, diff: diff, str: "${diff > 0 ? '+' : ''}${String.format('%.2f', ratePerHour)}/hr"]
-}
-
 def getAngularDiff(angle1, angle2) {
     def diff = Math.abs(angle1 - angle2) % 360
     return diff > 180 ? 360 - diff : diff
 }
 
-def evaluateWeather() {
+def calculateHeatIndex(tF, rh) {
+    if (tF < 80.0) return tF
+    def hi = -42.379 + (2.04901523 * tF) + (10.14333127 * rh) - (0.22475541 * tF * rh) - (0.00683783 * tF * tF) - (0.05481717 * rh * rh) + (0.00122874 * tF * tF * rh) + (0.00085282 * tF * rh * rh) - (0.00000199 * tF * tF * rh * rh)
+    if (rh < 13.0 && tF >= 80.0 && tF <= 112.0) {
+        hi -= ((13.0 - rh) / 4.0) * Math.sqrt((17.0 - Math.abs(tF - 95.0)) / 17.0)
+    } else if (rh > 85.0 && tF >= 80.0 && tF <= 87.0) {
+        hi += ((rh - 85.0) / 10.0) * ((87.0 - tF) / 5.0)
+    }
+    return hi
+}
+
+// === THE MATRIX EVALUATOR ===
+def evaluateMatrix() {
     def todayStr = new Date().format("yyyy-MM-dd", location.timeZone)
-    if (!state.currentDateStr) state.currentDateStr = todayStr
-    
-    if (state.currentDateStr != todayStr) {
-        def yesterdayTotal = state.currentDayRain ?: 0.0
-        def hist = state.sevenDayRain ?: []
-        hist.add(0, [date: state.currentDateStr, amount: yesterdayTotal])
- 
-        if (hist.size() > 7) hist = hist[0..6]
-        state.sevenDayRain = hist
-        
-        def record = state.recordRain ?: [date: "None", amount: 0.0]
-        if (yesterdayTotal > (record.amount ?: 0.0)) {
-            state.recordRain = [date: state.currentDateStr, amount: yesterdayTotal]
-            logAction("🏆 New All-Time Record Rainfall! ${yesterdayTotal} on ${state.currentDateStr}")
-        }
+    if (!state.currentDateStr || state.currentDateStr != todayStr) {
         state.currentDateStr = todayStr
         state.currentDayRain = 0.0
     }
     
     def currentDaily = getFloat(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], 0.0)
-    if (currentDaily > (state.currentDayRain ?: 0.0)) {
-       state.currentDayRain = currentDaily
-    }
+    if (currentDaily > (state.currentDayRain ?: 0.0)) state.currentDayRain = currentDaily
 
     if (!sensorTemp || !sensorHum || !sensorPress) return
 
@@ -1045,536 +857,772 @@ def evaluateWeather() {
     def isStale = (settings.enableStaleCheck != false) && ((now() - (state.lastHeartbeat ?: now())) > (staleMins * 60000))
     state.isStale = isStale
     
-    def redundancyActive = false
-    def tP = getFloat(sensorTemp, ["temperature", "tempf"])
-    def hP = getFloat(sensorHum, ["humidity"])
-    def pP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
+    // Fetch Data
+    def t = getFloat(sensorTemp, ["temperature", "tempf"], 0.0)
+    def h = getFloat(sensorHum, ["humidity"], 0.0)
+    def rawP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], 0.0)
+    def p = rawP + (settings.pressOffset ?: 0.0)
     
-    def t = tP
-    def h = hP
-    def p = pP
-    
-    // --- Sensor Redundancy Engine ---
-    if (settings.enableRedundancy != false) {
-        def tB = getFloat(sensorTempBackup, ["temperature", "tempf"])
-        def hB = getFloat(sensorHumBackup, ["humidity"])
-        def pB = getFloat(sensorPressBackup, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
-        
-        if (tP != null && tB != null) t = (tP + tB) / 2.0
-        else if (tP == null && tB != null) { t = tB; redundancyActive = true }
-        
-        if (hP != null && hB != null) h = (hP + hB) / 2.0
-        else if (hP == null && hB != null) { h = hB; redundancyActive = true }
-        
-        if (pP != null && pB != null) p = (pP + pB) / 2.0
-        else if (pP == null && pB != null) { p = pB; redundancyActive = true }
-    }
-    
-    // Failsafe zeroing if all sensors offline
-    if (t == null) t = 0.0
-    if (h == null) h = 0.0
-    if (p == null) p = 0.0
-
-    // --- Thermal Smoothing (Sun-Spike Protection) ---
-    def smoothedAnomaly = false
-    if (settings.enableThermalSmoothing != false) {
-        def lastT = state.smoothedTemp != null ? state.smoothedTemp : t
-        def delta = Math.abs(t - lastT)
-        
-        if (delta > 3.0 && state.tempHistory?.size() > 0) {
-            t = lastT + ((t - lastT) * 0.3)
-            smoothedAnomaly = true
-        }
-        state.smoothedTemp = t
-    }
-
     def r = getFloat(sensorRain, ["rainRate", "hourlyrainin", "precipRate", "hourlyRain"], 0.0)
-    def luxVal = getFloat(sensorLux, ["illuminance", "solarradiation", "solarRadiation"], 0.0)
     def windVal = getFloat(sensorWind, ["windSpeed", "windspeedmph", "wind"], 0.0)
     def windDirVal = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], 0.0)
     def lightDist = getFloat(sensorLightning, ["lightningDistance", "distance"], 999.0)
     def strikeCount = state.lightningHistory?.size() ?: 0
 
-    // NEW: Find the closest recorded lightning strike
-    def closestLightning = lightDist
-    if (strikeCount > 0) {
-        state.lightningHistory.each { if (it.value < closestLightning) closestLightning = it.value }
+    if (settings.enableThermalSmoothing != false) {
+        def lastT = state.smoothedTemp != null ? state.smoothedTemp : t
+        def delta = Math.abs(t - lastT)
+        if (delta > 3.0 && state.tempHistory?.size() > 0) t = lastT + ((t - lastT) * 0.3)
+        state.smoothedTemp = t
     }
     
-    def vpd = calculateVPD(t, h)
-    state.currentVPD = vpd
-  
     def dp = calculateDewPoint(t, h)
-    state.currentDewPoint = dp
-    
-    def wb = calculateWetBulb(t, h)
-    state.currentWetBulb = wb
-    
     def dpSpread = t - dp
     if (dpSpread < 0) dpSpread = 0.0
-    state.dewPointSpread = dpSpread
-    
-    updateHistory("spreadHistory", dpSpread, 86400000)
-   
+    updateHistory("spreadHistory", dpSpread, 3600000)
+
     def pTrendData = getTrendData(state.pressureHistory, 0.25)
-    def tTrendData = getTrendData(state.tempHistory, 0.16)
-    def sTrendData = getTrendData(state.spreadHistory, 0.16)
-    def lTrendData = getTrendData(state.luxHistory, 0.16)
-    def wTrendData = getTrendData(state.windHistory, 0.16)
+    def pTrend3Hr = getTrendData(state.pressureHistory, 2.5) 
+    def tTrendData = getTrendData(state.tempHistory, 0.25)
+    def sTrendData = getTrendData(state.spreadHistory, 0.25)
     
     state.pressureTrendStr = pTrendData.str
     state.tempTrendStr = tTrendData.str
     state.spreadTrendStr = sTrendData.str
-    state.luxTrendStr = sensorLux ? lTrendData.str : "N/A"
-    state.windTrendStr = sensorWind ? wTrendData.str : "N/A"
+    state.windTrendStr = sensorWind ? getTrendData(state.windHistory, 0.25).str : "N/A"
 
-    state.windShiftDetected = false
-    if (sensorWindDir && settings.enableWindShiftLogic != false && state.windDirHistory && state.windDirHistory.size() > 5) {
+    def shiftMagnitude = 0.0
+    if (sensorWindDir && state.windDirHistory && state.windDirHistory.size() > 5) {
         def oldestDir = state.windDirHistory.first().value
-        def shift = getAngularDiff(oldestDir, windDirVal)
-        if (shift >= 45.0) state.windShiftDetected = true
-    }
-    
-    def leakWet = sensorLeak ? (sensorLeak.currentValue("water") == "wet") : false
-    def dewRejectionActive = false
-    
-    if (leakWet && settings.enableDewRejection != false) {
-        def checkLux = sensorLux ? (luxVal < 100) : true
-        def checkWind = sensorWind ? (windVal < 3.0) : true
-        if (checkLux && checkWind && dpSpread <= 3.0) {
-            leakWet = false
-            dewRejectionActive = true
-        }
-    }
-    state.dewRejectionActive = dewRejectionActive
-    
-    def evapIndex = vpd
-    if (sensorWind) evapIndex += (windVal * 0.03) 
-    if (sensorLux) evapIndex += (luxVal / 80000.0)
-  
-    if (r > 0 || leakWet) state.dryingPotential = "<span style='color:blue;'>Raining (No Drying)</span>"
-    else if (evapIndex < 0.3) state.dryingPotential = "<span style='color:red;'>Very Low (Ground stays wet)</span>"
-    else if (evapIndex < 0.8) state.dryingPotential = "<span style='color:orange;'>Moderate (Slow drying)</span>"
-    else if (evapIndex < 1.5) state.dryingPotential = "<span style='color:green;'>High (Good drying conditions)</span>"
-    else state.dryingPotential = "<span style='color:#008800; font-weight:bold;'>Very High (Rapid evaporation)</span>"
-    
-    // --- Time-to-Dry Estimator ---
-    def ttdStr = "Dry"
-    if (settings.enableTimeToDry != false) {
-        def totalRain = state.currentDayRain ?: 0.0
-        if (r > 0 || leakWet) {
-            ttdStr = "Raining..."
-        } else if (totalRain > 0 && evapIndex > 0) {
-            def evapPerHour = evapIndex * 0.02
-            if (evapPerHour < 0.01) evapPerHour = 0.01
-            def hours = totalRain / evapPerHour
-            if (hours > 72) ttdStr = "> 3 Days"
-            else if (hours < 0.5) ttdStr = "< 30 mins"
-            else ttdStr = "~${String.format('%.1f', hours)} hrs"
-        } else if (totalRain > 0) {
-            ttdStr = "Stagnant (No Evaporation)"
-        }
-    }
-    state.timeToDryStr = ttdStr
-
-    // --- Advanced Predictor Logic & Synergy ---
-    def probability = 0.0
-    def reasoning = []
-    def activeFactors = 0
-    def activeFactorNames = []
-    def totalModelsEnabled = 0
-    
-    if (!isStale) {
-        if (redundancyActive) reasoning << "⚠ Primary Sensor Offline: Redundancy Failover Active"
-        if (smoothedAnomaly) reasoning << "☼ Thermal Smoothing Active (Filtered Solar Spike)"
-
-        if (settings.enableDPLogic != false) {
-            totalModelsEnabled++
-            if (dpSpread <= 1.5) { probability += 40; reasoning << "Critical: Dew Point spread near 0° (Air saturated)"; activeFactors++; activeFactorNames << "Dew Point" }
-            else if (dpSpread <= 4.0) { probability += 20; reasoning << "Dew Point spread tightening (<4°)"; activeFactors++; activeFactorNames << "Dew Point" }
-            if (sTrendData.rate <= -3.0) { probability += 30; reasoning << "Spread Velocity Convergence! Atmosphere saturating rapidly"; activeFactors++; activeFactorNames << "Squeeze Velocity" }
-        }
-        
-        // NEW: Fixed VPD Penalty Block
-        if (settings.enableVPDLogic != false) {
-            totalModelsEnabled++
-            if (vpd < 0.2) { probability += 20; reasoning << "VPD extremely low"; activeFactors++; activeFactorNames << "VPD" }
-            else if (vpd > 1.0) { 
-                if (strikeCount > 0) {
-                    reasoning << "VPD High (Penalty suspended due to active lightning)"
-                } else {
-                    probability -= 20; reasoning << "VPD High (Dry air)" 
-                }
-            }
-        }
-        
-        if (settings.enableWetBulbLogic != false) {
-            totalModelsEnabled++
-            if (tTrendData.rate <= -4.0 && (t - wb) <= 3.0) { probability += 40; reasoning << "Rain Shaft Detected! Temp crashing toward Wet-Bulb"; activeFactors++; activeFactorNames << "Wet-Bulb Cooling" }
-        }
-        
-        if (settings.enablePressureLogic != false) {
-            totalModelsEnabled++
-            if (pTrendData.rate <= -0.04) { probability += 30; reasoning << "Pressure dropping rapidly"; activeFactors++; activeFactorNames << "Barometric" }
-            else if (pTrendData.rate <= -0.02) { probability += 15; reasoning << "Pressure falling"; activeFactors++; activeFactorNames << "Barometric" }
-            else if (pTrendData.rate > 0.03) { probability -= 30; reasoning << "Pressure rising strongly (Clearing)" }
-        }
-        
-        if (settings.enableCloudLogic != false && sensorLux) {
-            totalModelsEnabled++
-            if (lTrendData.diff < 0) {
-                def oldestLux = state.luxHistory.first()?.value ?: 0.0
-                if (oldestLux > 2000) { 
-                    def dropPercentage = Math.abs(lTrendData.diff) / oldestLux
-                     if (dropPercentage >= 0.60) { probability += 20; reasoning << "Solar radiation plummeted >60% (Heavy cloud cover)"; activeFactors++; activeFactorNames << "Solar" }
-                }
-            }
-        }
-        
-        if (settings.enableWindLogic != false && sensorWind) {
-            totalModelsEnabled++
-            if (wTrendData.diff >= 10.0 && state.windHistory.last()?.value > 15.0) {
-                probability += 15; reasoning << "Sudden wind gust detected"; activeFactors++; activeFactorNames << "Wind Gust"
-            }
-        }
-
-        if (settings.enableWindShiftLogic != false && sensorWindDir) {
-            totalModelsEnabled++
-            if (state.windShiftDetected) {
-                probability += 20; reasoning << "Wind direction shift detected (Frontal Passage)"; activeFactors++; activeFactorNames << "Wind Shift"
-            }
-        }
-        
-        // NEW: Fixed Lightning Logic Block using closestLightning
-        if (settings.enableLightningLogic != false && sensorLightning && closestLightning != 999.0) {
-            totalModelsEnabled++
-            def reqStrikes = settings.lightningStrikeThreshold ?: 3
-            if (strikeCount >= reqStrikes) {
-                if (closestLightning <= 10.0) { probability += 50; reasoning << "Critical: Lightning nearby (<= 10 miles)"; activeFactors++; activeFactorNames << "Lightning" }
-                else if (closestLightning <= 25.0) { probability += 25; reasoning << "Storms approaching (Lightning <= 25 miles)"; activeFactors++; activeFactorNames << "Lightning" }
-            }
-        }
-        
-        // SYNERGY MULTIPLIERS
-        if (settings.enableSynergyLogic != false) {
-            totalModelsEnabled++
-            if (settings.enableDPLogic != false && settings.enablePressureLogic != false && sTrendData.rate <= -2.0 && pTrendData.rate <= -0.02) {
-                probability *= 1.3
-                reasoning << "SYNERGY: Squeeze Velocity + Barometric Drop (1.3x Multiplier)"
-            }
-            if (settings.enableWetBulbLogic != false && settings.enableWindShiftLogic != false && tTrendData.rate <= -3.0 && sensorWindDir && state.windShiftDetected) {
-                probability *= 1.2
-                reasoning << "SYNERGY: Temp Drop + Wind Shift (1.2x Multiplier)"
-            }
-            // NEW: Severe Squall Synergy
-            if (settings.enableLightningLogic != false && settings.enableWindShiftLogic != false && sensorWindDir && state.windShiftDetected && strikeCount > 0) {
-                probability *= 1.3
-                reasoning << "SYNERGY: Lightning + Frontal Wind Shift (1.3x Multiplier)"
-            }
-        }
-        
-        // OPEN-METEO API SYNERGY (Only apply if API is Online)
-        if (settings.enableOpenMeteo != false && settings.enableOpenMeteoSynergy != false && !state.apiOffline) {
-            totalModelsEnabled++
-            if (state.omProb && state.omProb > 50) {
-                def boost = (state.omProb * 0.15).toInteger()
-                probability += boost
-                reasoning << "SYNERGY: Open-Meteo Regional Forecast (+${boost}% Multiplier)"
-            }
-        }
-        
-        // --- Post-Rain / Dew Saturation Penalty ---
-        // Prevents the "Rain Probable" switch from getting stuck ON after a storm due to ground evaporation
-        if (r == 0 && !leakWet && pTrendData.rate > -0.02 && dpSpread <= 4.0) {
-            probability -= 25
-            reasoning << "Evaporation Penalty (Stable Pressure + Saturated Air)"
-        }
-
-        probability = Math.round(probability)
-        if (probability < 0) probability = 0
-        if (probability > 100) probability = 100
-        
-        if (r > 0 || leakWet) {
-            probability = 100
-            if (leakWet) reasoning << "Instant 'First Drop' detected via Leak Sensor"
-            if (r > 0) reasoning << "Active physical precipitation detected"
-        }
-        
-        if (dewRejectionActive) reasoning << "Leak Sensor ignored (Morning Dew/Frost Detected)"
-        if (probability == 0 && r == 0 && !leakWet) reasoning << "Conditions are stable and dry."
-    } else {
-        probability = 0
-        reasoning << "⚠ Sensors Stale/Offline (No data received in ${staleMins} mins)"
-    }
-    
-    state.rainProbability = Math.round(probability)
-    
-    // --- Confidence Engine ---
-    def conf = 50 
-    def confRes = ""
-    
-    if (sensorLux) conf += 5
-    if (sensorWind) conf += 5
-    if (sensorWindDir) conf += 5
-    if (sensorLeak) conf += 5
-    if (sensorRain) conf += 5
-    if (settings.enableOpenMeteo != false && !state.apiOffline) conf += 5
-    
-    def highAgreementThreshold = (totalModelsEnabled / 2).toInteger()
-    if (highAgreementThreshold < 1) highAgreementThreshold = 1
-    if (highAgreementThreshold > 3) highAgreementThreshold = 3
-    
-    if (isStale) {
-        conf = 0
-        confRes = "Zero confidence due to stale data."
-    } else if (r > 0 || leakWet) {
-        conf = 100
-        if (leakWet && r <= 0) confRes = "100% Confirmed - Physical precipitation registered by instant Leak Sensor."
-        else confRes = "100% Confirmed - Physical precipitation registered by Rain Gauge."
-    } else {
-        if (probability >= 60) {
-            if (activeFactors >= highAgreementThreshold) {
-                conf += 25
-                confRes = "High agreement. Prediction driven by ${activeFactors} converging models (${activeFactorNames.unique().join(', ')})."
-            } else if (activeFactors > 0) {
-                conf += 5
-                confRes = "Moderate agreement. High probability but relying on isolated factors (${activeFactorNames.unique().join(', ')})."
-            }
-        } else if (probability <= 20) {
-            if (activeFactors == 0) {
-                conf += 30
-                confRes = "Strong agreement. All monitored metrics indicate stable, dry conditions."
-            } else {
-                conf += 10
-                confRes = "Mostly stable. Low probability, but ${activeFactors} model (${activeFactorNames.unique().join(', ')}) shows minor fluctuations."
-            }
-        } else {
-            conf += 10
-            confRes = "Unsettled/Transitional environment. Conflicting or mild metrics preventing strong consensus."
-        }
-    }
-    
-    if (conf > 100) conf = 100
-    state.confidenceScore = conf
-    state.confidenceReasoning = confRes
-    
-    // --- Switches and State ---
-    def probThreshold = settings.notifyProbThreshold != null ? settings.notifyProbThreshold.toInteger() : 75
-    if (probability >= probThreshold && !isStale) {
-        safeOn(switchProbable)
-        if (!state.notifiedProb) {
-            logAction("Probability threshold (${probThreshold}%) reached.")
-            if (notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(probability)}%.")
-            if (audioProbable) playAudioTrack(audioProbable)
-            state.notifiedProb = true
-        }
-    } else if (probability < (probThreshold - 15) || isStale) {
-        safeOff(switchProbable)
-        if (state.notifiedProb) {
-            state.notifiedProb = false
-        }
-    }
-    
-    def targetState = "Clear"
-    def threshold = heavyRainThreshold ?: 0.1
-    
-    if (!isStale) {
-        if (r >= threshold) {
-            targetState = "Raining"
-            reasoning << "Rain Rate (${r}) meets Heavy Rain threshold."
-        } else if (r > 0 || leakWet) {
-            targetState = "Sprinkling"
-            if (leakWet && r <= 0) reasoning << "Leak Sensor is WET (Instant detection)."
-            else reasoning << "Rain Rate (${r}) indicates Sprinkling."
-        } else if (probability >= 90 && dpSpread <= 1.5) {
-            targetState = "Sprinkling"
-            reasoning << "Predictive Active: Total saturation and pressure drop indicate mist/drizzle before bucket tip."
-        }
-    }
-    
-    if (isStale) {
-        state.expectedClearTime = "Unknown (Sensors Offline)"
-    } else if (targetState != "Clear") {
-        if (pTrendData.rate > 0.02 || vpd > 0.4 || dpSpread > 4.0) {
-            state.expectedClearTime = "~15-30 mins (Trends improving rapidly)"
-        } else if (pTrendData.rate < -0.01 || dpSpread < 1.0) {
-            state.expectedClearTime = "1+ Hour (Conditions worsening/stagnant)"
-        } else {
-            state.expectedClearTime = "~45 mins (Stable rain profile)"
-        }
-    } else {
-        state.expectedClearTime = "Already Clear"
+        shiftMagnitude = getAngularDiff(oldestDir, windDirVal)
     }
 
-    state.logicReasoning = reasoning.join(" | ")
+    def latchMs = (settings.enableLatching != false) ? ((settings.latchMins ?: 60) * 60000) : 0
+    def highestProbThisCycle = 0.0
 
-    def currentState = state.weatherState
-    def debounceMs = (debounceMins ?: 5) * 60000
-    def timeSinceChange = now() - (state.lastStateChange ?: 0)
-    
-    def allowTransition = false
-    
-    if (isStale && currentState != "Clear") {
-        targetState = "Clear"
-        allowTransition = true
-    } else if (currentState != targetState) {
-        if (currentState == "Clear" && (targetState == "Sprinkling" || targetState == "Raining")) { allowTransition = true }
-        else if (currentState == "Sprinkling" && targetState == "Raining") { allowTransition = true }
-        else if (timeSinceChange >= debounceMs) { allowTransition = true }
-        else {
-            state.logicReasoning += " [Downgrade to ${targetState} delayed by Debounce timer: ${Math.ceil((debounceMs - timeSinceChange)/60000)}m remaining]"
+    // --------------------------------------------------------------------------------
+    // 1. TORNADO / EXTREME SHEAR DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableTornado != false && !isStale) {
+        def tThreat = 0.0
+        def tMath = ""
+        
+        if (sensorWind) {
+            tThreat = (windVal / 45.0) * 100.0
+            if (tThreat > 100.0) tThreat = 100.0
+            tMath += "Thrt: (W[${String.format('%.1f', windVal)}] / 45) * 100 = ${String.format('%.1f', tThreat)}%<br>"
+         } else {
+            tMath += "Thrt: 0% [No Wind Sensor]<br>"
         }
-    }
-    
-    if (allowTransition) {
-        logAction("State changed from ${currentState} to ${targetState}.")
-        state.weatherState = targetState
-        state.lastStateChange = now()
         
-        if (targetState == "Raining") {
-            safeOff(switchSprinkling)
-            safeOn(switchRaining)
-            if (notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%")
-            if (audioRaining) playAudioTrack(audioRaining)
-        } 
-        else if (targetState == "Sprinkling") {
-            safeOff(switchRaining)
-            safeOn(switchSprinkling)
-            if (notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%")
-            if (audioSprinkling) playAudioTrack(audioSprinkling)
-        } 
-        else if (targetState == "Clear") {
-            safeOff(switchRaining)
-            safeOff(switchSprinkling)
-            if (notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.")
+        def tProb = 0.0
+        def tConf = 50
+        def tWhy = "Atmospheric conditions are currently stable."
+        tMath += "Prob Base: 0.0%<br>"
+        
+        if (pTrendData.rate < 0) {
+            def pScore = (Math.abs(pTrendData.rate) / 0.10) * 40.0
+            def pCap = pScore > 40.0 ? 40.0 : pScore
+            tProb += pCap
+            tMath += "&nbsp;↳ Baro Drop [${String.format('%.2f', pTrendData.rate)}]: +${String.format('%.1f', pCap)}%<br>"
         }
-    }
-
-    def currentPayload = [
-        ws: state.weatherState,
-        rp: state.rainProbability,
-        cs: state.confidenceScore,
-        ect: state.expectedClearTime,
-        dp: state.dryingPotential,
-        ttd: state.timeToDryStr,
-        vpd: String.format("%.2f", state.currentVPD ?: 0.0),
-        wb: String.format("%.1f", state.currentWetBulb ?: 0.0),
-        dew: String.format("%.1f", state.currentDewPoint ?: 0.0),
-        spread: String.format("%.1f", state.dewPointSpread ?: 0.0),
-        pt: state.pressureTrendStr,
-        tt: state.tempTrendStr,
-        st: state.spreadTrendStr,
-        lt: state.luxTrendStr,
-        wt: state.windTrendStr,
-        cdr: state.currentDayRain,
-        rra: state.recordRain?.amount
-    ].toString()
-
-    def dataChanged = (state.lastChildPayload != currentPayload)
-    if (dataChanged) {
-        state.lastChildPayload = currentPayload
-    }
-  
-    if (allowTransition || (dataChanged && settings.enableSmartSync != false)) {
-        updateChildDevice()
-    }
-    
-    logProbabilityHistory()
-}
-
-// === CHILD DEVICE SYNCHRONIZATION ===
-def updateChildDevice() {
-    def child = getChildDevice("RainDet-${app.id}")
-    if (child) {
-        child.sendEvent(name: "weatherState", value: state.weatherState)
-        child.sendEvent(name: "rainProbability", value: state.rainProbability, unit: "%")
-        child.sendEvent(name: "confidenceScore", value: state.confidenceScore, unit: "%")
-        child.sendEvent(name: "expectedClearTime", value: state.expectedClearTime)
-        child.sendEvent(name: "sprinkling", value: state.weatherState == "Sprinkling" ? "on" : "off")
-        child.sendEvent(name: "raining", value: state.weatherState == "Raining" ? "on" : "off")
         
-        def rawDrying = state.dryingPotential?.replaceAll("<[^>]*>", "") ?: "N/A"
-        child.sendEvent(name: "dryingPotential", value: rawDrying)
-        child.sendEvent(name: "timeToDry", value: state.timeToDryStr ?: "N/A")
-       
-        child.sendEvent(name: "vpd", value: String.format("%.2f", state.currentVPD ?: 0.0), unit: "kPa")
-        child.sendEvent(name: "wetBulb", value: String.format("%.1f", state.currentWetBulb ?: 0.0), unit: "°")
-        child.sendEvent(name: "dewPoint", value: String.format("%.1f", state.currentDewPoint ?: 0.0), unit: "°")
-        child.sendEvent(name: "dewPointSpread", value: String.format("%.1f", state.dewPointSpread ?: 0.0), unit: "°")
+        if (pTrendData.rate <= -0.06 && shiftMagnitude >= 40.0) {
+            tProb += 40.0
+            tMath += "&nbsp;↳ PREDICTIVE: Severe Shear/Drop Synergy: +40.0%<br>"
+        }
         
-        child.sendEvent(name: "pressureTrend", value: state.pressureTrendStr ?: "Stable")
-        child.sendEvent(name: "tempTrend", value: state.tempTrendStr ?: "Stable")
-        child.sendEvent(name: "spreadTrend", value: state.spreadTrendStr ?: "Stable")
-        child.sendEvent(name: "luxTrend", value: state.luxTrendStr ?: "N/A")
-        child.sendEvent(name: "windTrend", value: state.windTrendStr ?: "N/A")
-        
+        if (sensorWind) {
+            tConf += 25
+            def wScore = (windVal / 45.0) * 40.0
+            def wCap = wScore > 50.0 ? 50.0 : wScore
+            tProb += wCap
+            tMath += "&nbsp;↳ Kinetic [${String.format('%.1f', windVal)}]: +${String.format('%.1f', wCap)}%<br>"
+        }
         if (sensorWindDir) {
-            def windDir = getFloat(sensorWindDir, ["windDirection", "winddir", "windDir"], 0.0)
-            child.sendEvent(name: "windDirection", value: windDir, unit: "°")
-            child.sendEvent(name: "windShiftDetected", value: state.windShiftDetected ? "Active" : "Stable")
+            tConf += 25
+            def sScore = (shiftMagnitude / 60.0) * 20.0
+            def sCap = sScore > 30.0 ? 30.0 : sScore
+            tProb += sCap
+            tMath += "&nbsp;↳ Shear [${String.format('%.0f', shiftMagnitude)}°]: +${String.format('%.1f', sCap)}%<br>"
+        }
+        
+        tProb = Math.round(tProb)
+        if (tProb > 100) tProb = 100
+        tThreat = Math.round(tThreat)
+        if (tThreat > 100) tThreat = 100
+        
+        tMath += "<b>Final Prob: ${tProb}%</b>"
+        
+        if (tProb > highestProbThisCycle) highestProbThisCycle = tProb
+        
+        if (tProb > 20) {
+            tWhy = "Probability is ${tProb}% driven by pressure dropping at ${String.format('%.2f', pTrendData.rate)} inHg/hr. "
+            if (pTrendData.rate <= -0.06 && shiftMagnitude >= 40.0) tWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> Dangerous synergy of rapidly falling pressure and shifting winds detected before kinetic impact. "
+            if (windVal > 15) tWhy += "Threat is ${tThreat}% due to current kinetic winds of ${String.format('%.1f', windVal)} mph. "
+            if (shiftMagnitude > 30) tWhy += "Wind shear is contributing via a ${String.format('%.0f', shiftMagnitude)}° shift."
+        }
+        
+        processHazardState("Tornado", tThreat, tProb, tConf, tWhy, tMath, latchMs)
+    }
+
+    // --------------------------------------------------------------------------------
+    // 2. THUNDERSTORM DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableThunderstorm != false && !isStale) {
+        def tsThreat = 0.0
+        def tsMath = ""
+        
+        if (sensorWind) {
+            tsThreat = (windVal / 30.0) * 100.0
+            if (tsThreat > 100.0) tsThreat = 100.0
+            tsMath += "Thrt(Wind): (W[${String.format('%.1f', windVal)}] / 30) * 100 = ${String.format('%.1f', tsThreat)}%<br>"
+        }
+        if (strikeCount > 5) {
+            def lThreat = (strikeCount / 15.0) * 100.0
+            if (lThreat > 100.0) lThreat = 100.0
+            if (lThreat > tsThreat) tsThreat = lThreat
+            tsMath += "Thrt(Lght): (Strk[${strikeCount}] / 15) * 100 = ${String.format('%.1f', lThreat)}%<br>"
+        }
+        if (!sensorWind && strikeCount <= 5) tsMath += "Thrt: 0.0%<br>"
+        
+        def tsProb = 0.0
+        def tsConf = 40
+        def tsWhy = "No localized convective or electrical activity detected."
+        tsMath += "Prob Base: 0.0%<br>"
+        
+        if (t > 75.0 && dp > 65.0 && sTrendData.rate < -1.5) {
+            tsProb += 40.0
+            tsMath += "&nbsp;↳ PREDICTIVE CAPE Proxy: High Heat/Moisture + Atmospheric Squeeze: +40.0%<br>"
         }
         
         if (sensorLightning) {
-            def strikes = state.lightningHistory?.size() ?: 0
-            def closest = 999.0
-            if (strikes > 0) {
-                state.lightningHistory.each { if (it.value < closest) closest = it.value }
+            tsConf += 30
+            def lScore = (strikeCount / 15.0) * 50.0
+            if (lightDist <= 10.0) { lScore *= 1.2; tsMath += "&nbsp;↳ Proximity Multiplier: x1.2<br>" }
+            def lCap = lScore > 60.0 ? 60.0 : lScore
+            tsProb += lCap
+            tsMath += "&nbsp;↳ Strikes [${strikeCount}]: +${String.format('%.1f', lCap)}%<br>"
+        }
+        if (sTrendData.rate < -2.0 || tTrendData.rate < -3.0) {
+            tsProb += 25
+            tsMath += "&nbsp;↳ Squeeze/Temp Drop: +25.0%<br>"
+        }
+        if (windVal > 20.0 && pTrendData.rate > 0.02) {
+            tsProb += 25
+            tsMath += "&nbsp;↳ Gust Front detected: +25.0%<br>"
+        }
+        if (sensorWind) tsConf += 30
+        
+        // NEW LOGIC: Prevent purely thermodynamic warnings without kinetic/electrical action
+        if (strikeCount == 0 && r == 0.0 && windVal < 15.0) {
+            if (tsProb > 45.0) {
+                tsProb = 45.0
+                tsMath += "&nbsp;↳ <b>Cap Applied: Max 45% without Kinetic/Electrical confirmation.</b><br>"
             }
-            child.sendEvent(name: "lightningStrikeCount", value: strikes)
-            child.sendEvent(name: "lightningClosestDistance", value: closest, unit: "mi")
+        }
+
+        tsProb = Math.round(tsProb)
+        if (tsProb > 100) tsProb = 100
+        tsThreat = Math.round(tsThreat)
+        if (tsThreat > 100) tsThreat = 100
+        
+        tsMath += "<b>Final Prob: ${tsProb}%</b>"
+        
+        if (tsProb > highestProbThisCycle) highestProbThisCycle = tsProb
+        
+        if (tsProb > 20) {
+            tsWhy = "Probability is ${tsProb}%. "
+            if (t > 75.0 && dp > 65.0 && sTrendData.rate < -1.5) tsWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> High Heat/Moisture (CAPE Proxy) combined with a rapid atmospheric squeeze indicates brewing convection. "
+            if (strikeCount > 0) tsWhy += "Driven by ${strikeCount} lightning strikes (closest: ${lightDist} mi). "
+            if (sTrendData.rate < -1.5 && !(t > 75.0 && dp > 65.0)) tsWhy += "Atmospheric squeeze velocity is rapidly converging (${String.format('%.2f', sTrendData.rate)}°/hr) indicating rain shafts. "
+            if (pTrendData.rate > 0.01 && windVal > 10) tsWhy += "A pressure bump and gust front was detected. "
         }
         
-        child.sendEvent(name: "currentDayRain", value: state.currentDayRain ?: 0.0)
-        def record = state.recordRain ?: [date: "None", amount: 0.0]
-        child.sendEvent(name: "recordRainAmount", value: record.amount)
-        child.sendEvent(name: "recordRainDate", value: record.date)
+        processHazardState("Thunderstorm", tsThreat, tsProb, tsConf, tsWhy, tsMath, latchMs)
     }
+
+    // --------------------------------------------------------------------------------
+    // 3. FLOOD DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableFlood != false && !isStale) {
+        def fMath = ""
+        def fThreat = (state.currentDayRain / 3.0) * 100.0
+        if (fThreat > 100.0) fThreat = 100.0
+        fMath += "Thrt: (Acc[${String.format('%.2f', state.currentDayRain)}] / 3.0) * 100 = ${String.format('%.1f', fThreat)}%<br>"
+        
+        def fProb = 0.0
+        def fConf = 20
+        def fWhy = "Ground is absorbing moisture effectively with no extreme rain rates."
+        fMath += "Prob Base: 0.0%<br>"
+        
+        if (sensorRain) fConf += 40
+        if (sensorRainDaily) fConf += 40
+        
+        if (state.currentDayRain >= 1.5 && pTrendData.rate <= -0.03) {
+            fProb += 30.0
+            fMath += "&nbsp;↳ PREDICTIVE: Saturated Ground + Low Pressure Front: +30.0%<br>"
+        }
+        
+        def rScore = (r / 2.0) * 60.0
+        def rCap = rScore > 70.0 ? 70.0 : rScore
+        fProb += rCap
+        fMath += "&nbsp;↳ Rate [${String.format('%.2f', r)} in/hr]: +${String.format('%.1f', rCap)}%<br>"
+        
+        def aScore = (state.currentDayRain / 3.0) * 40.0
+        def aCap = aScore > 60.0 ? 60.0 : aScore
+        fProb += aCap
+        fMath += "&nbsp;↳ Accumulation: +${String.format('%.1f', aCap)}%<br>"
+        
+        fProb = Math.round(fProb)
+        if (fProb > 100) fProb = 100
+        fThreat = Math.round(fThreat)
+        
+        fMath += "<b>Final Prob: ${fProb}%</b>"
+        
+        if (fProb > highestProbThisCycle) highestProbThisCycle = fProb
+        
+        if (fProb > 0) {
+            fWhy = "Threat intensity is ${fThreat}% based on ${String.format('%.2f', state.currentDayRain)} inches of total daily accumulation. "
+            if (state.currentDayRain >= 1.5 && pTrendData.rate <= -0.03) fWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> Ground is already heavily saturated and an incoming low-pressure front is detected. "
+            if (r > 0) fWhy += "Probability of flash flooding is ${fProb}% driven by a real-time rain rate of ${String.format('%.2f', r)} in/hr. "
+        }
+        
+        processHazardState("Flood", fThreat, fProb, fConf, fWhy, fMath, latchMs)
+    }
+
+    // --------------------------------------------------------------------------------
+    // 4. FREEZE DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableFreeze != false && !isStale) {
+        def frMath = ""
+        def frThreat = 0.0
+        if (t <= 32.0) {
+            frThreat = 100.0
+            frMath += "Thrt: Temp[${t}] <= 32 = 100.0%<br>"
+        } else {
+            frThreat = 100.0 - ((t - 32.0) * 5.0)
+            if (frThreat < 0.0) frThreat = 0.0
+            frMath += "Thrt: 100 - ((T[${t}] - 32) * 5) = ${String.format('%.1f', frThreat)}%<br>"
+        }
+        
+        def frProb = 0.0
+        def frConf = 70
+        def frWhy = "Temperatures safely above freezing."
+        frMath += "Prob Base: 0.0%<br>"
+        
+        if (sensorHum) frConf += 30
+        
+        if (t <= 32.0) {
+            frProb = 100
+            frMath += "&nbsp;↳ Hard Freeze Active: 100%<br>"
+        } else if (t <= 40.0 && tTrendData.rate < 0) {
+            def dropRate = Math.abs(tTrendData.rate > 0.1 ? tTrendData.rate : 0.1)
+            def hoursToFreeze = (t - 32.0) / dropRate
+            frMath += "&nbsp;↳ PREDICTIVE: Est Time to 32°: ${String.format('%.1f', hoursToFreeze)} hrs<br>"
+            if (hoursToFreeze <= 2.0) { frProb = 90; frMath += "&nbsp;&nbsp;&nbsp;↳ < 2hrs: +90.0%<br>" }
+            else if (hoursToFreeze <= 4.0) { frProb = 65; frMath += "&nbsp;&nbsp;&nbsp;↳ < 4hrs: +65.0%<br>" }
+            else { frProb = 30; frMath += "&nbsp;&nbsp;&nbsp;↳ > 4hrs: +30.0%<br>" }
+        } else {
+             frMath += "&nbsp;↳ Trajectory Safe.<br>"
+        }
+        
+        frProb = Math.round(frProb)
+        if (frProb > 100) frProb = 100
+        frThreat = Math.round(frThreat)
+        if (frThreat > 100) frThreat = 100
+        
+        frMath += "<b>Final Prob: ${frProb}%</b>"
+        
+        if (frProb > highestProbThisCycle) highestProbThisCycle = frProb
+        
+        if (frProb > 0) {
+            frWhy = "Current temperature is ${String.format('%.1f', t)}°. Threat intensity is ${frThreat}%. "
+            if (frProb == 100) {
+                frWhy += (dpSpread <= 3.0) ? "Hard Freeze with Hoar Frost actively occurring. " : "Dry Hard Freeze actively occurring. "
+            } else {
+                frWhy += "Probability is ${frProb}% based on a trajectory of dropping ${String.format('%.2f', Math.abs(tTrendData.rate))}°/hr towards the freezing point. "
+            }
+        }
+        
+        processHazardState("Freeze", frThreat, frProb, frConf, frWhy, frMath, latchMs)
+    }
+
+    // --------------------------------------------------------------------------------
+    // 5. SEVERE HEAT DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableSevereHeat != false && !isStale) {
+        def shMath = ""
+        def hi = calculateHeatIndex(t, h)
+        shMath += "NWS Heat Index: ${String.format('%.1f', hi)}°F<br>"
+        
+        def shThreat = 0.0
+        if (hi >= 90.0) {
+            shThreat = ((hi - 90.0) / 35.0) * 100.0
+        }
+        if (shThreat > 100.0) shThreat = 100.0
+        shMath += "Thrt: ((HI - 90)/35)*100 = ${String.format('%.1f', shThreat)}%<br>"
+        
+        def shProb = 0.0
+        def shConf = 60
+        if (sensorHum) shConf += 40
+        def shWhy = "Heat levels are currently safe."
+        shMath += "Prob Base: 0.0%<br>"
+        
+        if (hi >= 90.0) {
+            shProb = shThreat 
+            shMath += "&nbsp;↳ Base Level: +${String.format('%.1f', shProb)}%<br>"
+            if (tTrendData.rate > 0) {
+                def bump = (tTrendData.rate / 2.0) * 20.0
+                shProb += bump
+                shMath += "&nbsp;↳ PREDICTIVE: Heating Bump [${String.format('%.1f', tTrendData.rate)}°/hr]: +${String.format('%.1f', bump)}%<br>"
+            }
+        } else if (t >= 80.0 && tTrendData.rate > 1.0) {
+             shProb = ((t - 80.0)/10.0) * 20.0
+             shMath += "&nbsp;↳ PREDICTIVE: Trajectory to 90°: +${String.format('%.1f', shProb)}%<br>"
+        }
+        
+        shProb = Math.round(shProb)
+        if (shProb > 100) shProb = 100
+        shThreat = Math.round(shThreat)
+        
+        shMath += "<b>Final Prob: ${shProb}%</b>"
+        
+        if (shProb > highestProbThisCycle) highestProbThisCycle = shProb
+        
+        if (shProb > 0) {
+            shWhy = "Current NWS Heat Index is ${String.format('%.1f', hi)}°F. "
+            if (hi >= 103.0) shWhy += "<b>DANGER:</b> High risk of heat exhaustion or heat stroke for individuals or pets outside. "
+            else if (hi >= 90.0) shWhy += "CAUTION: Prolonged exposure and physical activity may lead to heat exhaustion. "
+        }
+        
+        processHazardState("SevereHeat", shThreat, shProb, shConf, shWhy, shMath, latchMs)
+    }
+
+    // --------------------------------------------------------------------------------
+    // 6. TROPICAL DNA
+    // --------------------------------------------------------------------------------
+    if (settings.enableTropical != false && !isStale) {
+        def trMath = ""
+        def trThreat = ((29.90 - p) / 0.50) * 100.0
+        if (trThreat > 100.0) trThreat = 100.0
+        if (trThreat < 0.0) trThreat = 0.0
+        trMath += "Thrt: ((29.90 - P[${String.format('%.2f', p)}])/0.5) * 100 = ${String.format('%.1f', trThreat)}%<br>"
+        
+        def trProb = 0.0
+        def trConf = 50
+        def trWhy = "No sustained tropical barometric signatures detected locally."
+        trMath += "Prob Base: 0.0%<br>"
+        
+        if (sensorPress) trConf += 25
+        if (sensorWind) trConf += 25
+        
+        if (p < 29.80) {
+            def pScore = ((29.80 - p) / 0.30) * 60.0
+            def pCap = pScore > 70.0 ? 70.0 : pScore
+            trProb += pCap
+            trMath += "&nbsp;↳ Depth Score (MSLP Calibrated): +${String.format('%.1f', pCap)}%<br>"
+        }
+        
+        if (pTrend3Hr.rate <= -0.05) {
+            trProb += 15
+            trMath += "&nbsp;↳ PREDICTIVE: Sustained 3hr Drop [${String.format('%.2f', pTrend3Hr.rate)}]: +15.0%<br>"
+            if (dp >= 70.0) {
+                trProb += 15
+                trMath += "&nbsp;&nbsp;&nbsp;↳ PREDICTIVE: Deep Moisture Loading Synergy: +15.0%<br>"
+            }
+        }
+        
+        if (windVal > 30.0) {
+             trProb += 30
+            trMath += "&nbsp;↳ Sustained Wind [>30mph]: +30.0%<br>"
+        }
+        
+        trProb = Math.round(trProb)
+        if (trProb > 100) trProb = 100
+        trThreat = Math.round(trThreat)
+        if (trThreat > 100) trThreat = 100
+        
+        trMath += "<b>Final Prob: ${trProb}%</b>"
+        
+        if (trProb > highestProbThisCycle) highestProbThisCycle = trProb
+        
+        if (trProb > 20) {
+            trWhy = "Threat intensity is ${trThreat}% due to a current barometric depth of ${String.format('%.2f', p)} inHg. "
+            if (pTrend3Hr.rate <= -0.05 && dp >= 70.0) trWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> A long-duration barometric vacuum is combining with deep atmospheric moisture loading. "
+            trWhy += "Probability is ${trProb}% factoring in a 3-hour pressure trajectory of ${String.format('%.2f', pTrend3Hr.rate)} inHg/hr and sustained winds of ${String.format('%.1f', windVal)} mph. "
+        }
+        
+        processHazardState("Tropical", trThreat, trProb, trConf, trWhy, trMath, latchMs)
+    }
+
+    if (isStale) {
+        def hazards = ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"]
+        hazards.each { haz -> processHazardState(haz, 0, 0, 0, "⚠ Sensors Offline. Stale data prevented safe calculation.", "Offline. Connect sensors.", latchMs) }
+        highestProbThisCycle = 0.0 
+    }
+
+    // DEFCON WATCHDOG LOGIC
+    if (settings.enableDefcon != false) {
+        def threshold = settings.defconThresh ?: 25
+        if (highestProbThisCycle >= threshold && !state.watchdogActive) {
+            state.watchdogActive = true
+            logAction("🚨 DEFCON WATCHDOG ENGAGED: Threat probability crossed ${threshold}%. Commencing overdrive polling.")
+            watchdogPoll()
+        } else if (highestProbThisCycle < threshold && state.watchdogActive) {
+            state.watchdogActive = false
+            logAction("✅ DEFCON WATCHDOG DISENGAGED: All threat probabilities below ${threshold}%. Returning to standard polling schedule.")
+        }
+    } else {
+        state.watchdogActive = false
+    }
+
+    updateChildDevice()
 }
 
-// === HARDWARE SAFE WRAPPERS ===
+// === HAZARD STATE & FORENSICS ROUTING ===
+def processHazardState(haz, threat, prob, conf, why, mathEx, latchMs) {
+    def matrix = state.threatMatrix ?: [:]
+    def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Initializing...", mathEx: "Awaiting calculation cycle...", lastTrig: 0, lastWarnTime: 0, lastAlarmTime: 0, lastAnnounceTime: 0, history: [], currentEvent: null]
+    if (!data.history) data.history = []
+    if (data.lastAnnounceTime == null) data.lastAnnounceTime = 0
+    
+    def pfx = haz.toLowerCase()
+    def warnThresh = settings["${pfx}WarnThresh"] ?: 50
+    def alarmThresh = settings["${pfx}AlarmThresh"] ?: 80
+    
+    def baseTargetState = "Clear"
+    if (prob >= alarmThresh) baseTargetState = "ALARM"
+    else if (prob >= warnThresh) baseTargetState = "WARNING"
+    
+    if (settings.enableNOAA && settings.noaaTriggersHardware) {
+        def noaaMap = state.noaaAlertsMap ?: [:]
+        def officialStatus = noaaMap[haz] ?: "Clear"
+        
+        if (officialStatus == "ALARM") {
+            baseTargetState = "ALARM"
+            why = "<b>[🚨 OVERRIDE: NOAA OFFICIAL ALARM TRIGGERED]</b> " + why
+        } else if (officialStatus == "WARNING" && baseTargetState == "Clear") {
+            baseTargetState = "WARNING"
+            why = "<b>[⚠ OVERRIDE: NOAA OFFICIAL WARNING TRIGGERED]</b> " + why
+        }
+    }
+    
+    // Update active timestamps based on pure active conditions to power the Latch
+    if (baseTargetState == "ALARM") data.lastAlarmTime = now()
+    if (baseTargetState == "WARNING" || baseTargetState == "ALARM") data.lastWarnTime = now()
+    
+    // Apply Latching
+    def targetState = baseTargetState
+    def latchMsg = ""
+
+    if (targetState != "ALARM" && data.lastAlarmTime && (now() - data.lastAlarmTime < latchMs)) {
+        targetState = "ALARM"
+        def minsLeft = Math.ceil((latchMs - (now() - data.lastAlarmTime))/60000).toInteger()
+        latchMsg = "[🚨 ALARM Latched for ${minsLeft} more mins]"
+    } else if (targetState == "Clear" && data.lastWarnTime && (now() - data.lastWarnTime < latchMs)) {
+        targetState = "WARNING"
+        def minsLeft = Math.ceil((latchMs - (now() - data.lastWarnTime))/60000).toInteger()
+        latchMsg = "[⚠ WARNING Latched for ${minsLeft} more mins]"
+    }
+
+    if (latchMsg) {
+        why += "<br><span style='color:#f0ad4e;'><b>${latchMsg}</b></span>"
+    }
+
+    def currentState = data.state
+    
+    if (currentState != targetState) {
+        logAction("${haz} DNA shifted from ${currentState} to ${targetState}.")
+        data.lastTrig = now()
+        data.lastAnnounceTime = now() // Reset the repeat audio timer
+        
+        // --- FORENSICS LOGGING ---
+        if (currentState == "WARNING" || currentState == "ALARM") {
+            def startTs = data.currentEvent?.start ?: now()
+            def durMs = now() - startTs
+            def durMins = Math.round(durMs / 60000)
+            def durStr = durMins > 60 ? "${Math.round(durMins/60)}h ${durMins%60}m" : "${durMins}m"
+            def startStr = new Date(startTs).format("MM/dd HH:mm", location.timeZone)
+            
+            data.history.add(0, [type: currentState, start: startStr, dur: durStr])
+            if (data.history.size() > 5) data.history = data.history[0..4]
+        }
+        data.currentEvent = [state: targetState, start: now()]
+        // -------------------------
+
+        // Check granular modes for WARNING and ALARM
+        def warnAllowedModes = settings["${pfx}WarnModes"]
+        def warnModeOk = (!warnAllowedModes || warnAllowedModes.contains(location.mode))
+        
+        def alarmAllowedModes = settings["${pfx}AlarmModes"]
+        def alarmModeOk = (!alarmAllowedModes || alarmAllowedModes.contains(location.mode))
+        
+        def warnSw = settings["switch${haz}Warn"]
+        def alarmSw = settings["switch${haz}Alarm"]
+        
+        if (targetState == "ALARM") {
+            safeOn(alarmSw)
+            safeOff(warnSw)
+            
+            if (alarmModeOk) {
+                if (settings["${pfx}AlarmNotify"]) sendNotification("🚨 CRITICAL: ${haz} ALARM Conditions Detected!", settings["${pfx}AlarmNotifyDevs"])
+                if (settings["${pfx}AlarmTTS"]) playAudio(settings["tts${haz}Alarm"], settings["${pfx}AlarmTTSDevs"])
+                if (settings["${pfx}AlarmSiren"]) triggerSiren(settings["${pfx}AlarmSirenDevs"])
+                if (settings["${pfx}AlarmSound"]) playSoundFile(settings["url${haz}Alarm"], settings["${pfx}AlarmSoundDevs"])
+            } else {
+                logAction("Alarm audio/push suppressed due to Mode Restriction.")
+            }
+        } else if (targetState == "WARNING") {
+            safeOff(alarmSw)
+            safeOn(warnSw)
+            
+            if (warnModeOk) {
+                if (settings["${pfx}WarnNotify"]) sendNotification("⚠ WARNING: Elevated ${haz} Conditions.", settings["${pfx}WarnNotifyDevs"])
+                if (settings["${pfx}WarnTTS"]) playAudio(settings["tts${haz}Warn"], settings["${pfx}WarnTTSDevs"])
+                if (settings["${pfx}WarnSiren"]) triggerSiren(settings["${pfx}WarnSirenDevs"])
+                if (settings["${pfx}WarnSound"]) playSoundFile(settings["url${haz}Warn"], settings["${pfx}WarnSoundDevs"])
+            } else {
+                logAction("Warning audio/push suppressed due to Mode Restriction.")
+            }
+        } else {
+             safeOff(alarmSw)
+            safeOff(warnSw)
+            if (currentState != "Clear") {
+                stopAllSirens()
+                if ((warnModeOk || alarmModeOk) && settings["${pfx}WarnNotify"]) sendNotification("✅ The localized ${haz} threat has cleared.", settings["${pfx}WarnNotifyDevs"])
+            }
+        }
+    } else if (settings.enableRepeatAudio && (targetState == "WARNING" || targetState == "ALARM")) {
+        // --- 60 MINUTE RECURRING ALERT LOGIC ---
+        if ((now() - data.lastAnnounceTime) >= 3600000) { // 3,600,000 ms = 60 minutes
+            logAction("RECURRING ALERT: Re-broadcasting audio for active ${haz} ${targetState}.")
+            data.lastAnnounceTime = now() // Reset the repeat audio timer
+            
+            def warnAllowedModes = settings["${pfx}WarnModes"]
+            def warnModeOk = (!warnAllowedModes || warnAllowedModes.contains(location.mode))
+            
+            def alarmAllowedModes = settings["${pfx}AlarmModes"]
+            def alarmModeOk = (!alarmAllowedModes || alarmAllowedModes.contains(location.mode))
+            
+            if (targetState == "ALARM" && alarmModeOk) {
+                if (settings["${pfx}AlarmTTS"]) playAudio(settings["tts${haz}Alarm"], settings["${pfx}AlarmTTSDevs"])
+                if (settings["${pfx}AlarmSound"]) playSoundFile(settings["url${haz}Alarm"], settings["${pfx}AlarmSoundDevs"])
+            } else if (targetState == "WARNING" && warnModeOk) {
+                if (settings["${pfx}WarnTTS"]) playAudio(settings["tts${haz}Warn"], settings["${pfx}WarnTTSDevs"])
+                if (settings["${pfx}WarnSound"]) playSoundFile(settings["url${haz}Warn"], settings["${pfx}WarnSoundDevs"])
+            }
+        }
+    }
+    
+    data.threat = threat
+    data.prob = prob
+    data.conf = conf
+    data.state = targetState
+    data.howWhy = why
+    data.mathEx = mathEx
+    
+    matrix[haz] = data
+    state.threatMatrix = matrix
+}
+
+// === HARDWARE ROUTING ===
 def safeOn(dev) {
     if (dev && dev.currentValue("switch") != "on") {
-        try { dev.on() } catch (e) { log.error "Failed to turn ON ${dev.displayName}: ${e.message}" }
+        try { dev.on() } catch (e) { log.error "Failed ON: ${e}" }
     }
 }
 
 def safeOff(dev) {
     if (dev && dev.currentValue("switch") != "off") {
-        try { dev.off() } catch (e) { log.error "Failed to turn OFF ${dev.displayName}: ${e.message}" }
+        try { dev.off() } catch (e) { log.error "Failed OFF: ${e}" }
     }
 }
 
-def sendNotification(msg) {
-    if (notifyDevices) {
-        notifyDevices.each { it.deviceNotification(msg) }
-        logAction("Notification Sent: ${msg}")
+def sendNotification(msg, specificDevs = null) {
+    def targetDevs = specificDevs ?: settings.notifyDevices
+    if (targetDevs) {
+        targetDevs.each { it.deviceNotification(msg) }
+        logAction("Push Sent: ${msg}")
     }
 }
 
-// === AUDIO PLAYBACK LOGIC ===
-def playAudioTrack(trackNum) {
-    if (audioModes && !audioModes.contains(location.mode)) {
-        logDebug("Audio playback skipped: Current mode (${location.mode}) is not in allowed audio modes.")
-        return
-    }
+def playAudio(msg, specificDevs = null) {
+    def targetDevs = specificDevs ?: settings.audioDevices
+    if (!msg || !targetDevs) return
+    def vol = settings.audioVolume ?: 65
+    try {
+        targetDevs.each { speaker ->
+            if (speaker.hasCommand("setVolume")) speaker.setVolume(vol)
+            if (speaker.hasCommand("speak")) speaker.speak(msg)
+            else if (speaker.hasCommand("playText")) speaker.playText(msg)
+        }
+        logAction("TTS Broadcasted: ${msg}")
+    } catch (e) { log.error "TTS routing failed: ${e}" }
+}
 
-    if (audioDevices && trackNum) {
-        audioDevices.each { dev ->
-            try {
-                if (dev.hasCommand("playSound")) {
-                    dev.playSound(trackNum as Integer)
-                } else if (dev.hasCommand("playTrack")) {
-                    dev.playTrack(trackNum.toString())
-                } else if (dev.hasCommand("chime")) {
-                    dev.chime(trackNum as Integer)
-                } else {
-                    log.error "${dev.displayName} does not support standard audio/siren commands (playSound, playTrack, or chime)."
-                }
-            } catch (e) {
-                log.error "Error playing audio on ${dev.displayName}: ${e}"
+def playSoundFile(url, specificDevs = null) {
+    def targetDevs = specificDevs ?: settings.soundDevices
+    if (!url || !targetDevs) return
+    def vol = settings.audioVolume ?: 65
+    
+    def isNumeric = url.toString().isNumber()
+    def trackNum = isNumeric ? url.toString().toInteger() : null
+
+    try {
+        targetDevs.each { player ->
+            if (player.hasCommand("setVolume")) player.setVolume(vol)
+            
+            if (player.hasCommand("playSound") && trackNum != null) {
+                player.playSound(trackNum)
+            } else if (player.hasCommand("playTrack")) {
+                player.playTrack(url.toString())
+            } else if (player.hasCommand("chime") && trackNum != null) {
+                player.chime(trackNum)
+            } else {
+                log.error "${player.displayName} does not support standard audio/siren commands (playSound, playTrack, or chime)."
             }
         }
-        logAction("Audio Action: Played track ${trackNum} on selected siren/speaker devices.")
+        logAction("Sound File Played: ${url}")
+    } catch (e) { log.error "Sound file routing failed: ${e}" }
+}
+
+def triggerSiren(specificDevs = null) {
+    def targetDevs = specificDevs ?: settings.sirenDevices
+    if (targetDevs) {
+        try {
+            targetDevs.each { siren -> 
+                if (siren.hasCommand("siren")) siren.siren()
+                else if (siren.hasCommand("on")) siren.on() 
+            }
+            logAction("SIREN TRIGGERED")
+        } catch (e) { log.error "Siren trigger failed: ${e}" }
+    }
+}
+
+def stopAllSirens() {
+    def allSirens = []
+    if (settings.sirenDevices) allSirens += settings.sirenDevices
+    
+    // Scour all possible granular siren settings
+    ["tornado", "thunderstorm", "flood", "freeze", "severeheat", "tropical"].each { pfx ->
+        if (settings["${pfx}WarnSirenDevs"]) allSirens += settings["${pfx}WarnSirenDevs"]
+        if (settings["${pfx}AlarmSirenDevs"]) allSirens += settings["${pfx}AlarmSirenDevs"]
+    }
+    
+    allSirens = allSirens.unique()
+    
+    if (allSirens) {
+        try {
+            allSirens.each { siren ->
+                if (siren.hasCommand("off")) siren.off()
+            }
+            logAction("All Sirens Silenced")
+        } catch (e) { log.error "Siren shutoff failed: ${e}" }
+    }
+}
+
+// === HTML DASHBOARD TILE COMPILERS ===
+def buildDashboardTile(hazName, data, noaaState, noaaRaw) {
+    def bgColors = ["ALARM": "#fdf0f0", "WARNING": "#fcf6ec", "Clear": "#f8f9fa"]
+    def borderColors = ["ALARM": "#d9534f", "WARNING": "#f0ad4e", "Clear": "#5cb85c"]
+    
+    def stateColor = borderColors[data.state] ?: "#5cb85c"
+    def mainBg = bgColors[data.state] ?: "#f8f9fa"
+    def noaaColor = borderColors[noaaState] ?: "#5cb85c"
+    
+    def histHtml = ""
+    if (data.history && data.history.size() > 0) {
+        histHtml = "<div style='margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;'><b style='font-size:10px; color:#555;'>Recent Events:</b><br>"
+        data.history.each { h ->
+            def c = h.type == 'ALARM' ? '#d9534f' : '#f0ad4e'
+            histHtml += "<div style='font-size:10px; color:#666;'>• <span style='color:${c}; font-weight:bold;'>${h.type}</span> | ${h.start} (${h.dur})</div>"
+        }
+        histHtml += "</div>"
+    }
+    
+    def html = """
+    <div style="width:100%; height:100%; box-sizing:border-box; padding:8px; font-family:-apple-system, system-ui, sans-serif; background-color:${mainBg}; border: 2px solid ${stateColor}; border-radius:8px; display:flex; flex-direction:column; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 6px;">
+            <div style="font-weight:bold; font-size:14px; color:#333;">${hazName} DNA</div>
+            <div style="background-color:${stateColor}; color:#fff; padding:2px 6px; border-radius:10px; font-size:10px; font-weight:bold;">${data.state}</div>
+        </div>
+        
+        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; color:#444;">
+            <span><b>Threat:</b> ${data.threat}%</span>
+            <span><b>Prob:</b> ${data.prob}%</span>
+            <span><b>Conf:</b> ${data.conf}%</span>
+        </div>
+        
+        <div style="flex-grow:1; font-size:11px; color:#333; line-height:1.3; overflow-y:auto; margin-bottom: 6px;">
+            <b>Local Report:</b> ${data.howWhy}
+            ${histHtml}
+        </div>
+        
+        <div style="font-size:10px; color:#555; background:rgba(0,0,0,0.05); padding:4px; border-radius:4px; margin-bottom: 6px;">
+            <b>NWS Status:</b> <span style="color:${noaaColor}; font-weight:bold;">${noaaState}</span><br>
+            <i>${noaaRaw}</i>
+        </div>
+    </div>
+    """
+    return html
+}
+
+def buildForecastTile() {
+    if (!state.noaaForecastText) return "<div style='padding:8px; font-family:sans-serif;'>Forecast data unavailable.</div>"
+    
+    return """
+    <div style="width:100%; height:100%; box-sizing:border-box; padding:10px; font-family:-apple-system, system-ui, sans-serif; background-color:#f4f9ff; border: 2px solid #4a90e2; border-radius:8px; display:flex; flex-direction:column; overflow-y:auto; color: #333;">
+        <div style="font-weight:bold; font-size:14px; color:#0275d8; border-bottom: 1px solid #cce0ff; padding-bottom: 4px; margin-bottom: 6px;">
+            ⛅ NWS Local Forecast
+        </div>
+        <div style="font-size:12px; line-height:1.4; margin-bottom:6px;">
+            <b style="color: #444;">${state.noaaCurrentPeriod}:</b> ${state.noaaForecastText}
+        </div>
+        <div style="font-size:11px; line-height:1.3; color:#555; background:rgba(0,0,0,0.03); padding:6px; border-radius:4px;">
+            <b style="color: #444;">${state.noaaNextPeriodName}:</b> ${state.noaaNextForecastText}
+        </div>
+    </div>
+    """
+}
+
+// === CHILD DEVICE SYNCHRONIZATION ===
+def updateChildDevice() {
+    def child = getChildDevice("SevWeather-${app.id}")
+    if (child) {
+        def matrix = state.threatMatrix
+        def noaaMap = state.noaaAlertsMap ?: [:]
+        def hazards = ["Tornado", "Thunderstorm", "Flood", "Freeze", "SevereHeat", "Tropical"]
+        
+        def highestState = "Clear"
+        hazards.each { haz ->
+            if (!matrix[haz]) return
+            def s = matrix[haz].state
+            if (s == "ALARM") highestState = "ALARM"
+            else if (s == "WARNING" && highestState == "Clear") highestState = "WARNING"
+            
+            def lName = haz.toLowerCase()
+            child.sendEvent(name: "${lName}Threat", value: matrix[haz].threat, unit: "%")
+            child.sendEvent(name: "${lName}Prob", value: matrix[haz].prob, unit: "%")
+            child.sendEvent(name: "${lName}Conf", value: matrix[haz].conf, unit: "%")
+            child.sendEvent(name: "${lName}State", value: matrix[haz].state)
+            
+            def noaaState = noaaMap[haz] ?: "Clear"
+            def noaaRaw = noaaMap["Raw_${haz}"] ?: "No alerts."
+            def tileHtml = buildDashboardTile(haz, matrix[haz], noaaState, noaaRaw)
+            child.sendEvent(name: "${lName}Tile", value: tileHtml)
+        }
+        
+        child.sendEvent(name: "globalThreatState", value: highestState)
+        child.sendEvent(name: "pressureTrend", value: state.pressureTrendStr ?: "Stable")
+        child.sendEvent(name: "tempTrend", value: state.tempTrendStr ?: "Stable")
+        child.sendEvent(name: "windTrend", value: state.windTrendStr ?: "Stable")
+        child.sendEvent(name: "currentDayRain", value: state.currentDayRain ?: 0.0)
+        
+        if (settings.enableNOAA && state.noaaForecastText) {
+            child.sendEvent(name: "noaaForecastText", value: "${state.noaaCurrentPeriod}: ${state.noaaForecastText}")
+            child.sendEvent(name: "noaaForecastTile", value: buildForecastTile())
+        }
     }
 }
 
@@ -1588,7 +1636,3 @@ def logAction(msg) {
 }
 
 def logInfo(msg) { if(txtEnable) log.info "${app.label}: ${msg}" }
-
-def logDebug(msg) {
-    if (debugEnable) log.debug "${app.label}: ${msg}"
-}
