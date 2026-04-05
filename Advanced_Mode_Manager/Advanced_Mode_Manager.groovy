@@ -1,7 +1,6 @@
 /**
  * Advanced Mode Manager
  */
-
 definition(
     name: "Advanced Mode Manager",
     namespace: "ShaneAllen",
@@ -20,6 +19,7 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced Mode Manager</b>", install: true, uninstall: true) {
         
+    
         section("<b>Live Mode Dashboard & History</b>") {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Provides a real-time view of your current Hubitat location mode and logs recent activity.</div>"
             
@@ -80,6 +80,7 @@ def mainPage() {
             section(dynamicTitle, hideable: true, hidden: true) {
                 input "dcEnable${i}", "bool", title: "<b>Enable Device Control ${i}</b>", defaultValue: false, submitOnChange: true
                 if (settings["dcEnable${i}"]) {
+                 
                     paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #2ecc71;'><b>State Sweep / Device Enforcement</b></div>"
                     input "dcMode${i}", "mode", title: "<b>[TRIGGER]</b> When mode becomes...", required: true, submitOnChange: true
                     input "dcSwitchesOff${i}", "capability.switch", title: "Turn OFF these switches", required: false, multiple: true
@@ -101,6 +102,7 @@ def mainPage() {
                     paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #f39c12; margin-top:10px;'><b>Audio Announcements</b></div>"
                     input "dcTtsSpeakers${i}", "capability.speechSynthesis", title: "Target Smart Speakers (Sonos, etc.)", required: false, multiple: true, submitOnChange: true
                     input "dcTtsMessage${i}", "text", title: "TTS Announcement Message", required: false, submitOnChange: true
+                    input "dcTtsBlocker${i}", "capability.switch", title: "Block Announcements if this switch is ON (e.g., TV)", required: false, multiple: false
                     
                     if (settings["dcTtsSpeakers${i}"] && settings["dcTtsMessage${i}"]) {
                         input "testTts${i}", "button", title: "Test TTS Announcement"
@@ -187,7 +189,7 @@ def mainPage() {
                 paragraph "<b>Timer 1 (e.g., Sunset/Dim)</b>"
                 input "ledTime1", "time", title: "Time", required: true
                 input "ledLevel1", "number", title: "LED Light % (0-100)", required: true, defaultValue: 50
-                
+                 
                 paragraph "<b>Timer 2 (e.g., Sunrise/Bright)</b>"
                 input "ledTime2", "time", title: "Time", required: true
                 input "ledLevel2", "number", title: "LED Light % (0-100)", required: true, defaultValue: 100
@@ -211,17 +213,17 @@ def initialize() {
     
     // Schedule Inovelli LED Timers
     if (settings["ledDimEnable"] && settings["ledTime1"]) {
-        schedule(settings["ledTime1"], executeLedTimer1)
+        schedule(settings["ledTime1"], "executeLedTimer1")
     }
     if (settings["ledDimEnable"] && settings["ledTime2"]) {
-        schedule(settings["ledTime2"], executeLedTimer2)
+        schedule(settings["ledTime2"], "executeLedTimer2")
     }
     
     // Schedule 30-Minute Refresh for Inovelli Colors
     if (settings["enableColorRefresh"] != false) {
-        runEvery30Minutes(refreshInovelliColor)
+        runEvery30Minutes("refreshInovelliColor")
     } else {
-        unschedule(refreshInovelliColor)
+        unschedule("refreshInovelliColor")
     }
    
     for (int i = 1; i <= 8; i++) {
@@ -276,7 +278,8 @@ def appButtonHandler(btn) {
         def chimes = settings["dcZoozChimes${idx}"]
         def sound = settings["dcZoozSound${idx}"]
         if (chimes && sound != null) {
-            chimes.each { it.playSound(sound.toInteger()) }
+            // FIX APPLIED: Routing test button through safe Zooz Helper
+            playZoozSound(chimes, sound)
             logAction("Tested Zooz Chime for Rule ${idx}: Sound ${sound}")
         }
     }
@@ -373,7 +376,7 @@ def modeChangeHandler(evt) {
                 state.pendingTargetTime = now() + (delayMins * 60000)
                 state.pendingRuleNumber = i
                 logAction("Transition Rule ${i}: Delay active. Shifting '${newMode}' to '${target}' in ${delayMins} mins.")
-                runIn((delayMins * 60).toInteger(), executeTransition)
+                runIn((delayMins * 60).toInteger(), "executeTransition")
                 break // Only allow one transition timer to run at a time
             }
         }
@@ -460,16 +463,21 @@ def enforceDevices(ruleIdx) {
     // --- Audio Announcements ---
     def ruleTtsSpeakers = settings["dcTtsSpeakers${ruleIdx}"]
     def ttsMsg = settings["dcTtsMessage${ruleIdx}"]
+    def ttsBlocker = settings["dcTtsBlocker${ruleIdx}"]
     
     def ruleZoozChimes = settings["dcZoozChimes${ruleIdx}"]
     def chimeSound = settings["dcZoozSound${ruleIdx}"]
     
     if (ttsMsg && ruleTtsSpeakers) {
-        ruleTtsSpeakers.speak(ttsMsg)
-        logMsg += "[TTS: ${ttsMsg}] "
+        if (ttsBlocker && ttsBlocker.currentValue("switch") == "on") {
+            logMsg += "[TTS: Blocked by '${ttsBlocker.displayName}'] "
+        } else {
+            ruleTtsSpeakers.speak(ttsMsg)
+            logMsg += "[TTS: ${ttsMsg}] "
+        }
     }
     
-    // FIX APPLIED HERE: Delayed execution for Zooz Chimes
+    // Delayed execution for Zooz Chimes
     if (chimeSound != null && ruleZoozChimes) {
         runInMillis(2000, "playDelayedZoozChimes", [data: [ruleIdx: ruleIdx]])
         logMsg += "[Zooz Chime: Scheduled File ${chimeSound} (Delayed 2s)] "
@@ -547,6 +555,7 @@ def refreshInovelliColor() {
     for (int i = 1; i <= 8; i++) {
         if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
             if (settings["dcInovelli${i}"] && settings["dcInovelliColor${i}"] != null) {
+               
                 def blocker = settings["dcInovelliBlocker${i}"]
                 
                 // Ensure no active blocker before reissuing the color/effect
@@ -571,8 +580,8 @@ def executeLedTimer1() {
     def level = settings["ledLevel1"] != null ? settings["ledLevel1"].toInteger() : 50
     logAction("Scheduled LED Timer 1 triggered. Setting Inovelli LEDs to ${level}%.")
     settings["ledDimSwitches"].each { dev ->
-        dev.setParameter(97, level, 1) // LED Intensity (When On)
-        dev.setParameter(98, level, 1) // LED Intensity (When Off)
+        dev.setParameter(97, level) // LED Intensity (When On)
+        dev.setParameter(98, level) // LED Intensity (When Off)
     }
 }
 
@@ -581,14 +590,42 @@ def executeLedTimer2() {
     def level = settings["ledLevel2"] != null ? settings["ledLevel2"].toInteger() : 100
     logAction("Scheduled LED Timer 2 triggered. Setting Inovelli LEDs to ${level}%.")
     settings["ledDimSwitches"].each { dev ->
-        dev.setParameter(97, level, 1) // LED Intensity (When On)
-        dev.setParameter(98, level, 1) // LED Intensity (When Off)
+        dev.setParameter(97, level) // LED Intensity (When On)
+        dev.setParameter(98, level) // LED Intensity (When Off)
     }
 }
 
 // ------------------------------------------------------------------------------
 // UTILITY FUNCTIONS
 // ------------------------------------------------------------------------------
+
+// FIX APPLIED: New safe play function handling playSound, playTrack, and chime with mesh protection
+def playZoozSound(devices, sound) {
+    if (!devices || sound == null) return
+    def soundInt = sound.toInteger()
+    
+    def devList = devices instanceof List ? devices : [devices]
+    
+    devList.eachWithIndex { dev, index ->
+        if (index > 0) {
+            pauseExecution(1000)
+        }
+        
+        try {
+            if (dev.hasCommand("playSound")) {
+                dev.playSound(soundInt)
+            } else if (dev.hasCommand("playTrack")) {
+                dev.playTrack(sound.toString())
+            } else if (dev.hasCommand("chime")) {
+                dev.chime(soundInt)
+            } else {
+                log.warn "Advanced Mode Manager: Device ${dev.displayName} does not support standard sound commands (playSound, playTrack, or chime)."
+            }
+        } catch (e) {
+            log.error "Failed to play audio on ${dev.displayName}: ${e}"
+        }
+    }
+}
 
 def turnOnDelayedSwitches(data) {
     def ruleIdx = data?.ruleIdx
@@ -615,17 +652,17 @@ def turnOffWeatherSwitch(data) {
     }
 }
 
-// FIX APPLIED HERE: New utility function for handling the Zooz mesh delay
+// FIX APPLIED: Routing delayed mesh execution through safe Zooz Helper
 def playDelayedZoozChimes(data) {
     def ruleIdx = data?.ruleIdx
     if (ruleIdx && settings["dcZoozChimes${ruleIdx}"]) {
         def sound = settings["dcZoozSound${ruleIdx}"]
-        settings["dcZoozChimes${ruleIdx}"].each { it.playSound(sound.toInteger()) }
+        playZoozSound(settings["dcZoozChimes${ruleIdx}"], sound)
     }
 }
 
 def clearPendingTransition() {
-    unschedule(executeTransition)
+    unschedule("executeTransition")
     state.pendingTargetMode = null
     state.pendingTriggerMode = null
     state.pendingTargetTime = null
