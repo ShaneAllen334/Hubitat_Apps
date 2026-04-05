@@ -66,10 +66,12 @@ def mainPage() {
                     def customName = settings["z${i}Name"]
                     
                     def resolvedName = customName ?: (spk.label ?: "Zone ${i}")
+      
                     activeZoneOptions["${i}"] = resolvedName
                     
                     // Zone State & Locks
                     def isLocked = gnLock && (gnLock.currentValue("switch") == "on")
+             
                     def isEventMuted = (state.doorbellMutedSpks?.contains(spk.id)) || (state.doorOpenMutedSpks?.contains(spk.id))
                     
                     def zoneNameStr = resolvedName
@@ -113,6 +115,7 @@ def mainPage() {
                     }
                     
                     def vol = spk.currentValue("volume") ?: "--"
+        
                     def trackTitle = spk.currentValue("trackDescription")
                     if (!trackTitle || trackTitle.trim() == "") trackTitle = "Idle / Streaming"
                     
@@ -120,7 +123,7 @@ def mainPage() {
                 }
             }
             dashHTML += "</tbody></table>"
-            
+  
             if (hasZones) {
                 input "refreshDash", "button", title: "🔄 Refresh Dashboard Data"
                 paragraph dashHTML
@@ -302,6 +305,8 @@ def mainPage() {
                         input "z${i}ModeRoutineEnabled", "bool", title: "Enable Mode-Based Routine", defaultValue: false, submitOnChange: true
                         if (settings["z${i}ModeRoutineEnabled"]) {
                             input "z${i}RoutineMode", "mode", title: "Select Mode to Trigger Routine", required: false
+                            // FIX: Added Blocker Switch for Routine
+                            input "z${i}RoutineBlocker", "capability.switch", title: "Block routine if this switch is ON (e.g., TV)", required: false
                             input "z${i}RoutineDelay", "number", title: "Delay before playing (seconds)", defaultValue: 10, required: false
                             
                             def favList = [:]
@@ -397,7 +402,7 @@ def initialize() {
     
     if (settings.enablePowerManagement != false) {
         subscribe(location, "mode", modeChangeHandler)
-        runEvery1Hour(hourlyStateEnforcement)
+        runEvery1Hour("hourlyStateEnforcement")
     }
 
     if (settings.enableSelfHealing != false) {
@@ -407,12 +412,12 @@ def initialize() {
     if (settings.enableFavorites != false) {
         getChildDevices().each { child -> subscribe(child, "switch", childSwitchHandler) }
         if (settings.enableAutoPurge != false) {
-            schedule("0 0 3 ? * *", purgeOldFavorites)
+            schedule("0 0 3 ? * *", "purgeOldFavorites")
         }
     }
 
     if (settings.enableCostTracker != false) {
-        runEvery15Minutes(calculateEnergy)
+        runEvery15Minutes("calculateEnergy")
     }
 
     if (settings.enableEventOverrides) {
@@ -421,7 +426,7 @@ def initialize() {
     }
 
     if (settings.enableNightSweep && settings.nightSweepTime) {
-        schedule(settings.nightSweepTime, executeNightSweep)
+        schedule(settings.nightSweepTime, "executeNightSweep")
     }
 
     // Hardware Volume Protection & Follow-Me Subscriptions
@@ -503,7 +508,7 @@ def appButtonHandler(btn) {
         if (btn == "btnSleep" && sleepTimerMins) {
             state.sleepTimers[zNum] = true
             def fadeDur = sleepTimerFade ?: 0
-            runIn((sleepTimerMins * 60).toInteger(), executeSleepTimer, [data: [spkId: spk.id, zNum: zNum, fade: fadeDur]])
+            runIn((sleepTimerMins * 60).toInteger(), "executeSleepTimer", [data: [spkId: spk.id, zNum: zNum, fade: fadeDur], overwrite: false])
             logAction("Command -> Sleep Timer started for ${spk.label} (${sleepTimerMins} mins, ${fadeDur}s fade).")
         }
         
@@ -530,6 +535,7 @@ def appButtonHandler(btn) {
 
 def queueTTS(spkId, message, vol, origVol, priority) {
     if (!state.ttsQueue) state.ttsQueue = []
+    
     def payload = [spkId: spkId, msg: message, vol: vol, origVol: origVol, id: now()]
     
     if (priority) {
@@ -559,9 +565,9 @@ def processTTSQueue(force = false) {
         spk.setLevel(payload.vol)
         spk.speak(payload.msg)
         logAction("TTS Broadcast: '${payload.msg}' on ${spk.label}")
-        
+    
         def waitTime = Math.max((payload.msg.length() / 15).toInteger(), 6)
-        runIn(waitTime, restoreVolumeAndContinueTTS, [data: [spkId: spk.id, origVol: payload.origVol]])
+        runIn(waitTime, "restoreVolumeAndContinueTTS", [data: [spkId: spk.id, origVol: payload.origVol], overwrite: false])
     } else {
         processTTSQueue(false)
     }
@@ -571,7 +577,7 @@ def restoreVolumeAndContinueTTS(data) {
     def spk = getSpeakerById(data.spkId)
     if (spk) spk.setLevel(data.origVol)
     state.isSpeaking = false
-    runIn(1, processTTSQueue)
+    runIn(1, "processTTSQueue", [overwrite: false])
 }
 
 // --- VOLUME FADING ENGINE ---
@@ -599,7 +605,7 @@ def startVolumeFade(spkId, targetVol, durationSec, isFadeOut = false) {
         logAction("Using native hardware volume fade for ${spk.label}")
         spk.setLevel(targetVol, durationSec)
         if (isFadeOut) {
-            runIn(durationSec + 1, finalizeNativeFadeOut, [data: [spkId: spk.id, origVol: curVol]])
+            runIn(durationSec + 1, "finalizeNativeFadeOut", [data: [spkId: spk.id, origVol: curVol], overwrite: false])
         }
         return
     }
@@ -622,7 +628,7 @@ def startVolumeFade(spkId, targetVol, durationSec, isFadeOut = false) {
         stepsLeft: steps, isFadeOut: isFadeOut, origVol: curVol
     ]
     
-    runIn(stepDelay, processVolumeFade, [data: [spkId: spkId, delay: stepDelay]])
+    runIn(stepDelay, "processVolumeFade", [data: [spkId: spkId, delay: stepDelay], overwrite: false])
 }
 
 def finalizeNativeFadeOut(data) {
@@ -630,7 +636,7 @@ def finalizeNativeFadeOut(data) {
     if (spk) {
         spk.pause()
         logAction("Fade-out complete for ${spk.label}. Paused.")
-        runIn(2, restoreVolume, [data: [spkId: data.spkId, vol: data.origVol]])
+        runIn(2, "restoreVolume", [data: [spkId: data.spkId, origVol: data.origVol], overwrite: false])
     }
 }
 
@@ -651,13 +657,13 @@ def processVolumeFade(data) {
     
     if (fadeData.stepsLeft > 0) {
         state["fade_${spkId}"] = fadeData
-        runIn(data.delay, processVolumeFade, [data: [spkId: spkId, delay: data.delay]])
+        runIn(data.delay, "processVolumeFade", [data: [spkId: spkId, delay: data.delay], overwrite: false])
     } else {
         spk.setLevel(fadeData.target)
         if (fadeData.isFadeOut) {
             spk.pause()
             logAction("Software Fade-out complete for ${spk.label}. Paused.")
-            runIn(2, restoreVolume, [data: [spkId: spkId, vol: fadeData.origVol]]) 
+            runIn(2, "restoreVolume", [data: [spkId: spkId, vol: fadeData.origVol], overwrite: false]) 
         } else {
             logAction("Software Fade-in complete for ${spk.label}.")
         }
@@ -688,7 +694,7 @@ def followMeMotionHandler(evt) {
             
             def srcSpk = settings["z${sourceZoneNum}Speaker"]
             def targetSpk = settings["z${i}Speaker"]
-            
+        
             if (srcSpk && targetSpk && srcSpk.currentValue("status") == "playing") {
                 logAction("Follow-Me Triggered: Moving audio from ${srcSpk.label} to ${targetSpk.label}")
                 
@@ -698,7 +704,7 @@ def followMeMotionHandler(evt) {
                 if (trackUri) {
                     targetSpk.setLevel(curVol)
                     targetSpk.setTrack(trackUri)
-                    runIn(1, triggerPlayOnFav, [data: [spkId: targetSpk.id]])
+                    runIn(1, "triggerPlayOnFav", [data: [spkId: targetSpk.id], overwrite: false])
                     srcSpk.pause()
                 }
             }
@@ -734,6 +740,7 @@ def doorbellHandler(evt) {
     if (evt.value == btnNum.toString()) {
         logAction("Doorbell rang! Muting applicable playing speakers.")
         def mutedSpks = []
+        
         for(int i = 1; i <= 10; i++) {
             def spk = settings["z${i}Speaker"]
             if (spk && !isZoneLocked(i)) {
@@ -744,7 +751,7 @@ def doorbellHandler(evt) {
             }
         }
         state.doorbellMutedSpks = mutedSpks
-        runIn(settings.doorbellMuteTime ?: 30, restoreDoorbellMute)
+        runIn(settings.doorbellMuteTime ?: 30, "restoreDoorbellMute", [overwrite: false])
     }
 }
 
@@ -790,13 +797,32 @@ def executeNightSweep() {
     if (!isAppEnabled() || !settings.enableNightSweep) return
     logAction("Executing Automated Night-Time Volume Sweep.")
     
+    def delayMult = 0
     for (int i = 1; i <= 10; i++) {
         if (settings["enableZ${i}"] && settings["z${i}Speaker"]) {
             if (isZoneLocked(i)) continue
-            def spk = settings["z${i}Speaker"]
-            def targetVol = settings.nightSweepVol ?: 15
-            spk.setLevel(targetVol)
+            
+            // If a smart plug is configured but currently OFF, skip the volume command to prevent connection timeouts
+            def sw = settings["z${i}Switch"]
+            if (sw && sw.currentValue("switch") == "off") {
+                logAction("Night Sweep: Skipping ${settings["z${i}Speaker"].label} (Powered Off).")
+                continue
+            }
+
+            def delay = (delayMult * 4) + 1 
+            runIn(delay, "executeStaggeredSweep", [data: [zNum: i], overwrite: false])
+            delayMult++
         }
+    }
+}
+
+def executeStaggeredSweep(data) {
+    def i = data.zNum.toInteger()
+    def spk = settings["z${i}Speaker"]
+    if (spk) {
+        def targetVol = settings.nightSweepVol ?: 15
+        spk.setLevel(targetVol)
+        logAction("Night Sweep: Normalized ${spk.label} to ${targetVol}%.")
     }
 }
 
@@ -806,7 +832,8 @@ def restoreVolume(data) {
 }
 
 def executeSleepTimer(data) {
-    if (!state.sleepTimers[data.zNum]) return
+    def zNumSafe = data.zNum.toInteger()
+    if (!state.sleepTimers[zNumSafe]) return
     
     def spk = getSpeakerById(data.spkId)
     if (spk) {
@@ -818,7 +845,7 @@ def executeSleepTimer(data) {
             logAction("Sleep Timer Executed: Paused ${spk.label}.")
         }
     }
-    state.sleepTimers[data.zNum] = false
+    state.sleepTimers[zNumSafe] = false
 }
 
 // --- FAVORITES & VIRTUAL SWITCH GENERATOR ---
@@ -887,10 +914,10 @@ def childSwitchHandler(evt) {
                 logAction("Triggered Favorite via Switch. Setting volume to ${favData.vol}% and playing [${favData.name}] on ${speaker.label}")
                 if (favData.vol != null) speaker.setLevel(favData.vol)
                 speaker.setTrack(favData.uri)
-                runIn(2, triggerPlayOnFav, [data: [spkId: speaker.id]])
+                runIn(2, "triggerPlayOnFav", [data: [spkId: speaker.id], overwrite: false])
             }
         }
-        runIn(3, turnOffChild, [data: [dni: dni]])
+        runIn(3, "turnOffChild", [data: [dni: dni], overwrite: false])
     }
 }
 
@@ -922,7 +949,7 @@ def purgeOldFavorites() {
 
 def hourlyStateEnforcement() {
     if (!isAppEnabled() || settings.enablePowerManagement == false) return
-    def currentMode = location.mode
+    def currentMode = location.mode?.toString()
     def delayMult = 0
     def zonesFixed = false
     
@@ -931,18 +958,18 @@ def hourlyStateEnforcement() {
             if (isZoneLocked(i)) continue
             
             def sw = settings["z${i}Switch"]
-            def onModes = settings["z${i}TurnOnModes"] as List
-            def offModes = settings["z${i}TurnOffModes"] as List
+            def onModes = [settings["z${i}TurnOnModes"]].flatten().findAll { it }
+            def offModes = [settings["z${i}TurnOffModes"]].flatten().findAll { it }
             def currentState = sw.currentValue("switch")
             
             if (onModes && onModes.contains(currentMode) && currentState != "on") {
                 def delay = delayMult * 6 + 1
-                runIn(delay, enforcePowerState, [data: [zNum: i, state: "on"]])
+                runIn(delay, "enforcePowerState", [data: [zNum: i, state: "on"], overwrite: false])
                 delayMult++
                 zonesFixed = true
             } else if (offModes && offModes.contains(currentMode) && currentState != "off") {
                 def delay = delayMult * 6 + 1
-                runIn(delay, enforcePowerState, [data: [zNum: i, state: "off"]])
+                runIn(delay, "enforcePowerState", [data: [zNum: i, state: "off"], overwrite: false])
                 delayMult++
                 zonesFixed = true
             }
@@ -954,10 +981,10 @@ def hourlyStateEnforcement() {
 }
 
 def enforcePowerState(data) {
-    def sw = settings["z${data.zNum}Switch"]
+    def sw = settings["z${data.zNum.toInteger()}Switch"]
     if (sw) {
         if (data.state == "on") {
-            sw.on()
+             sw.on()
             logAction("Hourly Enforcement: Turned ON Zone ${data.zNum}.")
         } else {
             sw.off()
@@ -974,12 +1001,12 @@ def modeChangeHandler(evt) {
 def systemStartHandler(evt) {
     if (!isAppEnabled() || settings.enablePowerManagement == false || settings.enableSelfHealing == false) return
     logAction("🔄 Hub Reboot/Power Outage Detected. Waiting 60s for mesh networks to settle before Self-Healing Sync...")
-    runIn(60, executeSelfHealingSync)
+    runIn(60, "executeSelfHealingSync", [overwrite: false])
 }
 
 def executeSelfHealingSync() {
     logAction("🔄 Initiating Self-Healing Sync now...")
-    syncSystemToMode(location.mode, "Self-Healing")
+    syncSystemToMode(location.mode?.toString(), "Self-Healing")
 }
 
 def syncSystemToMode(currentMode, triggerSource) {
@@ -994,8 +1021,8 @@ def syncSystemToMode(currentMode, triggerSource) {
                 continue
             }
             
-            def onModes = settings["z${i}TurnOnModes"] as List
-            def offModes = settings["z${i}TurnOffModes"] as List
+            def onModes = [settings["z${i}TurnOnModes"]].flatten().findAll { it }
+            def offModes = [settings["z${i}TurnOffModes"]].flatten().findAll { it }
             
             if (onModes && onModes.contains(currentMode)) zonesToTurnOn << i
             else if (offModes && offModes.contains(currentMode)) zonesToTurnOff << i
@@ -1021,7 +1048,7 @@ def syncSystemToMode(currentMode, triggerSource) {
         def rDelayMult = 0
         zonesToRunRoutine.each { zNum -> 
             def delay = (rDelayMult * 6) + 2
-            runIn(delay, executeModeRoutine, [data: [zNum: zNum]]) 
+            runIn(delay, "executeModeRoutine", [data: [zNum: zNum], overwrite: false]) 
             rDelayMult++
         }
     }
@@ -1032,7 +1059,7 @@ def powerUpSpecificZones(zones, routineZones = []) {
     zones.each { i ->
         if (settings["z${i}Switch"]) {
             def delay = delayMult * 6 + 1
-            runIn(delay, executeStaggeredPowerOn, [data: [zNum: i, isRoutine: routineZones.contains(i)]])
+            runIn(delay, "executeStaggeredPowerOn", [data: [zNum: i, isRoutine: routineZones.contains(i)], overwrite: false])
             delayMult++
         }
     }
@@ -1040,7 +1067,7 @@ def powerUpSpecificZones(zones, routineZones = []) {
 }
 
 def executeStaggeredPowerOn(data) {
-    def i = data.zNum
+    def i = data.zNum.toInteger()
     def isRoutine = data.isRoutine
     def sw = settings["z${i}Switch"]
     def spk = settings["z${i}Speaker"]
@@ -1053,28 +1080,35 @@ def executeStaggeredPowerOn(data) {
         
         if (fadeDur && fadeDur > 0) {
             spk.setLevel(0) 
-            runIn(5, startVolumeFadeWrapper, [data: [spkId: spk.id, targetVol: targetVol, durationSec: fadeDur, isFadeOut: false]])
+            runIn(5, "startVolumeFadeWrapper", [data: [spkId: spk.id, targetVol: targetVol, durationSec: fadeDur, isFadeOut: false], overwrite: false])
         } else {
-            runIn(5, setStartupVolume, [data: [spkId: spk.id, vol: targetVol]])
+            runIn(5, "setStartupVolume", [data: [spkId: spk.id, vol: targetVol], overwrite: false])
         }
     }
     
     if (settings["z${i}AutoResume"] && spk && !isRoutine) {
-        runIn(60, triggerAutoResume, [data: [spkId: spk.id]])
+        runIn(60, "triggerAutoResume", [data: [spkId: spk.id], overwrite: false])
     }
 }
 
 def executeModeRoutine(data) {
-    def i = data.zNum
+    def i = data.zNum.toInteger()
     def spk = settings["z${i}Speaker"]
     def sw = settings["z${i}Switch"]
+    def blocker = settings["z${i}RoutineBlocker"]
     def delay = settings["z${i}RoutineDelay"] ?: 10
     def favDni = settings["z${i}RoutineFavorite"]
+    
+    // FIX: Check for TV Blocker before executing the routine
+    if (blocker && blocker.currentValue("switch") == "on") {
+        logAction("Routine skipped for ${spk?.label ?: 'Zone '+i}: Blocker switch '${blocker.displayName}' is ON.")
+        return
+    }
     
     if (sw && sw.currentValue("switch") != "on") sw.on()
     
     if (favDni && state.savedFavorites && state.savedFavorites[favDni]) {
-        runIn(delay, playRoutineFavorite, [data: [spkId: spk.id, favDni: favDni]])
+        runIn(delay, "playRoutineFavorite", [data: [spkId: spk.id, favDni: favDni], overwrite: false])
         logAction("Routine scheduled for ${spk.label} in ${delay} seconds.")
     } else {
         logAction("Routine skipped for ${spk.label}: No valid favorite selected.")
@@ -1087,7 +1121,7 @@ def playRoutineFavorite(data) {
     if (spk && favData) {
         if (favData.vol != null) spk.setLevel(favData.vol)
         spk.setTrack(favData.uri)
-        runIn(2, triggerPlayOnFav, [data: [spkId: spk.id]])
+        runIn(2, "triggerPlayOnFav", [data: [spkId: spk.id], overwrite: false])
         logAction("Routine Triggered: Playing favorite [${favData.name}] on ${spk.label}")
     }
 }
@@ -1103,7 +1137,7 @@ def gracefulShutdownSpecificZones(zones) {
             }
         }
     }
-    runIn(commandsSent ? 5 : 1, executePowerCutSpecificZones, [data: [zonesToCut: zones]])
+    runIn(commandsSent ? 5 : 1, "executePowerCutSpecificZones", [data: [zonesToCut: zones], overwrite: false])
 }
 
 def executePowerCutSpecificZones(data) {
@@ -1112,7 +1146,7 @@ def executePowerCutSpecificZones(data) {
     zones.each { i ->
         if (settings["z${i}Switch"]) {
             def delay = delayMult * 6 + 1
-            runIn(delay, executeStaggeredPowerOff, [data: [zNum: i]])
+            runIn(delay, "executeStaggeredPowerOff", [data: [zNum: i], overwrite: false])
             delayMult++
         }
     }
@@ -1120,7 +1154,7 @@ def executePowerCutSpecificZones(data) {
 }
 
 def executeStaggeredPowerOff(data) {
-    settings["z${data.zNum}Switch"]?.off()
+    settings["z${data.zNum.toInteger()}Switch"]?.off()
 }
 
 def setStartupVolume(data) {
