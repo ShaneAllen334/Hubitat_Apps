@@ -39,6 +39,7 @@ def mainPage() {
                 def tstatHeat = thermostat.currentValue("heatingSetpoint") ?: "--"
                 def tstatMode = thermostat.currentValue("thermostatMode")?.toUpperCase() ?: "UNKNOWN"
                 def tstatState = thermostat.currentValue("thermostatOperatingState")?.toUpperCase() ?: "IDLE"
+                def tstatFan = thermostat.currentValue("thermostatFanMode")?.toUpperCase() ?: "UNKNOWN"
             
                 def stateColor = "black"
                 if (tstatState == "COOLING") stateColor = "blue"
@@ -50,7 +51,7 @@ def mainPage() {
                 
                 // Gather Diagnostics
                 def currentLocMode = location.mode ?: "Unknown"
-           
+            
                 // Free Cooling Dashboard Updates
                 def fcStatusStr = "Idle / Not Favorable"
                 if (state.freeCoolState == "pending") {
@@ -109,7 +110,7 @@ def mainPage() {
                 def swapText = "N/A (Disabled)"
                 if (enableAutoSwap && !(state.freeCoolState in ["pending", "active"])) {
                     def safeSwapDB = autoSwapDeadband ?: 1.0
-                   
+                    
                     if (enableAverageSync && enableHysteresis) {
                         def drift = hysteresisDrift ?: 1.0
                         if (safeSwapDB <= drift) safeSwapDB = drift + 0.5
@@ -125,22 +126,30 @@ def mainPage() {
 
                 def deltaTStr = "N/A (Disabled or Missing Sensors)"
                 if (enableDeltaT && returnSensor && dischargeSensor) {
-           
+            
                     def retT = returnSensor.currentValue("temperature")
                     def disT = dischargeSensor.currentValue("temperature")
                     if (retT != null && disT != null) {
                         def dT = 0.0
           
-                        if (tstatState == "COOLING") dT = (retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
-                        else if (tstatState == "HEATING") dT = (disT - retT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
-                        else dT = Math.abs(retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP) 
+                        if (tstatState == "COOLING") {
+                            dT = (retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+                        } else if (tstatState == "HEATING") {
+                            dT = (disT - retT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+                        } else {
+                            if (tstatMode == "COOL" && disT > retT) {
+                                dT = (retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+                            } else {
+                                dT = Math.abs(retT - disT).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP) 
+                            }
+                        }
             
                         def health = ""
                         if (tstatState == "COOLING" && dT < (minCoolingDeltaT ?: 12.0)) health = " <span style='color:red;'>(Warning: Low)</span>"
                         else if (tstatState == "HEATING" && dT < (minHeatingDeltaT ?: 15.0)) health = " <span style='color:red;'>(Warning: Low)</span>"
                         else if (tstatState in ["COOLING", "HEATING"]) health = " <span style='color:green;'>(Good)</span>"
                         else health = " <span style='color:gray;'>(System Idle)</span>"
-                      
+                       
                         deltaTStr = "${dT}°F (Return: ${retT}° | Supply: ${disT}°)${health}"
                     } else {
                         deltaTStr = "Waiting for sensor data..."
@@ -203,7 +212,7 @@ def mainPage() {
                     
                         <tr><td class="dash-hl">Temperature</td><td><b>${avgTemp}°</b></td><td>${tstatTemp}°</td><td>Cool: ${tstatCool}° | Heat: ${tstatHeat}°</td></tr>
                         <tr><td class="dash-hl">Humidity</td><td><b>${avgHum}%</b></td><td>${tstatHum}%</td><td>Limit: ${maxHumidity ?: '--'}%</td></tr>
-                        <tr><td class="dash-hl">HVAC State</td><td><b>Mode: ${tstatMode}</b></td><td colspan="2" style="color:${stateColor};"><b>Status: ${tstatState}</b></td></tr>
+                        <tr><td class="dash-hl">HVAC State</td><td><b>Mode: ${tstatMode}</b></td><td colspan="2" style="color:${stateColor};"><b>Status: ${tstatState}</b> (Fan: ${tstatFan})</td></tr>
                         
                         <tr><td colspan="4" class="dash-subhead">Internal Diagnostics</td></tr>
                         <tr><td class="dash-hl">Location Mode</td><td colspan="3" class="dash-val">${currentLocMode}</td></tr>
@@ -262,7 +271,7 @@ def mainPage() {
                     
                     def isOccupied = "N/A"
                     def zStatus = "<span style='color:green;'>Averaging</span>"
-      
+       
                     if (isError) {
                         zStatus = "<span style='color:red;'>Sensor Error (Ignored)</span>"
                         isOccupied = "N/A"
@@ -314,14 +323,25 @@ def mainPage() {
             input "resetCycles", "button", title: "Clear Cycle History"
         }
 
-        section("<b>App Control & Main HVAC System</b>") {
+        section("<b>App Control & Main HVAC System</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> The core connection to your physical HVAC hardware. Allows you to assign your main thermostat and provides a master kill-switch to quickly bypass all app automation.</div>"
             input "appEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch (Optional)", required: false, multiple: false
             input "thermostat", "capability.thermostat", title: "Select Main Thermostat", required: false, multiple: false
             if (state.manualHold) input "releaseHold", "button", title: "Release Manual Hold"
         }
+        
+        section("<b>Safety: Fire & Smoke Isolation</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Instantly shuts down the HVAC and blower if smoke or carbon monoxide is detected to prevent spreading smoke or feeding oxygen to a fire. This failsafe overrides all other logic.</div>"
+            input "smokeDetectors", "capability.smokeDetector", title: "Select Smoke Detectors", required: false, multiple: true
+            input "coDetectors", "capability.carbonMonoxideDetector", title: "Select CO Detectors", required: false, multiple: true
+        }
 
-        section("<b>1. App-Driven Auto Changeover</b>") {
+        section("<b>Health: Sick Mode (Continuous Filtration)</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> When the assigned switch is turned on, the app forces the HVAC fan to run 24/7 to continuously filter the air. Restores to Auto when turned off.</div>"
+            input "sickModeSwitch", "capability.switch", title: "Select Sick Mode Switch", required: false
+        }
+
+        section("<b>1. App-Driven Auto Changeover</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Takes control of deciding whether your house needs Heating or Cooling away from the thermostat. It automatically swaps modes based on your home's <i>Calculated Average Temperature</i> rather than the single wall sensor.</div>"
             input "enableAutoSwap", "bool", title: "<b>Enable App-Driven Mode Swapping</b>", defaultValue: false, submitOnChange: true
             if (enableAutoSwap) {
@@ -329,7 +349,7 @@ def mainPage() {
             }
         }
 
-        section("<b>2. Zones & Dynamic Occupancy (Global Settings)</b>") {
+        section("<b>2. Zones & Dynamic Occupancy (Global Settings)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Connects motion sensors to temperature sensors. If a room has no motion for the set timeout, it is mathematically dropped from the home's average temperature to stop wasting energy on empty rooms.</div>"
             input "enableOccupancy", "bool", title: "<b>Enable Dynamic Occupancy Weighting</b>", defaultValue: false, submitOnChange: true
             if (enableOccupancy) {
@@ -353,7 +373,7 @@ def mainPage() {
             }
         }
 
-        section("<b>2b. Dynamic Setpoint Alignment & Deadband</b>") {
+        section("<b>2b. Dynamic Setpoint Alignment & Deadband</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically shifts the physical thermostat's target to force it to run based on the Average Home Temp.</div>"
             input "enableAverageSync", "bool", title: "<b>Enable Dynamic Setpoint Alignment</b>", defaultValue: false, submitOnChange: true
             if (enableAverageSync) {
@@ -371,7 +391,7 @@ def mainPage() {
             }
         }
 
-        section("<b>3. The Economizer (Free Cooling Advisor)</b>") {
+        section("<b>3. The Economizer (Free Cooling Advisor)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Suspends the AC and alerts you to open windows if outdoor weather is favorable. <b>Failsafe:</b> If windows are not opened within the timeout period, it aborts Free Cooling and resumes normal AC to prevent the house from getting hot.</div>"
             input "enableFreeCooling", "bool", title: "<b>Enable Free Cooling</b>", defaultValue: true, submitOnChange: true
             if (enableFreeCooling) {
@@ -381,12 +401,28 @@ def mainPage() {
                 input "freeCoolMaxHumidity", "decimal", title: "Maximum Outdoor Humidity Allowed (%)", required: false, defaultValue: 60.0
                 input "freeCoolTimeout", "number", title: "Minutes to wait for windows to open before aborting", required: false, defaultValue: 15
                 input "freeCoolFan", "bool", title: "Run HVAC Fan during Free Cooling", defaultValue: false, required: false
+                
+                paragraph "<b>Wind Direction Optimization</b>"
+                input "useWindDirection", "bool", title: "Optimize with Wind Direction", defaultValue: false, submitOnChange: true
+                if (useWindDirection) {
+                    input "windWeatherDevice", "capability.sensor", title: "Select Weather/Wind Device", required: false
+                    input "optimalWindDirs", "text", title: "Optimal Wind Directions (e.g. N, NW, W)", required: false, defaultValue: "N, S"
+                }
+
                 input "freeCoolNotify", "capability.notification", title: "Send Push Notification", required: false, multiple: true
                 input "freeCoolSwitch", "capability.switch", title: "Trigger Virtual Switch", required: false, multiple: false
             }
         }
 
-        section("<b>4. Energy Cost & ROI Savings Tracking</b>") {
+        section("<b>4. Heat Pump: Aux Heat Suppression</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Tricks thermostats (like the Honeywell T6) into NOT using expensive Aux heat. It does this by 'gliding' the setpoint up 1 degree at a time, keeping the target just out of reach of the thermostat's internal Aux-trigger threshold.</div>"
+            input "enableAuxSuppression", "bool", title: "<b>Enable Aux Heat Suppression</b>", defaultValue: false, submitOnChange: true
+            if (enableAuxSuppression) {
+                input "maxHeatStep", "decimal", title: "Max Setpoint Step (°F) (Keep below your thermostat's Aux threshold, usually 2°)", required: false, defaultValue: 1.5
+            }
+        }
+
+        section("<b>5. Energy Cost & ROI Savings Tracking</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Tracks exact compressor and Aux heat runtimes to estimate your HVAC utility costs. It also calculates the runtime you <i>avoided</i> while using Free Cooling to prove your Return on Investment (ROI).</div>"
             input "enableCostTracker", "bool", title: "<b>Enable 7-Day Energy Tracking</b>", defaultValue: true, submitOnChange: true
             if (enableCostTracker) {
@@ -398,7 +434,7 @@ def mainPage() {
             }
         }
 
-        section("<b>5. Predictive Pre-Conditioning (Thermal Battery)</b>") {
+        section("<b>6. Predictive Pre-Conditioning (Thermal Battery)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Checks tomorrow's weather forecast. If extreme heat is predicted, it sub-cools your house during the early morning when electricity is cheap to build a 'Thermal Battery' to coast through the hot afternoon.</div>"
             input "enablePreCondition", "bool", title: "<b>Enable Predictive Pre-Conditioning</b>", defaultValue: false, submitOnChange: true
             if (enablePreCondition) {
@@ -410,7 +446,7 @@ def mainPage() {
             }
         }
 
-        section("<b>6. Adaptive Recovery (Smart Start)</b>") {
+        section("<b>7. Adaptive Recovery (Smart Start)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Eliminates guesswork. You input what time you will get home, and the app calculates exactly when to start the HVAC based on how fast your specific unit heats or cools.</div>"
             input "enableAdaptive", "bool", title: "<b>Enable Adaptive Recovery</b>", defaultValue: false, submitOnChange: true
             if (enableAdaptive) {
@@ -420,7 +456,7 @@ def mainPage() {
             }
         }
 
-        section("<b>7. Open Window / Door Defeat</b>") {
+        section("<b>8. Open Window / Door Defeat</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically intercepts and shuts off the HVAC if a monitored door or window is left open past the delay threshold. Restores normal operation once closed.</div>"
             input "enableWindowDefeat", "bool", title: "<b>Enable Window/Door Defeat</b>", defaultValue: true, submitOnChange: true
             if (enableWindowDefeat) {
@@ -429,7 +465,7 @@ def mainPage() {
              }
         }
 
-        section("<b>8. Multi-Stage Dehumidification</b>") {
+        section("<b>9. Multi-Stage Dehumidification</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Prioritizes indoor air quality. Stage 1 turns on standalone dehumidifier plugs. Stage 2 slightly overcools the house with the main AC to force the compressor to wring excess moisture out of the air.</div>"
             input "enableDehumidification", "bool", title: "<b>Enable Dehumidification Logic</b>", defaultValue: true, submitOnChange: true
             if (enableDehumidification) {
@@ -440,7 +476,7 @@ def mainPage() {
             }
         }
 
-        section("<b>9. Time-of-Use (Peak Shaving)</b>") {
+        section("<b>10. Time-of-Use (Peak Shaving)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically drifts your target temperatures up or down during expensive utility Time-of-Use (TOU) hours to reduce peak demand charges.</div>"
             input "enablePeakShaving", "bool", title: "<b>Enable Peak Shaving</b>", defaultValue: true, submitOnChange: true
             if (enablePeakShaving) {
@@ -451,7 +487,7 @@ def mainPage() {
             }
         }
 
-        section("<b>10. Smart Filter & Maintenance Tracking</b>") {
+        section("<b>11. Smart Filter & Maintenance Tracking</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Tracks exact blower runtime multiplied by air quality dust conditions to accurately predict filter life, logs physical service dates, and stores your HVAC technician's contact info.</div>"
             input "enableFilterTracker", "bool", title: "<b>Enable Maintenance Tracking Logic</b>", defaultValue: true, submitOnChange: true
             if (enableFilterTracker) {
@@ -469,7 +505,7 @@ def mainPage() {
                     paragraph "<b>Last Filter Change:</b> ${state.lastFilterDate ?: 'Not Recorded'}"
                     input "resetFilter", "button", title: "Record Filter Change (Resets Life to 100%)"
                 }
-                   
+                    
                 paragraph "<hr>"
                 paragraph "<b>HVAC System Service Tracking</b>"
                 input "hvacCompanyName", "text", title: "HVAC Company Name", required: false
@@ -479,7 +515,7 @@ def mainPage() {
             }
         }
 
-        section("<b>11. Delta-T Efficiency Monitoring & Run Time Protection</b>") {
+        section("<b>12. Delta-T Efficiency Monitoring & Run Time Protection</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> <b>1) Delta-T:</b> Monitors system health by measuring the temperature drop across your HVAC coil. <b>2) Run Time Protection:</b> Protects oversized compressors from damaging short-cycles by artificially dropping the setpoint to force a minimum, safe runtime.</div>"
             input "enableDeltaT", "bool", title: "<b>Enable Delta-T Logic</b>", defaultValue: true, submitOnChange: true
             if (enableDeltaT) {
@@ -508,7 +544,7 @@ def mainPage() {
             }
         }
 
-        section("<b>12. Routine Setpoint Enforcement</b>") {
+        section("<b>13. Routine Setpoint Enforcement</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Acts as a Self-Healing loop. Periodically wakes up and re-transmits the correct setpoints to the thermostat to ensure no wireless commands were dropped by your Z-Wave/Zigbee mesh network.</div>"
             input "enableEnforcement", "bool", title: "<b>Enable Routine Enforcement</b>", defaultValue: false, submitOnChange: true
             if (enableEnforcement) {
@@ -516,14 +552,14 @@ def mainPage() {
             }
         }
 
-        section("<b>External Money Saving Override</b>") {
+        section("<b>External Money Saving Override</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Allows external applications or virtual switches to force the system into a high-savings mode. All alignment and compressor protections still function normally around these new targets.</div>"
             input "moneySavingSwitch", "capability.switch", title: "Select Money Saving Switch", required: false
             input "moneySavingCoolingSetpoint", "decimal", title: "Money Saving Cooling Setpoint", required: false, defaultValue: 80
             input "moneySavingHeatingSetpoint", "decimal", title: "Money Saving Heating Setpoint", required: false, defaultValue: 60
         }
 
-        section("<b>Base Operating Modes & Ranges</b>") {
+        section("<b>Base Operating Modes & Ranges</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> The foundation of the BMS. Sets your default targets based on Hubitat Location Modes. <i>Note: 'Good Night' mode strictly locks these temperatures for maximum comfort, bypassing economy features.</i></div>"
             paragraph "<i>Leave 'Allowed Modes (Overall App)' BLANK to allow the app to run 24/7. Otherwise, make sure to select every single mode you want the app to function in.</i>"
             input "allowedModes", "mode", title: "Allowed Modes (Overall App) [Master Override]", multiple: true, required: false
@@ -543,7 +579,7 @@ def mainPage() {
             input "nightHeatingSetpoint", "decimal", title: "Good Night Heating Setpoint", required: false, defaultValue: 66
         }
 
-        section("<b>13. Alerts & Routine Notifications</b>") {
+        section("<b>14. Alerts & Routine Notifications</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Centralized notification hub. The app will quietly monitor system health and only notify you when routine maintenance is required or if critical efficiency drops are detected.</div>"
             input "notifyDevices", "capability.notification", title: "Select Notification Devices", required: false, multiple: true
             input "notifyDeltaT", "bool", title: "Notify on Bad Delta-T (Poor Efficiency/Freezing Coil)", defaultValue: true
@@ -551,7 +587,7 @@ def mainPage() {
             input "notifyMaintenance", "bool", title: "Notify for Summer/Winter Maintenance Reminders", defaultValue: true
         }
         
-        section("<b>Disclaimer</b>") {
+        section("<b>Disclaimer</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:12px; color:#888;'><b>Legal Disclaimer:</b> ShaneAllen is not responsible for any damage or liability with the use of this application. This is a user customer application, use at your own discretion.</div>"
         }
     }
@@ -581,6 +617,7 @@ def initialize() {
     state.freeCoolState = "idle" 
     state.freeCoolTargetTime = null
     state.fcStartTime = null
+    state.fireEmergency = false
     
     state.expectedCool = null; state.expectedHeat = null
     state.alignmentLockout = null; state.alignmentLockoutTarget = null
@@ -597,9 +634,16 @@ def initialize() {
     subscribe(location, "mode", modeChangeHandler)
     subscribe(location, "systemStart", hubRestartHandler)
     
+    if (smokeDetectors) subscribe(smokeDetectors, "smoke", smokeCoHandler)
+    if (coDetectors) subscribe(coDetectors, "carbonMonoxide", smokeCoHandler)
+    if (sickModeSwitch) subscribe(sickModeSwitch, "switch", sickModeHandler)
+    
     if (enableFreeCooling && outdoorSensor) {
         subscribe(outdoorSensor, "temperature", outdoorSensorHandler)
         subscribe(outdoorSensor, "humidity", outdoorSensorHandler)
+    }
+    if (enableFreeCooling && useWindDirection && windWeatherDevice) {
+        subscribe(windWeatherDevice, "windDirection", outdoorSensorHandler)
     }
     
     for (int i = 1; i <= 12; i++) {
@@ -627,11 +671,14 @@ def initialize() {
     }
     
     logAction("App Initialized. Modular BMS Engine Ready.")
+    
+    // Check initial smoke/co status
+    smokeCoHandler([:])
     evaluateSystem()
 }
 
 def routineSweep() {
-    if (state.manualHold || state.windowOpenHold || state.isBuffering) return 
+    if (state.fireEmergency || state.manualHold || state.windowOpenHold || state.isBuffering) return 
     logAction("Running routine setpoint enforcement sweep.")
     evaluateSystem()
 }
@@ -657,7 +704,49 @@ def hubRestartHandler(evt) {
         else if (interval == "30") runEvery30Minutes(routineSweep)
         else if (interval == "60") runEvery1Hour(routineSweep)
     }
-   
+    
+    smokeCoHandler([:])
+    evaluateSystem()
+}
+
+def smokeCoHandler(evt) {
+    def isFire = false
+    if (smokeDetectors && smokeDetectors.any { it.currentValue("smoke") == "detected" }) isFire = true
+    if (coDetectors && coDetectors.any { it.currentValue("carbonMonoxide") == "detected" }) isFire = true
+    
+    if (isFire && !state.fireEmergency) {
+        state.fireEmergency = true
+        logAction("CRITICAL EMERGENCY: Smoke/CO detected! Executing HVAC Fire Isolation.")
+        
+        if (thermostat) {
+            thermostat.off()
+            if (thermostat.hasCommand("setThermostatFanMode")) thermostat.setThermostatFanMode("auto")
+        }
+        
+        if (notifyDevices) notifyDevices.deviceNotification("CRITICAL: Smoke/CO detected. HVAC shut down to prevent smoke spread.")
+        evaluateSystem()
+        
+    } else if (!isFire && state.fireEmergency) {
+        state.fireEmergency = false
+        logAction("Emergency Cleared: Smoke/CO no longer detected. Releasing Fire Isolation.")
+        evaluateSystem()
+    }
+}
+
+def sickModeHandler(evt) {
+    if (state.fireEmergency || !thermostat) return 
+    
+    if (evt.value == "on") {
+        logAction("Sick Mode Activated: Forcing HVAC Fan ON for continuous filtration.")
+        if (thermostat.hasCommand("setThermostatFanMode")) thermostat.setThermostatFanMode("on")
+    } else {
+        logAction("Sick Mode Deactivated: Restoring HVAC Fan to Auto.")
+        if (state.freeCoolState == "active" && freeCoolFan) {
+            logAction("Sick Mode Off: Free Cooling is active, keeping fan ON.")
+        } else {
+            if (thermostat.hasCommand("setThermostatFanMode")) thermostat.setThermostatFanMode("auto")
+        }
+    }
     evaluateSystem()
 }
 
@@ -667,33 +756,39 @@ def moneySavingHandler(evt) {
 }
 
 String getHumanReadableStatus() {
-    if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return "The application is disabled via the Master Switch."
+    def status = ""
+    def sickStr = (sickModeSwitch && sickModeSwitch.currentValue("switch") == "on") ? "<br><span style='color:#17a2b8;'><b>Health:</b> Sick Mode Active (Continuous Fan Filtration)</span>" : ""
     
-    if (allowedModes && !(allowedModes as List).contains(location.mode)) {
-        return "<span style='color:orange;'><b>App Disabled by Mode:</b></span> The current location mode (<b>${location.mode}</b>) is not selected in your 'Allowed Modes' setting."
+    if (state.fireEmergency) {
+        return "<span style='color:red; font-size:14px;'><b>🚨 CRITICAL: FIRE / CO ISOLATION ACTIVE. HVAC SHUT DOWN. 🚨</b></span>" + sickStr
     }
     
-    if (state.windowOpenHold) return "<span style='color:red;'><b>HVAC is OFF</b></span> because a monitored perimeter window or door is open."
+    if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") status = "The application is disabled via the Master Switch."
+    else if (allowedModes && !(allowedModes as List).contains(location.mode)) status = "<span style='color:orange;'><b>App Disabled by Mode:</b></span> The current location mode (<b>${location.mode}</b>) is not selected in your 'Allowed Modes' setting."
+    else if (state.windowOpenHold) status = "<span style='color:red;'><b>HVAC is OFF</b></span> because a monitored perimeter window or door is open."
+    else if (state.manualHold) status = "<span style='color:orange;'><b>Automation Paused</b></span> because someone manually adjusted the physical thermostat."
+    else if (moneySavingSwitch && moneySavingSwitch.currentValue("switch") == "on") status = "<span style='color:green;'><b>Money Saving Mode Active:</b></span> Targets shifted to maximize energy savings based on external switch."
+    else if (state.isBuffering) status = "<span style='color:blue;'><b>Compressor Protection Engaged:</b></span> The system is locked ON to satisfy the Minimum Run Time and prevent hardware damage."
+    else if (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) status = "<span style='color:orange;'><b>Anti-Yo-Yo Cooldown Active:</b></span> Dynamic Setpoint Alignment is temporarily paused to prevent the system from rapidly turning back on."
+    else {
+        def mode = thermostat?.currentValue("thermostatOperatingState")?.toLowerCase()
+        if (mode?.contains("aux") || mode?.contains("emergency")) status = "<span style='color:red;'><b>WARNING: Auxiliary Heat is Active.</b></span> The system is currently running the high-power resistance heat strips."
+        else {
+            def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
+            if (isNight) status = "Good Night mode is active. Setpoints strictly locked."
+            else if (state.freeCoolState == "pending") status = "<span style='color:orange;'><b>Free Cooling Pending:</b></span> Favorable weather detected! Waiting for you to open the windows before the timeout aborts the cycle."
+            else if (state.freeCoolState == "active") status = "<span style='color:green;'><b>Free Cooling Active:</b></span> AC is suspended because outdoor conditions are favorable and windows are open."
+            else if (state.dehumidifyingStage == 1) status = "Running smart-plug dehumidifiers to reduce high indoor humidity."
+            else if (state.dehumidifyingStage == 2) status = "AC is actively overcooling the house to extract excess humidity."
+            else if (state.isAdaptiveRecovering) status = "Starting the HVAC early to ensure the house reaches the target temperature."
+            else if (state.isPeakHours) status = "Saving money by shifting target temperatures during expensive Peak Utility hours."
+            else if (state.isPreConditioning) status = "Pre-cooling the house to build a thermal battery ahead of extreme heat."
+            else if (mode == "cooling" || mode == "heating") status = "Operating normally. Currently ${mode} to satisfy the average room requirements."
+            else status = "System is IDLE. Averaged zone temperatures are currently within the comfort range."
+        }
+    }
     
-    if (state.manualHold) return "<span style='color:orange;'><b>Automation Paused</b></span> because someone manually adjusted the physical thermostat."
-    if (moneySavingSwitch && moneySavingSwitch.currentValue("switch") == "on") return "<span style='color:green;'><b>Money Saving Mode Active:</b></span> Targets shifted to maximize energy savings based on external switch."
-    
-    if (state.isBuffering) return "<span style='color:blue;'><b>Compressor Protection Engaged:</b></span> The system is locked ON to satisfy the Minimum Run Time and prevent hardware damage."
-    if (state.yoyoCooldownEnds && now() < state.yoyoCooldownEnds) return "<span style='color:orange;'><b>Anti-Yo-Yo Cooldown Active:</b></span> Dynamic Setpoint Alignment is temporarily paused to prevent the system from rapidly turning back on."
-    
-    def mode = thermostat?.currentValue("thermostatOperatingState")?.toLowerCase()
-    if (mode?.contains("aux") || mode?.contains("emergency")) return "<span style='color:red;'><b>WARNING: Auxiliary Heat is Active.</b></span> The system is currently running the high-power resistance heat strips."
-    def isNight = nightModes ? (nightModes as List).contains(location.mode) : false
-    if (isNight) return "Good Night mode is active. Setpoints strictly locked."
-    if (state.freeCoolState == "pending") return "<span style='color:orange;'><b>Free Cooling Pending:</b></span> Favorable weather detected! Waiting for you to open the windows before the timeout aborts the cycle."
-    if (state.freeCoolState == "active") return "<span style='color:green;'><b>Free Cooling Active:</b></span> AC is suspended because outdoor conditions are favorable and windows are open."
-    if (state.dehumidifyingStage == 1) return "Running smart-plug dehumidifiers to reduce high indoor humidity."
-    if (state.dehumidifyingStage == 2) return "AC is actively overcooling the house to extract excess humidity."
-    if (state.isAdaptiveRecovering) return "Starting the HVAC early to ensure the house reaches the target temperature."
-    if (state.isPeakHours) return "Saving money by shifting target temperatures during expensive Peak Utility hours."
-    if (state.isPreConditioning) return "Pre-cooling the house to build a thermal battery ahead of extreme heat."
-    if (mode == "cooling" || mode == "heating") return "Operating normally. Currently ${mode} to satisfy the average room requirements."
-    return "System is IDLE. Averaged zone temperatures are currently within the comfort range."
+    return status + sickStr
 }
 
 def getAverageTemp() {
@@ -779,7 +874,7 @@ def enableSwitchHandler(evt) { if (evt.value == "off") logAction("App Disabled."
 def modeChangeHandler(evt) { state.manualHold = false; state.isAdaptiveRecovering = false; evaluateSystem() }
 
 def setpointHandler(evt) {
-    if (state.windowOpenHold || state.isBuffering) return 
+    if (state.fireEmergency || state.windowOpenHold || state.isBuffering) return 
     
     // 15-second blindspot for incoming setpoint echoes right after the BMS sends a command.
     if (state.lastCommandTime && (now() - state.lastCommandTime) < 15000) {
@@ -835,8 +930,22 @@ def checkFreeCooling(currentCoolTarget, evalMode = location.mode) {
                 } else {
                     state.freeCoolState = "pending"
                     state.freeCoolTargetTime = now() + (timeoutMins * 60000)
+                    
+                    def notifyMsg = "Free Cooling available! Open the windows to save energy. AC suspended for ${timeoutMins} minutes."
+                    
+                    // Wind Direction Optimization check
+                    if (useWindDirection && windWeatherDevice && optimalWindDirs) {
+                        def currentWindDir = windWeatherDevice.currentValue("windDirection")?.toString()?.toUpperCase()
+                        if (currentWindDir) {
+                            def optimalList = optimalWindDirs.split(",").collect { it.trim().toUpperCase() }
+                            if (optimalList.contains(currentWindDir)) {
+                                notifyMsg = "Free Cooling available! Favorable wind detected from the ${currentWindDir}. Open windows facing this direction for optimal cross-ventilation. AC suspended."
+                            }
+                        }
+                    }
+                    
                     logAction("Free Cooling Favorable. Waiting ${timeoutMins} mins for windows to open.")
-                    if (freeCoolNotify) freeCoolNotify.deviceNotification("Free Cooling available! Open the windows to save energy. AC suspended for ${timeoutMins} minutes.")
+                    if (freeCoolNotify) freeCoolNotify.deviceNotification(notifyMsg)
                     runIn(timeoutMins * 60, freeCoolTimeoutHandler)
                 }
                 return 85.0 
@@ -870,9 +979,11 @@ def engageFreeCooling() {
     state.fcStartTime = now()
   
     if (freeCoolSwitch) freeCoolSwitch.on()
-    if (freeCoolFan && thermostat) {
+    
+    def isSickMode = sickModeSwitch && sickModeSwitch.currentValue("switch") == "on"
+    if (freeCoolFan && thermostat && !isSickMode) {
         logAction("Free Cooling: Turning HVAC Fan ON to circulate outside air.")
-        thermostat.setThermostatFanMode("on")
+        if (thermostat.hasCommand("setThermostatFanMode")) thermostat.setThermostatFanMode("on")
     }
 }
 
@@ -880,10 +991,15 @@ def disengageFreeCooling() {
     logAction("Free Cooling disabled or weather reset. Restoring AC.")
     if (state.fcStartTime) trackFreeCoolingSavings()
     if (freeCoolSwitch) freeCoolSwitch.off()
-    if (freeCoolFan && thermostat && thermostat.currentValue("thermostatFanMode") != "auto") {
+    
+    def isSickMode = sickModeSwitch && sickModeSwitch.currentValue("switch") == "on"
+    if (freeCoolFan && thermostat && thermostat.currentValue("thermostatFanMode") != "auto" && !isSickMode) {
         logAction("Free Cooling Ended: Restoring HVAC Fan to Auto.")
-        thermostat.setThermostatFanMode("auto")
+        if (thermostat.hasCommand("setThermostatFanMode")) thermostat.setThermostatFanMode("auto")
+    } else if (isSickMode) {
+        logAction("Free Cooling Ended: Sick Mode is active, keeping Fan ON.")
     }
+    
     if (freeCoolNotify) freeCoolNotify.deviceNotification("Free Cooling ended. Please close the windows.")
 }
 
@@ -904,6 +1020,11 @@ def trackFreeCoolingSavings() {
 
 def evaluateSystem() {
     if (!thermostat) return
+    if (state.fireEmergency) {
+        if (thermostat.currentValue("thermostatMode") != "off") thermostat.setThermostatMode("off")
+        return
+    }
+    
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return
     
     def evalMode = location.mode
@@ -1194,6 +1315,15 @@ def evaluateSystem() {
         }
     }
     
+    // --- AUX HEAT SUPPRESSION (GLIDING) ---
+    if (enableAuxSuppression && currentLocalTemp != null) {
+        def stepLimit = maxHeatStep ?: 1.5
+        if (targetHeat > (currentLocalTemp + stepLimit)) {
+            targetHeat = (currentLocalTemp + stepLimit).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)
+            syncMessage += " [Aux Suppressed: Heat target glided to ${targetHeat}°]"
+        }
+    }
+    
     if (thermostat.currentValue("coolingSetpoint") != targetCool || thermostat.currentValue("heatingSetpoint") != targetHeat) {
         state.expectedCool = targetCool; state.expectedHeat = targetHeat
         state.lastCommandTime = now() // Track execution time to prevent network echo
@@ -1403,7 +1533,7 @@ def sensorHandler(evt) {
     
     if (!enableMinRuntime || isNight || state.currentAction == "idle" || state.isBuffering || !state.cycleStartTime) return
     if (state.currentAction == "auxHeating") return
-   
+    
     def runMins = (now() - state.cycleStartTime) / 60000.0
     if (runMins < 1.0 || runMins >= (minRunTime ?: 10)) return 
     def dropRate = ((state.currentAction == "cooling" ? state.startTemp - thermostat.currentValue("temperature") : thermostat.currentValue("temperature") - state.startTemp)) / runMins
@@ -1457,7 +1587,7 @@ def releaseBuffer() {
 }
 
 def checkDeltaT() { 
-    if (state.currentAction == "idle") return
+    if (state.currentAction == "idle" || state.fireEmergency) return
     def retT = returnSensor.currentValue("temperature")
     def disT = dischargeSensor.currentValue("temperature")
     if (retT == null || disT == null) return
@@ -1517,7 +1647,7 @@ def dailyMaintenanceCheck() {
     }
 }
 
-def humidityHandler(evt) { if (state.windowOpenHold || state.manualHold || !enableDehumidification) return; def avgHum = getAverageHumidity(); if (avgHum > (maxHumidity ?: 55.0) && state.dehumidifyingStage == 0) { state.dehumidifyingStage = 1; if (dehumidifierPlugs) { state.savedPlugStates = dehumidifierPlugs.collectEntries { [it.id, it.currentValue("switch")] }; dehumidifierPlugs.on() }; runIn((dehumidifierTimeout ?: 45) * 60, checkDehumidifierProgress) } else if (avgHum <= ((maxHumidity ?: 55.0) - 2.0) && state.dehumidifyingStage > 0) { state.dehumidifyingStage = 0; unschedule(checkDehumidifierProgress); restorePlugs(); evaluateSystem() } }
+def humidityHandler(evt) { if (state.windowOpenHold || state.manualHold || state.fireEmergency || !enableDehumidification) return; def avgHum = getAverageHumidity(); if (avgHum > (maxHumidity ?: 55.0) && state.dehumidifyingStage == 0) { state.dehumidifyingStage = 1; if (dehumidifierPlugs) { state.savedPlugStates = dehumidifierPlugs.collectEntries { [it.id, it.currentValue("switch")] }; dehumidifierPlugs.on() }; runIn((dehumidifierTimeout ?: 45) * 60, checkDehumidifierProgress) } else if (avgHum <= ((maxHumidity ?: 55.0) - 2.0) && state.dehumidifyingStage > 0) { state.dehumidifyingStage = 0; unschedule(checkDehumidifierProgress); restorePlugs(); evaluateSystem() } }
 def checkDehumidifierProgress() { if (getAverageHumidity() > (maxHumidity ?: 55.0)) { state.dehumidifyingStage = 2; restorePlugs(); evaluateSystem() } }
 def restorePlugs() { if (dehumidifierPlugs && state.savedPlugStates) { dehumidifierPlugs.each { plug -> def orig = state.savedPlugStates[plug.id]; if (orig == "off") plug.off(); else if (orig == "on") plug.on() } }; state.savedPlugStates = null }
 def schedulePeakTimes() { if (enablePeakShaving && peakStartTime && peakEndTime) { schedule(peakStartTime, startPeak); schedule(peakEndTime, endPeak); def now = new Date(); if (now >= timeToday(peakStartTime) && now <= timeToday(peakEndTime)) state.isPeakHours = true } }
