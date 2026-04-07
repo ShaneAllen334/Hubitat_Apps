@@ -48,14 +48,16 @@ def mainPage() {
             }
 
             // SMART LEARNING DISPLAY
+            def reqDays = (settings.learningDaysReq ?: "30").toInteger()
             def epcsb = getExpectedPeakLux()
             def epcsbReason = ""
+            
             if (useSmartLearning) {
                 def learnedDays = state.peakLuxHistory ? state.peakLuxHistory.size() : 0
-                if (learnedDays >= 30) {
-                    epcsbReason = "Learning Active (30-day Avg)"
+                if (learnedDays >= reqDays) {
+                    epcsbReason = "Learning Active (${reqDays}-day Avg)"
                 } else {
-                    epcsbReason = "Collecting Data (${learnedDays}/30)"
+                    epcsbReason = "Collecting Data (${learnedDays}/${reqDays})"
                 }
             } else {
                 epcsbReason = "Manual User Setting"
@@ -92,7 +94,7 @@ def mainPage() {
             if (numRooms && numRooms > 0) {
                 statusText += "<div style='margin-top: 15px; font-weight: bold; font-size: 14px;'>Smart Room Darkness Targets</div>"
                 statusText += "<table style='width:100%; border-collapse: collapse; font-size: 12px; font-family: sans-serif; border: 1px solid #ccc;'>"
-                statusText += "<tr style='background-color: #eee; text-align: left;'><th style='padding: 6px;'>Room</th><th style='padding: 6px;'>Daily Max</th><th style='padding: 6px;'>Learned Setpoint</th><th style='padding: 6px;'>Target Variable</th></tr>"
+                statusText += "<tr style='background-color: #eee; text-align: left;'><th style='padding: 6px;'>Room</th><th style='padding: 6px;'>Daily Max</th><th style='padding: 6px;'>Days Learned</th><th style='padding: 6px;'>Learned Setpoint</th><th style='padding: 6px;'>Target Variable</th></tr>"
                 
                 for (int i = 1; i <= numRooms; i++) {
                     def rName = settings["roomName_${i}"] ?: "Room ${i}"
@@ -100,10 +102,19 @@ def mainPage() {
                     def dMax = rData?.dailyMax ?: 0
                     def setpt = rData?.currentSetpoint ?: (settings["roomBaseLux_${i}"] ?: 0)
                     def vName = settings["roomVar_${i}"] ?: "Not Configured"
+                    
+                    def daysLearned = rData?.peakHistory ? rData.peakHistory.size() : 0
+                    def learningStatus = ""
+                    if (useSmartLearning) {
+                        learningStatus = (daysLearned >= reqDays) ? "<span style='color: green; font-weight: bold;'>${daysLearned}/${reqDays} (Active)</span>" : "<span style='color: #d2691e;'>${daysLearned}/${reqDays} (Learning)</span>"
+                    } else {
+                        learningStatus = "<span style='color: #888;'>Disabled</span>"
+                    }
                 
                     statusText += "<tr style='border-bottom: 1px solid #eee;'>"
                     statusText += "<td style='padding: 6px;'><b>${rName}</b></td>"
                     statusText += "<td style='padding: 6px;'>${dMax} lx</td>"
+                    statusText += "<td style='padding: 6px;'>${learningStatus}</td>"
                     statusText += "<td style='padding: 6px; color: #b8860b; font-weight: bold;'>${setpt} lx</td>"
                     statusText += "<td style='padding: 6px; color: #555;'>${vName}</td>"
                     statusText += "</tr>"
@@ -191,7 +202,10 @@ def mainPage() {
         
         section("Graph Calibration (Solar Baseline)", hideable: true, hidden: true) {
             input "useSmartLearning", "bool", title: "Enable Smart Learning Mode", defaultValue: true, submitOnChange: true,
-                description: "Logs the daily max lux for 30 days to automatically set your Expected Peak Clear-Sky Brightness. Automatically rejects bad weather days from the dataset."
+                description: "Logs the daily max lux to automatically set your Expected Peak Clear-Sky Brightness. Automatically rejects bad weather days from the dataset."
+                
+            input "learningDaysReq", "enum", title: "Required Learning Days", options: ["10", "20", "30"], defaultValue: "30", submitOnChange: true,
+                description: "How many days of valid data must be collected before the algorithm shifts from your manual fallback to dynamic tracking?"
                 
             input "peakClearLux", "number", title: "Expected Peak Clear-Sky Brightness (Lux)", defaultValue: 10000,
                 description: "Manual fallback value. Set this to whatever your sensor typically reads at Solar Noon on a perfectly clear day. This scales the theoretical sun curve on your graph."
@@ -393,7 +407,8 @@ def appButtonHandler(btn) {
 
 // --- UTILITY: SMART LEARNING HELPER ---
 def getExpectedPeakLux() {
-    if (useSmartLearning && state.peakLuxHistory && state.peakLuxHistory.size() >= 30) {
+    def reqDays = (settings.learningDaysReq ?: "30").toInteger()
+    if (useSmartLearning && state.peakLuxHistory && state.peakLuxHistory.size() >= reqDays) {
         return (state.peakLuxHistory.sum() / state.peakLuxHistory.size()).toInteger()
     }
     return peakClearLux ?: 10000
@@ -959,7 +974,7 @@ def evaluateLuxCondition() {
                 addToHistory("Sky brightened back to ${lux} lx. Canceled Overcast Verification.")
             }
         }
-       
+        
         if (!state.pendingClear) {
             state.pendingClear = true
             runIn(debounceSecs, "triggerClear", [overwrite: true])
@@ -1054,6 +1069,8 @@ def executeSunset() {
   
     if (state.activeCloudEvent) closeActiveCloudEvent()
     
+    def reqDays = (settings.learningDaysReq ?: "30").toInteger()
+    
     // --- SMART LEARNING: EVALUATE OUTDOOR DAILY MAX ---
     if (useSmartLearning && state.dailyMaxLux && state.dailyMaxLux > 100) {
         def baseline = state.peakLuxHistory.size() > 0 ? (state.peakLuxHistory.sum() / state.peakLuxHistory.size()) : (peakClearLux ?: 10000)
@@ -1061,7 +1078,11 @@ def executeSunset() {
         
         if (state.peakLuxHistory.size() < 3 || state.dailyMaxLux >= lowerBound) {
             state.peakLuxHistory.add(state.dailyMaxLux)
-            if (state.peakLuxHistory.size() > 30) state.peakLuxHistory = state.peakLuxHistory.drop(1)
+            
+            // Clean up array if it exceeds user's required days (or if they scaled down the setting)
+            def overflow = state.peakLuxHistory.size() - reqDays
+            if (overflow > 0) state.peakLuxHistory = state.peakLuxHistory.drop(overflow)
+            
             log.info "SMART LEARNING (OUTDOOR): Daily max of ${state.dailyMaxLux} lx added."
         } else {
             log.info "SMART LEARNING (OUTDOOR): Daily max of ${state.dailyMaxLux} lx rejected (20% bad weather rule)."
@@ -1085,14 +1106,17 @@ def executeSunset() {
             if (rData.peakHistory.size() < 3 || rData.dailyMax >= rLowerBound) {
                 rData.peakHistory.add(rData.dailyMax)
                 
-                if (rData.peakHistory.size() > 30) rData.peakHistory = rData.peakHistory.drop(1)
+                // Clean up array if it exceeds user's required days (or if they scaled down the setting)
+                def overflow = rData.peakHistory.size() - reqDays
+                if (overflow > 0) rData.peakHistory = rData.peakHistory.drop(overflow)
+                
                 log.info "SMART LEARNING (ROOM ${i}): Daily max of ${rData.dailyMax} lx added."
             } else {
                 log.info "SMART LEARNING (ROOM ${i}): Daily max of ${rData.dailyMax} lx rejected (20% rule)."
             }
             
             // Calculate proportional setpoint
-            def currentPeak = rData.peakHistory.size() >= 30 ? (rData.peakHistory.sum() / rData.peakHistory.size()) : basePeak
+            def currentPeak = rData.peakHistory.size() >= reqDays ? (rData.peakHistory.sum() / rData.peakHistory.size()) : basePeak
             def ratio = baseTarget / basePeak
             def newSetpoint = (currentPeak * ratio).toInteger()
             rData.currentSetpoint = newSetpoint
