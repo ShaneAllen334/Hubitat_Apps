@@ -32,7 +32,7 @@ def mainPage() {
             def currentLux = luxSensor ? luxSensor.currentValue("illuminance") ?: "--" : "N/A"
             def currentCT = state.calculatedCT ?: "--"
             def currentLevel = state.calculatedLevel ?: "--"
-           
+            
             def overrideModeStr = overrideMode ?: "Normal"
             
             // Sun Position Math for Dashboard
@@ -45,7 +45,7 @@ def mainPage() {
                 phase = "<span style='color:#d35400;'><b>Daytime Storm (Cozy Mode Active)</b></span>"
             } else if (sunData.sunrise && sunData.sunset) {
                 def nowMs = now()
-       
+        
                 def riseMs = sunData.sunrise.time
                 def setMs = sunData.sunset.time
                 def solarNoonMs = riseMs + ((setMs - riseMs) / 2)
@@ -171,6 +171,8 @@ def initialize() {
     state.calculatedCT = null
     state.calculatedLevel = null
     state.stormModeActive = false
+    state.lastStormModeState = false
+    state.lastOverrideState = false
     
     if (appEnableSwitch) subscribe(appEnableSwitch, "switch", enableSwitchHandler)
     if (luxSensor) subscribe(luxSensor, "illuminance", luxHandler)
@@ -196,11 +198,12 @@ def enableSwitchHandler(evt) {
 }
 
 def luxHandler(evt) {
-    if (txtEnable) log.info "${app.label}: Outdoor Lux updated to ${evt.value}"
+    // Commented out to prevent aggressive logging from chatty lux sensors filling the hub's DB
+    // if (txtEnable) log.info "${app.label}: Outdoor Lux updated to ${evt.value}"
     
-    // If Lux override is enabled, evaluate instantly when brightness changes rapidly
     if (enableLuxOverride) {
-        evaluateSystem()
+        // Debounce rapid lux sensor reports (e.g. passing clouds) by 10 seconds to save CPU cycles
+        runIn(10, "evaluateSystem", [overwrite: true])
     }
 }
 
@@ -228,14 +231,14 @@ def evaluateSystem() {
     // 1. Handle Manual Overrides
     if (overrideMode == "Force Cool & Bright (6500K / Max Level)") {
         targetCT = 6500
-        targetLevel = maxLevel ?: 100
+        targetLevel = maxLevel != null ? maxLevel : 100
         if (txtEnable && (state.calculatedCT != targetCT || state.calculatedLevel != targetLevel)) {
             logAction("Override Active: Forcing 6500K / Max Level.")
         }
     } 
     else if (overrideMode == "Force Warm & Dim (2500K / Min Level)") {
         targetCT = 2500
-        targetLevel = minLevel ?: 10
+        targetLevel = minLevel != null ? minLevel : 10
         if (txtEnable && (state.calculatedCT != targetCT || state.calculatedLevel != targetLevel)) {
             logAction("Override Active: Forcing 2500K / Min Level.")
         }
@@ -248,7 +251,7 @@ def evaluateSystem() {
         // Storm Compensation Override Logic
         if (luxSensor && enableLuxOverride) {
             def currentLux = luxSensor.currentValue("illuminance")
-            def luxThresh = luxThreshold ?: 1000
+            def luxThresh = luxThreshold != null ? luxThreshold : 1000
             
             if (currentLux != null && currentLux <= luxThresh) {
                 def sunData = getSunriseAndSunset()
@@ -256,8 +259,8 @@ def evaluateSystem() {
                 
                 // Only engage Storm Compensation if it is actually daytime
                 if (sunData.sunrise && sunData.sunset && nowMs > sunData.sunrise.time && nowMs < sunData.sunset.time) {
-                    def stormCT = luxTargetCT ?: 3000
-                    def stormLevel = luxTargetLevel ?: 50
+                    def stormCT = luxTargetCT != null ? luxTargetCT : 3000
+                    def stormLevel = luxTargetLevel != null ? luxTargetLevel : 50
                     
                     // Override if storm settings are cozier than current sun curve expectations
                     def engaged = false
@@ -276,8 +279,20 @@ def evaluateSystem() {
         }
     }
     
-    // 3. Push to Outputs
-    if (state.calculatedCT != targetCT) {
+    // Determine if changes meet the threshold to avoid network/mesh spam
+    def ctDiff = state.calculatedCT != null ? Math.abs((state.calculatedCT as Integer) - targetCT) : 999
+    def levelDiff = state.calculatedLevel != null ? Math.abs((state.calculatedLevel as Integer) - targetLevel) : 999
+    
+    def isOverride = (overrideMode == "Force Cool & Bright (6500K / Max Level)" || overrideMode == "Force Warm & Dim (2500K / Min Level)")
+    
+    // Force an immediate update if Storm Mode or a Manual Override is toggled on/off
+    def forceUpdate = (state.stormModeActive != state.lastStormModeState) || (isOverride != state.lastOverrideState)
+    
+    state.lastStormModeState = state.stormModeActive
+    state.lastOverrideState = isOverride
+    
+    // 3. Push to Outputs (Only if thresholds are met or a forceUpdate is triggered)
+    if (forceUpdate || ctDiff >= 100) {
         state.calculatedCT = targetCT
         def success = setGlobalVar(ctVariable, targetCT)
         if (success) {
@@ -287,7 +302,7 @@ def evaluateSystem() {
         }
     }
     
-    if (state.calculatedLevel != targetLevel) {
+    if (forceUpdate || levelDiff >= 5) {
         state.calculatedLevel = targetLevel
         
         // Push to Hub Variable if selected
@@ -314,8 +329,8 @@ def evaluateSystem() {
 
 def calculateNaturalCT() {
     def sunData = getSunriseAndSunset()
-    def minTemp = minCT ?: 2500
-    def maxTemp = maxCT ?: 6500
+    def minTemp = minCT != null ? minCT : 2500
+    def maxTemp = maxCT != null ? maxCT : 6500
     
     if (!sunData.sunrise || !sunData.sunset) {
         logInfo("Could not retrieve Hubitat solar data. Defaulting to max coolness.")
@@ -348,8 +363,8 @@ def calculateNaturalCT() {
 
 def calculateNaturalLevel() {
     def sunData = getSunriseAndSunset()
-    def rawMin = minLevel ?: 10
-    def rawMax = maxLevel ?: 100
+    def rawMin = minLevel != null ? minLevel : 10
+    def rawMax = maxLevel != null ? maxLevel : 100
     
     // Determine bounds based on inverse selection
     def isStandard = (dimCurveType == "Standard (Bright Midday, Dim Night)")
