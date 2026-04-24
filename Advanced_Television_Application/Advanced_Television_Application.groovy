@@ -1,5 +1,7 @@
 /**
  * Advanced Television Application
+ *
+ * Author: ShaneAllen
  */
 definition(
     name: "Advanced Television Application",
@@ -24,9 +26,8 @@ def mainPage() {
             if (numTVs > 0) {
                 
                 input "btnRefreshData", "button", title: "<i class='fa fa-refresh fa-spin' style='color: #007bff;'></i> Refresh Dashboard Data", description: "Click here to immediately fetch the latest states and metrics for the data table below."
-                
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-top: 10px;'>"
-                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px; width: 20%;'>Television</th><th style='padding: 8px; width: 35%;'>State & Acoustics</th><th style='padding: 8px;'>Watch Time</th><th style='padding: 8px;'>Top Media</th><th style='padding: 8px;'>Cost Today</th></tr>"
+                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px; width: 20%;'>Television</th><th style='padding: 8px; width: 30%;'>State & Acoustics</th><th style='padding: 8px; width: 20%;'>Watch Time</th><th style='padding: 8px; width: 20%;'>Media & Telemetry</th><th style='padding: 8px;'>Cost Today</th></tr>"
           
                 for (int i = 1; i <= (numTVs as Integer); i++) {
                     def tvName = settings["tvName_${i}"] ?: "TV ${i}"
@@ -45,7 +46,7 @@ def mainPage() {
                     def currentApp = "Unknown"
                     if (isTrulyOn) {
                         if (settings["isAvrOnly_${i}"]) {
-                             def rawInput = tv.currentValue("mediaInputSource") ?: "Unknown"
+                            def rawInput = tv.currentValue("mediaInputSource") ?: "Unknown"
                             currentApp = getMappedAppName(i, rawInput)
                         } else {
                             currentApp = tv.currentValue("application") ?: "Unknown"
@@ -71,8 +72,12 @@ def mainPage() {
                         
                         def dish = settings["dishwasher_${i}"]
                         if (dish) {
-                            if (dish.currentValue("switch") == "on") activeAcoustics << "Dishwasher (ON): +${settings["dishwasherBoost_${i}"] ?: 4}"
-                            else activeAcoustics << "Dishwasher (OFF)"
+                            def dishPwr = 0.0
+                            try { dishPwr = (dish.currentValue("power") ?: 0.0) as Float } catch(e) {}
+                            def dThresh = (settings["dishwasherThreshold_${i}"] ?: 15) as Float
+                            
+                            if (dishPwr > dThresh) activeAcoustics << "Dishwasher (${dishPwr}W): +${settings["dishwasherBoost_${i}"] ?: 4}"
+                            else activeAcoustics << "Dishwasher (Idle)"
                         }
                         
                         def vac = settings["vacuum_${i}"]
@@ -83,8 +88,18 @@ def mainPage() {
    
                         def ap = settings["airPurifier_${i}"]
                         if (ap) {
-                            if (ap.currentValue("switch") == "on") activeAcoustics << "Purifier (ON): +${settings["airPurifierBoost_${i}"] ?: 2}"
+                            if (ap.currentValue("switch") == "on") {
+                                def sickModeOn = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                                def modeTag = sickModeOn ? " (Sick Mode)" : ""
+                                activeAcoustics << "Purifier (ON)${modeTag}: +${settings["airPurifierBoost_${i}"] ?: 2}"
+                            }
                             else activeAcoustics << "Purifier (OFF)"
+                        }
+                        
+                        def dehum = settings["dehumidifier_${i}"]
+                        if (dehum) {
+                            if (dehum.currentValue("switch") == "on") activeAcoustics << "Dehumidifier (ON): +${settings["dehumidifierBoost_${i}"] ?: 3}"
+                            else activeAcoustics << "Dehumidifier (OFF)"
                         }
                         
                         if (activeAcoustics.size() > 0) {
@@ -97,28 +112,34 @@ def mainPage() {
  
                     def watchMins = state.watchTimeToday?."${i}" ?: 0
                     def watchDisplay = "${(watchMins / 60).toInteger()}h ${watchMins % 60}m"
-               
+                
                     // --- Time Limit Dashboard Extensions ---
                     if (settings["enableTimeLimits_${i}"]) {
+                        def isGuestMode = settings["globalGuestSwitch"]?.currentValue("switch") == "on"
                         def maxTv = settings["tvMaxLimitMins_${i}"]
                         def ext = state.tvTimeExtended?."${i}" ?: 0
                         def limitText = ""
                         
-                        if (maxTv) {
-                             def totalAllowedTv = maxTv + ext
-                            def remainTv = totalAllowedTv - watchMins
-                            if (remainTv < 0) remainTv = 0
-                             limitText += "<br><span style='color:#e67e22; font-size:11px;'>TV Limit: ${(remainTv/60).toInteger()}h ${remainTv%60}m left</span>"
-                        }
-                        
-                        def limitedApps = settings["appLimitList_${i}"]
-                        def appLimit = settings["appLimitMins_${i}"]
-                        if (limitedApps && appLimit && isTrulyOn && limitedApps.contains(currentApp)) {
-                            def appMins = state.appTimeWatched?."${i}"?."${currentApp}" ?: 0
-                            def totalAllowedApp = appLimit + ext
-                            def remainApp = totalAllowedApp - appMins
-                            if (remainApp < 0) remainApp = 0
-                            limitText += "<br><span style='color:#c0392b; font-size:11px;'>App Limit: ${(remainApp/60).toInteger()}h ${remainApp%60}m left</span>"
+                        if (isGuestMode) {
+                            limitText += "<br><span style='color:#27ae60; font-size:11px;'><b>🎉 Guest Mode Active: Limits Bypassed</b></span>"
+                        } else {
+                            if (maxTv) {
+                                def totalAllowedTv = maxTv + ext
+                                def remainTv = totalAllowedTv - watchMins
+                                if (remainTv < 0) remainTv = 0
+                                limitText += "<br><span style='color:#e67e22; font-size:11px;'>TV Limit: ${(remainTv/60).toInteger()}h ${remainTv%60}m left</span>"
+                            }
+                            
+                            def limitedApps = settings["appLimitList_${i}"]
+                            def appLimit = settings["appLimitMins_${i}"]
+                            if (limitedApps && appLimit && isTrulyOn && limitedApps.contains(currentApp)) {
+                                def appMins = settings["enforceGlobalAppLimits"] ? (state.globalAppTimeWatched?."${currentApp}" ?: 0) : (state.appTimeWatched?."${i}"?."${currentApp}" ?: 0)
+                                def totalAllowedApp = appLimit + ext
+                                def remainApp = totalAllowedApp - appMins
+                                if (remainApp < 0) remainApp = 0
+                                def scopeText = settings["enforceGlobalAppLimits"] ? "Global App Limit" : "App Limit"
+                                limitText += "<br><span style='color:#c0392b; font-size:11px;'>${scopeText}: ${(remainApp/60).toInteger()}h ${remainApp%60}m left</span>"
+                            }
                         }
                         
                         watchDisplay += limitText
@@ -127,7 +148,7 @@ def mainPage() {
                     def topApp = "None"
                     def topTime = 0
                     if (state.appStats?."${i}") {
-                         state.appStats["${i}"].each { app, time ->
+                        state.appStats["${i}"].each { app, time ->
                             if (time > topTime) {
                                 topApp = app
                                 topTime = time
@@ -135,9 +156,21 @@ def mainPage() {
                         }
                     }
                     
+                    // --- Roku XML Telemetry Injection ---
+                    def mediaText = "<b>Top:</b> ${topApp}"
+                    if (settings["tvType_${i}"] == "Roku TV" && isTrulyOn) {
+                        def tData = state.rokuTelemetry?."${i}"
+                        if (tData) {
+                            def appTag = tData.appId ? "AppID: ${tData.appId}" : "AppID: ---"
+                            def contentTag = tData.contentId ? "ID: ${tData.contentId}" : "ID: ---"
+                            def typeTag = tData.mediaType ? "Type: ${tData.mediaType}" : ""
+                            mediaText += "<div style='margin-top: 6px; padding: 4px; background-color: #e8f4f8; border: 1px solid #3498db; border-radius: 3px; font-size: 10px; font-family: monospace; color: #333;'><b>Roku ECP Telemetry:</b><br>${appTag}<br>${contentTag}<br>${typeTag}</div>"
+                        }
+                    }
+                    
                     def cost = "\$" + (state.costToday?."${i}" ?: 0.00).setScale(2, BigDecimal.ROUND_HALF_UP)
                  
-                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${tvName}</b></td><td style='padding: 8px;'><span style='color: ${pwrColor}; font-weight:bold;'>${powerState}</span><br><span style='font-size:11px; color:#555;'>${currentApp}</span>${acousticText}</td><td style='padding: 8px;'>${watchDisplay}</td><td style='padding: 8px;'>${topApp}</td><td style='padding: 8px;'>${cost}</td></tr>"
+                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${tvName}</b></td><td style='padding: 8px;'><span style='color: ${pwrColor}; font-weight:bold;'>${powerState}</span><br><span style='font-size:11px; color:#555;'>${currentApp}</span>${acousticText}</td><td style='padding: 8px;'>${watchDisplay}</td><td style='padding: 8px;'>${mediaText}</td><td style='padding: 8px;'>${cost}</td></tr>"
                     
                     // --- ACTIVE MACRO BANNER INJECTION ---
                     def activeMacro = state.activeMacro?."${i}"
@@ -189,7 +222,7 @@ def mainPage() {
         
         section("BMS Integrity & System Robustness", hideable: true, hidden: true) {
             paragraph "These features elevate the application from simple convenience to a robust Building Management Engine, ensuring commands land safely and preventing apps from fighting each other."
-           
+            
             input "bmsPriorityLock", "capability.switch", title: "Global Priority Lock Switch", required: false, description: "Turns ON automatically when Movie, Gaming, or Weather modes are active. Use this switch as a 'Restriction' in your other apps to prevent them from turning off the lights or TV while you are watching."
             input "bmsMeshJitter", "bool", title: "Enable Mesh Optimization (Surge Staggering)", defaultValue: false, description: "Adds a random 500ms-2000ms delay between device commands during global events (like weather alerts) to prevent Zigbee/Z-Wave network flooding and electrical power surges."
             input "bmsHeartbeat", "bool", title: "Enable Device Heartbeat & Retries", defaultValue: false, description: "Actively verifies if TV/AVR power commands actually executed. It will retry the command up to 3 times if the device dropped off the network, and log a Comms Failure if it completely fails."
@@ -200,14 +233,16 @@ def mainPage() {
             input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false, description: "Select a virtual switch to act as a global pause. If the switch is OFF, the entire TV application will halt all automation and routines."
             input "numTVs", "number", title: "Number of Televisions to Configure (1-10)", required: true, defaultValue: 1, range: "1..10", submitOnChange: true, description: "Enter the number of TVs or Home Theaters you want to manage in your home. Save to reveal their setup menus below."
             input "elecRate", "decimal", title: "Electricity Rate (per kWh)", defaultValue: 0.14, required: true, description: "Your local utility rate (e.g., 0.14 for 14 cents per kWh). This is used to accurately calculate your daily entertainment costs on the dashboard."
+            input "enforceGlobalAppLimits", "bool", title: "Enforce House-Wide Application Limits", defaultValue: false, description: "If enabled, time spent on restricted apps is combined across all TVs. (e.g., 30 mins of YouTube on TV 1 + 30 mins on TV 2 = 60 mins total towards the limit)."
+            input "globalGuestSwitch", "capability.switch", title: "Global Guest Mode Switch (Limit Bypass)", required: false, description: "When this switch is ON, all TV and Application Time Limits are temporarily ignored, allowing unrestricted viewing for house guests."
         }
 
-        section("Safety & Security Interruption (Auto-Mute)", hideable: true, hidden: true) {
-            input "enableSafetyMute", "bool", title: "Enable Security/Doorbell Auto-Mute", defaultValue: false, submitOnChange: true, description: "Automatically mutes any active TV when a monitored safety contact opens or a doorbell is pressed, ensuring you hear important activity."
+        section("Safety & Security Interruption (Smart Pause & Auto-Mute)", hideable: true, hidden: true) {
+            input "enableSafetyMute", "bool", title: "Enable Security/Doorbell Interruption", defaultValue: false, submitOnChange: true, description: "Automatically pauses or mutes any active TV when a monitored safety contact opens or a doorbell is pressed, ensuring you hear important activity."
             if (enableSafetyMute) {
-                input "muteContacts", "capability.contactSensor", title: "Safety Contacts", multiple: true, required: false, description: "If any of these doors/windows open while a TV is on, the TV will instantly mute. It restores volume when closed."
-                input "doorbellButtons", "capability.pushableButton", title: "Doorbell Buttons", multiple: true, required: false, description: "If these doorbells are pressed, active TVs will instantly mute to ensure you hear the chime."
-                input "doorbellMuteTime", "number", title: "Doorbell Mute Duration (Seconds)", defaultValue: 60, required: true, description: "How long to keep the TVs muted after a doorbell is pressed before automatically restoring the volume."
+                input "muteContacts", "capability.contactSensor", title: "Safety Contacts", multiple: true, required: false, description: "If any of these doors/windows open while a TV is on, the TV will instantly pause or mute. It restores when closed."
+                input "doorbellButtons", "capability.pushableButton", title: "Doorbell Buttons", multiple: true, required: false, description: "If these doorbells are pressed, active TVs will instantly pause or mute to ensure you hear the chime."
+                input "doorbellMuteTime", "number", title: "Doorbell Interruption Duration (Seconds)", defaultValue: 60, required: true, description: "How long to keep the TVs paused/muted after a doorbell is pressed before automatically resuming."
             }
         }
         
@@ -259,16 +294,21 @@ def tvPage(params) {
                     input "hdmiName_${tNum}_${h}", "text", title: "Friendly Name (e.g., DVD Player)", required: false, description: "Enter a clean, friendly name for this input to display on the dashboard."
                 }
             } else {
-                input "tvType_${tNum}", "enum", title: "Television Brand / Ecosystem", options: ["Roku TV", "LG WebOS", "Samsung Smart TV", "Sony Bravia", "Android TV / Google TV", "Apple TV", "Generic / Other"], defaultValue: "Roku TV", required: true, description: "Select the brand of your Smart TV so the app knows exactly how to detect idle states and screen savers."
+                input "tvType_${tNum}", "enum", title: "Television Brand / Ecosystem", options: ["Roku TV", "LG WebOS", "Samsung Smart TV", "Sony Bravia", "Android TV / Google TV", "Apple TV", "Generic / Other"], defaultValue: "Roku TV", submitOnChange: true, description: "Select the brand of your Smart TV so the app knows exactly how to detect idle states and screen savers."
                 input "tv_${tNum}", "capability.switch", title: "Television Device", required: true, description: "Select the primary Smart TV device to monitor and control."
                 input "tvPlug_${tNum}", "capability.switch", title: "Smart Plug Powering TV (Optional)", required: false, description: "If a smart plug powers this TV, select it here. The app will turn it on for routines and kill power when finished."
                 
+                // --- Roku Advanced LAN Telemetry ---
+                if (settings["tvType_${tNum}"] == "Roku TV") {
+                    paragraph "<i>Note: The app will automatically extract your Roku's IP Address from the device driver for Telemetry and Deep-Linking. You only need to type an IP below if auto-discovery fails.</i>"
+                    input "rokuIp_${tNum}", "text", title: "Roku IP Address (Optional Override)", required: false
+                }
+
                 input "tvAudio_${tNum}", "capability.audioVolume", title: "Dedicated Audio/Soundbar (Optional)", required: false, description: "Select this ONLY if your TV relies on an external, smart-controlled soundbar (like Sonos) for volume instead of native speakers."
                 input "audioType_${tNum}", "enum", title: "Audio Control Protocol", options: ["Standard Soundbar (Volume Clicks)", "Network AVR / Absolute (SetLevel 0-100)", "Onkyo / Pioneer Protocol", "Sonos / Wi-Fi Speaker"], defaultValue: "Standard Soundbar (Volume Clicks)", required: false, description: "Select the protocol used by your external audio device to ensure volume normalization works correctly."
             }
         }
         
-        // --- MODIFIED SECTION: APPLICATION TIME LIMITS ---
         section("Application & TV Time Limits", hideable: true, hidden: true) {
             input "enableTimeLimits_${tNum}", "bool", title: "Enable Time Limits", defaultValue: false, submitOnChange: true, description: "Limit screen time per TV or individual applications."
             if (settings["enableTimeLimits_${tNum}"]) {
@@ -320,7 +360,6 @@ def tvPage(params) {
                 input "extendSwitch_${tNum}", "capability.switch", title: "Virtual Switch to Extend Time", required: false, description: "If this switch turns on, it adds 30 minutes to the limit, then automatically turns itself back off after 30 seconds."
             }
         }
-        // ---------------------------------------------
         
         section("Dedicated Movie Mode (Macro / Scene)", hideable: true, hidden: true) {
             input "enableMovieMode_${tNum}", "bool", title: "Enable Movie Mode", defaultValue: false, submitOnChange: true, description: "Triggers a full home theater macro from a single virtual switch. Orchestrates TV power, inputs, volume, lights, shades, locks, fans, and HVAC in one smooth sequence."
@@ -419,15 +458,29 @@ def tvPage(params) {
         }
 
         section("TV Show Favorites (Auto-Tune & Turn Off)", hideable: true, hidden: true) {
-            paragraph "Schedule up to 2 shows to automatically power on the TV, tune to the channel, and turn the TV off when the show ends."
+            paragraph "Schedule up to 2 shows to automatically power on the TV, tune to the channel/app, and turn the TV off when the show ends."
             for (int s = 1; s <= 2; s++) {
-                input "enableShow_${tNum}_${s}", "bool", title: "Enable TV Show ${s}", defaultValue: false, submitOnChange: true, description: "Enable a schedule to auto-launch a specific show or channel."
+                input "enableShow_${tNum}_${s}", "bool", title: "Enable TV Show Schedule ${s}", defaultValue: false, submitOnChange: true
                 if (settings["enableShow_${tNum}_${s}"]) {
-                    input "showName_${tNum}_${s}", "text", title: "Show Name (For Logging)", required: false, description: "Enter a friendly name for this show to appear in the history logs."
-                    if (settings["isAvrOnly_${tNum}"]) {
-                        input "showHdmi_${tNum}_${s}", "text", title: "AVR Input (e.g., HDMI 1)", required: true, description: "The exact AVR input to switch to when this show schedule starts."
+                    input "showName_${tNum}_${s}", "text", title: "Friendly Show Name (For Logging)", required: false
+                    
+                    // --- NEW: Always-Visible Auto Capture Button ---
+                    if (!settings["isAvrOnly_${tNum}"] && settings["tvType_${tNum}"] == "Roku TV") {
+                        paragraph "<div style='background: #e8f4f8; border: 1px solid #3498db; padding: 10px; border-radius: 5px;'><b>🎯 Smart Capture</b><br>If your show is playing on the TV right now, click the button below to instantly extract and save the routing data. (Page will reload to show settings).</div>"
+                        input "captureFavoriteBtn_${tNum}_${s}", "button", title: "🎯 Auto-Capture Current Stream to Slot ${s}"
+                        input "showIsDeepLink_${tNum}_${s}", "bool", title: "Use Deep-Link Routing (Instead of OTA Channel)", defaultValue: false, submitOnChange: true, description: "Uses raw Roku ECP injection to launch specific media directly."
+                    }
+                    
+                    if (settings["showIsDeepLink_${tNum}_${s}"]) {
+                        input "favoriteAppId_${tNum}_${s}", "text", title: "App ID (e.g., 12 for Netflix)", required: true, description: "The internal Roku App ID."
+                        input "favoriteContentId_${tNum}_${s}", "text", title: "Content ID", required: false, description: "The alphanumeric ID of the specific movie or series."
+                        input "favoriteMediaType_${tNum}_${s}", "text", title: "Media Type", required: false, defaultValue: "movie", description: "Options: movie, series, season, live."
                     } else {
-                        input "showChannel_${tNum}_${s}", "text", title: "Channel (e.g., 8.1)", required: true, description: "The OTA channel to tune to when this show schedule starts."
+                        if (settings["isAvrOnly_${tNum}"]) {
+                            input "showHdmi_${tNum}_${s}", "text", title: "AVR Input (e.g., HDMI 1)", required: true, description: "The exact AVR input to switch to when this show schedule starts."
+                        } else {
+                            input "showChannel_${tNum}_${s}", "text", title: "Channel (e.g., 8.1)", required: true, description: "The OTA channel to tune to when this show schedule starts."
+                        }
                     }
                     
                     input "showTimeStart_${tNum}_${s}", "time", title: "Show Start Time", required: true, description: "The time the TV should automatically turn on and tune."
@@ -487,12 +540,23 @@ def tvPage(params) {
                     input "hvacVolumeBoost_${tNum}", "number", title: "HVAC Volume Boost (Relative Units)", defaultValue: 3, description: "How many volume units to increase when the HVAC starts running."
                 }
                 
-                input "dishwasher_${tNum}", "capability.switch", title: "Dishwasher Switch / Power State", required: false, description: "Select the smart plug or switch monitoring the dishwasher."
-                input "dishwasherBoost_${tNum}", "number", title: "Dishwasher Volume Boost (Units)", defaultValue: 4, description: "How many volume units to increase when the dishwasher is running."
+                input "dishwasher_${tNum}", "capability.powerMeter", title: "Dishwasher Power Monitor", required: false, description: "Select the smart plug monitoring the dishwasher's power."
+                if (settings["dishwasher_${tNum}"]) {
+                    input "dishwasherThreshold_${tNum}", "number", title: "Active Power Threshold (Watts)", defaultValue: 15, required: true, description: "The dishwasher is considered 'running' when its power draw goes above this number."
+                    input "dishwasherBoost_${tNum}", "number", title: "Dishwasher Volume Boost (Units)", defaultValue: 4, description: "How many volume units to increase when the dishwasher is running."
+                }
+                
                 input "vacuum_${tNum}", "capability.switch", title: "Robot Vacuum Switch / Power State", required: false, description: "Select the robot vacuum switch to monitor."
                 input "vacuumBoost_${tNum}", "number", title: "Vacuum Volume Boost (Units)", defaultValue: 10, description: "How many volume units to increase when the vacuum is running."
-                input "airPurifier_${tNum}", "capability.switch", title: "Air Purifier Switch / Power State", required: false, description: "Select the air purifier switch to monitor."
+                
+                input "airPurifier_${tNum}", "capability.switch", title: "Air Purifier Switch / Power State", required: false, submitOnChange: true, description: "Select the air purifier switch to monitor."
+                if (settings["airPurifier_${tNum}"]) {
+                    input "sickModeSwitch_${tNum}", "capability.switch", title: "Sick Mode / Air Quality Override Switch", required: false, description: "When ON, the system will refuse to turn off this air purifier even if it is listed in the 'FORCE OFF' appliances above, prioritizing air scrubbing over acoustics."
+                }
                 input "airPurifierBoost_${tNum}", "number", title: "Air Purifier Volume Boost (Units)", defaultValue: 2, description: "How many volume units to increase when the air purifier is running."
+                
+                input "dehumidifier_${tNum}", "capability.switch", title: "Dehumidifier Switch / Power State", required: false, description: "Select the dehumidifier switch to monitor."
+                input "dehumidifierBoost_${tNum}", "number", title: "Dehumidifier Volume Boost (Units)", defaultValue: 3, description: "How many volume units to increase when the dehumidifier is running."
             }
         }
         
@@ -503,6 +567,10 @@ def tvPage(params) {
                 input "tvBlinds_${tNum}", "capability.contactSensor", title: "Room Blinds Evaluator (Contact)", required: false, description: "If selected, the app will ONLY restore the lights upon TV shutdown if these blinds are closed (preventing lights turning on during a sunny day)."
                 input "lightRestoreTimeStart_${tNum}", "time", title: "Light Restore Start Time", required: false, description: "Earliest time of day lights are allowed to automatically turn back on."
                 input "lightRestoreTimeEnd_${tNum}", "time", title: "Light Restore End Time", required: false, description: "Latest time of day lights are allowed to automatically turn back on."
+                
+                // NEW: Automation Conflict Override Input
+                input "conflictOverrideSwitch_${tNum}", "capability.switch", title: "Automation Conflict Override (e.g., Meal Time)", required: false, description: "If this virtual switch is ON when the TV turns off, the app will SKIP restoring the lights. This prevents the lights from flashing back on just as your Meal Time app takes control."
+                
                 input "evaluateRoomBtn_${tNum}", "button", title: "Evaluate Room (Force OFF Lights & Appliances if TV is ON)", description: "Manually triggers the room evaluation to enforce lighting and acoustic sync rules immediately."
             }
         }
@@ -522,10 +590,11 @@ def tvPage(params) {
         section("Auto-Sweeper (Motion Bypass)", hideable: true, hidden: true) {
             input "enableSweeper_${tNum}", "bool", title: "Enable Active Room Sweeper", defaultValue: false, submitOnChange: true, description: "Links specific adjacent lights to specific motion sensors. If a light is ON but the adjacent room is empty, it turns the light off while the TV is running to reduce glare."
             if (settings["enableSweeper_${tNum}"]) {
-                paragraph "Configure up to 5 individual lights and their corresponding bypass sensors. If the linked sensor is ACTIVE, the light will not be turned off."
+                input "sweepTimeout_${tNum}", "number", title: "Sweeper Inactivity Timeout (Minutes)", defaultValue: 3, required: true, description: "How long the room must be completely empty before the lights are swept off."
+                paragraph "Configure up to 5 individual lights and their corresponding bypass sensors. ALL selected sensors must remain inactive to turn the light off."
                 for (int l = 1; l <= 5; l++) {
-                    input "sweepLight_${tNum}_${l}", "capability.switch", title: "Sweeper Light ${l}", required: false, description: "Select a light to monitor. If it is on but its assigned motion sensor is inactive, it will turn off."
-                    input "sweepMotion_${tNum}_${l}", "capability.motionSensor", title: "Bypass Motion Sensor ${l}", required: false, description: "Select the motion sensor that must remain active to keep this specific light on."
+                    input "sweepLight_${tNum}_${l}", "capability.switch", title: "Sweeper Light ${l}", required: false, description: "Select a light to monitor. If it is on but its assigned motion sensors are inactive, it will turn off."
+                    input "sweepMotion_${tNum}_${l}", "capability.motionSensor", title: "Bypass Motion Sensors ${l}", multiple: true, required: false, description: "Select one or more motion sensors to protect this light."
                 }
             }
         }
@@ -583,10 +652,12 @@ def initialize() {
     state.macroControlledList = state.macroControlledList ?: [:]
     state.lastHvacState = state.lastHvacState ?: [:]
     
-    // NEW: Time limit states
+    // Time limit states
     state.savedApps = state.savedApps ?: [:]
     state.appTimeWatched = state.appTimeWatched ?: [:]
+    state.globalAppTimeWatched = state.globalAppTimeWatched ?: [:] 
     state.tvTimeExtended = state.tvTimeExtended ?: [:]
+    state.lastAppLogged = state.lastAppLogged ?: [:]
     
     // Power State Trackers
     state.plugWasOffBeforeShow = state.plugWasOffBeforeShow ?: [:]
@@ -594,11 +665,17 @@ def initialize() {
     state.plugWasOffBeforeWeather = state.plugWasOffBeforeWeather ?: [:]
     state.plugWasOffBeforeMacro = state.plugWasOffBeforeMacro ?: [:]
     
+    // Telemetry Tracker
+    state.rokuTelemetry = state.rokuTelemetry ?: [:]
+    
     unschedule("trackUsageStep")
     unschedule("pollThermostats")
     unschedule("nightlyMaintenance")
+    unschedule("refreshTVs")
+    
     trackUsageStep()
-    schedule("0 0/3 * * * ?", "refreshTVs") 
+    // OPTIMIZATION: Reduced polling frequency from every 3 minutes to every 15 minutes to save hub CPU
+    schedule("0 0/15 * * * ?", "refreshTVs") 
     schedule("0 0 0 * * ?", "midnightReset")
     schedule("0 * * * * ?", "checkTvShows")
     
@@ -618,7 +695,6 @@ def initialize() {
             subscribe(settings["gamingSwitch_${i}"], "switch", macroModeHandler)
         }
         
-        // NEW: Subscribe to Time Extension Switches
         if (settings["enableTimeLimits_${i}"] && settings["extendSwitch_${i}"]) {
             subscribe(settings["extendSwitch_${i}"], "switch", extendSwitchHandler)
         }
@@ -655,9 +731,10 @@ def initialize() {
         
         if (settings["enableAcousticMgmt_${i}"]) {
             if (settings["mainThermostat_${i}"]) subscribe(settings["mainThermostat_${i}"], "thermostatOperatingState", acousticDeviceHandler)
-            if (settings["dishwasher_${i}"]) subscribe(settings["dishwasher_${i}"], "switch", acousticDeviceHandler)
+            if (settings["dishwasher_${i}"]) subscribe(settings["dishwasher_${i}"], "power", acousticDeviceHandler)
             if (settings["vacuum_${i}"]) subscribe(settings["vacuum_${i}"], "switch", acousticDeviceHandler)
             if (settings["airPurifier_${i}"]) subscribe(settings["airPurifier_${i}"], "switch", acousticDeviceHandler)
+            if (settings["dehumidifier_${i}"]) subscribe(settings["dehumidifier_${i}"], "switch", acousticDeviceHandler)
         }
         
         if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]) {
@@ -666,7 +743,96 @@ def initialize() {
     }
 }
 
-// --- NEW: Time Limit & Extension Handlers ---
+// --- Auto-IP Discovery Helper ---
+
+def getRokuIp(i) {
+    def manualIp = settings["rokuIp_${i}"]
+    if (manualIp) return manualIp
+    
+    def tv = settings["tv_${i}"]
+    if (!tv) return null
+    
+    // Automatically scans the driver's native Query URL or standard attributes
+    def queryUrl = tv.getDataValue("Query/active-app")
+    if (queryUrl) {
+        def ipMatch = queryUrl =~ /http:\/\/([0-9\.]+):/
+        if (ipMatch) return ipMatch[0][1]
+    }
+    
+    def ip = tv.getDataValue("ip") ?: tv.currentValue("networkAddress") ?: tv.getDataValue("networkAddress") ?: tv.currentValue("ip")
+    return ip
+}
+
+// --- Roku Async HTTP XML Polling ---
+
+def pollRokuTelemetry(i) {
+    def ip = getRokuIp(i)
+    if (!ip) return
+    
+    try {
+        def paramsApp = [uri: "http://${ip}:8060/query/active-app", timeout: 5]
+        asynchttpGet("rokuAppResponseHandler", paramsApp, [tvNum: i])
+        
+        def paramsMedia = [uri: "http://${ip}:8060/query/media-player", timeout: 5]
+        asynchttpGet("rokuMediaResponseHandler", paramsMedia, [tvNum: i])
+    } catch (e) {
+        log.warn "Roku Telemetry Polling failed for TV ${i}: ${e}"
+    }
+}
+
+def rokuAppResponseHandler(response, data) {
+    if (response.hasError() || !response.data) return
+    def i = data.tvNum
+    // Safely extract XML values via Regex to avoid Hubitat sandbox parsing errors
+    def appIdMatch = response.data =~ /<app id="([^"]+)"/
+    def appId = appIdMatch ? appIdMatch[0][1] : null
+    
+    if (!state.rokuTelemetry) state.rokuTelemetry = [:]
+    if (!state.rokuTelemetry["${i}"]) state.rokuTelemetry["${i}"] = [:]
+    state.rokuTelemetry["${i}"].appId = appId
+}
+
+def rokuMediaResponseHandler(response, data) {
+    if (response.hasError() || !response.data) return
+    def i = data.tvNum
+    
+    def contentMatch = response.data =~ /contentId="([^"]+)"/
+    def contentId = contentMatch ? contentMatch[0][1] : null
+    
+    def mediaMatch = response.data =~ /mediaType="([^"]+)"/
+    def mediaType = mediaMatch ? mediaMatch[0][1] : null
+    
+    if (!state.rokuTelemetry) state.rokuTelemetry = [:]
+    if (!state.rokuTelemetry["${i}"]) state.rokuTelemetry["${i}"] = [:]
+    state.rokuTelemetry["${i}"].contentId = contentId
+    state.rokuTelemetry["${i}"].mediaType = mediaType
+}
+
+// --- Deep Link Execution Engine ---
+
+def executeDeepLink(i, appId, contentId, mediaType) {
+    def ip = getRokuIp(i)
+    if (ip && appId) {
+        def uri = "http://${ip}:8060/launch/${appId}"
+        if (contentId) uri += "?contentId=${contentId}"
+        if (mediaType) uri += "&mediaType=${mediaType}"
+        
+        try {
+            def params = [uri: uri, timeout: 5]
+            asynchttpPost("rokuLaunchHandler", params, [tvNum: i])
+            addToHistory("${getTvName(i)}: Executing Roku Deep-Link to App ${appId}.")
+        } catch(e) {
+            log.error "Deep-Link execution failed: ${e}"
+        }
+    } else {
+        addToHistory("${getTvName(i)}: Deep-Link failed (Missing Roku IP or App ID).")
+    }
+}
+
+def rokuLaunchHandler(response, data) {
+    if (response.hasError()) log.warn "Roku Launch Error: HTTP ${response.status}"
+}
+
 
 def extendSwitchHandler(evt) {
     def isOn = evt.value == "on"
@@ -849,12 +1015,19 @@ def restoreState(i, prefix) {
         return
     }
     
+    def overrideSwitch = settings["conflictOverrideSwitch_${i}"]
+    def conflictActive = overrideSwitch && overrideSwitch.currentValue("switch") == "on"
+    
     def lightsOff = settings["${prefix}LightsOff_${i}"]
     if (lightsOff && cap.lightsOff) {
-        lightsOff.each { 
-            if (cap.lightsOff[it.id] == "on") {
-                it.on()
-                pauseExecution(300)
+        if (conflictActive) {
+            addToHistory("${getTvName(i)}: Macro Light snap-back bypassed (Automation Override is ON).")
+        } else {
+            lightsOff.each { 
+                if (cap.lightsOff[it.id] == "on") {
+                    it.on()
+                    pauseExecution(300)
+                }
             }
         }
     }
@@ -1094,16 +1267,24 @@ def executeMediaAction(data) {
             else if (avr.hasCommand("setMediaInputSource")) avr.setMediaInputSource(target)
         }
     } else {
-        def appSwitch = null
-        if (source == "weather") appSwitch = settings["weatherAppSwitch"]
-        else if (source == "morning") appSwitch = settings["morningAppSwitch_${i}"]
-        else if (source == "macro") appSwitch = settings["${prefix}AppSwitch_${i}"]
-        
-        if (appSwitch) {
-            addToHistory("${getTvName(i)}: Launching application via switch [${appSwitch.displayName}].")
-            appSwitch.on()
-        } else if (target) {
-            executeSetChannel(data)
+        // Deep Link Handling for Scheduled Shows
+        if (source == "show" && prefix != null && settings["showIsDeepLink_${i}_${prefix}"]) {
+            def appId = settings["favoriteAppId_${i}_${prefix}"]
+            def contentId = settings["favoriteContentId_${i}_${prefix}"]
+            def mediaType = settings["favoriteMediaType_${i}_${prefix}"]
+            executeDeepLink(i, appId, contentId, mediaType)
+        } else {
+            def appSwitch = null
+            if (source == "weather") appSwitch = settings["weatherAppSwitch"]
+            else if (source == "morning") appSwitch = settings["morningAppSwitch_${i}"]
+            else if (source == "macro") appSwitch = settings["${prefix}AppSwitch_${i}"]
+            
+            if (appSwitch) {
+                addToHistory("${getTvName(i)}: Launching application via switch [${appSwitch.displayName}].")
+                appSwitch.on()
+            } else if (target) {
+                executeSetChannel(data)
+            }
         }
     }
     
@@ -1214,6 +1395,10 @@ def refreshTVs() {
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def tv = getPrimaryDevice(i)
         if (tv && tv.hasCommand("refresh")) tv.refresh()
+        
+        if (settings["tvType_${i}"] == "Roku TV" && getRokuIp(i) && isTvActuallyOn(tv, i)) {
+            pollRokuTelemetry(i)
+        }
     }
 }
 
@@ -1263,7 +1448,8 @@ def tvPowerEvaluator(evt) {
                 state.evaluatedPowerState["${i}"] = true
                 addToHistory("${tvName}: Power State changed to ON.")
                 
-                if (primary.hasCommand("refresh")) primary.refresh()
+                // Immediately poll telemetry if it's a Roku
+                if (settings["tvType_${i}"] == "Roku TV" && getRokuIp(i)) pollRokuTelemetry(i)
                 
                 if (settings["enableVolumeMgmt_${i}"]) {
                     def targetVol = settings["startupVolume_${i}"]
@@ -1298,7 +1484,17 @@ def tvPowerEvaluator(evt) {
                 if (settings["enableAcousticMgmt_${i}"]) {
                     def noiseSwitches = settings["tvNoiseSwitches_${i}"]
                     if (noiseSwitches) {
-                        def activeNoise = noiseSwitches.findAll { it.currentValue("switch") == "on" }
+                        def isSickMode = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                        def apId = settings["airPurifier_${i}"]?.id
+                        
+                        def activeNoise = noiseSwitches.findAll { 
+                            if (it.currentValue("switch") != "on") return false
+                            if (isSickMode && apId && it.id == apId) {
+                                addToHistory("${tvName}: Sick Mode is ON. Allowing high-performance air filtration to continue running.")
+                                return false
+                            }
+                            return true
+                        }
                         if (activeNoise) {
                             addToHistory("${tvName}: Background noise detected. Turning OFF: ${activeNoise.join(', ')}")
                             activeNoise.each { 
@@ -1393,7 +1589,7 @@ def tvPowerEvaluator(evt) {
                 if (settings["enableVolumeMgmt_${i}"]) {
                     def reduceClicks = settings["shutdownVolumeReduction_${i}"]
                     if (reduceClicks && reduceClicks > 0) {
-                        def audioDev = getAudioDevice(i)
+                         def audioDev = getAudioDevice(i)
                         def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
                         addToHistory("${tvName}: Tapering volume down by ${reduceClicks} clicks for quiet startup.")
                         adjustVolumeRelative(audioDev, reduceClicks, "down", audioProtocol)
@@ -1404,7 +1600,7 @@ def tvPowerEvaluator(evt) {
                     def noiseSwitches = settings["tvNoiseSwitches_${i}"]
                     def pausedIds = state.noiseSwitchesPaused["${i}"] ?: []
                     if (noiseSwitches && pausedIds) {
-                        def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
+                         def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
                         if (toRestore) {
                              addToHistory("${tvName}: Restoring background appliances: ${toRestore.join(', ')}")
                              toRestore.each { 
@@ -1420,20 +1616,26 @@ def tvPowerEvaluator(evt) {
                     def lights = settings["tvLights_${i}"]
                     if (lights && state.lightsPausedByTv["${i}"]) {
                         state.lightsPausedByTv["${i}"] = false 
-                        def blind = settings["tvBlinds_${i}"]
-                        def isBlindClosed = blind ? (blind.currentValue("contact") == "closed") : true
-                        def startTime = settings["lightRestoreTimeStart_${i}"]
-                        def endTime = settings["lightRestoreTimeEnd_${i}"]
-                        def timeOk = true
                         
-                        if (startTime && endTime) timeOk = timeOfDayIsBetween(timeToday(startTime, location.timeZone), timeToday(endTime, location.timeZone), new Date(), location.timeZone)
-                        
-                        if (isBlindClosed && timeOk) {
-                             addToHistory("${tvName}: Conditions met. Restoring lights.")
-                             lights.each { 
-                                 it.on()
-                                 pauseExecution(300)
-                             } 
+                        def overrideSwitch = settings["conflictOverrideSwitch_${i}"]
+                        if (overrideSwitch && overrideSwitch.currentValue("switch") == "on") {
+                            addToHistory("${tvName}: Light restore bypassed. Automation Override switch is ON.")
+                        } else {
+                            def blind = settings["tvBlinds_${i}"]
+                            def isBlindClosed = blind ? (blind.currentValue("contact") == "closed") : true
+                            def startTime = settings["lightRestoreTimeStart_${i}"]
+                            def endTime = settings["lightRestoreTimeEnd_${i}"]
+                            def timeOk = true
+                            
+                            if (startTime && endTime) timeOk = timeOfDayIsBetween(timeToday(startTime, location.timeZone), timeToday(endTime, location.timeZone), new Date(), location.timeZone)
+                            
+                            if (isBlindClosed && timeOk) {
+                                 addToHistory("${tvName}: Conditions met. Restoring lights.")
+                                 lights.each { 
+                                     it.on()
+                                     pauseExecution(300)
+                                 } 
+                            }
                         }
                     }
                 }
@@ -1487,6 +1689,7 @@ def acousticDeviceHandler(evt) {
         else if (settings["dishwasher_${i}"]?.id == devId) isMatch = true
         else if (settings["vacuum_${i}"]?.id == devId) isMatch = true
         else if (settings["airPurifier_${i}"]?.id == devId) isMatch = true
+        else if (settings["dehumidifier_${i}"]?.id == devId) isMatch = true
         
         if (isMatch) evaluateAcoustics(i)
     }
@@ -1499,7 +1702,6 @@ def evaluateAcoustics(i) {
         return
     }
     
-    // NEW: Absolute HVAC Volume Handling
     def thermo = settings["mainThermostat_${i}"]
     def hvacRunning = thermo && thermo.currentValue("thermostatOperatingState") in ["heating", "cooling", "fan only"]
 
@@ -1525,7 +1727,6 @@ def evaluateAcoustics(i) {
         }
     }
 
-    // Evaluate standard relative acoustic boosts for everything else
     def maxBoost = 0
     
     if (thermo && hvacRunning && !settings["enableAbsoluteHvac_${i}"]) {
@@ -1533,8 +1734,13 @@ def evaluateAcoustics(i) {
     }
     
     def dish = settings["dishwasher_${i}"]
-    if (dish && dish.currentValue("switch") == "on") {
-        maxBoost = Math.max(maxBoost, (settings["dishwasherBoost_${i}"] ?: 4) as Integer)
+    if (dish) {
+        def dishPwr = 0.0
+        try { dishPwr = (dish.currentValue("power") ?: 0.0) as Float } catch(e) {}
+        def dThresh = (settings["dishwasherThreshold_${i}"] ?: 15) as Float
+        if (dishPwr > dThresh) {
+            maxBoost = Math.max(maxBoost, (settings["dishwasherBoost_${i}"] ?: 4) as Integer)
+        }
     }
     
     def vac = settings["vacuum_${i}"]
@@ -1545,6 +1751,11 @@ def evaluateAcoustics(i) {
     def ap = settings["airPurifier_${i}"]
     if (ap && ap.currentValue("switch") == "on") {
         maxBoost = Math.max(maxBoost, (settings["airPurifierBoost_${i}"] ?: 2) as Integer)
+    }
+
+    def dehum = settings["dehumidifier_${i}"]
+    if (dehum && dehum.currentValue("switch") == "on") {
+        maxBoost = Math.max(maxBoost, (settings["dehumidifierBoost_${i}"] ?: 3) as Integer)
     }
     
     def currentBoost = state.currentVolumeBoost["${i}"] ?: 0
@@ -1623,15 +1834,38 @@ def executeSweeper(i, isPeriodic) {
     
     def sweptDevices = []
     def bypassedDevices = []
+    def sweepTimeout = settings["sweepTimeout_${i}"] ?: 3
+    def timeoutMs = sweepTimeout * 60000
     
     for (int l = 1; l <= 5; l++) {
         def light = settings["sweepLight_${i}_${l}"]
-        def motion = settings["sweepMotion_${i}_${l}"]
+        def motions = settings["sweepMotion_${i}_${l}"]
         
         if (light && light.currentValue("switch") == "on") {
-            def hasMotion = motion ? (motion.currentValue("motion") == "active") : false
+            def canTurnOff = false
             
-            if (!hasMotion) {
+            if (motions) {
+                def motionList = motions instanceof List ? motions : [motions]
+                def anyActive = motionList.any { it.currentValue("motion") == "active" }
+                
+                if (!anyActive) {
+                    def allTimeoutMet = motionList.every { m ->
+                        def motionState = m.currentState("motion")
+                        if (motionState?.value == "inactive") {
+                            def inactiveSince = motionState.date?.time ?: new Date().time
+                            return (new Date().time - inactiveSince) >= timeoutMs
+                        }
+                        return false 
+                    }
+                    if (allTimeoutMet) {
+                        canTurnOff = true
+                    }
+                }
+            } else {
+                canTurnOff = true 
+            }
+            
+            if (canTurnOff) {
                 light.off()
                 pauseExecution(300)
                 sweptDevices << light.displayName
@@ -1646,7 +1880,7 @@ def executeSweeper(i, isPeriodic) {
     }
     
     if (bypassedDevices && !isPeriodic) {
-        addToHistory("${getTvName(i)}: Sweeper bypassed (Motion Active): ${bypassedDevices.join(', ')}")
+        addToHistory("${getTvName(i)}: Sweeper bypassed (Motion Active or timeout not met): ${bypassedDevices.join(', ')}")
     }
 }
 
@@ -1674,7 +1908,17 @@ def evaluateRoomLights(i) {
         if (settings["enableAcousticMgmt_${i}"]) {
             def noiseSwitches = settings["tvNoiseSwitches_${i}"]
             if (noiseSwitches) {
-                def activeNoise = noiseSwitches.findAll { it.currentValue("switch") == "on" }
+                def isSickMode = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                def apId = settings["airPurifier_${i}"]?.id
+                
+                def activeNoise = noiseSwitches.findAll { 
+                    if (it.currentValue("switch") != "on") return false
+                    if (isSickMode && apId && it.id == apId) {
+                        addToHistory("${getTvName(i)}: Room Evaluation bypassed for Air Purifier due to active Sick Mode.")
+                        return false
+                    }
+                    return true
+                }
                 if (activeNoise) {
                     addToHistory("${getTvName(i)}: Room Evaluation - Forcing background appliances OFF.")
                     activeNoise.each { 
@@ -1708,14 +1952,22 @@ def evaluateRoomLights(i) {
 def trackUsageStep() {
     if (isSystemPaused()) return
     def rate = settings["elecRate"] ?: 0.14
+    def isGuestMode = settings["globalGuestSwitch"]?.currentValue("switch") == "on"
+    
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def tv = getPrimaryDevice(i)
         if (isTvActuallyOn(tv, i)) {
+            
+            // Poll Telemetry continuously during usage
+            if (settings["tvType_${i}"] == "Roku TV" && getRokuIp(i)) {
+                pollRokuTelemetry(i)
+            }
+            
             def wattage = settings["tvWattage_${i}"] ?: 150
             def costPerMin = (wattage / 1000.0) * rate / 60.0
             def currentApp = "Unknown"
             
-            if (settings["isAvrOnly_${i}"]) {
+             if (settings["isAvrOnly_${i}"]) {
                 def rawInput = tv.currentValue("mediaInputSource") ?: "Unknown"
                 currentApp = getMappedAppName(i, rawInput)
             } else {
@@ -1754,15 +2006,20 @@ def trackUsageStep() {
                     def appMins = (state.appTimeWatched["${i}"][currentApp] ?: 0) + 5
                     state.appTimeWatched["${i}"][currentApp] = appMins
                     
+                    if (!state.globalAppTimeWatched) state.globalAppTimeWatched = [:]
+                    def globalAppMins = (state.globalAppTimeWatched[currentApp] ?: 0) + 5
+                    state.globalAppTimeWatched[currentApp] = globalAppMins
+                    
                     def appLimit = settings["appLimitMins_${i}"]
-                    if (appLimit && appMins >= (appLimit + ext)) {
+                    def minsToEvaluate = settings["enforceGlobalAppLimits"] ? globalAppMins : appMins
+                    
+                    if (!isGuestMode && appLimit && minsToEvaluate >= (appLimit + ext)) {
                         enforceLimitAction(i, "appLimit")
                         limitEnforced = true
                     }
                 }
                 
-                // Enforce TV Limit ONLY if an app limit action wasn't just sent
-                if (!limitEnforced && totalAllowedTv && state.watchTimeToday["${i}"] >= totalAllowedTv) {
+                if (!isGuestMode && !limitEnforced && totalAllowedTv && state.watchTimeToday["${i}"] >= totalAllowedTv) {
                     enforceLimitAction(i, "tvLimit")
                 }
             }
@@ -1780,6 +2037,7 @@ def midnightReset() {
     state.costToday = [:]
     state.appStats = [:]
     state.appTimeWatched = [:]
+    state.globalAppTimeWatched = [:] 
     state.tvTimeExtended = [:]
 }
 
@@ -1802,7 +2060,12 @@ def tvAppHandler(evt) {
         def primary = getPrimaryDevice(i)
         if (primary?.id == deviceId && isTvActuallyOn(primary, i)) {
             def appName = getMappedAppName(i, rawApp)
-            addToHistory("${getTvName(i)}: Content/Input changed to [${appName}].")
+            
+            if (state.lastAppLogged?."${i}" != appName) {
+                addToHistory("${getTvName(i)}: Content/Input changed to [${appName}].")
+                state.lastAppLogged["${i}"] = appName
+                if (settings["tvType_${i}"] == "Roku TV" && getRokuIp(i)) pollRokuTelemetry(i)
+            }
         }
     }
 }
@@ -1830,6 +2093,11 @@ def executeTvTimeout(data) {
     def tv = getPrimaryDevice(i)
     def timeout = settings["motionTimeout_${i}"]
     if (!tv || !timeout || !isTvActuallyOn(tv, i)) return
+    
+    // Final safety check: ensure the sensor is not actively reporting motion right now
+    def motionSensor = settings["motionSensor_${i}"]
+    if (motionSensor && motionSensor.currentValue("motion") == "active") return
+
     def lastMotion = state.lastMotionTime["${i}"] ?: 0
     def now = new Date().time
     if ((now - lastMotion) >= (timeout * 60000) - 2000) {
@@ -1860,7 +2128,7 @@ def morningMotionHandler(evt) {
             
             if (duration) {
                 runIn((duration * 60) + 15, "endMorningRoutine", [data: [tvNum: i], overwrite: false])
-            }
+             }
         }
     }
 }
@@ -1951,37 +2219,45 @@ def finalizeSetChannel(data) {
 
 def contactHandler(evt) {
     if (isSystemPaused() || !settings["enableSafetyMute"]) return
-    if (evt.value == "open") muteActiveTVs()
-    else if (evt.value == "closed") unmuteActiveTVs()
+    if (evt.value == "open") interruptActiveTVs("pause")
+    else if (evt.value == "closed") interruptActiveTVs("play")
 }
 
 def buttonHandler(evt) {
     if (isSystemPaused() || !settings["enableSafetyMute"]) return
-    muteActiveTVs()
+    interruptActiveTVs("pause")
     def muteTime = settings["doorbellMuteTime"] ?: 60
-    runIn(muteTime as Integer, "unmuteActiveTVs", [overwrite: true])
+    runIn(muteTime as Integer, "interruptActiveTVs", [data: [action: "play"], overwrite: true])
 }
 
-def muteActiveTVs() {
+def interruptActiveTVs(actionOrMap) {
+    def act = (actionOrMap instanceof String) ? actionOrMap : actionOrMap.action
+    
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def tv = getPrimaryDevice(i)
         if (isTvActuallyOn(tv, i)) {
-             def audioDevice = getAudioDevice(i)
-            if (audioDevice.hasCommand("mute")) {
-                audioDevice.mute()
+            def tvType = settings["tvType_${i}"]
+            def currentApp = tv.currentValue("application")
+            
+            if (tvType == "Roku TV") {
+                if (currentApp == "Antenna TV") {
+                    if (tv.currentValue("liveTvPauseActive") == "true") {
+                        if (act == "pause" && tv.hasCommand("pause")) tv.pause()
+                        else if (act == "play" && tv.hasCommand("play")) tv.play()
+                    } else {
+                        def audioDevice = getAudioDevice(i)
+                        if (act == "pause" && audioDevice.hasCommand("mute")) audioDevice.mute()
+                        else if (act == "play" && audioDevice.hasCommand("unmute")) audioDevice.unmute()
+                    }
+                } else {
+                    if (act == "pause" && tv.hasCommand("pause")) tv.pause()
+                    else if (act == "play" && tv.hasCommand("play")) tv.play()
+                }
                 pauseExecution(300)
-            }
-        }
-    }
-}
-
-def unmuteActiveTVs() {
-    for (int i = 1; i <= (numTVs as Integer); i++) {
-        def tv = getPrimaryDevice(i)
-        if (isTvActuallyOn(tv, i)) {
-            def audioDevice = getAudioDevice(i)
-            if (audioDevice.hasCommand("unmute")) {
-                audioDevice.unmute()
+            } else {
+                def audioDevice = getAudioDevice(i)
+                if (act == "pause" && audioDevice.hasCommand("mute")) audioDevice.mute()
+                else if (act == "play" && audioDevice.hasCommand("unmute")) audioDevice.unmute()
                 pauseExecution(300)
             }
         }
@@ -2042,7 +2318,63 @@ def appButtonHandler(btn) {
         log.info "Evaluate Room triggered for TV ${tNum}"
         evaluateRoomLights(tNum)
         
-    // --- NEW: Time Limit Buttons ---
+    // --- INSTANT SYNC AUTO-CAPTURE BUTTONS ---
+    } else if (btn?.startsWith("captureFavoriteBtn_")) {
+        def parts = btn.split("_")
+        def tNum = parts[1] as Integer
+        def sNum = parts[2] as Integer
+        
+        def ip = getRokuIp(tNum)
+        if (ip) {
+            try {
+                // Instantly poll the endpoints synchronously for immediate response
+                def appParams = [uri: "http://${ip}:8060/query/active-app", timeout: 3]
+                def mediaParams = [uri: "http://${ip}:8060/query/media-player", timeout: 3]
+                
+                def appId = null
+                def contentId = ""
+                def mediaType = "movie"
+                
+                httpGet(appParams) { resp ->
+                    def match = resp.data.toString() =~ /<app id="([^"]+)"/
+                    if (match) appId = match[0][1]
+                }
+                
+                if (appId) {
+                    try {
+                        httpGet(mediaParams) { resp ->
+                            def cMatch = resp.data.toString() =~ /contentId="([^"]+)"/
+                            if (cMatch) contentId = cMatch[0][1]
+                            def mMatch = resp.data.toString() =~ /mediaType="([^"]+)"/
+                            if (mMatch) mediaType = mMatch[0][1]
+                        }
+                    } catch(e) { log.debug "No specific media data found, defaulting to app only." }
+                    
+                    app.updateSetting("showIsDeepLink_${tNum}_${sNum}", [type: "bool", value: true])
+                    app.updateSetting("favoriteAppId_${tNum}_${sNum}", [type: "text", value: appId])
+                    app.updateSetting("favoriteContentId_${tNum}_${sNum}", [type: "text", value: contentId])
+                    app.updateSetting("favoriteMediaType_${tNum}_${sNum}", [type: "text", value: mediaType])
+                    
+                    if (!state.rokuTelemetry) state.rokuTelemetry = [:]
+                    if (!state.rokuTelemetry["${tNum}"]) state.rokuTelemetry["${tNum}"] = [:]
+                    state.rokuTelemetry["${tNum}"].appId = appId
+                    state.rokuTelemetry["${tNum}"].contentId = contentId
+                    state.rokuTelemetry["${tNum}"].mediaType = mediaType
+                    
+                    addToHistory("${getTvName(tNum)}: Successfully captured live stream to Favorite Slot ${sNum} (App: ${appId}).")
+                    log.info "Captured Deep Link for TV ${tNum} Slot ${sNum}: App=${appId}, Content=${contentId}, Type=${mediaType}"
+                } else {
+                    addToHistory("${getTvName(tNum)}: Capture failed. No app currently active.")
+                }
+            } catch(e) {
+                addToHistory("${getTvName(tNum)}: Capture failed. Could not communicate with Roku at ${ip}.")
+                log.error "Capture error: ${e}"
+            }
+        } else {
+             addToHistory("${getTvName(tNum)}: Capture failed. Roku IP not found or configured.")
+        }
+
+    // --- Time Limit Buttons ---
     } else if (btn?.startsWith("clearAppsBtn_")) {
         def tNum = btn.split("_")[1] as Integer
          state.savedApps["${tNum}"] = []
@@ -2053,7 +2385,7 @@ def appButtonHandler(btn) {
         if (appToDelete) {
             def saved = state.savedApps["${tNum}"] ?: []
             saved.remove(appToDelete)
-             state.savedApps["${tNum}"] = saved
+            state.savedApps["${tNum}"] = saved
             log.info "Deleted app ${appToDelete} for TV ${tNum}"
         }
     } else if (btn?.startsWith("extend30mBtn_")) {
@@ -2087,12 +2419,12 @@ def stopMorningRoutineTest(i) {
 }
 
 def testHvacBoost(i, isRunning) {
-    def tv = getPrimaryDevice(i)
+    def tv = settings["tv_${i}"]
     if (isTvActuallyOn(tv, i)) {
-         def audioDevice = getAudioDevice(i)
+        def audioDevice = settings["tvAudio_${i}"] ?: tv
         def boostAmount = settings["hvacVolumeBoost_${i}"] ?: 3
         def tvName = getTvName(i)
-       
+        
         if (isRunning && !state.hvacVolumeBoosted["${i}"]) {
             addToHistory("${tvName}: TEST HVAC started. Boosting volume by ${boostAmount} ticks.")
             state.hvacVolumeBoosted["${i}"] = true
@@ -2108,60 +2440,5 @@ def testHvacBoost(i, isRunning) {
         }
     } else {
         addToHistory("${getTvName(i)}: TEST HVAC ignored (TV is not ON).")
-    }
-}
-
-// --- Cozy Mode Dynamic Weather Sync ---
-
-def cozyOvercastHandler(evt) {
-    if (isSystemPaused()) return
-    def deviceId = evt.device.id
-    def isOvercast = evt.value == "on"
-    
-    for (int i = 1; i <= (numTVs as Integer); i++) {
-        if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]?.id == deviceId) {
-            def tvName = getTvName(i)
-            def tv = getPrimaryDevice(i)
-            
-            // Only adjust lights if the TV is actively running
-            if (isTvActuallyOn(tv, i)) {
-                def blinds = settings["cozyBlinds_${i}"]
-                def blindsClosed = blinds && blinds.any { it.currentValue("contact") == "closed" }
-                def cozyLights = settings["cozyLights_${i}"]
-               
-                // Turn OFF if Overcast clears AND blinds are open
-                if (!isOvercast && !blindsClosed && state.cozyLightsActivatedByTv["${i}"]) {
-                    addToHistory("${tvName}: Overcast cleared. Turning OFF Cozy Mode lights.")
-                    if (cozyLights) {
-                        cozyLights.each { 
-                            it.off()
-                            pauseExecution(300)
-                        }
-                    }
-                    state.cozyLightsActivatedByTv["${i}"] = false
-                } 
-                // Turn ON if it becomes Overcast while already watching TV
-                else if (isOvercast && !state.cozyLightsActivatedByTv["${i}"]) {
-                    def targetLevel = settings["cozyLevel_${i}"] ?: 50
-                    def ctVarName = settings["cozyCTVar_${i}"]
-                    def targetCT = null
-                    
-                    if (ctVarName) {
-                        def hubVar = getGlobalVar(ctVarName)
-                        if (hubVar != null && hubVar.value != null) targetCT = hubVar.value.toInteger()
-                    }
-                    
-                    addToHistory("${tvName}: Weather became overcast. Activating Cozy Mode lights.")
-                    if (cozyLights) {
-                        cozyLights.each { bulb ->
-                            if (targetCT != null && bulb.hasCommand("setColorTemperature")) bulb.setColorTemperature(targetCT, targetLevel)
-                            else bulb.setLevel(targetLevel)
-                            pauseExecution(300)
-                        }
-                    }
-                    state.cozyLightsActivatedByTv["${i}"] = true
-                }
-            }
-        }
     }
 }
