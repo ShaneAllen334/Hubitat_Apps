@@ -1,5 +1,5 @@
 /**
- * Advanced Sleep Metrics 
+ * Advanced Sleep Metrics (BMS Edition)
  *
  * Author: ShaneAllen
  */
@@ -126,7 +126,10 @@ def mainPage() {
                                 timers << "<span style='color: #1abc9c; font-size: 11px;'>Verifying: ${Math.max(0, rem.toInteger())}m</span>"
                             }
                             if (isSettlingLockActive(uId)) {
-                                def lockStart = state.inBedTime?."${uId}" ?: now
+                                def inBed = state.inBedTime?."${uId}" ?: 0
+                                def resumed = state.sessionResumedTime?."${uId}" ?: 0
+                                def lockStart = Math.max(inBed as Long, resumed as Long)
+                                if (lockStart == 0) lockStart = now
                                 def rem = (((settlingLockTime ?: 30) * 60000) - (now - lockStart)) / 60000
                                 timers << "<span style='color: #e74c3c; font-size: 11px;'>🔒 Locked: ${Math.max(0, rem.toInteger())}m</span>"
                             }
@@ -333,6 +336,7 @@ def ensureStateMaps() {
     if (state.pendingRoomMotions == null) state.pendingRoomMotions = [:]
     if (state.pendingAntiBounceWait == null) state.pendingAntiBounceWait = [:]
     if (state.dailyStats == null) state.dailyStats = [:]
+    if (state.sessionResumedTime == null) state.sessionResumedTime = [:]
 }
 
 def initialize() {
@@ -356,6 +360,7 @@ def initialize() {
             if (!state.sequenceStep1Time["${uId}"]) state.sequenceStep1Time["${uId}"] = 0
             if (!state.pendingRoomMotions["${uId}"]) state.pendingRoomMotions["${uId}"] = 0
             if (!state.pendingAntiBounceWait["${uId}"]) state.pendingAntiBounceWait["${uId}"] = 0
+            if (!state.sessionResumedTime["${uId}"]) state.sessionResumedTime["${uId}"] = 0
             if (!state.dailyStats["${uId}"]) state.dailyStats["${uId}"] = []
             if (!state.telemetry["${uId}"] || !state.telemetry["${uId}"].today) {
                 state.telemetry["${uId}"] = [today: [vibrations: 0, falseExits: 0, crossTalkAvoided: 0, inBedMotionsIgnored: 0, ghostBlocks: 0, settlingLockBlocks: 0], overall: [vibrations: 0, falseExits: 0, crossTalkAvoided: 0, inBedMotionsIgnored: 0, ghostBlocks: 0, settlingLockBlocks: 0]]
@@ -514,9 +519,11 @@ def vibrationHandler(evt) {
                     addToHistory("SESSION STITCHED: ${uName} returned within window (Away: ${awayMins}m). Continuing previous session.")
                 }
                 state.sleepState["${uId}"] = "IN BED"
+                state.sessionResumedTime["${uId}"] = now // Grants fresh settling lock upon return
                 updateVirtualSwitch(uId, "on")
             } else {
                 state.inBedTime["${uId}"] = now
+                state.sessionResumedTime["${uId}"] = 0
                 state.movements["${uId}"] = 0
                 state.asleepTime["${uId}"] = null
                 state.bathroomTrips["${uId}"] = 0
@@ -617,10 +624,12 @@ def verifyBedEntry(data) {
 def isSettlingLockActive(uId) {
     if (!settings["enableSettlingLock"]) return false
     def inBed = state.inBedTime?."${uId}" ?: 0
-    if (inBed == 0) return false
+    def resumed = state.sessionResumedTime?."${uId}" ?: 0
+    def lockStart = Math.max(inBed as Long, resumed as Long)
+    if (lockStart == 0) return false
     def lockMillis = (settings["settlingLockTime"] != null ? settings["settlingLockTime"].toInteger() : 30) * 60000
     def now = new Date().time
-    return (now - inBed) < lockMillis
+    return (now - lockStart) < lockMillis
 }
 
 // --- DYNAMIC STITCHING LOGIC ---
@@ -1218,6 +1227,7 @@ def forceResetAllBeds() {
             state.pendingEntryTime["${uId}"] = 0
             state.pendingRoomMotions["${uId}"] = 0
             state.pendingAntiBounceWait["${uId}"] = 0
+            state.sessionResumedTime["${uId}"] = 0
             updateVirtualSwitch(uId, "off")
             updateInfoDevice(uId)
         }
@@ -1279,6 +1289,7 @@ def middayReset() {
                 state.pendingEntryTime["${uId}"] = 0
                 state.pendingRoomMotions["${uId}"] = 0
                 state.pendingAntiBounceWait["${uId}"] = 0
+                state.sessionResumedTime["${uId}"] = 0
                 updateVirtualSwitch(uId, "off") 
                 state.sleepState["${uId}"] = "EMPTY" 
                 updateInfoDevice(uId)
