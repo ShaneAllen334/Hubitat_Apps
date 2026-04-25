@@ -22,7 +22,7 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced Ceiling Fan Climate Control</b>", install: true, uninstall: true) {
   
-        section("<b>Live Fan Dashboard</b>") {
+        section("<b>Live Fan Dashboard</b>", hideable: true, hidden: false) {
             input "btnRefresh", "button", title: "🔄 Refresh Data"
             input "btnResetOverrides", "button", title: "❌ Clear All Overrides"
             input "btnClearROI", "button", title: "🗑️ Clear ROI Data"
@@ -260,41 +260,41 @@ def mainPage() {
             }
         }
 
-        section("<b>Action History</b>") {
+        section("<b>Action History</b>", hideable: true, hidden: true) {
             input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
             if (state.actionHistory) {
                 paragraph "<span style='font-size: 13px; font-family: monospace;'>${state.actionHistory.join("<br>")}</span>"
             }
         }
 
-        section("<b>App Control</b>") {
+        section("<b>App Control</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> A master kill-switch to quickly bypass all app automation.</div>"
             input "appEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch (Optional)", required: false, multiple: false
         }
         
-        section("<b>Energy & ROI Tracking (Global)</b>") {
+        section("<b>Energy & ROI Tracking (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Automatically tracks power consumption and translates it into daily cost and savings estimates. Savings are calculated when a room is vacant and the fan turns off.</div>"
             input "energyRate", "decimal", title: 'Electricity Rate ($ per kWh)', required: true, defaultValue: 0.12
             input "calcSavingsAtMax", "bool", title: "Calculate Savings using Max Watts (Assumes the fan would have been left on High)", defaultValue: true
         }
 
-        section("<b>Manual Overrides (Global)</b>") {
+        section("<b>Manual Overrides (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Pauses automation for a specific room if a user manually changes the fan via a wall switch or dashboard. Resets automatically upon Mode change or after the defined timeout.</div>"
             input "overrideTimeoutHours", "decimal", title: "Global Manual Override Timeout (Hours)", required: true, defaultValue: 2.0
         }
         
-        section("<b>Smart Lighting Support (Global)</b>") {
+        section("<b>Smart Lighting Support (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Ensures your Master Power Relays stay ON (even if the fan blades are OFF) so your ceiling fan light kits continue to work when the room needs artificial light.</div>"
             input "overcastSwitch", "capability.switch", title: "Virtual Overcast Switch (Keeps relays ON if Occupied)", required: false
         }
 
-        section("<b>3-Speed Fan Thresholds (Global)</b>") {
+        section("<b>3-Speed Fan Thresholds (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Defines how far the room temperature must rise above the target setpoint to trigger each multi-speed fan step. (Anything above your Medium threshold will trigger High speed).</div>"
             input "thresholdLow", "decimal", title: "Delta for Low Speed (+°F)", required: true, defaultValue: 1.5
             input "thresholdMed", "decimal", title: "Delta for Medium Speed (+°F)", required: true, defaultValue: 3.0
         }
         
-        section("<b>5-Speed Fan Thresholds (Global)</b>") {
+        section("<b>5-Speed Fan Thresholds (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Specific temperature thresholds for 5-Speed fans.</div>"
             input "t5S1", "decimal", title: "Speed 1: Low (+°F)", required: true, defaultValue: 0.5
             input "t5S2", "decimal", title: "Speed 2: Med-Low (+°F)", required: true, defaultValue: 1.0
@@ -303,7 +303,7 @@ def mainPage() {
             paragraph "<i>Anything above Speed 4 triggers Speed 5 (High).</i>"
         }
 
-        section("<b>6-Speed Fan Thresholds (Global)</b>") {
+        section("<b>6-Speed Fan Thresholds (Global)</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Specific temperature thresholds for 6-Speed fans.</div>"
             input "t6S1", "decimal", title: "Speed 1: Very-Low (+°F)", required: true, defaultValue: 0.5
             input "t6S2", "decimal", title: "Speed 2: Low (+°F)", required: true, defaultValue: 1.0
@@ -313,27 +313,28 @@ def mainPage() {
             paragraph "<i>Anything above Speed 5 triggers Speed 6 (High).</i>"
         }
 
-        section("<b>RF / Bond Fan Reliability & Relays</b>") {
+        section("<b>RF / Bond Fan Reliability & Relays</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> <b>1) Stepping:</b> Prevents RF fans from missing commands.<br><b>2) Wiggle:</b> Hourly routine to drop the fan one speed and bump it back.<br><b>3) Spin-Down:</b> Delays power relay shutoff until blades stop. <i>(These settings only apply to Multi-Speed fans)</i></div>"
             input "rfStepDelay", "number", title: "Seconds between sequential fan speed steps", required: true, defaultValue: 3
             input "enableWiggle", "bool", title: "Enable Hourly Fan Wiggle (Self-Healing)", defaultValue: true
             input "relaySpinDown", "number", title: "Seconds to wait before killing power relay (Spin-down delay)", required: true, defaultValue: 15
         }
 
-        section("<b>Dynamic Occupancy</b>") {
+        section("<b>Dynamic Occupancy</b>", hideable: true, hidden: true) {
             input "enableOccupancy", "bool", title: "<b>Enable Dynamic Occupancy</b>", defaultValue: false, submitOnChange: true
             if (enableOccupancy) {
                 paragraph "<i>Occupancy timeouts are now configured individually inside each room's settings. Default is 30 minutes.</i>"
             }
         }
 
-        section("<b>Operating Modes Configuration</b>") {
+        section("<b>Operating Modes Configuration</b>", hideable: true, hidden: true) {
             input "awayModes", "mode", title: "<b>Away Modes</b> (All fans step to OFF)", multiple: true, required: false
             input "homeModes", "mode", title: "<b>Active Modes</b> (Home, Morning, Arrival - Uses Room Setpoints)", multiple: true, required: false
             input "nightModes", "mode", title: "<b>Good Night Modes</b> (Turns off fans unless GN override is active)", multiple: true, required: false
+            input "clearOverrideModes", "mode", title: "<b>Override Reset Modes</b> (Modes that will automatically clear manual overrides. Leave blank to clear on ALL mode changes)", multiple: true, required: false
         }
 
-        section("<b>Room Fan Configurations</b>") {
+        section("<b>Room Fan Configurations</b>", hideable: false, hidden: false) {
             paragraph "<div style='font-size:13px; color:#555;'>Click on a room below to expand its settings.</div>"
         }
 
@@ -552,9 +553,9 @@ def buttonHandler(evt) {
                     } else {
                         logAction("Button ${btnNum} ${eventType} on ${evt.device.displayName}. Setting ${zName} to ${requestedSpeed.toUpperCase()}.")
                         
-                        // Pass specific button timeout length
+                        // Pass specific button timeout length and explicit event type
                         def customHrs = settings["z${i}BtnOverrideHours"]
-                        setManualOverride(i, "Button ${requestedSpeed.toUpperCase()}", customHrs)
+                        setManualOverride(i, "Button ${requestedSpeed.toUpperCase()}", customHrs, "button")
                         
                         if (fanType == "switch") {
                             def sDev = settings["z${i}SimpleFan"]
@@ -705,9 +706,15 @@ def appButtonHandler(btn) {
 }
 
 def modeChangeHandler(evt) {
-    logAction("Location mode changed to: ${evt.value}. Clearing all manual overrides.")
-    state.overrideUntil = [:]
-    state.ignoreOverridesUntil = [:]
+    def clearModes = clearOverrideModes ? (clearOverrideModes as List) : []
+
+    if (!clearOverrideModes || clearModes.contains(evt.value)) {
+        logAction("Location mode changed to: ${evt.value}. Clearing all manual overrides.")
+        state.overrideUntil = [:]
+        state.ignoreOverridesUntil = [:]
+    } else {
+        logAction("Location mode changed to: ${evt.value}. (Overrides preserved per settings)")
+    }
     
     def isNight = nightModes ? (nightModes as List).contains(evt.value) : false
     
@@ -789,7 +796,7 @@ def setExpectedState(roomId, type, val) {
     }
 }
 
-def setManualOverride(roomId, actionVal, customHours = null) {
+def setManualOverride(roomId, actionVal, customHours = null, evtType = "unknown") {
     def timeoutHrs = customHours != null ? customHours.toBigDecimal() : (settings.overrideTimeoutHours != null ? settings.overrideTimeoutHours.toBigDecimal() : 2.0)
     def ms = (timeoutHrs * 3600000).toLong()
     
@@ -797,7 +804,8 @@ def setManualOverride(roomId, actionVal, customHours = null) {
     map[roomId.toString()] = now() + ms
     state.overrideUntil = map
     
-    logAction("Manual override detected for Room ${roomId} (Set to ${actionVal.toUpperCase()}). Automation paused for ${timeoutHrs} hours.")
+    def typeStr = evtType ? " [Event: ${evtType}]" : ""
+    logAction("Manual override detected for Room ${roomId} (Set to ${actionVal.toUpperCase()}).${typeStr} Automation paused for ${timeoutHrs} hours.")
     
     def delaySecs = (ms / 1000).toInteger() + 5
     runIn(delaySecs, "evaluateFans", [overwrite: false])
@@ -821,6 +829,9 @@ def isOverrideActive(roomId) {
 }
 
 def fanSpeedHandler(evt) {
+    // Prevent duplicate/stale polling events from triggering a false override
+    if (evt.isStateChange == false) return
+
     def roomId = getRoomIdFromDevice(evt.device.id, "fan")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSpeed"]
@@ -854,7 +865,7 @@ def fanSpeedHandler(evt) {
             state["z${roomId}ExpectedSpeed"] = evt.value
             state["z${roomId}Target"] = evt.value
         } else {
-            setManualOverride(roomId, evt.value)
+            setManualOverride(roomId, evt.value, null, evt.type)
             if (state["z${roomId}Target"] != evt.value) updateWiggleReset(roomId)
             state["z${roomId}ExpectedSpeed"] = evt.value
             state["z${roomId}Target"] = evt.value 
@@ -863,6 +874,8 @@ def fanSpeedHandler(evt) {
 }
 
 def simpleFanHandler(evt) {
+    if (evt.isStateChange == false) return
+
     def roomId = getRoomIdFromDevice(evt.device.id, "simpleFan")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedSimple"]
@@ -877,12 +890,14 @@ def simpleFanHandler(evt) {
     if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
         state["z${roomId}ExpectedSimple"] = evt.value
     } else {
-        setManualOverride(roomId, "Relay ${evt.value}")
+        setManualOverride(roomId, "Relay ${evt.value}", null, evt.type)
         state["z${roomId}ExpectedSimple"] = evt.value
     }
 }
 
 def powerRelayHandler(evt) {
+    if (evt.isStateChange == false) return
+
     def roomId = getRoomIdFromDevice(evt.device.id, "power")
     if (!roomId) return
     def expected = state["z${roomId}ExpectedPower"]
@@ -897,7 +912,7 @@ def powerRelayHandler(evt) {
     if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
         state["z${roomId}ExpectedPower"] = evt.value
     } else {
-        setManualOverride(roomId, "Master Relay ${evt.value}")
+        setManualOverride(roomId, "Master Relay ${evt.value}", null, evt.type)
         state["z${roomId}ExpectedPower"] = evt.value
     }
 }
