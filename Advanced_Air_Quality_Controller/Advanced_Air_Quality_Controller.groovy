@@ -1,5 +1,7 @@
 /**
  * Advanced Air Quality Controller
+ *
+ * Author: ShaneAllen
  */
 
 definition(
@@ -210,7 +212,7 @@ def mainPage() {
 
         section("<b>App Control & Main Hardware</b>", hideable: true, hidden: true) {
             input "appEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch (Optional)", required: false, multiple: false
-            input "notifyDevice", "capability.notification", title: "Notification Device for Alerts", required: false, multiple: true
+            input "notifyDevice", "capability.notification", title: "Notification Device for General App Alerts", required: false, multiple: true
             input "costPerKwh", "decimal", title: "Utility Rate (&#36; per kWh)", required: false, defaultValue: 0.15
             
             paragraph "<hr>"
@@ -236,6 +238,65 @@ def mainPage() {
             input "targetAQI", "number", title: "Target AQI (Turn ON if any room goes above this)", required: false, defaultValue: 50
         }
 
+        section("<b>Audio Announcements & Global Alerts</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'>Announce globally when the air quality indoors or outdoors reaches a harmful level.</div>"
+            
+            input "alertAllowedModes", "mode", title: "Allowed Modes for Alerts (Leave blank for all)", multiple: true, required: false
+
+            input "alertThresholdIndoor", "number", title: "Indoor AQI Alert Threshold", defaultValue: 100, required: false
+            input "alertThresholdOutdoor", "number", title: "Outdoor AQI Alert Threshold", defaultValue: 150, required: false
+            input "sendPushBadAQI", "bool", title: "Send Push Notification on Bad AQI?", defaultValue: false
+
+            paragraph "<b>Return Home Reminders</b>"
+            input "enableReturnReminders", "bool", title: "Send a reminder alert if returning home and AQI is still harmful?", defaultValue: true, submitOnChange: true
+            if (enableReturnReminders) {
+                input "awayNightModes", "mode", title: "Select your 'Away/Night' Modes", multiple: true, required: false
+                input "homeModes", "mode", title: "Select your 'Return/Home' Modes", multiple: true, required: false
+            }
+
+            paragraph "<b>Smart Speakers (TTS)</b>"
+            input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers", multiple: true, required: false
+            input "ttsBadIndoorAQIText", "text", title: "Indoor Bad AQI Announcement Text", defaultValue: "Warning, the indoor air quality has reached poor levels."
+            input "ttsBadOutdoorAQIText", "text", title: "Outdoor Bad AQI Announcement Text", defaultValue: "Warning, the outdoor air quality has reached poor levels."
+            
+            paragraph "<b>Zooz Siren & Chime</b>"
+            input "zoozChimes", "capability.chime", title: "Zooz Chime Devices", multiple: true, required: false, submitOnChange: true
+            if (zoozChimes) {
+                input "zoozSoundBadIndoorAQI", "number", title: "Sound File #: Bad Indoor AQI Warning", required: false
+                input "zoozSoundBadOutdoorAQI", "number", title: "Sound File #: Bad Outdoor AQI Warning", required: false
+                input "testZoozIndoorBtn", "button", title: "Test Indoor AQI Sound (Bypass Motion)"
+                input "testZoozOutdoorBtn", "button", title: "Test Outdoor AQI Sound (Bypass Motion)"
+            }
+        }
+
+        section("<b>Global Audio Room Mapping</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'><b>1-to-1 Motion Filtering:</b> Map your speakers to motion sensors here. When the system attempts to play audio on a speaker or chime, it will automatically intercept the command and check if that specific device's room has recent motion. (Devices not mapped here will play unconditionally).</div>"
+            
+            input "audioMotionTimeout", "number", title: "Audio Motion Timeout (Minutes)", defaultValue: 5, description: "Time to wait after motion stops before muting announcements."
+            input "alwaysOnRoom", "enum", title: "Select ONE room to ALWAYS announce (Ignores motion)", options: ["1": "Room 1", "2": "Room 2", "3": "Room 3", "4": "Room 4", "5": "Room 5", "6": "Room 6", "7": "Room 7"], required: false
+            
+            input "room1Speaker", "capability.actuator", title: "Room 1 Speaker/Chime(s)", required: false, multiple: true
+            input "room1Motion", "capability.motionSensor", title: "Room 1 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room2Speaker", "capability.actuator", title: "Room 2 Speaker/Chime(s)", required: false, multiple: true
+            input "room2Motion", "capability.motionSensor", title: "Room 2 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room3Speaker", "capability.actuator", title: "Room 3 Speaker/Chime(s)", required: false, multiple: true
+            input "room3Motion", "capability.motionSensor", title: "Room 3 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room4Speaker", "capability.actuator", title: "Room 4 Speaker/Chime(s)", required: false, multiple: true
+            input "room4Motion", "capability.motionSensor", title: "Room 4 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room5Speaker", "capability.actuator", title: "Room 5 Speaker/Chime(s)", required: false, multiple: true
+            input "room5Motion", "capability.motionSensor", title: "Room 5 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room6Speaker", "capability.actuator", title: "Room 6 Speaker/Chime(s)", required: false, multiple: true
+            input "room6Motion", "capability.motionSensor", title: "Room 6 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room7Speaker", "capability.actuator", title: "Room 7 Speaker/Chime(s)", required: false, multiple: true
+            input "room7Motion", "capability.motionSensor", title: "Room 7 Motion Sensor(s)", required: false, multiple: true
+        }
+
         section("<b>Operating Modes & Alerts</b>", hideable: true, hidden: true) {
             input "allowedModes", "mode", title: "Allowed Modes (Leave blank to run 24/7)", multiple: true, required: false
             input "quietModes", "mode", title: "Quiet Modes (Prevents purifiers from turning on UNLESS emergency override is met)", multiple: true, required: false
@@ -244,6 +305,10 @@ def mainPage() {
             
             paragraph "<b>Routine Cycling</b>"
             input "enableHourlyCycle", "bool", title: "Enable Hourly Cycle (Turns ON for 1 hour, OFF for 1 hour when idle & AQI is good)", required: false, defaultValue: false
+            
+            paragraph "<b>Health & Sick Mode</b>"
+            input "sickModeSwitch", "capability.switch", title: "Sick Mode Virtual Switches (Forces 24/7 Operation)", multiple: true, required: false
+            input "sickAwayModes", "mode", title: "Away Modes (Pauses Sick Mode automatically when vacant)", multiple: true, required: false
         }
 
         section("<b>External Monitoring & Pollen</b>", hideable: true, hidden: true) {
@@ -311,6 +376,11 @@ def mainPage() {
 def installed() { logInfo("Installed"); initialize() }
 def updated() { logInfo("Updated"); unsubscribe(); unschedule(); initialize() }
 
+def systemEventHandler(evt) {
+    // Bundles rapid-fire events from multiple sensor attributes into a single execution
+    runIn(2, "evaluateSystem", [overwrite: true])
+}
+
 def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     if (!state.purifierStarts) state.purifierStarts = [:]
@@ -321,38 +391,56 @@ def initialize() {
     
     if (!state.emergencyStartTimes) state.emergencyStartTimes = [:]
     if (!state.emergencyAlertSent) state.emergencyAlertSent = [:]
+    
+    // Reset global alerting locks on initialize
+    if (state.outdoorInAlarm == null) state.outdoorInAlarm = false
+    if (state.indoorInAlarm == null) state.indoorInAlarm = false
+    state.currentMode = location.mode
+    
     state.currentReason = "System Initialized"
     
-    if (appEnableSwitch) subscribe(appEnableSwitch, "switch", evaluateSystem)
+    if (appEnableSwitch) subscribe(appEnableSwitch, "switch", "systemEventHandler")
+    if (sickModeSwitch) subscribe(sickModeSwitch, "switch", "systemEventHandler")
     subscribe(location, "mode", modeChangeHandler)
     
     if (outdoorAQI) {
-        subscribe(outdoorAQI, "airQualityIndex", evaluateSystem)
-        subscribe(outdoorAQI, "aqi", evaluateSystem)
-        subscribe(outdoorAQI, "pm25", evaluateSystem)
+        subscribe(outdoorAQI, "airQualityIndex", "systemEventHandler")
+        subscribe(outdoorAQI, "aqi", "systemEventHandler")
+        subscribe(outdoorAQI, "pm25", "systemEventHandler")
     }
     
     if (isWholeHouse) {
         if (indoorAQI) {
-            subscribe(indoorAQI, "airQualityIndex", evaluateSystem)
-            subscribe(indoorAQI, "aqi", evaluateSystem)
-            subscribe(indoorAQI, "pm25", evaluateSystem)
+            subscribe(indoorAQI, "airQualityIndex", "systemEventHandler")
+            subscribe(indoorAQI, "aqi", "systemEventHandler")
+            subscribe(indoorAQI, "pm25", "systemEventHandler")
         }
-        if (mainTriggerSwitch) subscribe(mainTriggerSwitch, "switch", evaluateSystem)
-        if (mainPreventSwitch) subscribe(mainPreventSwitch, "switch", evaluateSystem)
+        if (mainTriggerSwitch) subscribe(mainTriggerSwitch, "switch", "systemEventHandler")
+        if (mainPreventSwitch) subscribe(mainPreventSwitch, "switch", "systemEventHandler")
+        if (mainPurifier) subscribe(mainPurifier, "switch", "systemEventHandler") // Enforce Sick Mode
     }
     
     for (int i = 1; i <= 12; i++) {
         if (settings["enableZ${i}"]) {
             if (settings["z${i}AQI"]) {
-                subscribe(settings["z${i}AQI"], "airQualityIndex", evaluateSystem)
-                subscribe(settings["z${i}AQI"], "aqi", evaluateSystem)
-                subscribe(settings["z${i}AQI"], "pm25", evaluateSystem)
+                subscribe(settings["z${i}AQI"], "airQualityIndex", "systemEventHandler")
+                subscribe(settings["z${i}AQI"], "aqi", "systemEventHandler")
+                subscribe(settings["z${i}AQI"], "pm25", "systemEventHandler")
             }
-            if (settings["z${i}PreventSwitch"]) subscribe(settings["z${i}PreventSwitch"], "switch", evaluateSystem)
-            if (!isWholeHouse && settings["z${i}TriggerSwitch"]) subscribe(settings["z${i}TriggerSwitch"], "switch", evaluateSystem)
+            if (settings["z${i}PreventSwitch"]) subscribe(settings["z${i}PreventSwitch"], "switch", "systemEventHandler")
+            if (!isWholeHouse && settings["z${i}TriggerSwitch"]) subscribe(settings["z${i}TriggerSwitch"], "switch", "systemEventHandler")
+            if (!isWholeHouse && settings["z${i}Purifier"]) subscribe(settings["z${i}Purifier"], "switch", "systemEventHandler") // Enforce Sick Mode
         }
     }
+    
+    // Subscribe to Audio Room Motion
+    if (settings.room1Motion) subscribe(settings.room1Motion, "motion.active", "room1MotionHandler")
+    if (settings.room2Motion) subscribe(settings.room2Motion, "motion.active", "room2MotionHandler")
+    if (settings.room3Motion) subscribe(settings.room3Motion, "motion.active", "room3MotionHandler")
+    if (settings.room4Motion) subscribe(settings.room4Motion, "motion.active", "room4MotionHandler")
+    if (settings.room5Motion) subscribe(settings.room5Motion, "motion.active", "room5MotionHandler")
+    if (settings.room6Motion) subscribe(settings.room6Motion, "motion.active", "room6MotionHandler")
+    if (settings.room7Motion) subscribe(settings.room7Motion, "motion.active", "room7MotionHandler")
     
     if (enablePollen && zipCode) {
         schedule("0 0 8 * * ?", fetchPollenData) 
@@ -367,6 +455,132 @@ def initialize() {
     logAction("App Initialized. Logic Engine Ready.")
     evaluateSystem()
 }
+
+// ------------------------------------------------------------------------------
+// AUDIO & 1-TO-1 MOTION HELPER ENGINE
+// ------------------------------------------------------------------------------
+
+def room1MotionHandler(evt) { state.lastMotionRoom1 = now() }
+def room2MotionHandler(evt) { state.lastMotionRoom2 = now() }
+def room3MotionHandler(evt) { state.lastMotionRoom3 = now() }
+def room4MotionHandler(evt) { state.lastMotionRoom4 = now() }
+def room5MotionHandler(evt) { state.lastMotionRoom5 = now() }
+def room6MotionHandler(evt) { state.lastMotionRoom6 = now() }
+def room7MotionHandler(evt) { state.lastMotionRoom7 = now() }
+
+def isSpeakerMotionActive(speaker) {
+    boolean isMapped = false
+    boolean hasMotion = false
+    
+    for (int i = 1; i <= 7; i++) {
+        def mappedSpeaker = settings["room${i}Speaker"]
+        if (mappedSpeaker) {
+            def mappedList = mappedSpeaker instanceof List ? mappedSpeaker : [mappedSpeaker]
+            if (mappedList.any { it.id == speaker.id }) {
+                isMapped = true
+                
+                // 1. Check Always On Room
+                if (settings.alwaysOnRoom && settings.alwaysOnRoom.toString() == i.toString()) {
+                    hasMotion = true
+                }
+                
+                // 2. Evaluate Standard Motion
+                if (!hasMotion) {
+                    def motion = settings["room${i}Motion"]
+                    if (!motion) {
+                        hasMotion = true // Mapped, but no sensor to restrict it
+                    } else {
+                        def mList = motion instanceof List ? motion : [motion]
+                        if (mList.any { it?.currentValue("motion") == "active" }) {
+                            state."lastMotionRoom${i}" = now()
+                            hasMotion = true
+                        } else {
+                            def lastTime = state."lastMotionRoom${i}"
+                            if (lastTime) {
+                                long timeoutMillis = (settings.audioMotionTimeout ?: 5) * 60 * 1000
+                                if ((now() - lastTime) <= timeoutMillis) {
+                                    hasMotion = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!isMapped) return true // Unmapped speakers play unconditionally
+    return hasMotion
+}
+
+def playTTS(speakers, msg) {
+    if (!speakers || !msg) return
+    def devList = speakers instanceof List ? speakers : [speakers]
+    devList.each { dev ->
+        if (isSpeakerMotionActive(dev)) {
+            try { 
+                dev.speak(msg) 
+                logInfo("Played TTS on ${dev.displayName}: ${msg}")
+            } catch (e) { log.error "Failed to play TTS: ${e}" }
+        } else {
+            logInfo("Skipping TTS on ${dev.displayName}: No recent motion.")
+        }
+    }
+}
+
+def playZoozChime(soundNum, bypassMotion = false) {
+    if (!settings.zoozChimes || soundNum == null) return
+    
+    def isNumeric = soundNum.toString().isNumber()
+    def trackNum = isNumeric ? soundNum.toString().toInteger() : null
+
+    int playCount = 0
+    settings.zoozChimes.each { chime ->
+        if (bypassMotion || isSpeakerMotionActive(chime)) {
+            if (playCount > 0) pauseExecution(1000)
+            try {
+                if (chime.hasCommand("playSound") && trackNum != null) {
+                    chime.playSound(trackNum)
+                } else if (chime.hasCommand("playTrack")) {
+                    chime.playTrack(soundNum.toString())
+                } else if (chime.hasCommand("chime") && trackNum != null) {
+                    chime.chime(trackNum)
+                } else {
+                    log.error "${chime.displayName} does not support standard audio commands."
+                }
+                playCount++
+            } catch (e) {
+                log.error "${chime.displayName} failed to play sound: ${e.message ?: e}"
+            }
+        } else {
+            logInfo("Skipping Zooz Chime on ${chime.displayName}: No recent motion.")
+        }
+    }
+}
+
+def triggerBadAQIAlert(reasonMsg, ttsText, zoozSound) {
+    if (alertAllowedModes && !(alertAllowedModes as List).contains(location.mode)) {
+        logInfo("Skipping alert '${reasonMsg}': Restricted by Mode settings.")
+        return
+    }
+
+    if (sendPushBadAQI) {
+        sendAlert(reasonMsg)
+    } else {
+        logAction("AUDIO ALERT TRIGGERED: ${reasonMsg}")
+    }
+
+    if (ttsSpeakers && ttsText) {
+        playTTS(ttsSpeakers, ttsText)
+    }
+    if (zoozChimes && zoozSound != null) {
+        playZoozChime(zoozSound)
+    }
+}
+
+// ------------------------------------------------------------------------------
+// APPLICATION LOGIC
+// ------------------------------------------------------------------------------
 
 def appButtonHandler(btn) {
     if (btn == "testPollen") {
@@ -389,6 +603,12 @@ def appButtonHandler(btn) {
             state.filterAlertSent?.remove(dev.id)
             logAction("Zone ${zNum} Filter reset to 100%.")
         }
+    } else if (btn == "testZoozIndoorBtn") {
+        logAction("Testing Zooz Indoor AQI Notification (Bypassing Motion)")
+        playZoozChime(zoozSoundBadIndoorAQI, true)
+    } else if (btn == "testZoozOutdoorBtn") {
+        logAction("Testing Zooz Outdoor AQI Notification (Bypassing Motion)")
+        playZoozChime(zoozSoundBadOutdoorAQI, true)
     }
 }
 
@@ -404,6 +624,12 @@ String getHumanReadableStatus() {
     if (appEnableSwitch && appEnableSwitch.currentValue("switch") == "off") return "The application is disabled via the Master Switch."
     if (allowedModes && !(allowedModes as List).contains(location.mode)) return "<span style='color:orange;'><b>App Disabled by Mode</b></span>"
     
+    def isSickModeActive = sickModeSwitch ? sickModeSwitch.any { it.currentValue("switch") == "on" } : false
+    def isSickAway = sickAwayModes ? (sickAwayModes as List).contains(location.mode) : false
+
+    if (isSickModeActive && isSickAway) return "<span style='color:orange;'><b>Sick Mode Paused:</b></span> System is in Away Mode."
+    if (isSickModeActive && !isSickAway) return "<span style='color:red;'><b>Sick Mode Active:</b></span> Purifiers are locked ON for Health Priority."
+
     def isQuiet = quietModes ? (quietModes as List).contains(location.mode) : false
     def pollenVal = (state.localPollen != null && state.localPollen != "Error/Unavailable") ? state.localPollen.toBigDecimal() : 0.0
     def isPollenContinuous = (enablePollen && continuousPollen && pollenVal >= (continuousPollenThreshold ?: 7.0))
@@ -414,7 +640,43 @@ String getHumanReadableStatus() {
     return "Monitoring actively. System is enforcing Target AQI requirements."
 }
 
-def modeChangeHandler(evt) { evaluateSystem() }
+def modeChangeHandler(evt) { 
+    def oldMode = state.currentMode ?: location.mode
+    def newMode = evt.value
+    state.currentMode = newMode
+    
+    if (enableReturnReminders && awayNightModes && homeModes) {
+        def awayList = awayNightModes instanceof List ? awayNightModes : [awayNightModes]
+        def homeList = homeModes instanceof List ? homeModes : [homeModes]
+        
+        if (awayList.contains(oldMode) && homeList.contains(newMode)) {
+            if (state.outdoorInAlarm || state.indoorInAlarm) {
+                logAction("User returned home during an active AQI alarm. Scheduling 15-minute reminder.")
+                runIn(15 * 60, "returnHomeReminder")
+            }
+        }
+    }
+    evaluateSystem() 
+}
+
+def returnHomeReminder() {
+    if (state.outdoorInAlarm) {
+        def currentOutAQI = getAQI(outdoorAQI) ?: 0
+        triggerBadAQIAlert("Welcome back. Reminder: Outdoor AQI is still harmful (${currentOutAQI}).", ttsBadOutdoorAQIText, zoozSoundBadOutdoorAQI)
+    }
+    if (state.indoorInAlarm) {
+        def mainIndoorAQIVal = isWholeHouse ? (getAQI(indoorAQI) ?: 0) : 0
+        def highestZoneAQI = 0
+        for (int i = 1; i <= 12; i++) {
+            if (settings["enableZ${i}"] && settings["z${i}AQI"]) {
+                def aqiVal = getAQI(settings["z${i}AQI"])
+                if (aqiVal != null && aqiVal > highestZoneAQI) highestZoneAQI = aqiVal
+            }
+        }
+        def maxIndoorAQI = isWholeHouse ? Math.max(mainIndoorAQIVal, highestZoneAQI) : highestZoneAQI
+        triggerBadAQIAlert("Welcome back. Reminder: Indoor AQI is still harmful (${maxIndoorAQI}).", ttsBadIndoorAQIText, zoozSoundBadIndoorAQI)
+    }
+}
 
 def sendAlert(msg) {
     if (notifyDevice) notifyDevice.deviceNotification("AQI Alert: ${msg}")
@@ -518,6 +780,10 @@ def evaluateSystem(evt = null) {
     }
 
     // 2. BASELINE CALCULATIONS
+    def isSickModeActive = sickModeSwitch ? sickModeSwitch.any { it.currentValue("switch") == "on" } : false
+    def isSickAway = sickAwayModes ? (sickAwayModes as List).contains(location.mode) : false
+    def forceSickMode = isSickModeActive && !isSickAway
+
     def isQuiet = quietModes ? (quietModes as List).contains(location.mode) : false
     def baseTarget = targetAQI ?: 50
     def pollenVal = (state.localPollen != null && state.localPollen != "Error/Unavailable") ? state.localPollen.toBigDecimal() : 0.0
@@ -555,11 +821,17 @@ def evaluateSystem(evt = null) {
             def emergencyQ = settings["z${i}OverrideLevel"] ?: 100
             
             // Core Need Check
-            if (isQuiet) { if (aqiVal >= (quietOverrideAQI ?: 150)) zNeedsIt = true } 
-            else if (aqiVal > baseTarget || isPollenContinuous) zNeedsIt = true
+            def isForcedOn = false
+            def isSickModeForced = forceSickMode
+
+            if (isSickModeForced) {
+                zNeedsIt = true
+                isForcedOn = true
+            } else if (isQuiet) { 
+                if (aqiVal >= (quietOverrideAQI ?: 150)) zNeedsIt = true 
+            } else if (aqiVal > baseTarget || isPollenContinuous) zNeedsIt = true
 
             // Trigger & Scrub Check
-            def isForcedOn = false
             def isScrubbing = false
             if (!isWholeHouse && settings["z${i}TriggerSwitch"]) {
                 if (settings["z${i}TriggerSwitch"].any { it.currentValue("switch") == "on" }) {
@@ -589,7 +861,7 @@ def evaluateSystem(evt = null) {
                 }
             }
             
-            // Alerting Logic
+            // Alerting Logic (Device Notification level)
             if (zNeedsIt && aqiVal >= emergencyQ) {
                 if (!state.emergencyStartTimes?.get("z${i}")) state.emergencyStartTimes["z${i}"] = now()
                 def elapsedMins = (now() - state.emergencyStartTimes.get("z${i}")) / 60000.0
@@ -607,7 +879,7 @@ def evaluateSystem(evt = null) {
                 def pState = settings["z${i}Purifier"].currentValue("switch")
                 if (zNeedsIt && pState != "on") {
                     controlPurifier(settings["z${i}Purifier"], "on", aqiVal)
-                    logAction("BMS Command -> Turned ON ${zName} Purifier (AQI: ${aqiVal}${isScrubbing ? ' | Scrubbing' : ''})")
+                    logAction("BMS Command -> Turned ON ${zName} Purifier (AQI: ${aqiVal}${isScrubbing ? ' | Scrubbing' : ''}${isSickModeForced ? ' | Sick Mode' : ''})")
                 } else if (!zNeedsIt && pState != "off") {
                     controlPurifier(settings["z${i}Purifier"], "off", aqiVal)
                     logAction("BMS Command -> Turned OFF ${zName} Purifier (AQI: ${aqiVal})")
@@ -616,7 +888,8 @@ def evaluateSystem(evt = null) {
 
             if (zNeedsIt) {
                 anyZoneNeedsPurification = true
-                if (isScrubbing) activeZoneReasons << "${zName} (Scrubbing)"
+                if (isSickModeForced) activeZoneReasons << "${zName} (Sick Mode)"
+                else if (isScrubbing) activeZoneReasons << "${zName} (Scrubbing)"
                 else if (isForcedOn) activeZoneReasons << "${zName} (Trigger Switch)"
                 else if (zCycleActive) activeZoneReasons << "${zName} (Hourly Cycle)"
                 else activeZoneReasons << "${zName} (AQI: ${aqiVal})"
@@ -625,8 +898,9 @@ def evaluateSystem(evt = null) {
     }
 
     // 4. MAIN WHOLE HOUSE EVALUATION
+    def mainIndoorAQIVal = isWholeHouse ? (getAQI(indoorAQI) ?: 0) : 0
+    
     if (isWholeHouse && mainPurifier) {
-        def mainIndoorAQIVal = getAQI(indoorAQI) ?: 0
         def isMainForcedOn = false
         def isMainScrubbing = false
         def mainHouseNeedsIt = false
@@ -643,7 +917,10 @@ def evaluateSystem(evt = null) {
         }
         
         // Core Main House Need Check
-        if (isQuiet) { 
+        if (forceSickMode) {
+            mainHouseNeedsIt = true
+            isMainForcedOn = true // Bypasses prevent switch
+        } else if (isQuiet) { 
             if (mainIndoorAQIVal >= (mainOverrideLevel ?: 100)) mainHouseNeedsIt = true 
         } else if (mainIndoorAQIVal > baseTarget || isPollenContinuous) {
             mainHouseNeedsIt = true
@@ -673,7 +950,8 @@ def evaluateSystem(evt = null) {
         // Generate Specific Reason String
         def currentActionReason = "Idle"
         if (mainNeedsIt) {
-            if (isMainScrubbing) currentActionReason = "ON: Main Post-Cleaning Scrubbing Active"
+            if (forceSickMode) currentActionReason = "ON: Health Priority (Sick Mode Active)"
+            else if (isMainScrubbing) currentActionReason = "ON: Main Post-Cleaning Scrubbing Active"
             else if (isMainForcedOn) currentActionReason = "ON: Forced by Main Trigger Switch"
             else if (isQuiet) currentActionReason = "ON: Emergency AQI Override during Quiet Mode"
             else if (isPollenContinuous) currentActionReason = "ON: Continuous Run for High Pollen (${pollenVal})"
@@ -706,7 +984,40 @@ def evaluateSystem(evt = null) {
         }
     } else if (!isWholeHouse) {
         // Detailed Multi-Zone Output
-        state.currentReason = anyZoneNeedsPurification ? "MIXED: Active Zones -> " + activeZoneReasons.join(" | ") : "OFF: All zones satisfied (AQI < Target)."
+        state.currentReason = forceSickMode ? "ON: Health Priority (Sick Mode Active)" : (anyZoneNeedsPurification ? "MIXED: Active Zones -> " + activeZoneReasons.join(" | ") : "OFF: All zones satisfied (AQI < Target).")
+    }
+    
+    // 5. GLOBAL ALERTING & NOTIFICATIONS (Audio/Push)
+    def currentOutAQI = getAQI(outdoorAQI) ?: 0
+    def maxIndoorAQI = isWholeHouse ? Math.max(mainIndoorAQIVal, highestZoneAQI) : highestZoneAQI
+    
+    def outThreshold = alertThresholdOutdoor ?: 150
+    def inThreshold = alertThresholdIndoor ?: 100
+    
+    // Evaluate Outdoor Global Alerts
+    if (alertThresholdOutdoor != null && currentOutAQI >= outThreshold) {
+        if (!state.outdoorInAlarm) {
+            state.outdoorInAlarm = true // Lock immediately
+            triggerBadAQIAlert("Outdoor AQI is harmful (${currentOutAQI}).", ttsBadOutdoorAQIText, zoozSoundBadOutdoorAQI)
+        }
+    } else if (alertThresholdOutdoor != null && currentOutAQI < (outThreshold - 10)) {
+        if (state.outdoorInAlarm) {
+            logInfo("Outdoor AQI dropped below threshold. Clearing alarm state.")
+            state.outdoorInAlarm = false
+        }
+    }
+    
+    // Evaluate Indoor Global Alerts
+    if (alertThresholdIndoor != null && maxIndoorAQI >= inThreshold) {
+        if (!state.indoorInAlarm) {
+            state.indoorInAlarm = true // Lock immediately
+            triggerBadAQIAlert("Indoor AQI is harmful (${maxIndoorAQI}).", ttsBadIndoorAQIText, zoozSoundBadIndoorAQI)
+        }
+    } else if (alertThresholdIndoor != null && maxIndoorAQI < (inThreshold - 10)) {
+        if (state.indoorInAlarm) {
+            logInfo("Indoor AQI dropped below threshold. Clearing alarm state.")
+            state.indoorInAlarm = false
+        }
     }
 }
 
