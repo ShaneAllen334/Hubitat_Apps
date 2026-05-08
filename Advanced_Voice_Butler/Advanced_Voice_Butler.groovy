@@ -2,7 +2,7 @@
  * Advanced Voice Butler
  *
  * Author: ShaneAllen
- *
+ * 
  * Version 1.4
  */
 definition(
@@ -300,7 +300,13 @@ def mainPage() {
                     input "calEventTimeAttr", "text", title: "Event Time Attribute (Epoch)", defaultValue: "eventEpoch", required: true
                 } else {
                     input "calendarUrl", "text", title: "iCal or Google Calendar URL (.ics)", required: true
-                    input "calPollInterval", "enum", title: "Polling Interval", options: ["15 Minutes", "30 Minutes", "1 Hour", "3 Hours"], defaultValue: "1 Hour", submitOnChange: true
+                    input "calSyncMethod", "enum", title: "Sync Method", options: ["Google Apps Script Webhook (Instant)", "Standard .ics Polling (Delayed)"], defaultValue: "Google Apps Script Webhook (Instant)", submitOnChange: true
+                    
+                    if (calSyncMethod == "Standard .ics Polling (Delayed)") {
+                        input "calPollInterval", "enum", title: "Polling Interval", options: ["15 Minutes", "30 Minutes", "1 Hour", "3 Hours"], defaultValue: "1 Hour", submitOnChange: true
+                    } else {
+                        paragraph "<div style='padding:8px; background-color:#d4edda; border:1px solid #c3e6cb; color:#155724; border-radius:4px;'><i><b>Webhook Mode Active:</b> The app is listening for instant pushes from your Google Script. Background polling is disabled.</i></div>"
+                    }
                 }
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "calAlertIntervals", "enum", title: "Warning Intervals", options: ["3 Hours", "2 Hours", "1 Hour", "30 Minutes", "15 Minutes"], multiple: true, required: false
@@ -796,16 +802,22 @@ def initialize() {
         }
     }
     
-    if (settings.enableCalendar) {
+        if (settings.enableCalendar) {
         if (settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice && settings.calEventTimeAttr) {
             subscribe(settings.calendarDevice, settings.calEventTimeAttr, calendarTimeHandler)
         } else if (settings.calendarUrl) {
-            def cInt = settings.calPollInterval ?: "1 Hour"
-            if (cInt == "15 Minutes") runEvery15Minutes("pollCalendars")
-            else if (cInt == "30 Minutes") runEvery30Minutes("pollCalendars")
-            else if (cInt == "3 Hours") runEvery3Hours("pollCalendars")
-            else runEvery1Hour("pollCalendars")
-            pollCalendars()
+            if (settings.calSyncMethod == "Standard .ics Polling (Delayed)") {
+                def cInt = settings.calPollInterval ?: "1 Hour"
+                if (cInt == "15 Minutes") runEvery15Minutes("pollCalendars")
+                else if (cInt == "30 Minutes") runEvery30Minutes("pollCalendars")
+                else if (cInt == "3 Hours") runEvery3Hours("pollCalendars")
+                else runEvery1Hour("pollCalendars")
+                
+                pollCalendars() // Run it immediately on boot
+                log.info "Calendar engine initialized using background .ics polling."
+            } else {
+                log.info "Calendar background polling disabled. Relying strictly on Google Webhook pushes."
+            }
         }
     }
     
@@ -1103,6 +1115,7 @@ def calendarTimeHandler(evt, passedTitle = null) {
         state.nextEventTimeStr = new Date(eventEpoch).format("MMM d 'at' h:mm a", location.timeZone)
         state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
         
+        // 1. Schedule all user-selected warning intervals
         def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
         intervals.each { interval ->
             def offsetMs = 0
@@ -1117,6 +1130,9 @@ def calendarTimeHandler(evt, passedTitle = null) {
                 runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
             }
         }
+        
+        // 2. ALWAYS schedule an alert for the exact moment the event begins
+        runOnce(new Date(eventEpoch), "executeCalendarAlert", [data: [title: title, timeStr: "0 Minutes"], overwrite: false])
     }
 }
 
@@ -1162,8 +1178,17 @@ def executeCalendarAlert(data) {
     def title = data.title
     def timeStr = data.timeStr
     
+    // 1. Enforce Allowed Modes for ALL calendar alerts
     def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
     if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+    
+    // 2. If this is the EXACT start time, enforce the "Someone Must Be Home" rule
+    if (timeStr == "0 Minutes") {
+        if (getPresentUsers().size() == 0) {
+            if (settings.enableDebug) log.debug "CALENDAR ALERT: Suppressed exact start time alert because the house roster shows no one is home."
+            return
+        }
+    }
     
     def smartContext = getSmartEventContext(title)
     if (smartContext.reason) {
@@ -1176,13 +1201,20 @@ def executeCalendarAlert(data) {
     for (int d = 1; d <= 4; d++) { if (settings["calMessage_${d}"]) messages << settings["calMessage_${d}"] }
     if (!messages) messages = getDefaultMessages("Calendar")
     
-    def randomMsg = applyDynamicVars(messages[new Random().nextInt(messages.size())].replace("%event%", title).replace("%time%", timeStr))
+    // 3. Adjust grammar gracefully if the event is starting right now
+    def rawMsg = messages[new Random().nextInt(messages.size())]
+    if (timeStr == "0 Minutes") {
+        rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
+    } else {
+        rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
+    }
+    
+    def randomMsg = applyDynamicVars(rawMsg)
     if (smartContext.text) randomMsg += " " + smartContext.text
     
     executeRoutedTTS(randomMsg, settings.calRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
-    addToHistory("CALENDAR ALERT: Event approaching. Queued: '${randomMsg}'")
+    addToHistory("CALENDAR ALERT: Event approaching/starting. Queued: '${randomMsg}'")
 }
-
 // --- AI HABIT & ANOMALY ENGINE ---
 def updateHabit(String uName, Long epochTime) {
     ensureStateMaps()
