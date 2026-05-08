@@ -1,0 +1,100 @@
+Advanced Voice Butler: Google Integration Guide
+This comprehensive guide details the technical configuration required to bridge the Advanced
+Voice Butler ecosystem with Google Workspace. By utilizing a serverless Google Apps Script,
+the system achieves zero-polling, real-time synchronization for calendar events and priority
+email routing.
+
+Phase 1: Hubitat Cloud Endpoint Preparation
+Before configuring the external script, the Hubitat environment must be authorized to receive
+secure inbound webhooks.
+1. Navigate to the Apps Code section within the Hubitat administrative interface and select
+the Advanced Voice Butler application.
+2. Locate and engage the OAuth configuration protocol.
+3. Select Enable OAuth in App. There is no requirement to define redirect URIs for this
+specific implementation.
+4. Commit the changes by selecting Update.
+5. Access the active Voice Butler application instance via the main Apps menu. Navigate to
+the Live System Dashboard to retrieve the newly generated Cloud Webhook URL. Copy
+the base URL (excluding the specific endpoint paths like /email or /calendar) for use in
+Phase 2.
+
+Phase 2: Gmail Filter and Label Configuration
+Relying on default algorithmic tagging for urgent communications can result in false positives.
+Establishing a dedicated custom label ensures absolute precision for TTS announcements.
+1. Access the primary Gmail interface via a desktop client.
+2. Create a new dedicated label titled Butler-Alert.
+3. Open the advanced search parameters to define the trigger criteria. This can be isolated
+to specific priority senders, critical subject lines, or keyword combinations.
+4. Initialize a new filter from these parameters.
+5. Configure the filter actions to explicitly Apply the label: Butler-Alert to any matching
+inbound communications.
+
+Phase 3: Google Apps Script Deployment
+The serverless function acts as the intermediary, securely pushing verified events from the
+Google ecosystem directly into the Hubitat TTS queue.
+1. Access the Google Apps Script portal and initialize a New Project.
+2. Clear the default workspace and inject the following JavaScript payload. Ensure the
+HUBITAT_BASE_URL constant is updated with the secure endpoint retrieved during Phase
+1.
+// --- ADVANCED VOICE BUTLER BRIDGE ---
+const HUBITAT_BASE_URL = "YOUR_SECURE_HUBITAT_CLOUD_URL_HERE";
+function checkImportantEmails() {
+const threads = GmailApp.search('is:unread label:Butler-Alert', 0, 1);
+if (threads.length > 0) {
+const message = threads[0].getMessages()[0];
+const payload = {
+sender: message.getFrom(),
+subject: message.getSubject(),
+snippet: message.getPlainBody().substring(0, 150) + "..."
+};
+const options = {
+method: 'post',
+contentType: 'application/json',
+payload: JSON.stringify(payload)
+};
+UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), options);
+message.markRead();
+}
+}
+function pushCalendarUpdates() {
+
+const now = new Date();
+const events = CalendarApp.getDefaultCalendar().getEvents(now, new
+Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)));
+if (events.length > 0) {
+const nextEvent = events[0];
+const payload = {
+nextEventTitle: nextEvent.getTitle(),
+nextEventEpoch: nextEvent.getStartTime().getTime()
+};
+const options = {
+method: 'post',
+contentType: 'application/json',
+payload: JSON.stringify(payload)
+};
+UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/calendar?"), options);
+}
+}
+
+Phase 4: Automation Triggers
+The final phase establishes the autonomous execution schedules for the deployed script,
+eliminating the need for manual intervention.
+Target Function Event Source Trigger Type Execution Interval
+
+checkImportantE
+mails
+
+Time-driven Minutes timer Every 5 minutes
+
+Target Function Event Source Trigger Type Execution Interval
+
+pushCalendarUpd
+ates
+
+From calendar Event update Immediate (On
+Change)
+
+Authorization Note
+Upon saving the initial triggers, the Google Workspace environment will request explicit
+authorization to execute these functions. Proceed through the advanced security warnings to
+grant the necessary permissions for inbox read access and outbound network requests.
