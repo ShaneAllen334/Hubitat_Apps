@@ -217,6 +217,10 @@ def mainPage() {
         section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
             input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
+            input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
+            if (enableChime) {
+                input "chimeUrl", "text", title: "Chime Audio File URL (MP3/WAV)", description: "e.g., http://127.0.0.1:8080/local/chime.mp3", required: true
+            }
             input "guestModeSwitch", "capability.switch", title: "Guest Mode Mute Switch", required: false
             input "notificationDevice", "capability.notification", title: "Silent Mode Notification Devices", multiple: true, required: false
             input "ttsTTL", "number", title: "Message Expiration / Time-To-Live (Minutes)", defaultValue: 5, required: false
@@ -800,6 +804,7 @@ def ensureStateMaps() {
     if (state.anomalyAlertedToday == null) state.anomalyAlertedToday = [:]
     if (state.spokenFacts == null) state.spokenFacts = [:]
     if (state.lastOfficeIntercept == null) state.lastOfficeIntercept = 0
+    if (state.reminderCounts == null) state.reminderCounts = [:]
 }
 
 def initialize() {
@@ -829,7 +834,10 @@ def initialize() {
         }
     }
     
-    if (settings.enableMailCheck && settings.mailSwitch) { subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler) }
+    if (settings.enableMailCheck && settings.mailSwitch) { 
+        subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler)
+        subscribe(settings.mailSwitch, "switch.off", mailClearedHandler)
+    }
     if (settings.enableMealTime && settings.mealTimeSwitch) { subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) }
     if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
     if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
@@ -1672,18 +1680,29 @@ def executeTTS(item) {
                 try { spk.setVolume(targetVol as Integer); if (!fastTrack) pauseExecution(1000) else pauseExecution(50) } catch(Exception ve) {}
             }
             
+            // --- OPTION 1: THE THROAT CLEAR CHIME ---
+            if (settings.enableChime && settings.chimeUrl && !fastTrack && spk.hasCommand("playTrack")) {
+                try { spk.playTrack(settings.chimeUrl); pauseExecution(1500) } catch(Exception ce) {}
+            }
+            // ----------------------------------------
+            
             spk.speak(finalMsg)
             
             if (currentVol != null && targetVol != null && currentVol != targetVol) {
-                def delay = Math.max(6, (finalMsg.length() / 12).toInteger() + 4)
+                // UPDATED: Math changed to 10 chars/sec to prevent early volume reset
+                def delay = Math.max(6, (finalMsg.length() / 10).toInteger() + 6)
                 runIn(delay, "restoreVolumeTask", [data: [speakerId: spk.id, oldVol: currentVol], overwrite: false])
             }
         } catch (Exception e) {}
     }
     
-    def speechDuration = Math.max(3, (finalMsg.length() / 12).toInteger()) * 1000
+    // --- UPDATED TIMING MATH ---
+    // Changed math from 12 chars/sec to 10 chars/sec for natural TTS pacing
+    def speechDuration = Math.max(4, (finalMsg.length() / 10).toInteger()) * 1000
+    
     if (mediaToResume.size() > 0) {
-        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 1
+        // Increased the buffer from + 1 second to + 3 seconds
+        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 3
         runIn(resumeDelay, "restoreMediaTask", [data: [resumeList: mediaToResume.collect { [id: it.dev.id, cmd: it.cmd] }], overwrite: false])
     }
     
@@ -1863,7 +1882,8 @@ def executeGenericIntruder(data) {
     def targetVol = settings.intruderVolume != null ? settings.intruderVolume : settings.outdoorVolume
     def rMode = settings.intruderRoutingMode ?: "Outdoor Speaker Only"
     
-    executeRoutedTTS(randomMsg, rMode, settings.globalVolume, targetVol, 1)
+    // Added 'true' at the end to fast-track the alert and skip the chime
+    executeRoutedTTS(randomMsg, rMode, settings.globalVolume, targetVol, 1, true)
     addToHistory("INTRUDER DETERRENT: Generic motion detected. Queued: '${randomMsg}'")
 }
 
@@ -1871,7 +1891,30 @@ def unifiProtectHandler(evt) {
     ensureStateMaps()
     def detectStr = evt.value?.toLowerCase() ?: ""
     if (detectStr == "none" || detectStr == "waiting" || detectStr == "null" || detectStr == "") return
-    if (detectStr.contains("package")) return
+    
+    // --- NEW: SMART PACKAGE CONCIERGE ---
+    if (detectStr.contains("package")) {
+        def debounceMs = 5 * 60000 // 5 minute cooldown for packages
+        def lastPkg = state.lastPackageAlert ?: 0
+        if ((new Date().time - lastPkg) > debounceMs) {
+            state.lastPackageAlert = new Date().time
+            
+            // 1. Thank the driver outside
+            if (outdoorSpeaker) {
+                def outMsg = "Thank you for the delivery. Please leave the package right there."
+                enqueueTTS(outdoorSpeaker, outMsg, settings.outdoorVolume, 2, true)
+            }
+            
+            // 2. Alert the house inside
+            def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
+            executeRoutedTTS(applyDynamicVars(inMsg), "Global Indoor Speaker Only", settings.globalVolume, 0, 2)
+            
+            addToHistory("SMART CAMERA: Package delivery detected and announced.")
+        }
+        return
+    }
+    // ------------------------------------
+    
     if (!canTriggerIntruder()) return
     
     unschedule("executeGenericIntruder")
@@ -1899,7 +1942,9 @@ def unifiProtectHandler(evt) {
 
     def randomMsg = applyDynamicVars(messages[new Random().nextInt(messages.size())])
     def targetVol = settings.intruderVolume != null ? settings.intruderVolume : settings.outdoorVolume
-    executeRoutedTTS(randomMsg, settings.intruderRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, targetVol, 1)
+    
+    // Added 'true' at the end to fast-track the alert and skip the chime
+    executeRoutedTTS(randomMsg, settings.intruderRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, targetVol, 1, true)
 }
 
 // --- BUTLER EVENT TRACKING & REPORTING ---
@@ -2281,12 +2326,24 @@ def arrivalHandler(evt) {
         
         greetingToPlay = applyDynamicVars(greetingToPlay)
         
-        if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
+            if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
             def allowedMail = [settings.mailAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
             if (settings.mailAllowedCustom) allowedMail += settings.mailAllowedCustom.split(',').collect { it.trim().toLowerCase() }
             if (allowedMail.isEmpty() || allowedMail.contains(actualUserName.toLowerCase()) || allowedMail.contains(trackingKey.toLowerCase())) {
                 def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
-                greetingToPlay += " Pardon the reminder, but the mail was delivered at ${mailTimeStr} and still needs to be retrieved."
+                
+                // --- PROGRESSIVE ESCALATION ---
+                def mCount = state.reminderCounts["mail"] ?: 0
+                state.reminderCounts["mail"] = mCount + 1
+                
+                if (mCount == 0) {
+                    greetingToPlay += " Pardon the reminder, but the mail was delivered at ${mailTimeStr} and still needs to be retrieved."
+                } else if (mCount == 1) {
+                    greetingToPlay += " As a gentle follow-up, the mail from ${mailTimeStr} is still waiting to be retrieved."
+                } else {
+                    greetingToPlay += " Please note, the mail remains uncollected."
+                }
+                // ------------------------------
             }
         }
         
@@ -2445,15 +2502,15 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         def agendaEnabled = settings["roomAgendaEnable_${rNum}"]
         def agendaText = settings["roomAgenda${dowString}_${rNum}"]
 
-        if (timeDateEnabled && agendaEnabled && agendaText) {
-            def agendaStr = "The current time is %time% on %date%, and your agenda for today is: ${agendaText}."
+       if (timeDateEnabled && agendaEnabled && agendaText) {
+            def agendaStr = getBridge("agenda") + "The current time is %time% on %date%, and your agenda for today is: ${agendaText}."
             def smartContext = getSmartEventContext(agendaText)
             if (smartContext.text && smartContext.text != "SECRET") agendaStr += " " + smartContext.text
             parts << agendaStr
         } else if (timeDateEnabled) {
             parts << "The current time is %time% on %date%."
         } else if (agendaEnabled && agendaText) {
-            def agendaStr = "Your agenda for today is: ${agendaText}."
+            def agendaStr = getBridge("agenda") + "Your agenda for today is: ${agendaText}."
             def smartContext = getSmartEventContext(agendaText)
             if (smartContext.text && smartContext.text != "SECRET") agendaStr += " " + smartContext.text
             parts << agendaStr
@@ -2476,9 +2533,9 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
 
         if (wDevice && settings["roomWeatherGM_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey) // Passed Room Key
+            def wText = getWeatherReport(wDevice, roomKey) 
             if (wText) {
-                def weatherBlock = wText
+                def weatherBlock = getBridge("weather") + wText
                 if (settings["roomWardrobe_${rNum}"]) {
                     def wardText = getWardrobeAdvice(wDevice)
                     if (wardText) weatherBlock += " " + wardText
@@ -2487,7 +2544,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             }
         } else if (settings["roomWardrobe_${rNum}"] && wDevice) {
             def wardText = getWardrobeAdvice(wDevice)
-            if (wardText) parts << wardText
+            if (wardText) parts << getBridge("weather") + wardText
         }
 
         if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || context.isTest)) {
@@ -2497,7 +2554,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
         if (settings["roomNewsEnable_${rNum}"]) {
             def newsText = getRoomNews(rNum, context.isTest)
-            if (newsText) parts << newsText
+            if (newsText) parts << getBridge("news") + newsText
         }
 
         if (settings["roomKidsMode_${rNum}"]) {
@@ -2575,12 +2632,12 @@ def getBoredomBuster(wDevice) {
 }
 
 def getRoomNews(rNum, isTest) {
-    if (isTest) return "Here is your news briefing. Local sports team wins championship. In other news, weather expected to improve."
+    if (isTest) return "A local sports team wins championship. In other news, weather expected to improve."
     def h = state."roomNewsHeadline_${rNum}"
     if (h && h != "Fetch Error" && h != "") {
         def splitParts = h.split(" / ")
         if (splitParts.size() >= 2) {
-            return "Here is your news briefing. ${splitParts[0]}. In other news, ${splitParts[1]}."
+            return "${splitParts[0]}. In other news, ${splitParts[1]}."
         }
     }
     return ""
@@ -3283,6 +3340,10 @@ def midnightReset() {
     state.awayDoorbellCount = 0
     state.anomalyAlertedToday = [:]
     
+    // --- OPTION 3: PROGRESSIVE ESCALATION RESET ---
+    state.reminderCounts = [:]
+    // ----------------------------------------------
+    
     // 4. QUEUE MAINTENANCE
     state.ttsQueue = []
     state.speakingUntil = 0
@@ -3534,4 +3595,19 @@ def handleGoogleCalendar() {
         if (settings.enableDebug) log.debug "GOOGLE CALENDAR: Multi-Event sync complete. Loaded ${body.events.size()} events into the schedule."
     }
     return [status: "success"]
+}
+
+def getBridge(String type = "general") {
+    def bridges = []
+    if (type == "weather") bridges = ["Looking at the weather,", "For the forecast,", "Outside right now,"]
+    else if (type == "news") bridges = ["Moving on to the news,", "Here are the latest headlines:", "In the news today,"]
+    else if (type == "agenda") bridges = ["Looking at your schedule,", "For your agenda today,", "Checking your calendar,"]
+    else bridges = ["Also,", "Additionally,", "Before I forget,", "One other thing,"]
+    return bridges[new Random().nextInt(bridges.size())] + " "
+}
+
+def mailClearedHandler(evt) {
+    ensureStateMaps()
+    state.reminderCounts["mail"] = 0
+    addToHistory("SYSTEM: Mail retrieved. Escalation counter reset.")
 }
