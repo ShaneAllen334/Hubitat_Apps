@@ -2,8 +2,8 @@
  * Advanced Voice Butler
  *
  * Author: ShaneAllen
- * 
- * Version 1.4
+ *
+ * Version 1.5
  */
 definition(
     name: "Advanced Voice Butler",
@@ -52,7 +52,6 @@ def mainPage() {
     
     dynamicPage(name: "mainPage", title: "Voice Butler Configuration", install: true, uninstall: true) {
        
-        
         def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
         
         def lockUsers = []
@@ -248,7 +247,7 @@ def mainPage() {
             input "arrivalIndoorSpeaker", "bool", title: "Play Third-Party Arrival Notice to Rest of House?", defaultValue: false, submitOnChange: true
             if (arrivalIndoorSpeaker) {
                 input "indoorArrivalMessage", "text", title: "Indoor Notice Message", defaultValue: "%name% has arrived home.", required: false
-                input "arrivalIndoorVolume", "number", title: "Indoor Notice Volume (0-100)", required: false
+                input "indoorArrivalVolume", "number", title: "Indoor Notice Volume (0-100)", required: false
                 input "arrivalNoticeRoutingMode", "enum", title: "Notice Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
             }
             
@@ -278,6 +277,17 @@ def mainPage() {
                         input "lockUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Lock Code Name", options: lockUsers, required: false
                         for (int m = 1; m <= 10; m++) { input "lockGreeting_${i}_${m}", "text", title: "User ${i} Welcome Message ${m}", required: false, defaultValue: getDefaultMessages("Arrival")[m-1] }
                     }
+                }
+            }
+            
+            // --- NEW: DEDICATED PRESENCE SENSOR LINKING ENGINE ---
+            paragraph "<hr>"
+            paragraph "<b>Presence Sensor & Lock Linking</b><br><i>Link your presence sensors to your lock code names. If a sensor arrives but the door isn't unlocked within 10 minutes, the Butler will automatically mark them home. Works with both Automatic and Manual modes!</i>"
+            input "numPresenceMappings", "number", title: "Number of Presence Sensor Links (0-10)", defaultValue: 0, submitOnChange: true
+            if (numPresenceMappings > 0) {
+                for (int i = 1; i <= numPresenceMappings; i++) {
+                    input "presenceUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Name (Matches Lock Code)", options: lockUsers, required: false
+                    input "fallbackPresence_${i}", "capability.presenceSensor", title: "User ${i} Presence Sensor", required: false
                 }
             }
 
@@ -321,18 +331,29 @@ def mainPage() {
             }
         }
 
-        
-        section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
+            section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
             paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
             input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
+            
             if (enableEmailAlerts) {
+                input "enableDeliveryTracking", "bool", title: "Announce Package Deliveries?", defaultValue: true
+                input "enableOomaVoicemail", "bool", title: "Announce Ooma Voicemails?", defaultValue: true
+                
                 input "emailAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "emailRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
                 input "emailVolume", "number", title: "Announcement Volume (0-100)", required: false
                 input "emailPrefix", "text", title: "Announcement Prefix", defaultValue: "%interruption%, you have just received an important email from", required: false
                 
                 def emailPrev = applyDynamicVars((settings.emailPrefix ?: "%interruption%, you have just received an important email from") + " John Doe. The subject is: Project Update.")
-                paragraph "<div style='${prevStyle}'><b>Live Email Preview:</b><br><i>${emailPrev}</i></div>"
+                def pkgPrev = applyDynamicVars("%interruption%, I am seeing a delivery notification from Amazon. The subject is: Your package is out for delivery. You have a package arriving today.")
+                def oomaPrev = applyDynamicVars("%interruption%, you have a new Ooma voicemail from John Doe, received at 2:00 PM. The message says: Please call me back when you get this.")
+                
+                def previewHtml = "<div style='${prevStyle}'><b>Live Email Preview:</b><br><i>${emailPrev}</i>"
+                if (settings.enableDeliveryTracking) previewHtml += "<br><br><b>Live Package Preview:</b><br><i>${pkgPrev}</i>"
+                if (settings.enableOomaVoicemail) previewHtml += "<br><br><b>Live Ooma Preview:</b><br><i>${oomaPrev}</i>"
+                previewHtml += "</div>"
+                
+                paragraph previewHtml
             }
         }
         
@@ -557,6 +578,14 @@ def mainPage() {
             if (enableHolidays) { input "holidayMessage", "text", title: "Holiday Message Format", defaultValue: "By the way, don't forget today is %holiday%!" }
             
             paragraph "<hr>"
+            // --- MOTHER'S & FATHER'S DAY SETTINGS ---
+            input "enableParentsDay", "bool", title: "Enable Parent's Day Reminders? (Call Mom/Dad)", defaultValue: false, submitOnChange: true
+            if (enableParentsDay) {
+                input "mothersDayUser", "enum", title: "Who should be reminded to call Mom on Mother's Day?", options: lockUsers, multiple: true, required: false
+                input "fathersDayUser", "enum", title: "Who should be reminded to call Dad on Father's Day?", options: lockUsers, multiple: true, required: false
+            }
+
+            paragraph "<hr>"
             input "enableAnniversary", "bool", title: "Enable House Anniversary Greetings?", defaultValue: false, submitOnChange: true
             if (enableAnniversary) {
                 def months = ["01":"January", "02":"February", "03":"March", "04":"April", "05":"May", "06":"June", "07":"July", "08":"August", "09":"September", "10":"October", "11":"November", "12":"December"]
@@ -573,12 +602,18 @@ def mainPage() {
             if (numBirthdays > 0) {
                 input "enableBdayCountdown", "bool", title: "Enable Birthday Month Countdown (Kids)?", defaultValue: false, submitOnChange: true
                 if (enableBdayCountdown) { input "bdayCountdownMsg", "text", title: "Countdown Format", defaultValue: "By the way, you only have %days% days until your birthday!" }
+                
                 def months = ["01":"January", "02":"February", "03":"March", "04":"April", "05":"May", "06":"June", "07":"July", "08":"August", "09":"September", "10":"October", "11":"November", "12":"December"]
+                
                 for (int i = 1; i <= (numBirthdays as Integer); i++) {
+                    paragraph "<b>Birthday Profile ${i}</b>"
                     input "bdayName_${i}", "text", title: "Person's Name ${i}", required: false
                     input "bdayMonth_${i}", "enum", title: "Birth Month ${i}", options: months, required: false
                     input "bdayDay_${i}", "number", title: "Birth Day ${i} (1-31)", range: "1..31", required: false
+                    // NEW: Select who needs to be present for the reminder to trigger
+                    input "bdayNotifyUser_${i}", "enum", title: "Who needs to be home for this reminder?", options: lockUsers, multiple: true, required: false
                 }
+                
                 input "bdayMsgArrival", "text", title: "Arrival Append", defaultValue: "Happy Birthday %name%!"
                 input "bdayMsgMorning", "text", title: "Good Morning Append", defaultValue: "Happy Birthday %name%! I hope you have a fantastic day."
             }
@@ -602,6 +637,7 @@ def mainPage() {
             input "enableDebug", "bool", title: "Enable Debug Logging?", defaultValue: false
             input "resetModes", "mode", title: "Reset ALL Arrivals on Mode Change", multiple: true, required: false
             input "btnForceReset", "button", title: "🔄 Force Reset All Daily Statuses"
+            input "awayIgnoreModes", "mode", title: "Ignore 'Away' Triggers during these Modes", description: "Prevent being marked away during Night or Sleep modes.", multiple: true, required: false
         }
     }
 }
@@ -771,6 +807,15 @@ def initialize() {
     }
     
     if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
+
+    // --- Arrival Sensor Fallback Subscriptions ---
+    def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
+    for (int i = 1; i <= numPres; i++) {
+        if (settings["fallbackPresence_${i}"]) {
+            subscribe(settings["fallbackPresence_${i}"], "presence.present", presenceFallbackHandler)
+        }
+    }
+    
     if (settings.enableMailCheck && settings.mailSwitch) { subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler) }
     if (settings.enableMealTime && settings.mealTimeSwitch) { subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) }
     if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
@@ -802,7 +847,7 @@ def initialize() {
         }
     }
     
-        if (settings.enableCalendar) {
+    if (settings.enableCalendar) {
         if (settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice && settings.calEventTimeAttr) {
             subscribe(settings.calendarDevice, settings.calEventTimeAttr, calendarTimeHandler)
         } else if (settings.calendarUrl) {
@@ -968,31 +1013,31 @@ def scheduleNextNewsPoll() {
 def pollBreakingNews() {
     scheduleNextNewsPoll() 
     if (!settings.enableBreakingNews || !settings.breakingNewsFeed) return
+    
     try {
-        def params = [
-            uri: settings.breakingNewsFeed,
-            headers: ["User-Agent": "Mozilla/5.0 (Hubitat; AdvancedVoiceButler)"],
-            timeout: 10,
-            textParser: true
-        ]
-        asynchttpGet("breakingNewsResponseHandler", params)
-    } catch (Exception e) { log.error "Failed to fetch Breaking News feed: ${e}" }
-}
-
-def breakingNewsResponseHandler(response, data) {
-    if (response.hasError() || response.status != 200) return
-    try {
-        def rss = parseRssResponse(response)
-        def items = rss?.channel?.item
-        if (items && items.size() > 0) {
-            def topHeadline = items[0].title.text().trim().replace("&", "and").replace("\"", "")
-            if (state.lastBreakingHeadline != "" && state.lastBreakingHeadline != topHeadline) {
-                if (settings.enableDebug) log.debug "SYSTEM: New breaking news detected: '${topHeadline}'"
-                executeBreakingNews(topHeadline)
+        // Switched to robust httpGet to properly handle NPR redirects
+        httpGet([uri: settings.breakingNewsFeed, headers: ["User-Agent": "Mozilla/5.0 (Hubitat; AdvancedVoiceButler)"], timeout: 10, textParser: true]) { resp ->
+            if (resp.status == 200 && resp.data) {
+                def rss = parseRssResponse(resp)
+                def items = rss?.channel?.item
+                if (items && items.size() > 0) {
+                    def topHeadline = items[0].title.text().trim().replace("&", "and").replace("\"", "")
+                    
+                    // Only broadcast if we have a baseline AND the headline is brand new
+                    if (state.lastBreakingHeadline != "" && state.lastBreakingHeadline != topHeadline) {
+                        if (settings.enableDebug) log.debug "SYSTEM: New breaking news detected: '${topHeadline}'"
+                        executeBreakingNews(topHeadline)
+                    } else if (state.lastBreakingHeadline == "") {
+                        if (settings.enableDebug) log.debug "SYSTEM: Breaking News baseline set. Waiting for next new headline."
+                    }
+                    
+                    state.lastBreakingHeadline = topHeadline
+                }
             }
-            state.lastBreakingHeadline = topHeadline
         }
-    } catch (Exception e) { log.warn "Voice Butler: Breaking News XML Parse Error - ${e}" }
+    } catch (Exception e) { 
+        log.warn "Voice Butler: Breaking News Fetch Error - ${e}" 
+    }
 }
 
 def executeBreakingNews(headline, isTest = false) {
@@ -1016,6 +1061,11 @@ def executeBreakingNews(headline, isTest = false) {
 // --- CALENDAR & SECRECY LOGIC ---
 def pollCalendars() {
     if (settings.calendarType == "Built-In Device (Advanced Calendar App)") return
+    
+    // FIX: Prevent background polling and the Force Sync button from wiping the 
+    // dashboard if you are actively using the Google Apps Script Webhook!
+    if (settings.calSyncMethod == "Google Apps Script Webhook (Instant)") return 
+    
     if (!settings.calendarUrl) return
     try {
         asynchttpGet("iCalResponseHandler", [uri: settings.calendarUrl, headers: ["User-Agent": "Mozilla/5.0"], timeout: 15])
@@ -1921,6 +1971,49 @@ def visitorHandler(evt) {
 }
 
 // --- ARRIVAL & RESET LOGIC ---
+
+def presenceFallbackHandler(evt) {
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
+    for (int i = 1; i <= numPres; i++) {
+        if (settings["fallbackPresence_${i}"]?.id == deviceId) {
+            def uName = settings["presenceUserName_${i}"]
+            if (uName && !state.hasArrivedToday[uName]) {
+                // Schedule the 10-minute (600 second) check
+                runIn(600, "checkMissedArrival", [data: [user: uName, deviceId: deviceId, mapIdx: i], overwrite: false])
+                addToHistory("SYSTEM: Presence detected for ${uName}. Starting 10-minute fallback timer.")
+            }
+        }
+    }
+}
+
+def checkMissedArrival(data) {
+    ensureStateMaps()
+    def uName = data.user
+    def i = data.mapIdx
+    
+    if (!state.hasArrivedToday[uName]) {
+        def sensorStillPresent = false
+        if (settings["fallbackPresence_${i}"]?.id == data.deviceId && settings["fallbackPresence_${i}"].currentValue("presence") == "present") {
+            sensorStillPresent = true
+        }
+        
+        if (sensorStillPresent) {
+            state.hasArrivedToday[uName] = true
+            state.resetReasons[uName] = "Presence Sensor Fallback (>10m)"
+            
+            def msg = "Pardon me, I didn't catch you coming through the door. Welcome home, ${applyAlias(uName)}."
+            def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
+            def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
+            def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
+            
+            executeRoutedTTS(applyDynamicVars(msg), rMode, indoorTargetVol, outdoorTargetVol, 3)
+            addToHistory("FALLBACK ARRIVAL: Missed door unlock. Auto-arrived ${uName}.")
+        }
+    }
+}
+
 def arrivalHandler(evt) {
     ensureStateMaps()
     def desc = evt.descriptionText ?: ""
@@ -2095,11 +2188,16 @@ def modeChangeHandler(evt) {
 
 def awaySwitchOnHandler(evt) {
     ensureStateMaps()
+    // Safety Gate: Skip if current mode is restricted
+    if (settings.awayIgnoreModes?.contains(location.mode)) return
+
     for (int i = 1; i <= (settings.numAwayMappings ? settings.numAwayMappings as Integer : 0); i++) {
         if (settings["awayMappingSwitch_${i}"]?.id == evt.device.id) {
             def uName = settings["awayMappingUser_${i}"]
             if (uName && state.hasArrivedToday[uName]) {
-                state.lastDepartureTime[uName] = new Date().time; state.hasArrivedToday.remove(uName); state.resetReasons[uName] = "Away Switch Turned ON"
+                state.lastDepartureTime[uName] = new Date().time
+                state.hasArrivedToday.remove(uName)
+                state.resetReasons[uName] = "Away Switch ON"
             }
         }
     }
@@ -2108,11 +2206,16 @@ def awaySwitchOnHandler(evt) {
 def awayPresenceHandler(evt) {
     if (evt.value != "not present") return
     ensureStateMaps()
+    // Safety Gate: Skip if current mode is restricted
+    if (settings.awayIgnoreModes?.contains(location.mode)) return
+
     for (int i = 1; i <= (settings.numAwayMappings ? settings.numAwayMappings as Integer : 0); i++) {
         if (settings["awayMappingPresence_${i}"]?.id == evt.device.id) {
             def uName = settings["awayMappingUser_${i}"]
             if (uName && state.hasArrivedToday[uName]) {
-                state.lastDepartureTime[uName] = new Date().time; state.hasArrivedToday.remove(uName); state.resetReasons[uName] = "Presence Sensor Departed"
+                state.lastDepartureTime[uName] = new Date().time
+                state.hasArrivedToday.remove(uName)
+                state.resetReasons[uName] = "Presence Sensor Departed"
             }
         }
     }
@@ -2133,7 +2236,7 @@ def scheduledAwayCheck() {
 // --- CENTRAL GREETING BUILDER ---
 def buildRoomGreeting(rNum, type, context = [:]) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
-    def occName = settings["roomOccupantName_${rNum}"] ?: "Guest"
+    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: "Guest")
     def displayOccName = applyAlias(occName)
     def parts = []
 
@@ -2412,43 +2515,38 @@ def goodNightOnHandler(evt) {
             if (hour >= 0 && hour < 7) return 
 
             def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
-            def occName = settings["roomOccupantName_${i}"] ?: "Guest"
-            def occupants = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-            def missedCount = 0
-            def totalOcc = occupants.size()
             
+            def occName = settings["roomOccupantName_${i}"] ?: "Guest"
+            // Intelligently split names (e.g. "Shane and Leanne" -> ["Shane", "Leanne"])
+            def occupants = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+            
+            def presentOccupants = []
+            def missingPersons = []
+            
+            // Cross-reference room occupants with the live House Roster (Presence/Locks)
             occupants.each { occ ->
                 def checkKey = state.hasArrivedToday?.keySet()?.find { it.equalsIgnoreCase(occ) } ?: occ
-                if (!state.hasArrivedToday[checkKey]) {
-                    missedCount++
-                    state.hasArrivedToday[checkKey] = true
-                    state.resetReasons[checkKey] = "Missed entry. Checked in via Good Night Switch."
+                if (state.hasArrivedToday[checkKey] == true) {
+                    presentOccupants << occ
+                } else {
+                    missingPersons << occ
                 }
             }
             
-            def apologyPrefix = ""
-            if (missedCount > 0) {
-                if (totalOcc > 1 && missedCount < totalOcc) apologyPrefix = "Pardon me, I did not realize one of you had returned earlier. Welcome home."
-                else apologyPrefix = "Pardon me, I did not catch your arrival earlier. Welcome home."
+            // Build the dynamic greeting name (e.g., just "Shane" instead of "Shane and Leanne")
+            def dynamicOccName = occName
+            if (presentOccupants.size() > 0) {
+                dynamicOccName = presentOccupants.join(" and ")
             }
             
             def curfewPrefix = ""
-            if (settings["roomCurfewWarning_${i}"]) {
-                def missingPersons = []
-                state.hasDepartedToday.each { depUser, hasDeparted ->
-                    if (hasDeparted) {
-                        def checkKey = state.hasArrivedToday?.keySet()?.find { it.equalsIgnoreCase(depUser) } ?: depUser
-                        if (!state.hasArrivedToday[checkKey]) missingPersons << depUser
-                    }
-                }
-                if (missingPersons.size() > 0) {
-                    if (missingPersons.size() == 1) curfewPrefix = "Please note that ${missingPersons[0]} has not yet returned."
-                    else if (missingPersons.size() == 2) curfewPrefix = "Please note that ${missingPersons[0]} and ${missingPersons[1]} have not yet returned."
-                    else { def lastMissing = missingPersons.pop(); curfewPrefix = "Please note that ${missingPersons.join(', ')}, and ${lastMissing} have not yet returned." }
-                }
+            if (settings["roomCurfewWarning_${i}"] && missingPersons.size() > 0) {
+                if (missingPersons.size() == 1) curfewPrefix = "Please note that ${missingPersons[0]} has not yet returned."
+                else if (missingPersons.size() == 2) curfewPrefix = "Please note that ${missingPersons[0]} and ${missingPersons[1]} have not yet returned."
+                else { def lastMissing = missingPersons.pop(); curfewPrefix = "Please note that ${missingPersons.join(', ')}, and ${lastMissing} have not yet returned." }
             }
             
-            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i, apology: apologyPrefix, curfew: curfewPrefix], overwrite: false])
+            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i, dynamicName: dynamicOccName, curfew: curfewPrefix], overwrite: false])
             return 
         }
     }
@@ -2466,6 +2564,8 @@ def executeGoodNightSequence(data) {
     if (targetSpeaker) {
         def finalMsg = buildRoomGreeting(rNum, "Good Night", data)
         enqueueTTS(targetSpeaker, finalMsg, targetVol, 4)
+        // FIX: Added history logging for Good Night
+        addToHistory("ROOM GREETING: Good Night sequence triggered for ${rName}. Queued: '${finalMsg}'")
     }
 }
 
@@ -2505,6 +2605,8 @@ def executeGoodMorningSequence(data) {
     if (targetSpeaker) {
         def finalMsg = buildRoomGreeting(rNum, "Good Morning", data)
         enqueueTTS(targetSpeaker, finalMsg, targetVol, 4)
+        // FIX: Added history logging for Good Morning
+        addToHistory("ROOM GREETING: Good Morning sequence triggered for ${rName}. Queued: '${finalMsg}'")
     }
 }
 
@@ -2841,9 +2943,14 @@ def getAnniversaryMessage(String type, String userName = "") {
     return ""
 }
 
-def getBirthdayMessage(String name, String type) {
-    if (!name || !settings.numBirthdays) return ""
-    
+/**
+ * Advanced Voice Butler
+ *
+ * Author: ShaneAllen
+ */
+
+def getBirthdayMessage(String arrivingUser, String type) {
+    if (!settings.numBirthdays) return ""
     def numBdays = settings.numBirthdays as Integer
     if (numBdays <= 0) return ""
     
@@ -2853,69 +2960,87 @@ def getBirthdayMessage(String name, String type) {
 
     for (int i = 1; i <= numBdays; i++) {
         def bName = settings["bdayName_${i}"]
-        def bMonth = settings["bdayMonth_${i}"]
-        def bDay = settings["bdayDay_${i}"]
+        def bMonthInt = settings["bdayMonth_${i}"]?.toInteger()
+        def bDayInt = settings["bdayDay_${i}"]?.toInteger()
+        def notifyUser = settings["bdayNotifyUser_${i}"]
         
-        if (bName && bMonth && bDay && bName.toLowerCase() == name.toLowerCase()) {
-            def bMonthInt = bMonth.toInteger()
-            def bDayInt = bDay.toInteger()
-            
-            if (bMonthInt == currentMonth) {
-                if (bDayInt == currentDay) {
-                    def rawMsg = ""
-                    switch(type) {
-                        case "Arrival": rawMsg = settings.bdayMsgArrival ?: "Happy Birthday %name%!"; break
-                        case "Departure": rawMsg = settings.bdayMsgDeparture ?: "Have a wonderful birthday today, %name%!"; break
-                        case "Morning": rawMsg = settings.bdayMsgMorning ?: "Happy Birthday %name%! I hope you have a fantastic day."; break
-                        case "Night": rawMsg = settings.bdayMsgNight ?: "Happy Birthday %name%. I hope you had a wonderful day."; break
-                    }
-                    return rawMsg.replace("%name%", name)
-                } else if (settings.enableBdayCountdown && type == "Morning" && currentDay < bDayInt) {
-                    def daysLeft = bDayInt - currentDay
-                    def rawMsg = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
-                    return rawMsg.replace("%days%", daysLeft.toString()).replace("%name%", name)
+        // 1. If it is exactly the person's birthday and the target user is home
+        if (bMonthInt == currentMonth && bDayInt == currentDay) {
+            if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
+                if (bName.toLowerCase() != notifyUser.toLowerCase()) {
+                    return "By the way, today is ${bName}'s birthday. Please remember to give them a call!"
+                }
+            }
+        }
+        
+        // 2. The 5-Day Gift Warning
+        if (type == "Morning" || type == "Arrival") {
+            def cal = Calendar.getInstance(location.timeZone)
+            cal.add(Calendar.DAY_OF_YEAR, 5) // Look 5 days into the future
+            if (cal.get(Calendar.MONTH) + 1 == bMonthInt && cal.get(Calendar.DAY_OF_MONTH) == bDayInt) {
+                if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
+                     return "As a quick reminder, ${bName}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
                 }
             }
         }
     }
+    
+    // 3. Mother's Day / Father's Day check
+    def holiday = getTodayHoliday()
+    if (settings.enableMothersDay && holiday == "Mother's Day") {
+        def mUser = settings.mothersDayUser
+        if (!mUser || mUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[mUser]) {
+            return "Also, today is Mother's Day. Please remember to call your mother."
+        }
+    }
+    if (settings.enableFathersDay && holiday == "Father's Day") {
+        def fUser = settings.fathersDayUser
+        if (!fUser || fUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[fUser]) {
+            return "Also, today is Father's Day. Please remember to call your father."
+        }
+    }
+
     return ""
 }
-
 def midnightReset() {
     ensureStateMaps()
-    
-    def stayHomeList = [settings.stayAtHomeUsers].flatten().findAll { it != null }
-    if (settings.stayAtHomeCustom) {
-        stayHomeList += settings.stayAtHomeCustom.split(',').collect { it.trim() }
-    }
     
     def newHasArrived = [:]
     def newResetReasons = [:]
     
-    stayHomeList.each { u ->
-        if (state.hasArrivedToday[u]) {
-            newHasArrived[u] = true
-            newResetReasons[u] = "Stayed Home (Carried Over)"
+    // 1. INTELLIGENT CARRY-OVER
+    // We look at everyone currently home and move them to the new day's roster immediately.
+    state.hasArrivedToday.each { uName, arrived ->
+        if (arrived == true) {
+            newHasArrived[uName] = true
+            // We set the context to 'Present' so the dashboard doesn't show a reset message
+            newResetReasons[uName] = "Present" 
         }
     }
     
+    // 2. APPLY THE NEW ROSTER
     state.hasArrivedToday = newHasArrived
-    state.hasDepartedToday = [:] 
+    state.hasDepartedToday = [:] // Clear departures so they can be tracked fresh today
     state.resetReasons = newResetReasons
-    state.globalResetReason = "Reset by Midnight Routine"
     
+    // Set the global status for anyone NOT already home
+    state.globalResetReason = "Awaiting First Entry"
+    
+    // 3. LOG ROTATION (For the Morning Briefings)
     state.lastNightMotionCount = state.nightMotionCount ?: 0
     state.lastAwayDoorbellCount = state.awayDoorbellCount ?: 0
     state.nightMotionCount = 0
     state.awayDoorbellCount = 0
     state.anomalyAlertedToday = [:]
     
+    // 4. QUEUE MAINTENANCE
     state.ttsQueue = []
     state.speakingUntil = 0
     state.currentPriority = 99
     state.originalVolumes = [:] 
     
-    addToHistory("SYSTEM: Midnight Reset completed. Daily statuses cleared and Queue flushed.")
+    def residentList = newHasArrived.keySet().join(', ')
+    addToHistory("SYSTEM: Midnight transition complete. Residents carried over: ${residentList ?: 'None'}")
 }
 
 def appButtonHandler(btn) {
@@ -3037,40 +3162,126 @@ def handleGoogleEmail() {
     }
 
     def body = request.JSON
-    if (body && body.subject) {
+    if (body) {
         def sender = body.sender?.replaceAll(/<.*?>/, "")?.trim() ?: "an unknown sender"
-        def subject = body.subject
-        def snippet = body.snippet ?: ""
-        
-        // 3. Build the dynamic message
-        def prefix = settings.emailPrefix ?: "%interruption%, you have just received an important email from"
-        def msg = "${prefix} ${sender}. The subject is: ${subject}. "
-        if (snippet.length() > 0) {
-            msg += "The email begins with: ${snippet}"
-        }
-        
-        if (settings.enableDebug) log.debug "GOOGLE EMAIL RECEIVER: New email triggered from ${sender}."
-        
-        // 4. Apply volume and routing preferences
+        def subject = body.subject ?: "No Subject"
         def targetVol = settings.emailVolume != null ? settings.emailVolume : settings.globalVolume
         def rMode = settings.emailRoutingMode ?: "Global Indoor Speaker Only"
-        
-        executeRoutedTTS(applyDynamicVars(msg), rMode, settings.globalVolume, targetVol, 2)
-        addToHistory("EMAIL ALERT: Important email announced from ${sender}.")
+        def msg = ""
+
+        // --- NEW: Handle Ooma Voicemails ---
+        if (body.isVoicemail) {
+            // Respect the dedicated Ooma Voicemail toggle!
+            if (settings.enableOomaVoicemail == false) {
+                if (settings.enableDebug) log.debug "OOMA VOICEMAIL: Suppressed (Ooma Voicemail is toggled OFF)."
+                return [status: "ooma_disabled"]
+            }
+            
+            def caller = body.sender ?: "an unknown caller"
+            def time = body.time ?: "just now"
+            def transcript = body.msgContent ?: "The caller did not leave a transcription."
+            
+            msg = "%interruption%, you have a new Ooma voicemail from ${caller}, received at ${time}. The message says: ${transcript}"
+            
+            if (settings.enableDebug) log.debug "OOMA VOICEMAIL RECEIVER: Voicemail notification received from ${caller}."
+            
+            executeRoutedTTS(applyDynamicVars(msg), rMode, settings.globalVolume, targetVol, 2)
+            addToHistory("VOICEMAIL ALERT: Missed call announced from ${caller} at ${time}.")
+            return [status: "success"]
+        }
+
+        // 3. Handle Delivery Notifications
+        if (body.isDelivery) {
+            // Respect the dedicated Package Tracking toggle!
+            if (settings.enableDeliveryTracking == false) {
+                if (settings.enableDebug) log.debug "GOOGLE DELIVERY: Suppressed (Package Tracking is toggled OFF)."
+                return [status: "delivery_disabled"]
+            }
+            
+            msg = "%interruption%, I am seeing a delivery notification from ${sender}. The subject is: ${subject}. You have a package arriving today."
+            if (settings.enableDebug) log.debug "GOOGLE DELIVERY RECEIVER: Package notification received from ${sender}."
+            
+            executeRoutedTTS(applyDynamicVars(msg), rMode, settings.globalVolume, targetVol, 2)
+            addToHistory("DELIVERY ALERT: Package notification announced from ${sender}.")
+            return [status: "success"]
+        }
+
+        // 4. Handle Standard Important Emails
+        if (subject) {
+            def snippet = body.snippet ?: ""
+            def prefix = settings.emailPrefix ?: "%interruption%, you have just received an important email from"
+            
+            msg = "${prefix} ${sender}. The subject is: ${subject}. "
+            if (snippet.length() > 0) {
+                msg += "The email begins with: ${snippet}"
+            }
+            
+            if (settings.enableDebug) log.debug "GOOGLE EMAIL RECEIVER: New email triggered from ${sender}."
+            
+            executeRoutedTTS(applyDynamicVars(msg), rMode, settings.globalVolume, targetVol, 2)
+            addToHistory("EMAIL ALERT: Important email announced from ${sender}.")
+        }
     }
     return [status: "success"]
 }
 
 def handleGoogleCalendar() {
     def body = request.JSON
-    if (body && body.nextEventTitle && body.nextEventEpoch) {
-        def title = body.nextEventTitle
-        def epoch = body.nextEventEpoch.toString()
+    if (body && body.events != null) {
         
-        if (settings.enableDebug) log.debug "GOOGLE CALENDAR RECEIVER: Real-time update received for '${title}' at Epoch: ${epoch}."
+        // 1. Hash Check: Stop CPU spikes. Only reschedule if the calendar actually changed.
+        def newHash = body.events.toString().hashCode()
+        if (state.calendarHash == newHash) {
+            return [status: "unchanged"]
+        }
+        state.calendarHash = newHash
         
-        // Pass it directly to your existing robust calendar engine
-        calendarTimeHandler([value: epoch], title)
+        // 2. Clear old schedules
+        unschedule("executeCalendarAlert")
+        state.scheduledCalendarAlerts = []
+        
+        def now = new Date().time
+        def nextTitle = "No Upcoming Events"
+        def nextEpoch = null
+        
+        // 3. Loop through the array and schedule all future events
+        body.events.eachWithIndex { evt, idx ->
+            def eventEpoch = evt.epoch.toLong()
+            def title = evt.title
+            
+            // Save the very next event for the Dashboard UI
+            if (idx == 0) {
+                nextTitle = title
+                nextEpoch = eventEpoch
+            }
+            
+            if (eventEpoch > now) {
+                def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
+                intervals.each { interval ->
+                    def offsetMs = 0
+                    if (interval == "3 Hours") offsetMs = 3 * 3600000
+                    if (interval == "2 Hours") offsetMs = 2 * 3600000
+                    if (interval == "1 Hour") offsetMs = 1 * 3600000
+                    if (interval == "30 Minutes") offsetMs = 30 * 60000
+                    if (interval == "15 Minutes") offsetMs = 15 * 60000
+                    
+                    def alertTime = eventEpoch - offsetMs
+                    if (alertTime > now) {
+                        runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
+                    }
+                }
+                // Schedule Exact Start Time alert (0 Minutes)
+                runOnce(new Date(eventEpoch), "executeCalendarAlert", [data: [title: title, timeStr: "0 Minutes"], overwrite: false])
+            }
+        }
+        
+        // 4. Update the live dashboard
+        state.nextEventName = nextTitle
+        state.nextEventEpoch = nextEpoch
+        state.nextEventTimeStr = nextEpoch ? new Date(nextEpoch).format("MMM d 'at' h:mm a", location.timeZone) : "--"
+        state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
+        
+        if (settings.enableDebug) log.debug "GOOGLE CALENDAR: Multi-Event sync complete. Loaded ${body.events.size()} events into the schedule."
     }
     return [status: "success"]
 }
