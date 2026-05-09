@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5
+ * Version 1.6
  */
 definition(
     name: "Advanced Voice Butler",
@@ -239,7 +239,7 @@ def mainPage() {
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
 
-        section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
+            section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
             input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
             input "arrivalVolume", "number", title: "Welcome Home Announcement Volume (0-100)", required: false
             input "arrivalFoyerSpeaker", "capability.speechSynthesis", title: "Foyer / Entryway Speaker (Plays Full Greeting)", required: false
@@ -250,6 +250,11 @@ def mainPage() {
                 input "indoorArrivalVolume", "number", title: "Indoor Notice Volume (0-100)", required: false
                 input "arrivalNoticeRoutingMode", "enum", title: "Notice Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
             }
+            
+            // --- NEW: GUEST / VIP USERS ---
+            input "guestUsers", "enum", title: "Guest Users (Omit from Missing/Curfew Warnings)", options: lockUsers, multiple: true, required: false
+            input "guestCustomUsers", "text", title: "Custom Guest Names (Comma separated)", required: false
+            // ------------------------------
             
             paragraph "<hr>"
             input "enableExtendedAbsence", "bool", title: "Enable Extended Absence (Vacation) Greetings?", defaultValue: false, submitOnChange: true
@@ -383,6 +388,7 @@ def mainPage() {
                 input "officeVolume", "number", title: "Speaker Volume (0-100)", required: false
                 input "officeModes", "mode", title: "Allowed Modes", multiple: true, required: false
                 input "officeFeed", "enum", title: "News Source", options: ["TechCrunch": "TechCrunch", "Engadget": "Engadget", "Wired": "Wired", "Ars Technica": "Ars Technica", "Custom": "Custom URL"], defaultValue: "TechCrunch", submitOnChange: true
+                input "officeDebounceHours", "number", title: "Minimum Hours Between Briefings (Cooldown)", defaultValue: 4, required: false
                 if (officeFeed == "Custom") {
                     input "officeCustomUrl", "text", title: "Custom RSS URL", required: true
                 }
@@ -600,17 +606,18 @@ def mainPage() {
             paragraph "<hr>"
             input "numBirthdays", "number", title: "Number of Birthdays to Track (0-10)", defaultValue: 0, submitOnChange: true
             if (numBirthdays > 0) {
-                input "enableBdayCountdown", "bool", title: "Enable Birthday Month Countdown (Kids)?", defaultValue: false, submitOnChange: true
-                if (enableBdayCountdown) { input "bdayCountdownMsg", "text", title: "Countdown Format", defaultValue: "By the way, you only have %days% days until your birthday!" }
-                
                 def months = ["01":"January", "02":"February", "03":"March", "04":"April", "05":"May", "06":"June", "07":"July", "08":"August", "09":"September", "10":"October", "11":"November", "12":"December"]
                 
                 for (int i = 1; i <= (numBirthdays as Integer); i++) {
                     paragraph "<b>Birthday Profile ${i}</b>"
                     input "bdayName_${i}", "text", title: "Person's Name ${i}", required: false
+                    
+                    // --- NEW: Per-Profile Type Selector ---
+                    input "bdayType_${i}", "enum", title: "Profile Type", options: ["Kid (30-Day Countdown)", "Adult (5-Day Gift Warning)"], defaultValue: "Kid (30-Day Countdown)", submitOnChange: true
+                    // --------------------------------------
+                    
                     input "bdayMonth_${i}", "enum", title: "Birth Month ${i}", options: months, required: false
                     input "bdayDay_${i}", "number", title: "Birth Day ${i} (1-31)", range: "1..31", required: false
-                    // NEW: Select who needs to be present for the reminder to trigger
                     input "bdayNotifyUser_${i}", "enum", title: "Who needs to be home for this reminder?", options: lockUsers, multiple: true, required: false
                 }
                 
@@ -703,10 +710,13 @@ def roomPage(params) {
             input "roomAnnounceAwayDoorbell_${rNum}", "bool", title: "Announce Away Doorbell Rings in Morning Brief?", defaultValue: false, submitOnChange: true
         }
         
-        section("Kid-Friendly Features (Junior Concierge)", hideable: true, hidden: true) {
+            section("Kid-Friendly Features (Junior Concierge)", hideable: true, hidden: true) {
             input "roomKidsNightWatch_${rNum}", "bool", title: "Enable Anti-Monster Security Check?", defaultValue: false, submitOnChange: true
             input "roomKidsWeekend_${rNum}", "bool", title: "Enable No-School Weekend Reminder?", defaultValue: false, submitOnChange: true
             input "roomKidsMode_${rNum}", "bool", title: "Enable Morning Jokes & Facts?", defaultValue: false, submitOnChange: true
+            if (settings["roomKidsMode_${rNum}"]) {
+                input "roomJokesFile_${rNum}", "text", title: "Custom Jokes File (Hubitat File Manager)", description: "e.g., jokes.txt (One joke per line)", required: false
+            }
         }
 
         section("Weather, Security & Briefing Integrations", hideable: true, hidden: true) {
@@ -788,12 +798,15 @@ def ensureStateMaps() {
     if (state.mealNewsSyncTime == null) state.mealNewsSyncTime = ""
     if (state.learnedHabits == null) state.learnedHabits = [:]
     if (state.anomalyAlertedToday == null) state.anomalyAlertedToday = [:]
+    if (state.spokenFacts == null) state.spokenFacts = [:]
+    if (state.lastOfficeIntercept == null) state.lastOfficeIntercept = 0
 }
 
 def initialize() {
     ensureStateMaps()
     schedule("0 0 0 * * ?", "midnightReset") 
     schedule("0 0/15 * * * ?", "checkAnomalies")
+    runEvery1Hour("pollPresenceSensors")
     
     if (settings.enableInternetCheck) { runEvery5Minutes("checkInternetConnection"); checkInternetConnection() }
     if (frontDoorbell) { subscribe(frontDoorbell, "pushed", visitorHandler); subscribe(frontDoorbell, "pushed", countDoorbellHandler) }
@@ -957,6 +970,17 @@ def syncRoomNews(rNum) {
 // --- NEW OFFICE INTERCEPTOR ---
 def officeSwitchHandler(evt) {
     ensureStateMaps()
+    
+    // --- NEW COOLDOWN LOGIC ---
+    def lastOffice = state.lastOfficeIntercept ?: 0
+    def debounceHours = settings.officeDebounceHours != null ? settings.officeDebounceHours.toInteger() : 4
+    if ((new Date().time - lastOffice) < (debounceHours * 3600000)) {
+        if (settings.enableDebug) log.debug "OFFICE INTERCEPTOR: Suppressed (Cooldown active: triggered within the last ${debounceHours} hours)."
+        return
+    }
+    state.lastOfficeIntercept = new Date().time
+    // --------------------------
+
     def allowedModes = [settings.officeModes].flatten().findAll { it != null }
     if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
         if (settings.enableDebug) log.debug "OFFICE INTERCEPTOR: Suppressed due to mode restriction."
@@ -1266,21 +1290,55 @@ def executeCalendarAlert(data) {
     addToHistory("CALENDAR ALERT: Event approaching/starting. Queued: '${randomMsg}'")
 }
 // --- AI HABIT & ANOMALY ENGINE ---
-def updateHabit(String uName, Long epochTime) {
+def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = "global") {
+    if (!factText) return ""
+    ensureStateMaps()
+    def now = new Date().time
+    
+    // Clean up expired memories
+    def keysToRemove = []
+    state.spokenFacts.each { k, v -> if (now > v) keysToRemove << k }
+    keysToRemove.each { state.spokenFacts.remove(it) }
+    
+    // Create a unique memory hash for the specific room/context
+    def factHash = contextKey + "_" + factText.hashCode().toString()
+    
+    if (state.spokenFacts[factHash] && now < state.spokenFacts[factHash]) {
+        if (settings.enableDebug) log.debug "MEMORY FILTER: Suppressed repeated fact for context '${contextKey}'"
+        return "" // The Butler remembers it already said this to this specific room!
+    } else {
+        state.spokenFacts[factHash] = now + (ttlHours * 3600000)
+        return factText
+    }
+}
+
+def updateHabit(String uName, Long epochTime, String habitType = "departure") {
     ensureStateMaps()
     if (!state.learnedHabits) state.learnedHabits = [:]
-    if (!state.learnedHabits[uName]) state.learnedHabits[uName] = [avgDepartureMins: 0, count: 0]
+    if (!state.learnedHabits[uName]) state.learnedHabits[uName] = [avgDepartureMins: 0, count: 0, avgArrivalMins: 0, arrCount: 0, avgSleepMins: 0, sleepCount: 0]
     
     def cal = Calendar.getInstance(location.timeZone)
     cal.setTime(new Date(epochTime))
     def minsPastMidnight = (cal.get(Calendar.HOUR_OF_DAY) * 60) + cal.get(Calendar.MINUTE)
     
-    def currentAvg = state.learnedHabits[uName].avgDepartureMins
-    def currentCount = state.learnedHabits[uName].count
-    def newAvg = ((currentAvg * currentCount) + minsPastMidnight) / (currentCount + 1)
-    
-    state.learnedHabits[uName].avgDepartureMins = newAvg.toInteger()
-    state.learnedHabits[uName].count = currentCount + 1
+    if (habitType == "departure") {
+        def currentAvg = state.learnedHabits[uName].avgDepartureMins ?: 0
+        def currentCount = state.learnedHabits[uName].count ?: 0
+        state.learnedHabits[uName].avgDepartureMins = (((currentAvg * currentCount) + minsPastMidnight) / (currentCount + 1)).toInteger()
+        state.learnedHabits[uName].count = currentCount + 1
+    } else if (habitType == "arrival") {
+        def currentAvg = state.learnedHabits[uName].avgArrivalMins ?: 0
+        def currentCount = state.learnedHabits[uName].arrCount ?: 0
+        state.learnedHabits[uName].avgArrivalMins = (((currentAvg * currentCount) + minsPastMidnight) / (currentCount + 1)).toInteger()
+        state.learnedHabits[uName].arrCount = currentCount + 1
+    } else if (habitType == "sleep") {
+        // Shift midnight crossover times so 11 PM and 1 AM average out correctly
+        def shiftedMins = minsPastMidnight < 720 ? minsPastMidnight + 1440 : minsPastMidnight 
+        def currentAvg = state.learnedHabits[uName].avgSleepMins ?: 0
+        def currentCount = state.learnedHabits[uName].sleepCount ?: 0
+        state.learnedHabits[uName].avgSleepMins = (((currentAvg * currentCount) + shiftedMins) / (currentCount + 1)).toInteger()
+        state.learnedHabits[uName].sleepCount = currentCount + 1
+    }
 }
 
 def formatMinsToTime(int mins) {
@@ -1346,7 +1404,19 @@ def mealTimeHandler(evt) {
             for (int i = 1; i <= (settings.numLockUsers as Integer); i++) { if (settings["lockUserName_${i}"]) allTracked << settings["lockUserName_${i}"] }
         }
         allTracked = allTracked.unique()
-        allTracked.each { u -> if (!state.hasArrivedToday || state.hasArrivedToday[u] != true) missing << applyAlias(u) }
+        
+        // --- NEW: GUEST LIST FILTER ---
+        def guestList = [settings.guestUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
+        if (settings.guestCustomUsers) guestList += settings.guestCustomUsers.split(',').collect { it.trim().toLowerCase() }
+        
+        allTracked.each { u -> 
+            if (!state.hasArrivedToday || state.hasArrivedToday[u] != true) {
+                // Only add to the missing list if they are NOT a guest!
+                if (!guestList.contains(u.toLowerCase()) && !guestList.contains(applyAlias(u).toLowerCase())) {
+                    missing << applyAlias(u) 
+                }
+            }
+        }
         
         if (missing.size() > 0) {
             if (missing.size() == 1) finalMsg += " Please note that ${missing[0]} has not yet returned home, so we will proceed without them."
@@ -1380,7 +1450,6 @@ def mealTimeHandler(evt) {
     executeRoutedTTS(applyDynamicVars(finalMsg), settings.mealTimeRoutingMode ?: "Global Indoor Speaker Only", settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 2, false, settings.mealTimeSpeaker)
     addToHistory("MEAL TIME: Routine triggered. Queued: '${finalMsg}'")
 }
-
 def testMealNews() {
     def feedUrl = settings.mealTimeNewsFeed ?: "https://feeds.npr.org/1001/rss.xml"
     def finalMsg = ""
@@ -1457,7 +1526,7 @@ def applyDynamicVars(String msg) {
 }
 
 // --- WEATHER HELPER ---
-def getWeatherReport(wDevice) {
+def getWeatherReport(wDevice, String contextKey = "global") {
     if (!wDevice) return ""
     def wText = ""
     try {
@@ -1474,7 +1543,9 @@ def getWeatherReport(wDevice) {
             }
         }
     } catch (Exception e) {}
-    return wText ?: ""
+    
+    // Pass the contextKey so the memory is tied to the specific room
+    return wText ? checkAndRegisterFact(wText, 3, contextKey) : ""
 }
 
 // --- TTS ENGINE & PRIORITY QUEUE ---
@@ -1691,16 +1762,19 @@ def departureHandler(evt) {
         def tEnd = settings["depTimeEnd_${i}"]
         def dModes = [settings["depModes_${i}"]].flatten().findAll { it != null }
         
-        if (uName && ctxSwitch && tStart && tEnd) {
+            if (uName && ctxSwitch && tStart && tEnd) {
             if (state.hasDepartedToday[uName]) continue
             if (sickSwitch && sickSwitch.currentValue("switch") == "on") continue
             if (dModes.size() > 0 && !dModes.contains(location.mode)) continue
             if (ctxSwitch.currentValue("switch") != "on") continue
             try { if (!timeOfDayIsBetween(toDateTime(tStart), toDateTime(tEnd), now, location.timeZone)) continue } catch (Exception e) { continue }
 
-            state.hasDepartedToday[uName] = true
-            state.lastDepartureTime[uName] = nowTime
-            updateHabit(uName, nowTime)
+            def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+            splitNames.each { n ->
+                state.hasDepartedToday[n] = true
+                state.lastDepartureTime[n] = nowTime
+                updateHabit(n, nowTime)
+            }
             departedIndexes << i
         }
     }
@@ -2014,6 +2088,46 @@ def checkMissedArrival(data) {
     }
 }
 
+def pollPresenceSensors() {
+    ensureStateMaps()
+    def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
+    if (numPres == 0) return
+
+    def missedUsers = []
+
+    // Sweep all linked presence sensors
+    for (int i = 1; i <= numPres; i++) {
+        def sensor = settings["fallbackPresence_${i}"]
+        def uName = settings["presenceUserName_${i}"]
+
+        if (sensor && uName) {
+            // If the sensor is home, but the Butler hasn't marked them arrived yet
+            if (sensor.currentValue("presence") == "present" && !state.hasArrivedToday[uName]) {
+                state.hasArrivedToday[uName] = true
+                state.resetReasons[uName] = "Hourly Presence Sweep Fallback"
+                missedUsers << applyAlias(uName)
+                addToHistory("FALLBACK ARRIVAL: Hourly sweep detected ${uName} was physically present but not marked arrived.")
+            }
+        }
+    }
+
+    // If anyone was caught in the sweep, group their names and play the apology
+    if (missedUsers.size() > 0) {
+        def namesStr = ""
+        if (missedUsers.size() == 1) namesStr = missedUsers[0]
+        else if (missedUsers.size() == 2) namesStr = "${missedUsers[0]} and ${missedUsers[1]}"
+        else { def last = missedUsers.pop(); namesStr = "${missedUsers.join(', ')}, and ${last}" }
+
+        def msg = "Pardon me, I didn't catch you coming through the door earlier. Welcome home, ${namesStr}."
+        
+        def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
+        def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
+        def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
+        
+        executeRoutedTTS(applyDynamicVars(msg), rMode, indoorTargetVol, outdoorTargetVol, 3)
+    }
+}
+
 def arrivalHandler(evt) {
     ensureStateMaps()
     def desc = evt.descriptionText ?: ""
@@ -2083,7 +2197,15 @@ def arrivalHandler(evt) {
             return
         }
         
-        state.hasArrivedToday[trackingKey] = true
+        // --- NEW: Split grouped names for separate Habit and Roster tracking ---
+        def splitNames = trackingKey.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+        splitNames.each { n -> 
+            state.hasArrivedToday[n] = true 
+            state.lastDepartureTime.remove(n)
+            state.anomalyAlertedToday[n] = false
+        }
+        // -----------------------------------------------------------------------
+        
         atomicState.lastOutdoorGreeting = new Date().time
         
         def messages = []
@@ -2110,8 +2232,20 @@ def arrivalHandler(evt) {
 
         def displayUserName = applyAlias(actualUserName)
         def greetingToPlay = messages[new Random().nextInt(messages.size())].replace("%name%", displayUserName)
-        state.lastDepartureTime.remove(trackingKey)
-        state.anomalyAlertedToday[trackingKey] = false 
+        
+        // --- AI ARRIVAL HABIT CHECK ---
+        def splitActual = actualUserName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+        splitActual.each { n -> updateHabit(n, nowTime, "arrival") } // Log individual arrival times
+        
+        if (state.learnedHabits[splitActual[0]]?.avgArrivalMins && state.learnedHabits[splitActual[0]].arrCount > 3) {
+            def expected = state.learnedHabits[splitActual[0]].avgArrivalMins
+            def cal = Calendar.getInstance(location.timeZone)
+            def nowMins = (cal.get(Calendar.HOUR_OF_DAY) * 60) + cal.get(Calendar.MINUTE)
+            
+            if (nowMins < (expected - 90)) greetingToPlay = "You are home quite early today! " + greetingToPlay
+            else if (nowMins > (expected + 120)) greetingToPlay = "Working late today? " + greetingToPlay
+        }
+        // ------------------------------
         
         def bdayMsg = getBirthdayMessage(actualUserName, "Arrival")
         if (bdayMsg) greetingToPlay = "${greetingToPlay} ${bdayMsg}"
@@ -2239,6 +2373,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: "Guest")
     def displayOccName = applyAlias(occName)
     def parts = []
+    def roomKey = "room_${rNum}" // Unique ID for the memory filter
 
     def rawMsg = ""
     if (type == "Good Night") {
@@ -2265,6 +2400,22 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     if (context.apology) baseString += context.apology + " "
     if (context.curfew) baseString += context.curfew + " "
     baseString += rawMsg.replace("%name%", displayOccName).replace("%room%", rName)
+
+    // --- AI SLEEP HABIT CHECK ---
+    if (type == "Good Night" && occName != "Guest") {
+        updateHabit(occName, new Date().time, "sleep") 
+        if (state.learnedHabits[occName]?.avgSleepMins && state.learnedHabits[occName].sleepCount > 3) {
+            def expected = state.learnedHabits[occName].avgSleepMins
+            def cal2 = Calendar.getInstance(location.timeZone)
+            def nowMins = (cal2.get(Calendar.HOUR_OF_DAY) * 60) + cal2.get(Calendar.MINUTE)
+            def shiftedNow = nowMins < 720 ? nowMins + 1440 : nowMins 
+            
+            if (shiftedNow > (expected + 90)) baseString = "It is quite late. " + baseString
+            else if (shiftedNow < (expected - 90)) baseString = "Turning in early tonight? " + baseString
+        }
+    }
+    // ----------------------------
+
     parts << baseString
 
     def bdayMsg = getBirthdayMessage(occName, type == "Good Night" ? "Night" : "Morning")
@@ -2325,7 +2476,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
 
         if (wDevice && settings["roomWeatherGM_${rNum}"]) {
-            def wText = getWeatherReport(wDevice)
+            def wText = getWeatherReport(wDevice, roomKey) // Passed Room Key
             if (wText) {
                 def weatherBlock = wText
                 if (settings["roomWardrobe_${rNum}"]) {
@@ -2350,7 +2501,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
 
         if (settings["roomKidsMode_${rNum}"]) {
-            parts << getKidsFunFact()
+            parts << getKidsFunFact(rNum) // Passed Room Number
         }
     }
 
@@ -2362,12 +2513,12 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
         
         if (settings["roomPerimeterCheck_${rNum}"]) {
-            def perimText = getPerimeterReport()
+            def perimText = getPerimeterReport(roomKey) // Passed Room Key
             if (perimText) parts << perimText
         }
 
         if (wDevice && settings["roomWeatherGN_${rNum}"]) {
-            def wText = getWeatherReport(wDevice)
+            def wText = getWeatherReport(wDevice, roomKey) // Passed Room Key
             if (wText) parts << wText
         }
 
@@ -2435,37 +2586,63 @@ def getRoomNews(rNum, isTest) {
     return ""
 }
 
-def getKidsFunFact() {
-    def funList = [
-        "Did you know that a shrimp's heart is located in its head?",
-        "Here is a joke for you: Why did the scarecrow win an award? Because he was outstanding in his field!",
-        "Did you know that honey never spoils? Archaeologists have found pots of honey that are over three thousand years old!",
-        "Here is a joke: What do you call a fake noodle? An impasta!",
-        "Did you know that octopuses have three hearts and blue blood?",
-        "Here is a joke for you: Why can't you give Elsa a balloon? Because she will let it go!",
-        "Did you know that cows have best friends and get stressed when they are separated?",
-        "Here is a joke: What falls, but never breaks? Nightfall!",
-        "Did you know that a day on Venus is longer than a year on Venus?",
-        "Here is a joke for you: Why did the math book look sad? Because it had too many problems."
-    ]
+def getKidsFunFact(rNum) {
+    def funList = []
+    def fileName = settings["roomJokesFile_${rNum}"]
+    
+    if (fileName) {
+        try {
+            // Secret trick: Hubitat can read its own file manager using its internal 127.0.0.1 IP address!
+            httpGet([uri: "http://127.0.0.1:8080/local/${fileName}", timeout: 5, textParser: true]) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    def rawText = ""
+                    if (resp.data instanceof String || resp.data instanceof GString) rawText = resp.data.toString()
+                    else try { rawText = resp.data.text } catch (e) { rawText = resp.data.toString() }
+                    
+                    // Split the text file by line breaks and ignore any blank lines
+                    funList = rawText.split(/\r?\n/).findAll { it.trim().length() > 0 }.collect { it.trim() }
+                }
+            }
+        } catch (e) {
+            log.warn "Voice Butler: Failed to load custom jokes file '${fileName}' - ${e}"
+        }
+    }
+    
+    // Fallback to defaults if the file is missing or empty
+    if (!funList || funList.size() == 0) {
+        funList = [
+            "Did you know that a shrimp's heart is located in its head?",
+            "Here is a joke for you: Why did the scarecrow win an award? Because he was outstanding in his field!",
+            "Did you know that honey never spoils? Archaeologists have found pots of honey that are over three thousand years old!",
+            "Here is a joke: What do you call a fake noodle? An impasta!",
+            "Did you know that octopuses have three hearts and blue blood?",
+            "Here is a joke for you: Why can't you give Elsa a balloon? Because she will let it go!",
+            "Did you know that cows have best friends and get stressed when they are separated?",
+            "Here is a joke: What falls, but never breaks? Nightfall!",
+            "Did you know that a day on Venus is longer than a year on Venus?",
+            "Here is a joke for you: Why did the math book look sad? Because it had too many problems."
+        ]
+    }
     return funList[new Random().nextInt(funList.size())]
 }
 
-def getPerimeterReport() {
+def getPerimeterReport(String contextKey = "global") {
     def unsecured = []
     settings.perimeterLocks?.each { if (it.currentValue("lock") == "unlocked") unsecured << "the ${it.displayName} is unlocked" }
     settings.perimeterContacts?.each { if (it.currentValue("contact") == "open") unsecured << "the ${it.displayName} is open" }
     settings.coopDoors?.each { if (it.currentValue("contact") == "open") unsecured << "the ${it.displayName} is open" }
     
+    def perimText = ""
     if (unsecured.size() > 0) {
-        if (unsecured.size() == 1) return "Before you go to sleep, I must warn you that ${unsecured[0]}."
-        if (unsecured.size() == 2) return "Before you go to sleep, I must warn you that ${unsecured[0]} and ${unsecured[1]}."
-        def last = unsecured.pop()
-        return "Before you go to sleep, I must warn you that ${unsecured.join(', ')}, and ${last}."
+        if (unsecured.size() == 1) perimText = "Before you go to sleep, I must warn you that ${unsecured[0]}."
+        else if (unsecured.size() == 2) perimText = "Before you go to sleep, I must warn you that ${unsecured[0]} and ${unsecured[1]}."
+        else { def last = unsecured.pop(); perimText = "Before you go to sleep, I must warn you that ${unsecured.join(', ')}, and ${last}." }
     } else if (settings.perimeterLocks || settings.perimeterContacts || settings.coopDoors) {
-        return "The perimeter is secure, and all coops are closed."
+        perimText = "The perimeter is secure, and all coops are closed."
     }
-    return ""
+    
+    // Pass the contextKey so the memory is tied to the specific room
+    return perimText ? checkAndRegisterFact(perimText, 4, contextKey) : ""
 }
 
 // --- ROOM LOGIC EXECUTION ---
@@ -2523,20 +2700,61 @@ def goodNightOnHandler(evt) {
             def presentOccupants = []
             def missingPersons = []
             
+            // --- NEW: GUEST LIST FILTER ---
+            def guestList = [settings.guestUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
+            if (settings.guestCustomUsers) guestList += settings.guestCustomUsers.split(',').collect { it.trim().toLowerCase() }
+            
             // Cross-reference room occupants with the live House Roster (Presence/Locks)
             occupants.each { occ ->
                 def checkKey = state.hasArrivedToday?.keySet()?.find { it.equalsIgnoreCase(occ) } ?: occ
                 if (state.hasArrivedToday[checkKey] == true) {
                     presentOccupants << occ
                 } else {
-                    missingPersons << occ
+                    // Only add to the curfew warning if they are NOT a guest!
+                    if (!guestList.contains(occ.toLowerCase()) && !guestList.contains(checkKey.toLowerCase())) {
+                        missingPersons << occ
+                    }
                 }
             }
             
-            // Build the dynamic greeting name (e.g., just "Shane" instead of "Shane and Leanne")
+            // --- NEW: INSTANT PRESENCE VALIDATION SWEEP ---
+            // If the roster says you are missing, but your sensor is physically here, auto-arrive instantly!
+            def instantlyArrived = []
+            def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
+            missingPersons.removeAll { missingOcc ->
+                def foundAndPresent = false
+                for (int p = 1; p <= numPres; p++) {
+                    if (settings["presenceUserName_${p}"]?.equalsIgnoreCase(missingOcc)) {
+                        if (settings["fallbackPresence_${p}"]?.currentValue("presence") == "present") {
+                            state.hasArrivedToday[missingOcc] = true
+                            state.resetReasons[missingOcc] = "Presence Auto-Arrived (Good Night Sweep)"
+                            presentOccupants << missingOcc
+                            instantlyArrived << missingOcc
+                            foundAndPresent = true
+                            break
+                        }
+                    }
+                }
+                return foundAndPresent
+            }
+
+            // If the Butler caught someone sneaking in, play the missed arrival greeting immediately!
+            if (instantlyArrived.size() > 0) {
+                def missedMsg = "Pardon me, I didn't catch you coming through the door earlier. Welcome home, ${applyAlias(instantlyArrived.join(' and '))}."
+                def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
+                def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
+                def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
+                
+                executeRoutedTTS(applyDynamicVars(missedMsg), rMode, indoorTargetVol, outdoorTargetVol, 3)
+                addToHistory("FALLBACK ARRIVAL: Good Night sweep forced instant arrival validation for ${instantlyArrived.join(', ')}.")
+            }
+            
+            // Build the dynamic greeting name to ONLY greet the people who are actually home
             def dynamicOccName = occName
             if (presentOccupants.size() > 0) {
                 dynamicOccName = presentOccupants.join(" and ")
+            } else {
+                dynamicOccName = "Guest" // Prevents the Butler from greeting you if you aren't actually there!
             }
             
             def curfewPrefix = ""
@@ -2545,6 +2763,9 @@ def goodNightOnHandler(evt) {
                 else if (missingPersons.size() == 2) curfewPrefix = "Please note that ${missingPersons[0]} and ${missingPersons[1]} have not yet returned."
                 else { def lastMissing = missingPersons.pop(); curfewPrefix = "Please note that ${missingPersons.join(', ')}, and ${lastMissing} have not yet returned." }
             }
+            
+            // Pad the delay slightly so it doesn't talk over the missed arrival greeting if it just triggered
+            if (instantlyArrived.size() > 0) delaySec += 6
             
             runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i, dynamicName: dynamicOccName, curfew: curfewPrefix], overwrite: false])
             return 
@@ -2960,11 +3181,12 @@ def getBirthdayMessage(String arrivingUser, String type) {
 
     for (int i = 1; i <= numBdays; i++) {
         def bName = settings["bdayName_${i}"]
+        def bType = settings["bdayType_${i}"] ?: "Kid (30-Day Countdown)"
         def bMonthInt = settings["bdayMonth_${i}"]?.toInteger()
         def bDayInt = settings["bdayDay_${i}"]?.toInteger()
         def notifyUser = settings["bdayNotifyUser_${i}"]
         
-        // 1. If it is exactly the person's birthday and the target user is home
+        // 1. Exact Birthday Match
         if (bMonthInt == currentMonth && bDayInt == currentDay) {
             if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
                 if (bName.toLowerCase() != notifyUser.toLowerCase()) {
@@ -2973,10 +3195,35 @@ def getBirthdayMessage(String arrivingUser, String type) {
             }
         }
         
-        // 2. The 5-Day Gift Warning
-        if (type == "Morning" || type == "Arrival") {
+        // 2. Birthday Month Countdown (Kids)
+        if (bType.contains("Kid") && (type == "Morning" || type == "Arrival")) {
+            def bdayCal = Calendar.getInstance(location.timeZone)
+            bdayCal.set(Calendar.MONTH, bMonthInt - 1)
+            bdayCal.set(Calendar.DAY_OF_MONTH, bDayInt)
+            bdayCal.set(Calendar.HOUR_OF_DAY, 0)
+            bdayCal.set(Calendar.MINUTE, 0)
+            bdayCal.set(Calendar.SECOND, 0)
+            
+            // If the birthday passed earlier this year, look to next year
+            if (bdayCal.time.time < now.time && !(bMonthInt == currentMonth && bDayInt == currentDay)) {
+                bdayCal.add(Calendar.YEAR, 1)
+            }
+            
+            def daysUntil = Math.round((bdayCal.time.time - now.time) / 86400000.0).toInteger()
+            
+            // Count down if it is exactly 30 days or less
+            if (daysUntil > 0 && daysUntil <= 30) {
+                if (!notifyUser || notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser]) {
+                    def cdMsg = "By the way, you only have %days% days until your birthday!"
+                    return cdMsg.replace("%days%", daysUntil.toString()).replace("%name%", applyAlias(bName))
+                }
+            }
+        }
+        
+        // 3. The 5-Day Adult Gift Warning
+        if (bType.contains("Adult") && (type == "Morning" || type == "Arrival")) {
             def cal = Calendar.getInstance(location.timeZone)
-            cal.add(Calendar.DAY_OF_YEAR, 5) // Look 5 days into the future
+            cal.add(Calendar.DAY_OF_YEAR, 5)
             if (cal.get(Calendar.MONTH) + 1 == bMonthInt && cal.get(Calendar.DAY_OF_MONTH) == bDayInt) {
                 if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
                      return "As a quick reminder, ${bName}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
@@ -2985,23 +3232,26 @@ def getBirthdayMessage(String arrivingUser, String type) {
         }
     }
     
-    // 3. Mother's Day / Father's Day check
+    // 4. Mother's Day / Father's Day check
     def holiday = getTodayHoliday()
-    if (settings.enableMothersDay && holiday == "Mother's Day") {
+    if (settings.enableParentsDay && holiday == "Mother's Day") {
         def mUser = settings.mothersDayUser
-        if (!mUser || mUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[mUser]) {
+        def mUsers = [mUser].flatten().findAll { it != null }.collect { it.toLowerCase() }
+        if (mUsers.isEmpty() || mUsers.contains(arrivingUser.toLowerCase())) {
             return "Also, today is Mother's Day. Please remember to call your mother."
         }
     }
-    if (settings.enableFathersDay && holiday == "Father's Day") {
+    if (settings.enableParentsDay && holiday == "Father's Day") {
         def fUser = settings.fathersDayUser
-        if (!fUser || fUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[fUser]) {
+        def fUsers = [fUser].flatten().findAll { it != null }.collect { it.toLowerCase() }
+        if (fUsers.isEmpty() || fUsers.contains(arrivingUser.toLowerCase())) {
             return "Also, today is Father's Day. Please remember to call your father."
         }
     }
 
     return ""
 }
+
 def midnightReset() {
     ensureStateMaps()
     
