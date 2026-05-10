@@ -394,6 +394,16 @@ def mainPage() {
                 input "googleMapsApiKey", "text", title: "Google Maps API Key", description: "Enter your key from Google Cloud Console", required: false
                 input "homeAddress", "text", title: "Home Address", description: "e.g., 123 Main St, Your City, State", required: false
                 input "leaveNowBuffer", "number", title: "Leave Now Buffer (Minutes)", defaultValue: 5, description: "Warning threshold before you MUST leave."
+                
+                // --- THIS IS THE MISSING BUTTON AND FAILSAFE ---
+                input "apiCallLimit", "number", title: "Monthly API Call Limit", defaultValue: 500, description: "Failsafe limit to prevent billing charges."
+                input "btnTestGoogleApi", "button", title: "▶️ Test Google API Connection"
+                
+                def apiCount = state.apiCallCount ?: 0
+                def apiLimit = settings.apiCallLimit ?: 500
+                paragraph "<div style='${prevStyle}'><b>API Usage This Month:</b> ${apiCount} / ${apiLimit} Calls</div>"
+                // -----------------------------------------------
+
                 paragraph "<hr>"
                 
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
@@ -1294,42 +1304,31 @@ def calendarTimeHandler(evt, passedTitle = null) {
     ensureStateMaps()
     def epochStr = evt.value
     if (!epochStr || !epochStr.isNumber()) return
-    
     def eventEpoch = epochStr.toLong()
     def now = new Date().time
     
     unschedule("executeCalendarAlert")
-    state.scheduledCalendarAlerts = []
-    
     if (eventEpoch > now) {
-        def title = passedTitle
-        if (!title && settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice) {
-            title = settings.calendarDevice.currentValue(settings.calEventTitleAttr) ?: "an upcoming appointment"
-        }
-        if (!title) title = "an upcoming appointment"
-        
+        def title = passedTitle ?: (settings.calendarType == "Built-In Device (Advanced Calendar App)" ? settings.calendarDevice.currentValue(settings.calEventTitleAttr) : "an appointment")
         state.nextEventName = title
         state.nextEventEpoch = eventEpoch
         state.nextEventTimeStr = new Date(eventEpoch).format("MMM d 'at' h:mm a", location.timeZone)
-        state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
-        
-        // 1. Schedule all user-selected warning intervals
+
+        // 1. Schedule standard intervals
         def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
         intervals.each { interval ->
-            def offsetMs = 0
-            if (interval == "3 Hours") offsetMs = 3 * 3600000
-            if (interval == "2 Hours") offsetMs = 2 * 3600000
-            if (interval == "1 Hour") offsetMs = 1 * 3600000
-            if (interval == "30 Minutes") offsetMs = 30 * 60000
-            if (interval == "15 Minutes") offsetMs = 15 * 60000
-            
+            def offsetMs = (interval == "1 Hour" ? 3600000 : interval == "30 Minutes" ? 1800000 : 900000)
             def alertTime = eventEpoch - offsetMs
-            if (alertTime > now) {
-                runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
-            }
+            if (alertTime > now) runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
         }
-        
-        // 2. ALWAYS schedule an alert for the exact moment the event begins
+
+        // 2. NEW: THE PROACTIVE TRAVEL CHECK
+        // Butler pings Google 1 hour before the event to see if traffic is so bad you need to leave NOW.
+        def travelCheckTime = eventEpoch - 3600000 
+        if (travelCheckTime > now) {
+            runOnce(new Date(travelCheckTime), "executeCalendarAlert", [data: [title: title, timeStr: "Travel Check", isProactive: true], overwrite: false])
+        }
+
         runOnce(new Date(eventEpoch), "executeCalendarAlert", [data: [title: title, timeStr: "0 Minutes"], overwrite: false])
     }
 }
@@ -3471,6 +3470,8 @@ def appButtonHandler(btn) {
         for (int i = 1; i <= numRoomsSet; i++) {
             if (settings["roomNewsEnable_${i}"]) syncRoomNews(i)
         }
+    } else if (btn == "btnTestGoogleApi") {
+        testGoogleIntegration() // <--- THIS MAKES THE BUTTON WORK
     } else if (btn == "btnTestGlobal") {
         enqueueTTS(globalIndoorSpeaker, applyDynamicVars("This is a test of the global indoor speakers. The time is %time%."), globalVolume, 1)
     } else if (btn == "btnTestOutdoor") {
@@ -3503,10 +3504,33 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestMidday") executeMiddayMaintenance(true)
     else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
     else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
-    else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
-    else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
     else if (btn == "btnClearNotes") clearNotesEndpoint()
 }
+
+
+def testGoogleIntegration() {
+    // We use a real street address as the fallback so the Distance Matrix GPS doesn't fail
+    def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
+    log.info "TEST: Pinging Google for travel to ${testDest}..."
+    
+    def mins = getTravelInfo(testDest)
+    def gas = getCheapestGas()
+    
+    def msg = ""
+    if (mins != null) {
+        msg = "Google API Test Successful. It currently takes ${mins} minutes to get to your destination from your home."
+        if (gas) { msg += gas }
+    } else {
+        msg = "Google API Test Failed. Please check your API Key, Home Address, and Hubitat Logs."
+    }
+    
+    def targetSpeaker = globalIndoorSpeaker
+    if (!targetSpeaker && arrivalFoyerSpeaker) targetSpeaker = arrivalFoyerSpeaker
+    if (targetSpeaker) enqueueTTS(targetSpeaker, msg, globalVolume, 1)
+    
+    addToHistory("TEST: Google Maps/Gas logic check performed.")
+}
+
 
 def addToHistory(String msg) {
     ensureStateMaps()
@@ -4193,22 +4217,23 @@ def getTravelInfo(destination) {
     def encodedDest = java.net.URLEncoder.encode(destination, "UTF-8")
     def url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodedHome}&destinations=${encodedDest}&departure_time=now&key=${settings.googleMapsApiKey}"
     
+    def travelMins = null // <-- Hold the value outside the closure!
+    
     try {
         httpGet([uri: url, timeout: 10]) { resp ->
-            // Safely check if the response structure actually exists
             if (resp.status == 200 && resp.data?.rows && resp.data.rows[0]?.elements) {
                 def element = resp.data.rows[0].elements[0]
                 if (element?.status == "OK") {
-                    // Try to get traffic duration, fallback to normal duration, fallback to 0
                     def trafficSecs = element.duration_in_traffic?.value ?: element.duration?.value ?: 0
-                    return (trafficSecs / 60).toInteger()
+                    travelMins = (trafficSecs / 60).toInteger() // <-- Assign it here
                 }
             }
         }
     } catch (e) { 
         if (settings.enableDebug) log.warn "Travel Info Error: ${e}" 
     }
-    return null
+    
+    return travelMins // <-- Safely return it to the Butler!
 }
 
 def getCheapestGas() {
@@ -4218,20 +4243,22 @@ def getCheapestGas() {
     def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
     def url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=cheapest+gas+near+${encodedHome}&key=${settings.googleMapsApiKey}"
     
+    def gasResult = "" // <-- Hold the value outside the closure!
+    
     try {
         httpGet([uri: url, timeout: 10]) { resp ->
-            // Safely check that the results array actually has items before grabbing index [0]
             if (resp.status == 200 && resp.data?.results && resp.data.results.size() > 0) {
                 def topStation = resp.data.results[0]
                 def addressObj = topStation.formatted_address ?: ""
                 def streetOnly = addressObj.contains(",") ? addressObj.split(',')[0] : addressObj
-                return " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}."
+                gasResult = " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}." // <-- Assign it here
             }
         }
     } catch (e) { 
         if (settings.enableDebug) log.warn "Gas Scout Error: ${e}" 
     }
-    return ""
+    
+    return gasResult // <-- Safely return it to the Butler!
 }
 
 def goodNightOnHandler(evt) {
@@ -4287,4 +4314,20 @@ def roomMotionHandler(evt) {
             }
         }
     }
+}
+
+def checkAndIncrementApiLimit() {
+    ensureStateMaps()
+    def currentMonth = new Date().format("MM")
+    if (state.apiResetMonth != currentMonth) {
+        state.apiCallCount = 0
+        state.apiResetMonth = currentMonth
+    }
+    def limit = settings.apiCallLimit != null ? settings.apiCallLimit.toInteger() : 500
+    if (state.apiCallCount >= limit) {
+        log.warn "Voice Butler: Monthly Google API Limit (${limit}) reached. Disabling Travel/Gas scout until next month."
+        return false
+    }
+    state.apiCallCount = (state.apiCallCount ?: 0) + 1
+    return true
 }
