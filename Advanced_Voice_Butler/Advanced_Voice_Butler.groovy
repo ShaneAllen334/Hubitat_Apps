@@ -2168,30 +2168,27 @@ def unifiProtectHandler(evt) {
 }
 
 // --- BUTLER EVENT TRACKING & REPORTING ---
-def countDoorbellHandler(evt) {
-    def awayList = [settings.butlerAwayModes].flatten().findAll { it != null }
-    if (awayList.contains(location.mode)) state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
-}
-
 def countMotionHandler(evt) {
-    def nightList = [settings.butlerNightModes].flatten().findAll { it != null }
-    if (nightList.contains(location.mode)) state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
+    ensureStateMaps()
+    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
+    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
+    
+    // --- THE FIX: Count motion if in Night Mode OR Away Mode ---
+    if (location.mode in nightModes || location.mode in awayModes || location.mode == "Away") {
+        state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
+        state.pendingMorningReport = true
+    }
 }
 
-def butlerLrMotionHandler(evt) {
+def countDoorbellHandler(evt) {
     ensureStateMaps()
-    if (evt.value == "active") {
-        def arrModes = [settings.butlerArrivalModes].flatten().findAll { it != null }
-        def mornModes = [settings.butlerMorningModes].flatten().findAll { it != null }
-        
-        if (state.pendingArrivalReport && (!arrModes || arrModes.contains(location.mode))) {
-            state.pendingArrivalReport = false 
-            runIn(settings.butlerReportDelay != null ? settings.butlerReportDelay.toInteger() : 120, "playButlerReport", [data: [type: "Arrival", count: state.awayDoorbellCount], overwrite: true])
-        }
-        if (state.pendingMorningReport && (!mornModes || mornModes.contains(location.mode))) {
-            state.pendingMorningReport = false 
-            runIn(settings.butlerReportDelay != null ? settings.butlerReportDelay.toInteger() : 120, "playButlerReport", [data: [type: "Morning", count: state.nightMotionCount], overwrite: true])
-        }
+    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
+    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
+    
+    // --- THE FIX: Count doorbells if in Away Mode OR Night Mode ---
+    if (location.mode in awayModes || location.mode in nightModes || location.mode == "Away") {
+        state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
+        state.pendingArrivalReport = true
     }
 }
 
@@ -2734,14 +2731,20 @@ def scheduledAwayCheck() {
 // --- CENTRAL GREETING BUILDER ---
 def buildRoomGreeting(rNum, type, context = [:]) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
-    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: "Guest")
+    
+    // --- FIX: Prioritize Occupant Name over Room Name to avoid "Master Bedroom" greeting ---
+    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: rName)
     def displayOccName = applyAlias(occName)
+    
     def parts = []
     def roomKey = "room_${rNum}" // Unique ID for the memory filter
+    def isTest = context.isTest ?: false // --- FIX: Catch the Test Flag to prevent Memory Poisoning ---
 
     def rawMsg = ""
     if (type == "Good Night") {
-        if (settings["useCustomRoomMessages_${rNum}"]) {
+        if (context.isNewArrival) {
+            rawMsg = "Welcome home, %name%. Your space is prepared."
+        } else if (settings["useCustomRoomMessages_${rNum}"]) {
             def msgs = []
             for (int m = 1; m <= 10; m++) { if (settings["gnMessage_${rNum}_${m}"]) msgs << settings["gnMessage_${rNum}_${m}"] }
             rawMsg = msgs ? msgs[new Random().nextInt(msgs.size())] : getDefaultMessages("Good Night")[0]
@@ -2768,10 +2771,10 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     // --- AI SLEEP HABIT CHECK ---
     if (type == "Good Night" && occName != "Guest") {
         def splitOcc = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-        splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
+        if (!isTest) splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
         
         def primaryOcc = splitOcc[0]
-        if (state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
+        if (state.learnedHabits && state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
             def expected = state.learnedHabits[primaryOcc].avgSleepMins
             def cal2 = Calendar.getInstance(location.timeZone)
             def nowMins = (cal2.get(Calendar.HOUR_OF_DAY) * 60) + cal2.get(Calendar.MINUTE)
@@ -2795,7 +2798,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
     if (settings.enableHolidays && type != "Good Night") {
         def holiday = getTodayHoliday()
-        if (context.isTest && !holiday) holiday = "a Holiday"
+        if (isTest && !holiday) holiday = "a Holiday"
         if (holiday) {
             def hMsg = settings.holidayMessage ?: "By the way, don't forget today is %holiday%!"
             parts << hMsg.replace('%holiday%', holiday)
@@ -2807,6 +2810,9 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     def dow = cal.get(Calendar.DAY_OF_WEEK)
     def dowString = new Date().format("EEEE", location.timeZone)
 
+    // ==============================================
+    //               GOOD MORNING LOGIC
+    // ==============================================
     if (type == "Good Morning") {
         def timeDateEnabled = settings["roomTimeDate_${rNum}"]
         def agendaEnabled = settings["roomAgendaEnable_${rNum}"]
@@ -2828,22 +2834,23 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
         if (settings["roomAnnounceNightMotion_${rNum}"]) {
             def count = state.lastNightMotionCount ?: 0
-            if (count > 0 || context.isTest) {
-                def c = context.isTest ? 3 : count
+            if (count > 0 || isTest) {
+                def c = isTest ? 3 : count
                 parts << "Please note, there were ${c} motion events on the porch last night."
             }
         }
 
         if (settings["roomAnnounceAwayDoorbell_${rNum}"]) {
             def count = state.lastAwayDoorbellCount ?: 0
-            if (count > 0 || context.isTest) {
-                def c = context.isTest ? 1 : count
+            if (count > 0 || isTest) {
+                def c = isTest ? 1 : count
                 parts << "Also, the doorbell rang ${c} times while the house was vacant yesterday."
             }
         }
 
         if (wDevice && settings["roomWeatherGM_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey) 
+            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
+            def wText = getWeatherReport(wDevice, roomKey, isTest) 
             if (wText) {
                 def weatherBlock = getBridge("weather") + wText
                 if (settings["roomWardrobe_${rNum}"]) {
@@ -2857,18 +2864,18 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             if (wardText) parts << getBridge("weather") + wardText
         }
 
-        if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || context.isTest)) {
+        if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || isTest)) {
             def bText = getBoredomBuster(wDevice)
             if (bText) parts << bText
         }
 
         if (settings["roomNewsEnable_${rNum}"]) {
-            def newsText = getRoomNews(rNum, context.isTest)
+            def newsText = getRoomNews(rNum, isTest)
             if (newsText) parts << getBridge("news") + newsText
         }
 
         if (settings["roomAnnounceMaintenance_${rNum}"] && settings["roomMaintenanceDevice_${rNum}"]) {
-            def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"])
+            def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"], isTest)
             if (mText) parts << mText
         }
 
@@ -2876,7 +2883,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             parts << getKidsFunFact(rNum)
         }
         
-        // --- UPDATED: BUTLER NOTES (MORNING) ---
+        // --- BUTLER NOTES (MORNING) ---
         if (settings.announceNotesMorning && state.butlerNotes && state.butlerNotes.size() > 0) {
             def pendingMorningNotes = state.butlerNotes.findAll { (it.when == "Morning" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(displayOccName) || it.target.equalsIgnoreCase(occName)) }
             if (pendingMorningNotes.size() > 0) {
@@ -2893,8 +2900,10 @@ def buildRoomGreeting(rNum, type, context = [:]) {
                 }
                 
                 parts << getBridge("general") + readStr
-                state.butlerNotes.removeAll { pendingMorningNotes.contains(it) }
-                addToHistory("NOTES: Delivered morning/missed notes to ${displayOccName}.")
+                if (!isTest) {
+                    state.butlerNotes.removeAll { pendingMorningNotes.contains(it) }
+                    addToHistory("NOTES: Delivered morning/missed notes to ${displayOccName}.")
+                }
             }
         }
         // ---------------------------------------
@@ -2902,27 +2911,38 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
             def inboxMsgs = state.messageInbox.join(", and ")
             parts << getBridge("general") + "while you were asleep, ${inboxMsgs}."
-            state.messageInbox = [] 
-            addToHistory("INBOX: Delivered stashed messages during Morning Briefing.")
+            if (!isTest) {
+                state.messageInbox = [] 
+                addToHistory("INBOX: Delivered stashed messages during Morning Briefing.")
+            }
         }
     }
 
+    // ==============================================
+    //               GOOD NIGHT LOGIC
+    // ==============================================
     if (type == "Good Night") {
         if (settings["roomKidsWeekend_${rNum}"]) {
-            if (dow == Calendar.FRIDAY || dow == Calendar.SATURDAY || context.isTest) {
+            if (dow == Calendar.FRIDAY || dow == Calendar.SATURDAY || isTest) {
                 parts << "Since tomorrow is the weekend, there is no school! Sleep well and sleep in."
             }
         }
         
         if (settings["roomPerimeterCheck_${rNum}"]) {
-            def perimText = getPerimeterReport(roomKey)
+            // --- FIX: Pass the isTest flag so Security isn't suppressed ---
+            def perimText = getPerimeterReport(roomKey, isTest)
             if (perimText) parts << perimText
         }
 
         if (wDevice && settings["roomWeatherGN_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey)
+            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
+            def wText = getWeatherReport(wDevice, roomKey, isTest)
             if (wText) parts << wText
         }
+        
+        // --- ADDED: Wind-Down Calendar Feature ---
+        def tomorrowMsg = getTomorrowPreview()
+        if (tomorrowMsg) parts << tomorrowMsg
 
         if (settings["roomKidsNightWatch_${rNum}"]) {
             def monsterList = [
@@ -4347,26 +4367,25 @@ def goodNightOnHandler(evt) {
     }
     
     if (rNum > 0) {
-        def userName = settings["roomName_${rNum}"] ?: "User ${rNum}"
-        def presenceDev = settings["fallbackPresence_${rNum}"] // Check for assigned hardware sensor
+        def presenceDev = settings["fallbackPresence_${rNum}"] 
+        def isArrival = false
         
-        // --- SMART ARRIVAL FAILSAFE ---
-        // Only force arrival if they DON'T have a hardware presence sensor
-        if (!presenceDev) {
-            if (state.hasArrivedToday[rNum] != true) {
-                state.hasArrivedToday[rNum] = true
-                state.hasDepartedToday[rNum] = false
-                addToHistory("ROOM ENGINE: ${userName} auto-arrived via Good Night Switch (No hardware sensor detected).")
-                
-                // Only greet the person who just arrived
-                testRoomGreeting(rNum, "Good Night", true) 
-            } else {
-                // Standard Good Night if they were already home
-                testRoomGreeting(rNum, "Good Night", false)
-            }
-        } else {
-            // They HAVE a hardware sensor. Let the sensor handle their status.
-            testRoomGreeting(rNum, "Good Night", false)
+        // Failsafe: Mark as arrived if they don't have a hardware sensor
+        if (!presenceDev && state.hasArrivedToday[rNum] != true) {
+            state.hasArrivedToday[rNum] = true
+            state.hasDepartedToday[rNum] = false
+            isArrival = true
+        }
+        
+        // --- THE FIX: Call the full engine, not the test function! ---
+        def fullMsg = buildRoomGreeting(rNum, "Good Night", [isNewArrival: isArrival, isTest: false])
+        
+        def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
+        def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+        
+        if (targetSpeaker && fullMsg) {
+            enqueueTTS(targetSpeaker, fullMsg, vol, 1)
+            addToHistory("ROOM ENGINE: Good Night Routine executed for Room ${rNum}.")
         }
     }
 }
