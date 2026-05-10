@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.6
+ * Version 1.8
  */
 definition(
     name: "Advanced Voice Butler",
@@ -23,6 +23,9 @@ preferences {
 mappings {
     path("/google/email") { action: [POST: "handleGoogleEmail"] }
     path("/google/calendar") { action: [POST: "handleGoogleCalendar"] }
+    path("/notes") { action: [GET: "serveNotesPage"] }
+    path("/notes/add") { action: [POST: "addNoteEndpoint"] }
+    path("/notes/clear") { action: [POST: "clearNotesEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -51,7 +54,16 @@ def mainPage() {
     }
     
     dynamicPage(name: "mainPage", title: "Voice Butler Configuration", install: true, uninstall: true) {
-       
+        
+        // --- HABIT DATABASE SCRUB ---
+        // Removes old "Group" entries (e.g. Shane and Christy) to keep the roster clean
+        if (state.learnedHabits) {
+            def keysToRemove = []
+            state.learnedHabits.each { k, v -> if (k.contains(" and ") || k.contains("&") || k.contains(",")) keysToRemove << k }
+            keysToRemove.each { state.learnedHabits.remove(it) }
+        }
+        // ----------------------------
+
         def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
         
         def lockUsers = []
@@ -70,9 +82,13 @@ def mainPage() {
         section("Live System Dashboard", hideable: false, hidden: false) {
             paragraph "<i>Welcome to the Voice Butler command center. Below is a real-time read-only view of your perimeter status, active voice zones, and today's arrival/departure log.</i>"
             
-            // --- TEMPORARY WEBHOOK ENDPOINT DISPLAY ---
-            paragraph "<div style='padding:10px; background-color:#ffeeba; border:1px solid #ffeeba; color:#856404; border-radius:4px;'><b>Your Webhook Base URL:</b><br>${getFullApiServerUrl()}/google?access_token=${state.accessToken}</div>"
-            // -------------------------------------------
+            // --- UPDATED WEBHOOK ENDPOINT DISPLAY ---
+            if (state.accessToken) {
+                def cloudUrl = getFullApiServerUrl()
+                def localUrl = getFullLocalApiServerUrl()
+                paragraph "<div style='padding:10px; background-color:#ffeeba; border:1px solid #ffeeba; color:#856404; border-radius:4px;'><b>Your Webhook Base URL (Cloud):</b><br>${cloudUrl}/google?access_token=${state.accessToken}<br><br><b>Your Webhook Base URL (Local):</b><br>${localUrl}/google?access_token=${state.accessToken}</div>"
+            }
+            // ----------------------------------------
             
             input "btnRefresh", "button", title: "🔄 Refresh Data Dashboard"
             input "btnQuickSave", "button", title: "💾 Quick Save / Refresh Page"
@@ -116,13 +132,28 @@ def mainPage() {
             // --- External Sync Data ---
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>External Integrations Sync</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Service</th><th style='padding: 8px;'>Status / Next Item</th><th style='padding: 8px;'>Last Checked</th></tr>"
+            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Service</th><th style='padding: 8px;'>Status / Next Item</th><th style='padding: 8px;'>Last Checked / Time</th></tr>"
             
             def nowMs = new Date().time
             if (state.nextEventEpoch && nowMs > state.nextEventEpoch) { state.nextEventName = null; state.nextEventTimeStr = null }
-            def nextCalText = (state.nextEventName && state.nextEventTimeStr) ? "<b>${state.nextEventName}</b> (${state.nextEventTimeStr})" : "<span style='color: #7f8c8d;'>Waiting for Sync... / No Events</span>"
+            def nextCalText = (state.nextEventName && state.nextEventTimeStr) ? "<b>${state.nextEventName}</b>" : "<span style='color: #7f8c8d;'>Waiting for Sync... / No Events</span>"
             if (!settings.enableCalendar) nextCalText = "<span style='color: #7f8c8d;'>Disabled</span>"
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Calendar Engine</b></td><td style='padding: 8px;'>${nextCalText}</td><td style='padding: 8px;'>${state.calendarSyncTime ?: '--'}</td></tr>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Calendar Engine</b></td><td style='padding: 8px;'>${nextCalText}</td><td style='padding: 8px;'>${state.nextEventTimeStr ?: '--'}</td></tr>"
+
+            // --- NEW: SCHEDULED BUTLER NOTES ROW ---
+            def nextNoteText = "<span style='color: #7f8c8d;'>No Scheduled Notes</span>"
+            def nextNoteTimeStr = "--"
+            if (state.butlerNotes) {
+                def upcomingNotes = state.butlerNotes.findAll { it.when == "Time" && it.timeEpoch && it.timeEpoch > nowMs }.sort { it.timeEpoch }
+                if (upcomingNotes.size() > 0) {
+                    def nextNote = upcomingNotes[0]
+                    def senderPrefix = nextNote.sender != "Someone" ? "${nextNote.sender} to " : "To "
+                    nextNoteText = "<b>${senderPrefix}${nextNote.target}:</b> <i>\"${nextNote.text.take(20)}${nextNote.text.length() > 20 ? '...' : ''}\"</i>"
+                    nextNoteTimeStr = new Date(nextNote.timeEpoch).format("MMM d 'at' h:mm a", location.timeZone)
+                }
+            }
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Scheduled Notes</b></td><td style='padding: 8px;'>${nextNoteText}</td><td style='padding: 8px; color: #0b3b60; font-weight: bold;'>${nextNoteTimeStr}</td></tr>"
+            // ---------------------------------------
 
             def mealNewsText = state.mealNewsHeadline ?: "<span style='color: #7f8c8d;'>Waiting for Sync...</span>"
             def mealNewsTime = state.mealNewsSyncTime ?: "--"
@@ -214,9 +245,35 @@ def mainPage() {
             }
         }
         
+        // --- NEW: BUTLER NOTES PORTAL ---
+        section("📝 Butler Notes Portal", hideable: true, hidden: true) {
+            paragraph "<i>Access this secure webpage from your phone or computer to leave targeted notes for specific members of the household.</i>"
+            if (state.accessToken) {
+                def cloudUrl = getFullApiServerUrl()
+                def localUrl = getFullLocalApiServerUrl()
+                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px;'><b>Cloud Notes Portal URL (Use anywhere):</b><br><a href='${cloudUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${cloudUrl}/notes?access_token=${state.accessToken}</a><br><br><b>Local Notes Portal URL (Use at home):</b><br><a href='${localUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${localUrl}/notes?access_token=${state.accessToken}</a></div>"
+            }
+            
+            input "announceNotesArrival", "bool", title: "Announce pending notes on Arrival?", defaultValue: true
+            input "announceNotesMorning", "bool", title: "Announce pending notes during Morning Briefing?", defaultValue: true
+            
+            if (state.butlerNotes && state.butlerNotes.size() > 0) {
+                paragraph "<b>Currently Pending Notes:</b><br>"
+                state.butlerNotes.each { note ->
+                    def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
+                    paragraph "• <b>For ${note.target}</b>${timeTxt}: ${note.text}"
+                }
+                input "btnClearNotes", "button", title: "🗑️ Clear All Notes"
+            } else {
+                paragraph "<i>No notes currently pending.</i>"
+            }
+        }
+        // --------------------------------
+        
         section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
             input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
+            input "enableInbox", "bool", title: "Enable 'Silver Platter' Message Inbox (Hold missed alerts)?", defaultValue: false, submitOnChange: true
             input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
             if (enableChime) {
                 input "chimeUrl", "text", title: "Chime Audio File URL (MP3/WAV)", description: "e.g., http://127.0.0.1:8080/local/chime.mp3", required: true
@@ -243,7 +300,7 @@ def mainPage() {
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
 
-            section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
+        section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
             input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
             input "arrivalVolume", "number", title: "Welcome Home Announcement Volume (0-100)", required: false
             input "arrivalFoyerSpeaker", "capability.speechSynthesis", title: "Foyer / Entryway Speaker (Plays Full Greeting)", required: false
@@ -266,6 +323,9 @@ def mainPage() {
                 input "extendedAbsenceHours", "number", title: "Absence Threshold (Hours)", defaultValue: 48, required: false
                 for (int m = 1; m <= 5; m++) { input "extAbsenceMessage_${m}", "text", title: "Extended Message ${m}", required: false, defaultValue: getDefaultMessages("ExtendedAbsence")[m-1] }
             }
+            
+            input "enableDurationAware", "bool", title: "Enable Duration-Aware Arrival Context (Quick trip vs Long day)?", defaultValue: false
+            
             paragraph "<hr>"
 
             input "btnTestArrival", "button", title: "▶️ Test Welcome Home Audio"
@@ -327,6 +387,25 @@ def mainPage() {
                         paragraph "<div style='padding:8px; background-color:#d4edda; border:1px solid #c3e6cb; color:#155724; border-radius:4px;'><i><b>Webhook Mode Active:</b> The app is listening for instant pushes from your Google Script. Background polling is disabled.</i></div>"
                     }
                 }
+                
+                // --- MOVED: Travel & Mapping Intelligence is now outside the local-only condition ---
+                paragraph "<hr>"
+                paragraph "<b>🌍 Travel & Mapping Intelligence</b>"
+                input "googleMapsApiKey", "text", title: "Google Maps API Key", description: "Enter your key from Google Cloud Console", required: false
+                input "homeAddress", "text", title: "Home Address", description: "e.g., 123 Main St, Your City, State", required: false
+                input "leaveNowBuffer", "number", title: "Leave Now Buffer (Minutes)", defaultValue: 5, description: "Warning threshold before you MUST leave."
+                
+                // --- THIS IS THE MISSING BUTTON AND FAILSAFE ---
+                input "apiCallLimit", "number", title: "Monthly API Call Limit", defaultValue: 500, description: "Failsafe limit to prevent billing charges."
+                input "btnTestGoogleApi", "button", title: "▶️ Test Google API Connection"
+                
+                def apiCount = state.apiCallCount ?: 0
+                def apiLimit = settings.apiCallLimit ?: 500
+                paragraph "<div style='${prevStyle}'><b>API Usage This Month:</b> ${apiCount} / ${apiLimit} Calls</div>"
+                // -----------------------------------------------
+
+                paragraph "<hr>"
+                
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "calAlertIntervals", "enum", title: "Warning Intervals", options: ["3 Hours", "2 Hours", "1 Hour", "30 Minutes", "15 Minutes"], multiple: true, required: false
                 input "calRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
@@ -340,7 +419,7 @@ def mainPage() {
             }
         }
 
-            section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
+        section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
             paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
             input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
             
@@ -399,9 +478,26 @@ def mainPage() {
             }
         }
 
+        section("Midday Maintenance Reminder", hideable: true, hidden: true) {
+            input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
+            if (enableMiddayMaintenance) {
+                paragraph "<i>The Butler will secretly pick a random time between 11:00 AM and 3:00 PM every day to politely remind you of any overdue tasks. It will remain silent if the house is empty or if guests are present.</i>"
+                input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: true
+                input "middayMaintenanceModes", "mode", title: "Allowed Modes for Reminder", multiple: true, required: false
+                input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+            }
+        }
+        
         section("Contextual Departures & Habit Tracking", hideable: true, hidden: true) {
             input "frontDoorContact", "capability.contactSensor", title: "Front Door Contact Sensor", required: false
             input "numDepartureUsers", "number", title: "Number of Departure Profiles (0-5)", required: true, defaultValue: 0, range: "0..5", submitOnChange: true
+            
+            input "enableCoatCheck", "bool", title: "Enable Departure 'Coat Check' (Weather Warnings)?", defaultValue: false, submitOnChange: true
+            if (enableCoatCheck) {
+                input "depWeatherDevice", "capability.temperatureMeasurement", title: "Weather Device for Coat Check", required: true
+            }
             
             if (numDepartureUsers > 0) {
                 for (int i = 1; i <= (numDepartureUsers as Integer); i++) {
@@ -480,6 +576,13 @@ def mainPage() {
                 input "mealTimeNewsWeather", "bool", title: "Enable Evening Digest (News & Weather)?", defaultValue: false, submitOnChange: true
                 if (mealTimeNewsWeather) { input "mealTimeNewsFeed", "text", title: "RSS News Feed URL", defaultValue: "https://feeds.npr.org/1001/rss.xml"; input "mealTimeWeatherDevice", "capability.temperatureMeasurement", title: "Weather / Temperature Device", required: false }
                 
+                // --- NEW: THE MISSING INPUTS ---
+                input "enableMealQuestions", "bool", title: "Enable Meal Time Conversation Starters?", defaultValue: false, submitOnChange: true
+                if (enableMealQuestions) {
+                    input "mealTimeQuestionsFile", "text", title: "Custom Questions File (.txt)", description: "e.g. dinner_questions.txt", required: false
+                }
+                // -------------------------------
+
                 input "btnTestMealNews", "button", title: "▶️ Test Evening News Fetch"
                 input "btnTestMealTime", "button", title: "▶️ Test Meal Time Audio"
                 
@@ -588,7 +691,6 @@ def mainPage() {
             if (enableHolidays) { input "holidayMessage", "text", title: "Holiday Message Format", defaultValue: "By the way, don't forget today is %holiday%!" }
             
             paragraph "<hr>"
-            // --- MOTHER'S & FATHER'S DAY SETTINGS ---
             input "enableParentsDay", "bool", title: "Enable Parent's Day Reminders? (Call Mom/Dad)", defaultValue: false, submitOnChange: true
             if (enableParentsDay) {
                 input "mothersDayUser", "enum", title: "Who should be reminded to call Mom on Mother's Day?", options: lockUsers, multiple: true, required: false
@@ -616,9 +718,7 @@ def mainPage() {
                     paragraph "<b>Birthday Profile ${i}</b>"
                     input "bdayName_${i}", "text", title: "Person's Name ${i}", required: false
                     
-                    // --- NEW: Per-Profile Type Selector ---
                     input "bdayType_${i}", "enum", title: "Profile Type", options: ["Kid (30-Day Countdown)", "Adult (5-Day Gift Warning)"], defaultValue: "Kid (30-Day Countdown)", submitOnChange: true
-                    // --------------------------------------
                     
                     input "bdayMonth_${i}", "enum", title: "Birth Month ${i}", options: months, required: false
                     input "bdayDay_${i}", "number", title: "Birth Day ${i} (1-31)", range: "1..31", required: false
@@ -649,6 +749,18 @@ def mainPage() {
             input "resetModes", "mode", title: "Reset ALL Arrivals on Mode Change", multiple: true, required: false
             input "btnForceReset", "button", title: "🔄 Force Reset All Daily Statuses"
             input "awayIgnoreModes", "mode", title: "Ignore 'Away' Triggers during these Modes", description: "Prevent being marked away during Night or Sleep modes.", multiple: true, required: false
+        }
+
+        section("Screen Time Manager", hideable: true, hidden: true) {
+            input "enableScreenTime", "bool", title: "Enable Screen Time Alerts?", defaultValue: false, submitOnChange: true
+            if (enableScreenTime) {
+                input "screenTimeSwitch", "capability.switch", title: "Screen Time Virtual Switch", required: true
+                input "screenTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Screen Time Speaker", required: false
+                input "screenTimeVolume", "number", title: "Alert Volume (0-100)", required: false
+                input "screenTimeRoutingMode", "enum", title: "Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                for (int d = 1; d <= 5; d++) { input "screenTimeMsg_${d}", "text", title: "Alert Message ${d}", required: false, defaultValue: getDefaultMessages("ScreenTime")[d-1] }
+                input "btnTestScreenTime", "button", title: "▶️ Test Screen Time Audio"
+            }
         }
     }
 }
@@ -729,6 +841,8 @@ def roomPage(params) {
             input "roomWeatherDevice_${rNum}", "capability.temperatureMeasurement", title: "Weather / Temperature Device", required: false, submitOnChange: true
             input "roomWeatherGM_${rNum}", "bool", title: "Append Forecast to Good Morning", defaultValue: false
             input "roomWeatherGN_${rNum}", "bool", title: "Append Forecast to Good Night", defaultValue: false
+            input "roomMaintenanceDevice_${rNum}", "capability.sensor", title: "House Maintenance Dashboard Device", required: false
+            input "roomAnnounceMaintenance_${rNum}", "bool", title: "Announce Overdue Maintenance in Morning Brief?", defaultValue: false
             
             def gnPrev = buildRoomGreeting(rNum, "Good Night", [isTest: true])
             def gmPrev = buildRoomGreeting(rNum, "Good Morning", [isTest: true])
@@ -805,6 +919,8 @@ def ensureStateMaps() {
     if (state.spokenFacts == null) state.spokenFacts = [:]
     if (state.lastOfficeIntercept == null) state.lastOfficeIntercept = 0
     if (state.reminderCounts == null) state.reminderCounts = [:]
+    if (state.messageInbox == null) state.messageInbox = []
+    if (state.butlerNotes == null) state.butlerNotes = []
 }
 
 def initialize() {
@@ -812,6 +928,15 @@ def initialize() {
     schedule("0 0 0 * * ?", "midnightReset") 
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
+    
+    // --- NEW: Midday Maintenance Scheduler ---
+    if (settings.enableMiddayMaintenance) {
+        schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
+        // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
+        def cal = Calendar.getInstance(location.timeZone)
+        if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
+    }
+    // -----------------------------------------
     
     if (settings.enableInternetCheck) { runEvery5Minutes("checkInternetConnection"); checkInternetConnection() }
     if (frontDoorbell) { subscribe(frontDoorbell, "pushed", visitorHandler); subscribe(frontDoorbell, "pushed", countDoorbellHandler) }
@@ -1110,9 +1235,8 @@ def iCalResponseHandler(response, data) {
         return
     }
     try {
-        def text = ""
-        if (response.data instanceof String || response.data instanceof GString) text = response.data.toString()
-        else text = response.data.text
+        // Asynchronous Hubitat responses require .getData() to guarantee safe string extraction
+        def text = response.getData() ?: ""
         
         // Remove line folding (CRLF followed by space/tab)
         text = text.replaceAll(/\r?\n[ \t]/, "")
@@ -1123,9 +1247,9 @@ def iCalResponseHandler(response, data) {
         
         def events = text.findAll(/(?s)BEGIN:VEVENT.*?END:VEVENT/)
         events.each { evtStr ->
-            // Improved Regex: Safely ignores properties like ;LANGUAGE=en-us: or ;TZID=America/Chicago:
             def summaryMatch = evtStr =~ /SUMMARY[^:]*:([^\r\n]+)/
             def dtstartMatch = evtStr =~ /DTSTART[^:]*:([^\r\n]+)/
+            def locationMatch = evtStr =~ /LOCATION[^:]*:([^\r\n]+)/
             
             if (summaryMatch && dtstartMatch) {
                 def eName = summaryMatch[0][1].trim()
@@ -1145,22 +1269,23 @@ def iCalResponseHandler(response, data) {
                     } else {
                         def format = tStr.endsWith("Z") ? "yyyyMMdd'T'HHmmss'Z'" : "yyyyMMdd'T'HHmmss"
                         def tz = tStr.endsWith("Z") ? TimeZone.getTimeZone("UTC") : location.timeZone
-                        
-                        // Safe Hubitat-compatible date parsing
                         def sdf = new java.text.SimpleDateFormat(format)
                         sdf.setTimeZone(tz)
                         eDate = sdf.parse(tStr)
                     }
                     
-                    if (settings.enableDebug) log.debug "Calendar Parser: Evaluated '${eName}' at ${eDate} (Parsed from ${tStr})"
-                    
                     if (eDate.time > nowMs && eDate.time < nextEventTime) {
                         nextEventTime = eDate.time
                         nextEventName = eName
+                        
+                        if (locationMatch) {
+                            def rawLoc = locationMatch[0][1].trim()
+                            state.nextEventLocation = rawLoc.replace("\\,", ",").replace("\\;", ";")
+                        } else {
+                            state.nextEventLocation = null
+                        }
                     }
-                } catch(Exception dateEx) {
-                    log.warn "Calendar Parse: Failed to parse date string ${tStr} for event ${eName}. Error: ${dateEx.message}"
-                }
+                } catch(Exception dateEx) {}
             }
         }
         
@@ -1169,6 +1294,7 @@ def iCalResponseHandler(response, data) {
         } else {
             state.nextEventName = "No Upcoming Events"
             state.nextEventTimeStr = "--"
+            state.nextEventLocation = null
             state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
         }
     } catch (Exception e) { log.error "iCal Parse Error: ${e}" }
@@ -1178,42 +1304,31 @@ def calendarTimeHandler(evt, passedTitle = null) {
     ensureStateMaps()
     def epochStr = evt.value
     if (!epochStr || !epochStr.isNumber()) return
-    
     def eventEpoch = epochStr.toLong()
     def now = new Date().time
     
     unschedule("executeCalendarAlert")
-    state.scheduledCalendarAlerts = []
-    
     if (eventEpoch > now) {
-        def title = passedTitle
-        if (!title && settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice) {
-            title = settings.calendarDevice.currentValue(settings.calEventTitleAttr) ?: "an upcoming appointment"
-        }
-        if (!title) title = "an upcoming appointment"
-        
+        def title = passedTitle ?: (settings.calendarType == "Built-In Device (Advanced Calendar App)" ? settings.calendarDevice.currentValue(settings.calEventTitleAttr) : "an appointment")
         state.nextEventName = title
         state.nextEventEpoch = eventEpoch
         state.nextEventTimeStr = new Date(eventEpoch).format("MMM d 'at' h:mm a", location.timeZone)
-        state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
-        
-        // 1. Schedule all user-selected warning intervals
+
+        // 1. Schedule standard intervals
         def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
         intervals.each { interval ->
-            def offsetMs = 0
-            if (interval == "3 Hours") offsetMs = 3 * 3600000
-            if (interval == "2 Hours") offsetMs = 2 * 3600000
-            if (interval == "1 Hour") offsetMs = 1 * 3600000
-            if (interval == "30 Minutes") offsetMs = 30 * 60000
-            if (interval == "15 Minutes") offsetMs = 15 * 60000
-            
+            def offsetMs = (interval == "1 Hour" ? 3600000 : interval == "30 Minutes" ? 1800000 : 900000)
             def alertTime = eventEpoch - offsetMs
-            if (alertTime > now) {
-                runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
-            }
+            if (alertTime > now) runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
         }
-        
-        // 2. ALWAYS schedule an alert for the exact moment the event begins
+
+        // 2. NEW: THE PROACTIVE TRAVEL CHECK
+        // Butler pings Google 1 hour before the event to see if traffic is so bad you need to leave NOW.
+        def travelCheckTime = eventEpoch - 3600000 
+        if (travelCheckTime > now) {
+            runOnce(new Date(travelCheckTime), "executeCalendarAlert", [data: [title: title, timeStr: "Travel Check", isProactive: true], overwrite: false])
+        }
+
         runOnce(new Date(eventEpoch), "executeCalendarAlert", [data: [title: title, timeStr: "0 Minutes"], overwrite: false])
     }
 }
@@ -1259,44 +1374,52 @@ def executeCalendarAlert(data) {
     ensureStateMaps()
     def title = data.title
     def timeStr = data.timeStr
+    def location = state.nextEventLocation
     
-    // 1. Enforce Allowed Modes for ALL calendar alerts
-    def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
-    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
-    
-    // 2. If this is the EXACT start time, enforce the "Someone Must Be Home" rule
-    if (timeStr == "0 Minutes") {
-        if (getPresentUsers().size() == 0) {
-            if (settings.enableDebug) log.debug "CALENDAR ALERT: Suppressed exact start time alert because the house roster shows no one is home."
-            return
+    // --- TRAVEL TIME LOGIC ---
+    def travelWarning = ""
+    if (location && (timeStr == "30 Minutes" || timeStr == "15 Minutes" || data.isProactive)) {
+        def minsToDrive = getTravelInfo(location)
+        if (minsToDrive) {
+            def now = new Date().time
+            def eventStart = state.nextEventEpoch
+            def buffer = settings.leaveNowBuffer ?: 5
+            def minutesUntilEvent = ((eventStart - now) / 60000).toInteger()
+
+            // If drive time + buffer is greater than or equal to the time left...
+            if ((minsToDrive + buffer) >= minutesUntilEvent) {
+                travelWarning = "CRITICAL: If you don't leave now, you will be late for ${title}. Traffic is heavy, and it currently takes ${minsToDrive} minutes to get to ${location}."
+                travelWarning += getCheapestGas() // Adds the gas scout info
+            }
         }
     }
-    
-    def smartContext = getSmartEventContext(title)
-    if (smartContext.reason) {
-        log.info "AI SECRECY: Suppressing Calendar Alert! ${smartContext.reason}"
-        addToHistory("AI SECRECY: Suppressed calendar alert for '${title}' because ${smartContext.reason}")
-        return 
-    }
-    
-    def messages = []
-    for (int d = 1; d <= 4; d++) { if (settings["calMessage_${d}"]) messages << settings["calMessage_${d}"] }
-    if (!messages) messages = getDefaultMessages("Calendar")
-    
-    // 3. Adjust grammar gracefully if the event is starting right now
-    def rawMsg = messages[new Random().nextInt(messages.size())]
-    if (timeStr == "0 Minutes") {
-        rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
+
+    // 1. Enforce Allowed Modes
+    def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
+    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+
+    def finalMsg = ""
+    if (travelWarning) {
+        finalMsg = applyDynamicVars(travelWarning)
     } else {
-        rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
+        // Standard Calendar Message Logic
+        def messages = []
+        for (int d = 1; d <= 4; d++) { if (settings["calMessage_${d}"]) messages << settings["calMessage_${d}"] }
+        if (!messages) messages = getDefaultMessages("Calendar")
+        def rawMsg = messages[new Random().nextInt(messages.size())]
+        
+        if (timeStr == "0 Minutes") {
+            rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
+        } else {
+            rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
+        }
+        finalMsg = applyDynamicVars(rawMsg)
     }
-    
-    def randomMsg = applyDynamicVars(rawMsg)
-    if (smartContext.text) randomMsg += " " + smartContext.text
-    
-    executeRoutedTTS(randomMsg, settings.calRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
-    addToHistory("CALENDAR ALERT: Event approaching/starting. Queued: '${randomMsg}'")
+
+    executeRoutedTTS(finalMsg, settings.calRoutingMode, settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
+    addToHistory("TRAVEL CONCIERGE: ${finalMsg}")
 }
+
 // --- AI HABIT & ANOMALY ENGINE ---
 def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = "global") {
     if (!factText) return ""
@@ -1401,8 +1524,8 @@ def mealTimeHandler(evt) {
     if ((now - lastMeal) < 60000 && evt.value != "test") return
     state.lastMealTimeEvent = now
     
-    def finalMsg = settings.mealTimeDinnerBell ?: "%interruption%, but dinner is now served."
-    
+    // --- PART 1: THE DINNER BELL & ROLL CALL (Chime Active) ---
+    def bellMsg = settings.mealTimeDinnerBell ?: "%interruption%, but dinner is now served."
     if (settings.mealTimeAbsentee) {
         def missing = []
         def allTracked = []
@@ -1412,52 +1535,62 @@ def mealTimeHandler(evt) {
             for (int i = 1; i <= (settings.numLockUsers as Integer); i++) { if (settings["lockUserName_${i}"]) allTracked << settings["lockUserName_${i}"] }
         }
         allTracked = allTracked.unique()
-        
-        // --- NEW: GUEST LIST FILTER ---
         def guestList = [settings.guestUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
         if (settings.guestCustomUsers) guestList += settings.guestCustomUsers.split(',').collect { it.trim().toLowerCase() }
         
         allTracked.each { u -> 
             if (!state.hasArrivedToday || state.hasArrivedToday[u] != true) {
-                // Only add to the missing list if they are NOT a guest!
                 if (!guestList.contains(u.toLowerCase()) && !guestList.contains(applyAlias(u).toLowerCase())) {
                     missing << applyAlias(u) 
                 }
             }
         }
-        
         if (missing.size() > 0) {
-            if (missing.size() == 1) finalMsg += " Please note that ${missing[0]} has not yet returned home, so we will proceed without them."
-            else if (missing.size() == 2) finalMsg += " Please note that ${missing[0]} and ${missing[1]} have not yet returned home."
-            else { def last = missing.pop(); finalMsg += " Please note that ${missing.join(', ')}, and ${last} have not yet returned home." }
+            def names = (missing.size() == 1) ? missing[0] : (missing.size() == 2) ? "${missing[0]} and ${missing[1]}" : "${missing[0..-2].join(', ')}, and ${missing.last()}"
+            bellMsg += " Please note that ${names} have not yet returned home."
         }
     }
-    
+    // Send Part 1 (FastTrack = false: This triggers the initial chime)
+    executeRoutedTTS(applyDynamicVars(bellMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 2, false, settings.mealTimeSpeaker)
+
+    // --- PART 2: THE NEWS DIGEST (Fast Tracked / No Chime) ---
     if (settings.mealTimeNewsWeather) {
+        def newsMsg = ""
         def wDevice = settings.mealTimeWeatherDevice
         if (wDevice) {
              def wText = getWeatherReport(wDevice)
-             if (wText) finalMsg += " " + wText
+             if (wText) newsMsg += wText + " "
         }
         def feedUrl = settings.mealTimeNewsFeed ?: "https://feeds.npr.org/1001/rss.xml"
         try {
-            httpGet([uri: feedUrl, headers: ["User-Agent": "Mozilla/5.0 (Hubitat; AdvancedVoiceButler)"], timeout: 10, textParser: true]) { resp ->
+            httpGet([uri: feedUrl, headers: ["User-Agent": "Mozilla/5.0"], timeout: 10, textParser: true]) { resp ->
                 if (resp.status == 200 && resp.data) {
                     def rss = parseRssResponse(resp)
                     def items = rss?.channel?.item
                     if (items && items.size() >= 2) {
-                        def title1 = items[0].title.text().trim().replace("&", "and").replace("\"", "")
-                        def title2 = items[1].title.text().trim().replace("&", "and").replace("\"", "")
-                        finalMsg += " In the news this evening: ${title1}. In other news, ${title2}."
+                        def t1 = items[0].title.text().trim().replace("&", "and")
+                        def t2 = items[1].title.text().trim().replace("&", "and")
+                        newsMsg += "In the news this evening: ${t1}. Additionally, ${t2}."
                     }
                 }
             }
         } catch (Exception e) {}
+        if (newsMsg) {
+            // Send Part 2 (FastTrack = true: No chime, immediate follow-up)
+            executeRoutedTTS(applyDynamicVars(newsMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 3, true, settings.mealTimeSpeaker)
+        }
+    }
+
+    // --- PART 3: THE CONVERSATION STARTER (Fast Tracked / No Chime) ---
+    if (settings.enableMealQuestions) {
+        def questionMsg = getMealTimeQuestion()
+        // Send Part 3 (FastTrack = true: No chime, immediate follow-up)
+        executeRoutedTTS(applyDynamicVars(questionMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 4, true, settings.mealTimeSpeaker)
     }
     
-    executeRoutedTTS(applyDynamicVars(finalMsg), settings.mealTimeRoutingMode ?: "Global Indoor Speaker Only", settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 2, false, settings.mealTimeSpeaker)
-    addToHistory("MEAL TIME: Routine triggered. Queued: '${finalMsg}'")
+    addToHistory("MEAL TIME: Routine triggered in 3 parts for clarity.")
 }
+
 def testMealNews() {
     def feedUrl = settings.mealTimeNewsFeed ?: "https://feeds.npr.org/1001/rss.xml"
     def finalMsg = ""
@@ -1479,6 +1612,22 @@ def testMealNews() {
 }
 
 // --- ALIAS & DYNAMIC HELPERS ---
+def getTrackedUsers() {
+    def allNames = []
+    // FIX: Properly scoped settings to prevent Endpoint Crashes
+    if (settings.arrivalMode == "Automatic (Reads lock memory)") {
+        settings.trackedLockCodes?.each { codeName ->
+            if (codeName.toLowerCase() == "admin code" && settings.adminUserAlias) { allNames << settings.adminUserAlias } else { allNames << codeName }
+        }
+    } else if (settings.numLockUsers && settings.numLockUsers > 0) {
+        for (int i = 1; i <= (settings.numLockUsers as Integer); i++) {
+            if (settings["lockUserName_${i}"]) allNames << settings["lockUserName_${i}"]
+        }
+    }
+    allNames += (state.hasArrivedToday ?: [:]).keySet().findAll { it != "global" }
+    return allNames.unique().collect { applyAlias(it) }.sort()
+}
+
 def getPresentUsers() {
     ensureStateMaps()
     def present = []
@@ -1680,35 +1829,38 @@ def executeTTS(item) {
                 try { spk.setVolume(targetVol as Integer); if (!fastTrack) pauseExecution(1000) else pauseExecution(50) } catch(Exception ve) {}
             }
             
-            // --- OPTION 1: THE THROAT CLEAR CHIME ---
             if (settings.enableChime && settings.chimeUrl && !fastTrack && spk.hasCommand("playTrack")) {
                 try { spk.playTrack(settings.chimeUrl); pauseExecution(1500) } catch(Exception ce) {}
             }
-            // ----------------------------------------
             
             spk.speak(finalMsg)
             
             if (currentVol != null && targetVol != null && currentVol != targetVol) {
-                // UPDATED: Math changed to 10 chars/sec to prevent early volume reset
-                def delay = Math.max(6, (finalMsg.length() / 10).toInteger() + 6)
-                runIn(delay, "restoreVolumeTask", [data: [speakerId: spk.id, oldVol: currentVol], overwrite: false])
+                // FIXED: Adjusted to 7 chars/sec + chime allowance if needed
+                def volDelay = Math.max(10, (finalMsg.length() / 7).toInteger() + (fastTrack ? 6 : 10))
+                runIn(volDelay, "restoreVolumeTask", [data: [speakerId: spk.id, oldVol: currentVol], overwrite: false])
             }
         } catch (Exception e) {}
     }
     
-    // --- UPDATED TIMING MATH ---
-    // Changed math from 12 chars/sec to 10 chars/sec for natural TTS pacing
-    def speechDuration = Math.max(4, (finalMsg.length() / 10).toInteger()) * 1000
+    // --- TIMING ENGINE UPGRADE ---
+    // 1. Calculate length of the spoken message
+    def speechDuration = Math.max(6, (finalMsg.length() / 7).toInteger()) * 1000
+    
+    // 2. IMPORTANT: If we played a chime, add 2.5 seconds to the total duration
+    // This prevents the next message in the queue from interrupting the current one.
+    if (settings.enableChime && !fastTrack) {
+        speechDuration += 2500
+    }
     
     if (mediaToResume.size() > 0) {
-        // Increased the buffer from + 1 second to + 3 seconds
-        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 3
+        // Increased buffer to +6 seconds for natural music fade-in
+        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 6
         runIn(resumeDelay, "restoreMediaTask", [data: [resumeList: mediaToResume.collect { [id: it.dev.id, cmd: it.cmd] }], overwrite: false])
     }
     
     return speechDuration
 }
-
 def restoreMediaTask(data) {
     def resumeList = data.resumeList ?: []
     def allMedia = []
@@ -1814,6 +1966,28 @@ def departureHandler(evt) {
             if (annivMsg) { rawMsg = "${rawMsg} ${annivMsg}" }
             
             def finalMsg = applyDynamicVars(rawMsg)
+            
+            // --- NEW: COAT CHECK ---
+            if (settings.enableCoatCheck && settings.depWeatherDevice) {
+                def wDevice = settings.depWeatherDevice
+                def temp = wDevice.currentValue("temperature")?.toString()?.replaceAll("[^0-9.-]", "")?.toFloat()?.toInteger() ?: 50
+                def cond = wDevice.currentValue("weather")?.toString()?.toLowerCase() ?: ""
+                
+                def weatherWarning = ""
+                if (cond.contains("rain") || cond.contains("storm") || cond.contains("shower")) {
+                    weatherWarning = " Please note, precipitation is currently detected, an umbrella is highly advisable."
+                } else if (cond.contains("snow") || cond.contains("ice")) {
+                    weatherWarning = " Please note, it is currently snowing. Drive safely."
+                } else if (temp <= 32) {
+                    weatherWarning = " Please note, it is freezing outside. Stay warm."
+                } else if (temp >= 90) {
+                    weatherWarning = " Please note, it is quite hot out there today. Stay hydrated."
+                }
+                
+                if (weatherWarning) finalMsg += weatherWarning
+            }
+            // -----------------------
+            
             def delay = settings["depDelay_${idx}"] != null ? settings["depDelay_${idx}"].toInteger() : 5
             def outVol = settings["depVolume_${idx}"] ?: settings.outdoorVolume
             def rMode = settings["depRoutingMode_${idx}"] ?: "Outdoor Speaker Only"
@@ -1894,6 +2068,17 @@ def unifiProtectHandler(evt) {
     
     // --- NEW: SMART PACKAGE CONCIERGE ---
     if (detectStr.contains("package")) {
+        // Respect the dedicated Package Tracking toggle!
+        if (settings.enableDeliveryTracking == false) {
+            if (settings.enableDebug) log.debug "GOOGLE DELIVERY: Suppressed (Package Tracking is toggled OFF)."
+            return
+        }
+        
+        if (getPresentUsers().size() == 0) {
+            stashMessage("a package was delivered to the house")
+            return
+        }
+        
         def debounceMs = 5 * 60000 // 5 minute cooldown for packages
         def lastPkg = state.lastPackageAlert ?: 0
         if ((new Date().time - lastPkg) > debounceMs) {
@@ -2077,12 +2262,31 @@ def visitorHandler(evt) {
     } else if (!isDndActive && !isAfterHours && isDoorbell && enableDaytimeDoorbell) {
         def debounceMs = (settings.daytimeDoorbellDebounce != null ? settings.daytimeDoorbellDebounce.toInteger() : 2) * 60000
         if ((now - lastGreet) > debounceMs) {
-            def messages = []
-            for (int d = 1; d <= 20; d++) { if (settings["daytimeMessage_${d}"]) messages << settings["daytimeMessage_${d}"] }
-            if (!messages) messages = getDefaultMessages("Daytime")
-            executeRoutedTTS(applyDynamicVars(messages[new Random().nextInt(messages.size())]), settings.daytimeRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.daytimeDoorbellVolume != null ? settings.daytimeDoorbellVolume : settings.outdoorVolume, 2, true)
+            def presentFolks = getPresentUsers()
+            def greetingToPlay = ""
+            def willFollowUp = false
+            
+            // --- ROSTER-AWARE DOORBELL ---
+            if (presentFolks.size() == 0) {
+                // House is empty! Don't pretend we are home.
+                greetingToPlay = "The homeowners are currently away. Please leave a package or a message."
+                willFollowUp = false // Don't do the 3-minute follow-up if we know no one is here
+                addToHistory("DOORBELL: House is empty. Intercepted Daytime greeting.")
+            } else {
+                // Someone is home, proceed normally
+                def messages = []
+                for (int d = 1; d <= 20; d++) { if (settings["daytimeMessage_${d}"]) messages << settings["daytimeMessage_${d}"] }
+                if (!messages) messages = getDefaultMessages("Daytime")
+                greetingToPlay = messages[new Random().nextInt(messages.size())]
+                willFollowUp = settings.enableDaytimeFollowUp
+                addToHistory("DOORBELL: Daytime greeting triggered.")
+            }
+            // ----------------------------------
+
+            executeRoutedTTS(applyDynamicVars(greetingToPlay), settings.daytimeRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.daytimeDoorbellVolume != null ? settings.daytimeDoorbellVolume : settings.outdoorVolume, 2, true)
             atomicState.lastOutdoorGreeting = now
-            if (settings.enableDaytimeFollowUp && settings.daytimeDoorContact) {
+            
+            if (willFollowUp && settings.daytimeDoorContact) {
                 runIn((settings.daytimeFollowUpDelay != null ? settings.daytimeFollowUpDelay.toInteger() : 3) * 60, "playDaytimeFollowUp", [overwrite: true])
             }
         }
@@ -2123,11 +2327,22 @@ def checkMissedArrival(data) {
             state.resetReasons[uName] = "Presence Sensor Fallback (>10m)"
             
             def msg = "Pardon me, I didn't catch you coming through the door. Welcome home, ${applyAlias(uName)}."
-            def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
+            def finalMsg = applyDynamicVars(msg)
+            
             def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
             def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
             
-            executeRoutedTTS(applyDynamicVars(msg), rMode, indoorTargetVol, outdoorTargetVol, 3)
+            // 1. Play on Foyer Speaker (Standard Arrival Behavior)
+            if (settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, finalMsg, indoorTargetVol, 3, false)
+            
+            // 2. Play to Rest of House (If Enabled)
+            if (settings.arrivalIndoorSpeaker) executeRoutedTTS(finalMsg, settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only", indoorTargetVol, outdoorTargetVol, 3)
+            
+            // 3. Failsafe: Play on Global Speaker if no other speakers caught it
+            if (!settings.arrivalFoyerSpeaker && !settings.arrivalIndoorSpeaker && settings.globalIndoorSpeaker) {
+                enqueueTTS(settings.globalIndoorSpeaker, finalMsg, indoorTargetVol, 3, false)
+            }
+            
             addToHistory("FALLBACK ARRIVAL: Missed door unlock. Auto-arrived ${uName}.")
         }
     }
@@ -2164,12 +2379,21 @@ def pollPresenceSensors() {
         else { def last = missedUsers.pop(); namesStr = "${missedUsers.join(', ')}, and ${last}" }
 
         def msg = "Pardon me, I didn't catch you coming through the door earlier. Welcome home, ${namesStr}."
+        def finalMsg = applyDynamicVars(msg)
         
-        def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
         def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
         def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
         
-        executeRoutedTTS(applyDynamicVars(msg), rMode, indoorTargetVol, outdoorTargetVol, 3)
+        // 1. Play on Foyer Speaker (Standard Arrival Behavior)
+        if (settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, finalMsg, indoorTargetVol, 3, false)
+        
+        // 2. Play to Rest of House (If Enabled)
+        if (settings.arrivalIndoorSpeaker) executeRoutedTTS(finalMsg, settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only", indoorTargetVol, outdoorTargetVol, 3)
+        
+        // 3. Failsafe: Play on Global Speaker if no other speakers caught it
+        if (!settings.arrivalFoyerSpeaker && !settings.arrivalIndoorSpeaker && settings.globalIndoorSpeaker) {
+            enqueueTTS(settings.globalIndoorSpeaker, finalMsg, indoorTargetVol, 3, false)
+        }
     }
 }
 
@@ -2242,14 +2466,12 @@ def arrivalHandler(evt) {
             return
         }
         
-        // --- NEW: Split grouped names for separate Habit and Roster tracking ---
         def splitNames = trackingKey.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
         splitNames.each { n -> 
             state.hasArrivedToday[n] = true 
             state.lastDepartureTime.remove(n)
             state.anomalyAlertedToday[n] = false
         }
-        // -----------------------------------------------------------------------
         
         atomicState.lastOutdoorGreeting = new Date().time
         
@@ -2278,9 +2500,17 @@ def arrivalHandler(evt) {
         def displayUserName = applyAlias(actualUserName)
         def greetingToPlay = messages[new Random().nextInt(messages.size())].replace("%name%", displayUserName)
         
-        // --- AI ARRIVAL HABIT CHECK ---
+        if (settings.enableDurationAware && lastDepUser > 0) {
+            def minsAway = (nowTime - lastDepUser) / 60000
+            if (minsAway < 45) {
+                greetingToPlay += " A quick trip, I see."
+            } else if (minsAway >= 480) {
+                greetingToPlay += " I hope you had a productive day."
+            }
+        }
+        
         def splitActual = actualUserName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-        splitActual.each { n -> updateHabit(n, nowTime, "arrival") } // Log individual arrival times
+        splitActual.each { n -> updateHabit(n, nowTime, "arrival") }
         
         if (state.learnedHabits[splitActual[0]]?.avgArrivalMins && state.learnedHabits[splitActual[0]].arrCount > 3) {
             def expected = state.learnedHabits[splitActual[0]].avgArrivalMins
@@ -2290,7 +2520,6 @@ def arrivalHandler(evt) {
             if (nowMins < (expected - 90)) greetingToPlay = "You are home quite early today! " + greetingToPlay
             else if (nowMins > (expected + 120)) greetingToPlay = "Working late today? " + greetingToPlay
         }
-        // ------------------------------
         
         def bdayMsg = getBirthdayMessage(actualUserName, "Arrival")
         if (bdayMsg) greetingToPlay = "${greetingToPlay} ${bdayMsg}"
@@ -2326,13 +2555,12 @@ def arrivalHandler(evt) {
         
         greetingToPlay = applyDynamicVars(greetingToPlay)
         
-            if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
+        if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
             def allowedMail = [settings.mailAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
             if (settings.mailAllowedCustom) allowedMail += settings.mailAllowedCustom.split(',').collect { it.trim().toLowerCase() }
             if (allowedMail.isEmpty() || allowedMail.contains(actualUserName.toLowerCase()) || allowedMail.contains(trackingKey.toLowerCase())) {
                 def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
                 
-                // --- PROGRESSIVE ESCALATION ---
                 def mCount = state.reminderCounts["mail"] ?: 0
                 state.reminderCounts["mail"] = mCount + 1
                 
@@ -2343,8 +2571,37 @@ def arrivalHandler(evt) {
                 } else {
                     greetingToPlay += " Please note, the mail remains uncollected."
                 }
-                // ------------------------------
             }
+        }
+
+        // --- UPDATED: BUTLER NOTES (ARRIVAL) ---
+        if (settings.announceNotesArrival && state.butlerNotes && state.butlerNotes.size() > 0) {
+            def pendingArrivalNotes = state.butlerNotes.findAll { (it.when == "Arrival" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(actualUserName) || it.target.equalsIgnoreCase(displayUserName)) }
+            if (pendingArrivalNotes.size() > 0) {
+                def readStr = "I have ${pendingArrivalNotes.size()} notes saved for you. "
+                pendingArrivalNotes.eachWithIndex { note, idx ->
+                    def senderTxt = note.sender != "Someone" ? "from ${note.sender}: " : ""
+                    if (idx == 0) readStr += "First, ${senderTxt}${note.text}. "
+                    else if (idx == pendingArrivalNotes.size() - 1) readStr += "And finally, ${senderTxt}${note.text}."
+                    else readStr += "Next, ${senderTxt}${note.text}. "
+                }
+                if (pendingArrivalNotes.size() == 1) {
+                    def senderTxt = pendingArrivalNotes[0].sender != "Someone" ? "from ${pendingArrivalNotes[0].sender}" : ""
+                    readStr = "I have a note saved for you ${senderTxt}: ${pendingArrivalNotes[0].text}."
+                }
+                
+                greetingToPlay += " " + readStr
+                state.butlerNotes.removeAll { pendingArrivalNotes.contains(it) }
+                addToHistory("NOTES: Delivered arrival/missed notes to ${displayUserName}.")
+            }
+        }
+        // ---------------------------------------
+        
+        if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
+            def inboxMsgs = state.messageInbox.join(", and ")
+            greetingToPlay += " By the way, while you were out, ${inboxMsgs}."
+            state.messageInbox = [] 
+            addToHistory("INBOX: Delivered stashed messages on arrival.")
         }
         
         def outdoorTargetVol = settings["arrivalVolume"] != null ? settings["arrivalVolume"] : settings["outdoorVolume"]
@@ -2379,16 +2636,20 @@ def modeChangeHandler(evt) {
 
 def awaySwitchOnHandler(evt) {
     ensureStateMaps()
-    // Safety Gate: Skip if current mode is restricted
     if (settings.awayIgnoreModes?.contains(location.mode)) return
 
     for (int i = 1; i <= (settings.numAwayMappings ? settings.numAwayMappings as Integer : 0); i++) {
         if (settings["awayMappingSwitch_${i}"]?.id == evt.device.id) {
             def uName = settings["awayMappingUser_${i}"]
-            if (uName && state.hasArrivedToday[uName]) {
-                state.lastDepartureTime[uName] = new Date().time
-                state.hasArrivedToday.remove(uName)
-                state.resetReasons[uName] = "Away Switch ON"
+            if (uName) {
+                def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+                splitNames.each { n -> 
+                    if (state.hasArrivedToday[n]) {
+                        state.lastDepartureTime[n] = new Date().time
+                        state.hasArrivedToday.remove(n)
+                        state.resetReasons[n] = "Away Switch ON"
+                    }
+                }
             }
         }
     }
@@ -2397,16 +2658,20 @@ def awaySwitchOnHandler(evt) {
 def awayPresenceHandler(evt) {
     if (evt.value != "not present") return
     ensureStateMaps()
-    // Safety Gate: Skip if current mode is restricted
     if (settings.awayIgnoreModes?.contains(location.mode)) return
 
     for (int i = 1; i <= (settings.numAwayMappings ? settings.numAwayMappings as Integer : 0); i++) {
         if (settings["awayMappingPresence_${i}"]?.id == evt.device.id) {
             def uName = settings["awayMappingUser_${i}"]
-            if (uName && state.hasArrivedToday[uName]) {
-                state.lastDepartureTime[uName] = new Date().time
-                state.hasArrivedToday.remove(uName)
-                state.resetReasons[uName] = "Presence Sensor Departed"
+            if (uName) {
+                def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+                splitNames.each { n -> 
+                    if (state.hasArrivedToday[n]) {
+                        state.lastDepartureTime[n] = new Date().time
+                        state.hasArrivedToday.remove(n)
+                        state.resetReasons[n] = "Presence Sensor Departed"
+                    }
+                }
             }
         }
     }
@@ -2417,8 +2682,15 @@ def scheduledAwayCheck() {
     for (int i = 1; i <= (settings.numAwayMappings ? settings.numAwayMappings as Integer : 0); i++) {
         if (settings["awayMappingSwitch_${i}"]?.currentValue("switch") == "on") {
             def uName = settings["awayMappingUser_${i}"]
-            if (uName && state.hasArrivedToday[uName]) {
-                state.lastDepartureTime[uName] = new Date().time; state.hasArrivedToday.remove(uName); state.resetReasons[uName] = "Away Switch ON (Scheduled Check)"
+            if (uName) {
+                def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+                splitNames.each { n -> 
+                    if (state.hasArrivedToday[n]) {
+                        state.lastDepartureTime[n] = new Date().time
+                        state.hasArrivedToday.remove(n)
+                        state.resetReasons[n] = "Away Switch ON (Scheduled Check)"
+                    }
+                }
             }
         }
     }
@@ -2460,9 +2732,12 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
     // --- AI SLEEP HABIT CHECK ---
     if (type == "Good Night" && occName != "Guest") {
-        updateHabit(occName, new Date().time, "sleep") 
-        if (state.learnedHabits[occName]?.avgSleepMins && state.learnedHabits[occName].sleepCount > 3) {
-            def expected = state.learnedHabits[occName].avgSleepMins
+        def splitOcc = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+        splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
+        
+        def primaryOcc = splitOcc[0]
+        if (state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
+            def expected = state.learnedHabits[primaryOcc].avgSleepMins
             def cal2 = Calendar.getInstance(location.timeZone)
             def nowMins = (cal2.get(Calendar.HOUR_OF_DAY) * 60) + cal2.get(Calendar.MINUTE)
             def shiftedNow = nowMins < 720 ? nowMins + 1440 : nowMins 
@@ -2502,7 +2777,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         def agendaEnabled = settings["roomAgendaEnable_${rNum}"]
         def agendaText = settings["roomAgenda${dowString}_${rNum}"]
 
-       if (timeDateEnabled && agendaEnabled && agendaText) {
+        if (timeDateEnabled && agendaEnabled && agendaText) {
             def agendaStr = getBridge("agenda") + "The current time is %time% on %date%, and your agenda for today is: ${agendaText}."
             def smartContext = getSmartEventContext(agendaText)
             if (smartContext.text && smartContext.text != "SECRET") agendaStr += " " + smartContext.text
@@ -2557,8 +2832,43 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             if (newsText) parts << getBridge("news") + newsText
         }
 
+        if (settings["roomAnnounceMaintenance_${rNum}"] && settings["roomMaintenanceDevice_${rNum}"]) {
+            def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"])
+            if (mText) parts << mText
+        }
+
         if (settings["roomKidsMode_${rNum}"]) {
-            parts << getKidsFunFact(rNum) // Passed Room Number
+            parts << getKidsFunFact(rNum)
+        }
+        
+        // --- UPDATED: BUTLER NOTES (MORNING) ---
+        if (settings.announceNotesMorning && state.butlerNotes && state.butlerNotes.size() > 0) {
+            def pendingMorningNotes = state.butlerNotes.findAll { (it.when == "Morning" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(displayOccName) || it.target.equalsIgnoreCase(occName)) }
+            if (pendingMorningNotes.size() > 0) {
+                def readStr = "I have ${pendingMorningNotes.size()} notes saved for you. "
+                pendingMorningNotes.eachWithIndex { note, idx ->
+                    def senderTxt = note.sender != "Someone" ? "from ${note.sender}: " : ""
+                    if (idx == 0) readStr += "First, ${senderTxt}${note.text}. "
+                    else if (idx == pendingMorningNotes.size() - 1) readStr += "And finally, ${senderTxt}${note.text}."
+                    else readStr += "Next, ${senderTxt}${note.text}. "
+                }
+                if (pendingMorningNotes.size() == 1) {
+                    def senderTxt = pendingMorningNotes[0].sender != "Someone" ? "from ${pendingMorningNotes[0].sender}" : ""
+                    readStr = "I have a note saved for you ${senderTxt}: ${pendingMorningNotes[0].text}."
+                }
+                
+                parts << getBridge("general") + readStr
+                state.butlerNotes.removeAll { pendingMorningNotes.contains(it) }
+                addToHistory("NOTES: Delivered morning/missed notes to ${displayOccName}.")
+            }
+        }
+        // ---------------------------------------
+        
+        if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
+            def inboxMsgs = state.messageInbox.join(", and ")
+            parts << getBridge("general") + "while you were asleep, ${inboxMsgs}."
+            state.messageInbox = [] 
+            addToHistory("INBOX: Delivered stashed messages during Morning Briefing.")
         }
     }
 
@@ -2570,12 +2880,12 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
         
         if (settings["roomPerimeterCheck_${rNum}"]) {
-            def perimText = getPerimeterReport(roomKey) // Passed Room Key
+            def perimText = getPerimeterReport(roomKey)
             if (perimText) parts << perimText
         }
 
         if (wDevice && settings["roomWeatherGN_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey) // Passed Room Key
+            def wText = getWeatherReport(wDevice, roomKey)
             if (wText) parts << wText
         }
 
@@ -2594,240 +2904,6 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
     def finalMsg = parts.join(" ")
     return applyDynamicVars(finalMsg)
-}
-
-// --- BUILDER HELPERS ---
-def getWardrobeAdvice(wDevice) {
-    try {
-        def tempStr = wDevice.currentValue("temperature")
-        if (tempStr != null) {
-            def t = tempStr.toString().replaceAll("[^0-9.-]", "").toFloat().toInteger()
-            if (t < 40) return "It is freezing out there at ${t} degrees! Make sure to bundle up with your heavy winter coat, hat, and gloves."
-            if (t < 55) return "It is quite chilly today at ${t} degrees. A warm jacket and long pants are a great idea."
-            if (t < 70) return "The weather is nice and cool at ${t} degrees. A light jacket or a cozy sweater will be perfect."
-            if (t < 85) return "It is a beautiful and warm ${t} degrees! Shorts and a t-shirt are the way to go."
-            return "It is going to be a scorcher today at ${t} degrees! Dress lightly and do not forget to drink plenty of water."
-        }
-    } catch(Exception e) {}
-    return ""
-}
-
-def getBoredomBuster(wDevice) {
-    if (wDevice) {
-        try {
-            def tempStr = wDevice.currentValue("temperature")
-            def condStr = wDevice.currentValue("weather")?.toString()?.toLowerCase() ?: ""
-            if (tempStr != null) {
-                def t = tempStr.toString().replaceAll("[^0-9.-]", "").toFloat().toInteger()
-                def isBadWeather = (t < 50 || condStr.contains("rain") || condStr.contains("storm") || condStr.contains("snow"))
-                if (isBadWeather) {
-                    return "Since the weather is not great today, it looks like a perfect day for a board game, building a fort, or watching a movie."
-                } else {
-                    return "It is beautiful outside today! %butler% recommends playing in the yard, riding your bike, or going for a walk."
-                }
-            }
-        } catch(Exception e) {}
-    }
-    return "Enjoy your weekend! It's a great day to find a fun activity."
-}
-
-def getRoomNews(rNum, isTest) {
-    if (isTest) return "A local sports team wins championship. In other news, weather expected to improve."
-    def h = state."roomNewsHeadline_${rNum}"
-    if (h && h != "Fetch Error" && h != "") {
-        def splitParts = h.split(" / ")
-        if (splitParts.size() >= 2) {
-            return "${splitParts[0]}. In other news, ${splitParts[1]}."
-        }
-    }
-    return ""
-}
-
-def getKidsFunFact(rNum) {
-    def funList = []
-    def fileName = settings["roomJokesFile_${rNum}"]
-    
-    if (fileName) {
-        try {
-            // Secret trick: Hubitat can read its own file manager using its internal 127.0.0.1 IP address!
-            httpGet([uri: "http://127.0.0.1:8080/local/${fileName}", timeout: 5, textParser: true]) { resp ->
-                if (resp.status == 200 && resp.data) {
-                    def rawText = ""
-                    if (resp.data instanceof String || resp.data instanceof GString) rawText = resp.data.toString()
-                    else try { rawText = resp.data.text } catch (e) { rawText = resp.data.toString() }
-                    
-                    // Split the text file by line breaks and ignore any blank lines
-                    funList = rawText.split(/\r?\n/).findAll { it.trim().length() > 0 }.collect { it.trim() }
-                }
-            }
-        } catch (e) {
-            log.warn "Voice Butler: Failed to load custom jokes file '${fileName}' - ${e}"
-        }
-    }
-    
-    // Fallback to defaults if the file is missing or empty
-    if (!funList || funList.size() == 0) {
-        funList = [
-            "Did you know that a shrimp's heart is located in its head?",
-            "Here is a joke for you: Why did the scarecrow win an award? Because he was outstanding in his field!",
-            "Did you know that honey never spoils? Archaeologists have found pots of honey that are over three thousand years old!",
-            "Here is a joke: What do you call a fake noodle? An impasta!",
-            "Did you know that octopuses have three hearts and blue blood?",
-            "Here is a joke for you: Why can't you give Elsa a balloon? Because she will let it go!",
-            "Did you know that cows have best friends and get stressed when they are separated?",
-            "Here is a joke: What falls, but never breaks? Nightfall!",
-            "Did you know that a day on Venus is longer than a year on Venus?",
-            "Here is a joke for you: Why did the math book look sad? Because it had too many problems."
-        ]
-    }
-    return funList[new Random().nextInt(funList.size())]
-}
-
-def getPerimeterReport(String contextKey = "global") {
-    def unsecured = []
-    settings.perimeterLocks?.each { if (it.currentValue("lock") == "unlocked") unsecured << "the ${it.displayName} is unlocked" }
-    settings.perimeterContacts?.each { if (it.currentValue("contact") == "open") unsecured << "the ${it.displayName} is open" }
-    settings.coopDoors?.each { if (it.currentValue("contact") == "open") unsecured << "the ${it.displayName} is open" }
-    
-    def perimText = ""
-    if (unsecured.size() > 0) {
-        if (unsecured.size() == 1) perimText = "Before you go to sleep, I must warn you that ${unsecured[0]}."
-        else if (unsecured.size() == 2) perimText = "Before you go to sleep, I must warn you that ${unsecured[0]} and ${unsecured[1]}."
-        else { def last = unsecured.pop(); perimText = "Before you go to sleep, I must warn you that ${unsecured.join(', ')}, and ${last}." }
-    } else if (settings.perimeterLocks || settings.perimeterContacts || settings.coopDoors) {
-        perimText = "The perimeter is secure, and all coops are closed."
-    }
-    
-    // Pass the contextKey so the memory is tied to the specific room
-    return perimText ? checkAndRegisterFact(perimText, 4, contextKey) : ""
-}
-
-// --- ROOM LOGIC EXECUTION ---
-def roomMotionHandler(evt) {
-    ensureStateMaps()
-    def deviceId = evt.device.id
-    def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
-    
-    for (int i = 1; i <= numRoomsSet; i++) {
-        def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
-        if (mode == "1. Immediate (When Good Night Switch turns OFF)") continue
-        
-        def sensors = []
-        if (settings["roomMotion_${i}"]) sensors += [settings["roomMotion_${i}"]].flatten().collect { it?.id }
-        
-        if (sensors.contains(deviceId)) {
-            if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") {
-                if (state.waitingForMotion["${i}"]) {
-                    state.waitingForMotion["${i}"] = false
-                    triggerGoodMorningSequence(i)
-                }
-            } else if (mode == "3. Motion Driven (Trigger when Motion activates while switch is ON)") {
-                def gnSwitch = settings["roomGoodNightSwitch_${i}"]
-                if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
-                    if (!state.roomAlreadyAwake["${i}"]) {
-                        state.roomAlreadyAwake["${i}"] = true
-                        triggerGoodMorningSequence(i)
-                    }
-                }
-            }
-        }
-    }
-}
-
-def goodNightOnHandler(evt) {
-    ensureStateMaps()
-    def deviceId = evt.device.id
-    
-    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
-        if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
-            state.waitingForMotion["${i}"] = false 
-            state.roomAlreadyAwake["${i}"] = false 
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
-            
-            def cal = Calendar.getInstance(location.timeZone)
-            def hour = cal.get(Calendar.HOUR_OF_DAY)
-            if (hour >= 0 && hour < 7) return 
-
-            def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
-            
-            def occName = settings["roomOccupantName_${i}"] ?: "Guest"
-            // Intelligently split names (e.g. "Shane and Leanne" -> ["Shane", "Leanne"])
-            def occupants = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-            
-            def presentOccupants = []
-            def missingPersons = []
-            
-            // --- NEW: GUEST LIST FILTER ---
-            def guestList = [settings.guestUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
-            if (settings.guestCustomUsers) guestList += settings.guestCustomUsers.split(',').collect { it.trim().toLowerCase() }
-            
-            // Cross-reference room occupants with the live House Roster (Presence/Locks)
-            occupants.each { occ ->
-                def checkKey = state.hasArrivedToday?.keySet()?.find { it.equalsIgnoreCase(occ) } ?: occ
-                if (state.hasArrivedToday[checkKey] == true) {
-                    presentOccupants << occ
-                } else {
-                    // Only add to the curfew warning if they are NOT a guest!
-                    if (!guestList.contains(occ.toLowerCase()) && !guestList.contains(checkKey.toLowerCase())) {
-                        missingPersons << occ
-                    }
-                }
-            }
-            
-            // --- NEW: INSTANT PRESENCE VALIDATION SWEEP ---
-            // If the roster says you are missing, but your sensor is physically here, auto-arrive instantly!
-            def instantlyArrived = []
-            def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
-            missingPersons.removeAll { missingOcc ->
-                def foundAndPresent = false
-                for (int p = 1; p <= numPres; p++) {
-                    if (settings["presenceUserName_${p}"]?.equalsIgnoreCase(missingOcc)) {
-                        if (settings["fallbackPresence_${p}"]?.currentValue("presence") == "present") {
-                            state.hasArrivedToday[missingOcc] = true
-                            state.resetReasons[missingOcc] = "Presence Auto-Arrived (Good Night Sweep)"
-                            presentOccupants << missingOcc
-                            instantlyArrived << missingOcc
-                            foundAndPresent = true
-                            break
-                        }
-                    }
-                }
-                return foundAndPresent
-            }
-
-            // If the Butler caught someone sneaking in, play the missed arrival greeting immediately!
-            if (instantlyArrived.size() > 0) {
-                def missedMsg = "Pardon me, I didn't catch you coming through the door earlier. Welcome home, ${applyAlias(instantlyArrived.join(' and '))}."
-                def rMode = settings.arrivalNoticeRoutingMode ?: "Global Indoor Speaker Only"
-                def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
-                def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
-                
-                executeRoutedTTS(applyDynamicVars(missedMsg), rMode, indoorTargetVol, outdoorTargetVol, 3)
-                addToHistory("FALLBACK ARRIVAL: Good Night sweep forced instant arrival validation for ${instantlyArrived.join(', ')}.")
-            }
-            
-            // Build the dynamic greeting name to ONLY greet the people who are actually home
-            def dynamicOccName = occName
-            if (presentOccupants.size() > 0) {
-                dynamicOccName = presentOccupants.join(" and ")
-            } else {
-                dynamicOccName = "Guest" // Prevents the Butler from greeting you if you aren't actually there!
-            }
-            
-            def curfewPrefix = ""
-            if (settings["roomCurfewWarning_${i}"] && missingPersons.size() > 0) {
-                if (missingPersons.size() == 1) curfewPrefix = "Please note that ${missingPersons[0]} has not yet returned."
-                else if (missingPersons.size() == 2) curfewPrefix = "Please note that ${missingPersons[0]} and ${missingPersons[1]} have not yet returned."
-                else { def lastMissing = missingPersons.pop(); curfewPrefix = "Please note that ${missingPersons.join(', ')}, and ${lastMissing} have not yet returned." }
-            }
-            
-            // Pad the delay slightly so it doesn't talk over the missed arrival greeting if it just triggered
-            if (instantlyArrived.size() > 0) delaySec += 6
-            
-            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i, dynamicName: dynamicOccName, curfew: curfewPrefix], overwrite: false])
-            return 
-        }
-    }
 }
 
 def executeGoodNightSequence(data) {
@@ -2853,13 +2929,21 @@ def goodNightOffHandler(evt) {
     
     for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
         if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
             def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
             
-            if (mode == "1. Immediate (When Good Night Switch turns OFF)") { triggerGoodMorningSequence(i) } 
-            else if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") { state.waitingForMotion["${i}"] = true } 
+            if (mode == "1. Immediate (When Good Night Switch turns OFF)") { 
+                triggerGoodMorningSequence(i) 
+            } 
+            else if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") { 
+                state.waitingForMotion["${i}"] = true 
+            } 
             else if (mode == "3. Motion Driven (Trigger when Motion activates while switch is ON)") {
-                if (!state.roomAlreadyAwake["${i}"]) { state.roomAlreadyAwake["${i}"] = true; triggerGoodMorningSequence(i) }
+                // Failsafe: If the switch turns off but they never triggered motion, play it now
+                if (!state.roomAlreadyAwake["${i}"]) { 
+                    triggerGoodMorningSequence(i) 
+                }
+                // Reset the awake flag for tomorrow night
+                state.roomAlreadyAwake["${i}"] = false 
             }
             return
         }
@@ -3194,31 +3278,31 @@ def getTodayHoliday() {
 
 def getAnniversaryMessage(String type, String userName = "") {
     if (!settings.enableAnniversary || !settings.annivMonth || !settings.annivDay) return ""
-    
-    if (userName && (type == "Arrival" || type == "Departure")) {
-        def allowedUsers = [settings.annivAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
-        if (settings.annivAllowedCustom) allowedUsers += settings.annivAllowedCustom.split(',').collect { it.trim().toLowerCase() }
-        
-        if (!allowedUsers.isEmpty() && !allowedUsers.contains(userName.toLowerCase())) {
-            return "" 
-        }
-    }
-    
     def now = new Date()
     def currentMonth = now.format("MM", location.timeZone).toInteger()
     def currentDay = now.format("dd", location.timeZone).toInteger()
 
     if (settings.annivMonth.toInteger() == currentMonth && settings.annivDay.toInteger() == currentDay) {
-        def rawMsg = ""
         switch(type) {
-            case "Arrival": rawMsg = settings.annivMsgArrival ?: "Happy Anniversary! Welcome home."; break
-            case "Departure": rawMsg = settings.annivMsgDeparture ?: "Have a wonderful anniversary today!"; break
-            case "Morning": rawMsg = settings.annivMsgMorning ?: "Happy Anniversary! I hope you both have a fantastic day."; break
-            case "Night": rawMsg = settings.annivMsgNight ?: "Happy Anniversary. Sleep well, I will keep the perimeter secure."; break
+            case "Arrival": return settings.annivMsgArrival ?: "Happy Anniversary! Welcome home."
+            case "Morning": return settings.annivMsgMorning ?: "Happy Anniversary! I hope you both have a fantastic day."
+            case "Departure": return "Have a wonderful anniversary today!"
+            case "Night": return "Happy Anniversary. Sleep well."
         }
-        return rawMsg
     }
     return ""
+}
+
+def stashMessage(String msg) {
+    if (!settings.enableInbox) return
+    ensureStateMaps()
+    if (!state.messageInbox) state.messageInbox = []
+    
+    if (!state.messageInbox.contains(msg)) {
+        state.messageInbox.add(msg)
+        if (state.messageInbox.size() > 5) state.messageInbox.remove(0) 
+        if (settings.enableDebug) log.debug "INBOX: Stashed message -> '${msg}'"
+    }
 }
 
 /**
@@ -3237,16 +3321,23 @@ def getBirthdayMessage(String arrivingUser, String type) {
     def currentDay = now.format("dd", location.timeZone).toInteger()
 
     for (int i = 1; i <= numBdays; i++) {
-        def bName = settings["bdayName_${i}"]
+        def bName = settings["bdayName_${i}"] ?: ""
         def bType = settings["bdayType_${i}"] ?: "Kid (30-Day Countdown)"
         def bMonthInt = settings["bdayMonth_${i}"]?.toInteger()
         def bDayInt = settings["bdayDay_${i}"]?.toInteger()
-        def notifyUser = settings["bdayNotifyUser_${i}"]
         
+        // Safely extract the list of users who should hear this reminder
+        def notifyUserSetting = settings["bdayNotifyUser_${i}"]
+        def nUsers = [notifyUserSetting].flatten().findAll { it != null }.collect { it.toLowerCase() }
+        
+        // Determine if an authorized user is home or arriving
+        def isTargetPresent = nUsers.isEmpty() || nUsers.contains(arrivingUser.toLowerCase()) || nUsers.any { nu -> state.hasArrivedToday?.keySet()?.any { k -> k.toLowerCase() == nu } }
+
         // 1. Exact Birthday Match
         if (bMonthInt == currentMonth && bDayInt == currentDay) {
-            if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
-                if (bName.toLowerCase() != notifyUser.toLowerCase()) {
+            if (isTargetPresent) {
+                // Prevent telling the birthday person to call themselves
+                if (bName.toLowerCase() != arrivingUser.toLowerCase()) {
                     return "By the way, today is ${bName}'s birthday. Please remember to give them a call!"
                 }
             }
@@ -3270,8 +3361,8 @@ def getBirthdayMessage(String arrivingUser, String type) {
             
             // Count down if it is exactly 30 days or less
             if (daysUntil > 0 && daysUntil <= 30) {
-                if (!notifyUser || notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser]) {
-                    def cdMsg = "By the way, you only have %days% days until your birthday!"
+                if (isTargetPresent) {
+                    def cdMsg = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
                     return cdMsg.replace("%days%", daysUntil.toString()).replace("%name%", applyAlias(bName))
                 }
             }
@@ -3282,7 +3373,7 @@ def getBirthdayMessage(String arrivingUser, String type) {
             def cal = Calendar.getInstance(location.timeZone)
             cal.add(Calendar.DAY_OF_YEAR, 5)
             if (cal.get(Calendar.MONTH) + 1 == bMonthInt && cal.get(Calendar.DAY_OF_MONTH) == bDayInt) {
-                if (notifyUser && (notifyUser.toLowerCase() == arrivingUser.toLowerCase() || state.hasArrivedToday[notifyUser])) {
+                if (isTargetPresent) {
                      return "As a quick reminder, ${bName}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
                 }
             }
@@ -3379,6 +3470,8 @@ def appButtonHandler(btn) {
         for (int i = 1; i <= numRoomsSet; i++) {
             if (settings["roomNewsEnable_${i}"]) syncRoomNews(i)
         }
+    } else if (btn == "btnTestGoogleApi") {
+        testGoogleIntegration() // <--- THIS MAKES THE BUTTON WORK
     } else if (btn == "btnTestGlobal") {
         enqueueTTS(globalIndoorSpeaker, applyDynamicVars("This is a test of the global indoor speakers. The time is %time%."), globalVolume, 1)
     } else if (btn == "btnTestOutdoor") {
@@ -3408,9 +3501,36 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestDaytime") testDaytimeGreeting()
     else if (btn == "btnTestArrival") testArrivalGreeting()
     else if (btn == "btnTestIntruder") testIntruderGreeting()
+    else if (btn == "btnTestMidday") executeMiddayMaintenance(true)
     else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
     else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
+    else if (btn == "btnClearNotes") clearNotesEndpoint()
 }
+
+
+def testGoogleIntegration() {
+    // We use a real street address as the fallback so the Distance Matrix GPS doesn't fail
+    def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
+    log.info "TEST: Pinging Google for travel to ${testDest}..."
+    
+    def mins = getTravelInfo(testDest)
+    def gas = getCheapestGas()
+    
+    def msg = ""
+    if (mins != null) {
+        msg = "Google API Test Successful. It currently takes ${mins} minutes to get to your destination from your home."
+        if (gas) { msg += gas }
+    } else {
+        msg = "Google API Test Failed. Please check your API Key, Home Address, and Hubitat Logs."
+    }
+    
+    def targetSpeaker = globalIndoorSpeaker
+    if (!targetSpeaker && arrivalFoyerSpeaker) targetSpeaker = arrivalFoyerSpeaker
+    if (targetSpeaker) enqueueTTS(targetSpeaker, msg, globalVolume, 1)
+    
+    addToHistory("TEST: Google Maps/Gas logic check performed.")
+}
+
 
 def addToHistory(String msg) {
     ensureStateMaps()
@@ -3492,6 +3612,11 @@ def handleGoogleEmail() {
             def time = body.time ?: "just now"
             def transcript = body.msgContent ?: "The caller did not leave a transcription."
             
+            if (getPresentUsers().size() == 0) {
+                stashMessage("you received a voicemail from ${caller}")
+                return [status: "stashed"]
+            }
+            
             msg = "%interruption%, you have a new Ooma voicemail from ${caller}, received at ${time}. The message says: ${transcript}"
             
             if (settings.enableDebug) log.debug "OOMA VOICEMAIL RECEIVER: Voicemail notification received from ${caller}."
@@ -3507,6 +3632,11 @@ def handleGoogleEmail() {
             if (settings.enableDeliveryTracking == false) {
                 if (settings.enableDebug) log.debug "GOOGLE DELIVERY: Suppressed (Package Tracking is toggled OFF)."
                 return [status: "delivery_disabled"]
+            }
+            
+            if (getPresentUsers().size() == 0) {
+                stashMessage("a package was delivered to the house")
+                return [status: "stashed"]
             }
             
             msg = "%interruption%, I am seeing a delivery notification from ${sender}. The subject is: ${subject}. You have a package arriving today."
@@ -3610,4 +3740,594 @@ def mailClearedHandler(evt) {
     ensureStateMaps()
     state.reminderCounts["mail"] = 0
     addToHistory("SYSTEM: Mail retrieved. Escalation counter reset.")
+}
+
+def getMaintenanceReport(mDevice) {
+    if (!mDevice) return ""
+    try {
+        def maxOverdue = mDevice.currentValue("maxOverdueDays") as Integer ?: 0
+        def tasks = mDevice.currentValue("overdueTasks") ?: ""
+
+        if (maxOverdue > 0 && tasks != "") {
+            // Build proper grammar for lists
+            def taskList = tasks.split(",").collect { it.trim() }
+            def taskString = ""
+            def plural = taskList.size() > 1
+            def isAre = plural ? "are" : "is"
+            def requireRequires = plural ? "require" : "requires"
+
+            if (taskList.size() == 1) taskString = taskList[0]
+            else if (taskList.size() == 2) taskString = "${taskList[0]} and ${taskList[1]}"
+            else {
+                def last = taskList.pop()
+                taskString = "${taskList.join(', ')}, and ${last}"
+            }
+
+            // The Tone Escalator
+            if (maxOverdue <= 3) {
+                return "Just a friendly reminder %name%, the ${taskString} ${requireRequires} your attention when you have a moment."
+            } else if (maxOverdue <= 7) {
+                return "Pardon the reminder, but the ${taskString} ${isAre} now past due. Please try to get to them soon."
+            } else if (maxOverdue <= 14) {
+                return "I must advise you to address the house maintenance, %name%. The ${taskString} ${isAre} significantly overdue."
+            } else {
+                return "Critical alert. The ${taskString} have been neglected for over two weeks. Immediate action is strongly recommended to prevent systemic wear and tear."
+            }
+        }
+    } catch (Exception e) { log.warn "Voice Butler: Failed to fetch maintenance report - ${e}" }
+    return ""
+}
+
+def scheduleRandomMiddayMaintenance() {
+    if (!settings.enableMiddayMaintenance) return
+    
+    // Pick a random minute between 660 (11:00 AM) and 900 (3:00 PM) -> 240 minute range
+    int randomMinute = 660 + new Random().nextInt(241)
+    int h = (randomMinute / 60).toInteger()
+    int m = randomMinute % 60
+    
+    def cal = Calendar.getInstance(location.timeZone)
+    cal.set(Calendar.HOUR_OF_DAY, h)
+    cal.set(Calendar.MINUTE, m)
+    cal.set(Calendar.SECOND, 0)
+    
+    // Only schedule if the randomly selected time hasn't already passed today
+    if (cal.getTime().time > new Date().time) {
+        runOnce(cal.getTime(), "executeMiddayMaintenance", [overwrite: true])
+        if (settings.enableDebug) log.debug "SYSTEM: Scheduled Random Midday Maintenance Reminder for ${cal.getTime().format('h:mm a', location.timeZone)}"
+    }
+}
+
+def executeMiddayMaintenance(isTest = false) {
+    ensureStateMaps()
+    
+    if (!isTest) {
+        // Gate 1: Mode Check
+        def allowedModes = [settings.middayMaintenanceModes].flatten().findAll { it != null }
+        if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+        
+        def presentFolks = getPresentUsers()
+        // Gate 2: Empty House Check
+        if (presentFolks.size() == 0) return 
+        
+        // Gate 3: Privacy/Guest Check
+        def guestList = [settings.guestUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
+        if (settings.guestCustomUsers) guestList += settings.guestCustomUsers.split(',').collect { it.trim().toLowerCase() }
+        
+        def hasGuest = presentFolks.any { person -> 
+            guestList.contains(person.toLowerCase()) || guestList.contains(applyAlias(person).toLowerCase())
+        }
+        if (hasGuest) {
+            addToHistory("MIDDAY MAINTENANCE: Suppressed. A recognized guest is currently in the house.")
+            return 
+        }
+    }
+    
+    def mDevice = settings.middayMaintenanceDevice
+    if (!mDevice) return
+    
+    def mText = getMiddayMaintenanceReport(mDevice)
+    if (!mText && !isTest) return // Nothing is due, stay silent!
+    
+    if (isTest && !mText) mText = "%interruption%, but this is a test of the midday reminder system. If you had overdue tasks, I would politely list them here."
+    
+    def finalMsg = applyDynamicVars(mText)
+    def targetVol = settings.middayVolume != null ? settings.middayVolume : settings.globalVolume
+    
+    executeRoutedTTS(finalMsg, settings.middayRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+    addToHistory("MIDDAY MAINTENANCE: Random reminder fired. Queued: '${finalMsg}'")
+}
+
+def getMiddayMaintenanceReport(mDevice) {
+    if (!mDevice) return ""
+    try {
+        def maxOverdue = mDevice.currentValue("maxOverdueDays") as Integer ?: 0
+        def tasks = mDevice.currentValue("overdueTasks") ?: ""
+
+        if (maxOverdue > 0 && tasks != "") {
+            def taskList = tasks.split(",").collect { it.trim() }
+            def taskString = ""
+            def plural = taskList.size() > 1
+            def isAre = plural ? "are" : "is"
+
+            if (taskList.size() == 1) taskString = taskList[0]
+            else if (taskList.size() == 2) taskString = "${taskList[0]} and ${taskList[1]}"
+            else {
+                def last = taskList.pop()
+                taskString = "${taskList.join(', ')}, and ${last}"
+            }
+
+            // Escalating Grammar
+            if (maxOverdue <= 7) {
+                return "%interruption%, but as a friendly midday reminder, the ${taskString} ${isAre} due for maintenance when you have a free moment."
+            } else if (maxOverdue <= 14) {
+                return "%interruption%. I wanted to remind you that the ${taskString} ${isAre} significantly overdue for maintenance."
+            } else {
+                return "%interruption%. Please be advised that the ${taskString} have been neglected for over two weeks. It is highly recommended to address this today."
+            }
+        }
+    } catch (Exception e) { log.warn "Voice Butler: Failed to fetch midday report - ${e}" }
+    return ""
+}
+
+// --- NEW: NOTES PORTAL WEB HANDLERS ---
+def serveNotesPage() {
+    try {
+        def trackedNames = getTrackedUsers()
+        def userOptions = ""
+        trackedNames.each { u -> userOptions += "<option value='${u}'>${u}</option>" }
+
+        def apiUrl = getFullApiServerUrl()
+
+        // FIX: Protect against legacy string notes crashing the page
+        if (state.butlerNotes && state.butlerNotes.size() > 0 && state.butlerNotes[0] instanceof String) {
+            state.butlerNotes = []
+        }
+
+        // Use StringBuilder for safe, crash-free HTML rendering in Hubitat
+        def html = new StringBuilder()
+        html.append("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Butler Notes</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: sans-serif; padding: 20px; background-color: #f4f4f9; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                textarea { width: 100%; height: 100px; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: sans-serif; }
+                select, input[type="time"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: sans-serif; }
+                button { background-color: #0b3b60; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-bottom: 10px; font-weight: bold; }
+                button.clear { background-color: #c0392b; }
+                .note-list { margin-top: 20px; text-align: left; }
+                .note-item { background: #e9ecef; padding: 12px; border-radius: 4px; margin-bottom: 8px; border-left: 4px solid #0b3b60; font-size: 14px; line-height: 1.4; }
+            </style>
+            <script>
+                function toggleTime() {
+                    var sel = document.getElementById('whenSelect').value;
+                    document.getElementById('timeDiv').style.display = (sel === 'Time') ? 'block' : 'none';
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h2 style="text-align: center; color: #0b3b60; margin-top: 0;">Leave a Note</h2>
+                <p style="text-align: center; font-size: 13px; color: #666;">These notes will be read aloud by the Butler at the selected time or event.</p>
+                <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
+                    
+                    <label><b>Who is leaving this note?</b></label>
+                    <select name="senderName">
+                        <option value="Someone">Select your name...</option>
+                        ${userOptions}
+                    </select>
+
+                    <label><b>Who is this note for?</b></label>
+                    <select name="targetUser">
+                        <option value='Anyone'>Anyone</option>
+                        ${userOptions}
+                    </select>
+                    
+                    <label><b>When should I deliver it?</b></label>
+                    <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
+                        <option value="Arrival">When they arrive home</option>
+                        <option value="Morning">During their morning briefing</option>
+                        <option value="Time">At a specific time</option>
+                    </select>
+                    
+                    <div id="timeDiv" style="display:none;">
+                        <label><b>Select Time:</b></label>
+                        <input type="time" name="deliveryTime">
+                    </div>
+
+                    <textarea name="noteText" placeholder="e.g., Don't forget to take out the trash..." required></textarea>
+                    <button type="submit">Save Note</button>
+                </form>
+                <form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST">
+                    <button type="submit" class="clear">Clear All Notes</button>
+                </form>
+        """)
+        
+        if (state.butlerNotes && state.butlerNotes.size() > 0) {
+            html.append("<div class='note-list'><h3 style='margin-bottom: 10px;'>Pending Notes:</h3>")
+            state.butlerNotes.each { note -> 
+                def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
+                html.append("<div class='note-item'><b>From ${note.sender} to ${note.target}</b>${timeTxt}: ${note.text}</div>")
+            }
+            html.append("</div>")
+        } else {
+            html.append("<p style='text-align:center; color:#666; margin-top: 30px; font-style: italic;'>No pending notes.</p>")
+        }
+        
+        html.append("""
+            </div>
+        </body>
+        </html>
+        """)
+        
+        return render(contentType: "text/html", data: html.toString(), status: 200)
+        
+    } catch (Exception e) {
+        log.error "Notes Portal Crash: ${e}"
+        return render(contentType: "text/html", data: "<h3>Portal Error:</h3><p>${e}</p><p>Please check your Hubitat logs.</p>", status: 500)
+    }
+}
+
+def addNoteEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request.body ?: ""
+        def newNote = [id: java.util.UUID.randomUUID().toString(), addedAt: new Date().time]
+        
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        newNote.sender = params.senderName ?: "Someone"
+        newNote.target = params.targetUser ?: "Anyone"
+        newNote.when = params.deliveryWhen ?: "Arrival"
+        newNote.text = params.noteText ?: ""
+        
+        if (newNote.text.trim().length() > 0) {
+            if (state.butlerNotes && state.butlerNotes.size() > 0 && state.butlerNotes[0] instanceof String) {
+                state.butlerNotes = []
+            }
+            
+            if (newNote.when == "Time" && params.deliveryTime) {
+                def timeParts = params.deliveryTime.split(":")
+                def cal = Calendar.getInstance(location.timeZone)
+                cal.set(Calendar.HOUR_OF_DAY, timeParts[0].toInteger())
+                cal.set(Calendar.MINUTE, timeParts[1].toInteger())
+                cal.set(Calendar.SECOND, 0)
+                if (cal.time.time < new Date().time) cal.add(Calendar.DAY_OF_YEAR, 1) // Tomorrow
+                newNote.timeEpoch = cal.time.time
+                runOnce(new Date(newNote.timeEpoch), "executeTimeNote", [data: [id: newNote.id], overwrite: false])
+                addToHistory("NOTES: Scheduled note from ${newNote.sender} to ${newNote.target} at ${params.deliveryTime}.")
+            } else {
+                addToHistory("NOTES: Added note from ${newNote.sender} to ${newNote.target} on ${newNote.when}.")
+            }
+            state.butlerNotes.add(newNote)
+        }
+    } catch (Exception e) { 
+        log.warn "Failed to parse or add note: ${e}" 
+    }
+    
+    return serveNotesPage()
+}
+
+def clearNotesEndpoint() {
+    try {
+        state.butlerNotes = []
+        addToHistory("NOTES: All notes cleared via web portal.")
+    } catch(Exception e) {}
+    
+    return serveNotesPage()
+}
+
+def formatNotesForReading() {
+    return "" // Handled dynamically in the routines now
+}
+
+def executeTimeNote(data) {
+    ensureStateMaps()
+    def note = state.butlerNotes.find { it.id == data.id }
+    if (!note) return
+    
+    def isTargetHome = false
+    def presentFolks = getPresentUsers()
+    
+    if (note.target == "Anyone" && presentFolks.size() > 0) isTargetHome = true
+    else if (presentFolks.any { it.equalsIgnoreCase(note.target) }) isTargetHome = true
+    
+    if (isTargetHome) {
+        def targetName = note.target == "Anyone" ? "the household" : applyAlias(note.target)
+        def senderTxt = note.sender != "Someone" ? "from ${note.sender} " : ""
+        def msg = "%interruption%. I have a scheduled note ${senderTxt}for ${targetName}. It says: ${note.text}"
+        
+        executeRoutedTTS(applyDynamicVars(msg), "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
+        state.butlerNotes.remove(note)
+        addToHistory("NOTES: Time-based note from ${note.sender} delivered to ${note.target}.")
+    } else {
+        // FIX: Keep the note and flag it as Pending so it isn't lost!
+        note.when = "Pending"
+        addToHistory("NOTES: Scheduled note missed (${note.target} not home). Converted to a pending greeting note.")
+    }
+}
+
+def getPerimeterReport(String contextKey = "global") {
+    def openDoors = []
+    def unlockedLocks = []
+    
+    // 1. Scan for open contact sensors
+    // We look through all settings to find any assigned contact sensors
+    settings.each { k, v ->
+        if (v instanceof com.hubitat.app.DeviceWrapper) {
+            if (v.hasCapability("ContactSensor") && v.currentValue("contact") == "open") {
+                openDoors << v.displayName
+            }
+        } else if (v instanceof List) {
+            v.each { dev ->
+                if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("ContactSensor") && dev.currentValue("contact") == "open") {
+                    openDoors << dev.displayName
+                }
+            }
+        }
+    }
+    
+    // 2. Scan for unlocked locks
+    settings.each { k, v ->
+        if (v instanceof com.hubitat.app.DeviceWrapper) {
+            if (v.hasCapability("Lock") && v.currentValue("lock") == "unlocked") {
+                unlockedLocks << v.displayName
+            }
+        } else if (v instanceof List) {
+            v.each { dev ->
+                if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("Lock") && dev.currentValue("lock") == "unlocked") {
+                    unlockedLocks << dev.displayName
+                }
+            }
+        }
+    }
+    
+    // 3. Build the report string
+    def report = ""
+    if (openDoors.size() > 0 || unlockedLocks.size() > 0) {
+        report = "Security note: "
+        if (openDoors.size() > 0) {
+            def doorList = openDoors.unique().join(", and ")
+            report += "The ${doorList} ${openDoors.size() > 1 ? 'are' : 'is'} still open. "
+        }
+        if (unlockedLocks.size() > 0) {
+            def lockList = unlockedLocks.unique().join(", and ")
+            report += "Also, the ${lockList} ${unlockedLocks.size() > 1 ? 'are' : 'is'} currently unlocked. "
+        }
+        report += "I will monitor the perimeter while you rest."
+    } else {
+        // Optional: If everything is secure, you can return a confirmation, 
+        // but usually, silence is better for the Perimeter Check unless there is a problem.
+        return "" 
+    }
+    
+    // 4. Use the Memory Filter so it doesn't repeat the SAME alert to the SAME room
+    return checkAndRegisterFact(report, 2, contextKey)
+}
+
+// --- NEWS RETRIEVAL HELPER ---
+def getRoomNews(rNum, isTest) {
+    def headline = state."roomNewsHeadline_${rNum}"
+    
+    if (isTest && !headline) {
+        return "This is a test of the morning news briefing. Once your RSS feed syncs, the latest headlines will appear here."
+    }
+    
+    return headline ?: ""
+}
+
+def getWardrobeAdvice(wDevice) {
+    if (!wDevice) return ""
+    def temp = wDevice.currentValue("temperature") ?: 70
+    def cond = wDevice.currentValue("weather")?.toLowerCase() ?: ""
+    
+    if (temp < 45) return "It is quite chilly, so a heavy coat is recommended."
+    if (temp < 65) return "A light jacket or sweater should be perfect for today."
+    if (cond.contains("rain") || cond.contains("storm")) return "Don't forget an umbrella, as precipitation is expected."
+    if (temp > 85) return "It's going to be a warm one, I suggest dressing light and staying hydrated."
+    return "The weather looks pleasant, standard attire should be fine."
+}
+
+def getBoredomBuster(wDevice) {
+    def suggestions = [
+        "Since it is the weekend, perhaps a visit to the local park would be refreshing.",
+        "It might be a good day to catch up on that book you've been meaning to read.",
+        "I suggest checking out a new recipe for lunch today.",
+        "A perfect day for a long walk or some light gardening."
+    ]
+    return suggestions[new Random().nextInt(suggestions.size())]
+}
+
+def getKidsFunFact(rNum) {
+    def customFile = settings["roomJokesFile_${rNum}"]
+    if (customFile) {
+        // Use the safe helper we just fixed above
+        def fileContents = readLocalFile(customFile) 
+        if (fileContents) {
+            def lines = fileContents.split('\n').findAll { it.trim().length() > 0 }
+            if (lines) return "Here is your morning joke: " + lines[new Random().nextInt(lines.size())]
+        }
+    }
+    
+    def jokes = ["Why don't scientists trust atoms? Because they make up everything!", "What do you call a fake noodle? An impasta!"]
+    return "Here is a fun fact for your morning: " + jokes[new Random().nextInt(jokes.size())]
+}
+
+def getMealTimeQuestion() {
+    def questions = [
+        "If you could have any superpower for just one hour, what would it be?",
+        "What was the most interesting thing that happened to you today?",
+        "If we could move the house to any country in the world tomorrow, where should we go?",
+        "What is one thing you are grateful for today?",
+        "If you had to eat only one food for the rest of your life, what would you choose?"
+    ]
+    
+    if (settings.mealTimeQuestionsFile) {
+        try {
+            def fileContents = readLocalFile(settings.mealTimeQuestionsFile)
+            if (fileContents) {
+                def lines = fileContents.split('\n').findAll { it.trim().length() > 0 }
+                if (lines) questions = lines
+            }
+        } catch (e) { 
+            log.warn "Meal Questions File Error: ${e}. Using defaults." 
+        }
+    }
+    
+    return "To start our dinner conversation: ${questions[new Random().nextInt(questions.size())]}"
+}
+def readLocalFile(fileName) {
+    try {
+        def params = [ uri: "http://127.0.0.1:8080/local/${fileName}", timeout: 5 ]
+        def text = ""
+        httpGet(params) { resp ->
+            if (resp.status == 200 && resp.data != null) {
+                // We use a safer way to extract text that Hubitat's sandbox allows
+                if (resp.data instanceof String) {
+                    text = resp.data
+                } else {
+                    try {
+                        // This reads the stream/reader without needing to name the class
+                        text = resp.data.text 
+                    } catch (e) {
+                        text = resp.data.toString()
+                    }
+                }
+            }
+        }
+        return text
+    } catch (e) {
+        if (settings.enableDebug) log.error "readLocalFile failed for ${fileName}: ${e}"
+        return null
+    }
+}
+
+def getTravelInfo(destination) {
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return null
+    if (!checkAndIncrementApiLimit()) return null
+    
+    def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
+    def encodedDest = java.net.URLEncoder.encode(destination, "UTF-8")
+    def url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodedHome}&destinations=${encodedDest}&departure_time=now&key=${settings.googleMapsApiKey}"
+    
+    def travelMins = null // <-- Hold the value outside the closure!
+    
+    try {
+        httpGet([uri: url, timeout: 10]) { resp ->
+            if (resp.status == 200 && resp.data?.rows && resp.data.rows[0]?.elements) {
+                def element = resp.data.rows[0].elements[0]
+                if (element?.status == "OK") {
+                    def trafficSecs = element.duration_in_traffic?.value ?: element.duration?.value ?: 0
+                    travelMins = (trafficSecs / 60).toInteger() // <-- Assign it here
+                }
+            }
+        }
+    } catch (e) { 
+        if (settings.enableDebug) log.warn "Travel Info Error: ${e}" 
+    }
+    
+    return travelMins // <-- Safely return it to the Butler!
+}
+
+def getCheapestGas() {
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return ""
+    if (!checkAndIncrementApiLimit()) return ""
+    
+    def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
+    def url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=cheapest+gas+near+${encodedHome}&key=${settings.googleMapsApiKey}"
+    
+    def gasResult = "" // <-- Hold the value outside the closure!
+    
+    try {
+        httpGet([uri: url, timeout: 10]) { resp ->
+            if (resp.status == 200 && resp.data?.results && resp.data.results.size() > 0) {
+                def topStation = resp.data.results[0]
+                def addressObj = topStation.formatted_address ?: ""
+                def streetOnly = addressObj.contains(",") ? addressObj.split(',')[0] : addressObj
+                gasResult = " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}." // <-- Assign it here
+            }
+        }
+    } catch (e) { 
+        if (settings.enableDebug) log.warn "Gas Scout Error: ${e}" 
+    }
+    
+    return gasResult // <-- Safely return it to the Butler!
+}
+
+def goodNightOnHandler(evt) {
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    
+    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
+        if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
+            def rName = settings["roomName_${i}"] ?: "Room ${i}"
+            def occName = settings["roomOccupantName_${i}"]
+            
+            // Auto-Arrive the room occupant if the house thinks they are away
+            if (occName && occName != "Guest" && !state.hasArrivedToday[occName]) {
+                state.hasArrivedToday[occName] = true
+                state.resetReasons[occName] = "Auto-Arrived via Good Night Switch"
+                addToHistory("SYSTEM: Auto-arrived ${occName} because ${rName} Good Night switch was turned ON.")
+            }
+            
+            def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
+            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i], overwrite: false])
+            return
+        }
+    }
+}
+
+def roomMotionHandler(evt) {
+    if (evt.value != "active") return
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    
+    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
+        def mSensors = [settings["roomMotion_${i}"]].flatten().findAll { it != null }
+        
+        if (mSensors.any { it.id == deviceId }) {
+            def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
+            
+            // Mode 2: Waiting for motion AFTER the switch was turned off
+            if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") {
+                if (state.waitingForMotion["${i}"]) {
+                    state.waitingForMotion["${i}"] = false
+                    triggerGoodMorningSequence(i)
+                }
+            } 
+            // Mode 3: Waiting for motion BEFORE the switch is turned off
+            else if (mode == "3. Motion Driven (Trigger when Motion activates while switch is ON)") {
+                def gnSwitch = settings["roomGoodNightSwitch_${i}"]
+                if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+                    if (!state.roomAlreadyAwake["${i}"]) {
+                        state.roomAlreadyAwake["${i}"] = true
+                        triggerGoodMorningSequence(i)
+                    }
+                }
+            }
+        }
+    }
+}
+
+def checkAndIncrementApiLimit() {
+    ensureStateMaps()
+    def currentMonth = new Date().format("MM")
+    if (state.apiResetMonth != currentMonth) {
+        state.apiCallCount = 0
+        state.apiResetMonth = currentMonth
+    }
+    def limit = settings.apiCallLimit != null ? settings.apiCallLimit.toInteger() : 500
+    if (state.apiCallCount >= limit) {
+        log.warn "Voice Butler: Monthly Google API Limit (${limit}) reached. Disabling Travel/Gas scout until next month."
+        return false
+    }
+    state.apiCallCount = (state.apiCallCount ?: 0) + 1
+    return true
 }
