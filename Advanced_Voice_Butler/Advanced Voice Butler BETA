@@ -398,6 +398,7 @@ def mainPage() {
                 // --- THIS IS THE MISSING BUTTON AND FAILSAFE ---
                 input "apiCallLimit", "number", title: "Monthly API Call Limit", defaultValue: 500, description: "Failsafe limit to prevent billing charges."
                 input "btnTestGoogleApi", "button", title: "▶️ Test Google API Connection"
+                input "enableTravelPush", "bool", title: "Send Event & Gas Addresses to Phones via Push?", description: "Requires 'Silent Mode Notification Devices' to be configured in Section 1.", defaultValue: false, submitOnChange: true
                 
                 def apiCount = state.apiCallCount ?: 0
                 def apiLimit = settings.apiCallLimit ?: 500
@@ -487,6 +488,18 @@ def mainPage() {
                 input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
                 input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
                 input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+            }
+        }
+        
+       section("Quick Exit (Away Mode Farewell)", hideable: true, hidden: true) {
+            paragraph "<i>If the house enters Away Mode, the next door opened within 5 minutes will trigger a farewell message and a gas price scout.</i>"
+            input "enableQuickExit", "bool", title: "Enable Quick Exit Farewell?", defaultValue: false, submitOnChange: true
+            if (enableQuickExit) {
+                input "quickExitDoors", "capability.contactSensor", title: "Exit Doors", multiple: true, required: true
+                input "quickExitModes", "mode", title: "Away Modes to Watch For", multiple: true, required: true
+                input "quickExitRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "quickExitVolume", "number", title: "Farewell Volume (0-100)", required: false
+                input "btnTestQuickExit", "button", title: "▶️ Test Quick Exit Audio"
             }
         }
         
@@ -929,29 +942,36 @@ def initialize() {
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
     
-    // --- NEW: Midday Maintenance Scheduler ---
+    // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
         schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
         // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
         def cal = Calendar.getInstance(location.timeZone)
         if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
     }
-    // -----------------------------------------
+
+    // --- NEW: Quick Exit (Away Mode Farewell) ---
+    if (settings.enableQuickExit && settings.quickExitDoors) {
+        subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
+    }
     
+    // Vital Checks & Internet Safety
     if (settings.enableInternetCheck) { runEvery5Minutes("checkInternetConnection"); checkInternetConnection() }
+    
+    // Perimeter & Visitor Handlers
     if (frontDoorbell) { subscribe(frontDoorbell, "pushed", visitorHandler); subscribe(frontDoorbell, "pushed", countDoorbellHandler) }
     if (frontDoorMotion) { subscribe(frontDoorMotion, "motion.active", visitorHandler); subscribe(frontDoorMotion, "motion.active", countMotionHandler) }
     if (settings.enableDaytimeFollowUp && settings.daytimeDoorContact) { subscribe(settings.daytimeDoorContact, "contact.open", daytimeDoorHandler) }
     
+    // Intruder Deterrent Subscriptions
     if (enableIntruder) {
         if (intruderMotion) subscribe(intruderMotion, "motion.active", intruderMotionHandler)
         if (intruderBypassDoors) subscribe(intruderBypassDoors, "contact.open", intruderDoorHandler)
         if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, unifiProtectHandler) }
     }
     
+    // Smart Lock & Presence Arrival Handlers
     if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
-
-    // --- Arrival Sensor Fallback Subscriptions ---
     def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
     for (int i = 1; i <= numPres; i++) {
         if (settings["fallbackPresence_${i}"]) {
@@ -959,6 +979,7 @@ def initialize() {
         }
     }
     
+    // Household Routine Handlers (Mail, Meals, Departures, Screen Time)
     if (settings.enableMailCheck && settings.mailSwitch) { 
         subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler)
         subscribe(settings.mailSwitch, "switch.off", mailClearedHandler)
@@ -966,33 +987,36 @@ def initialize() {
     if (settings.enableMealTime && settings.mealTimeSwitch) { subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) }
     if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
     if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
+    if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler) }
 
-    if (settings.enableOffice && settings.officeSwitch) {
-        subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler)
-    }
-
+    // Global Mode & Motion Tracking
     subscribe(location, "mode", modeChangeHandler)
     if (butlerLrMotion) subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler)
     if (awayCheckTime) { schedule(awayCheckTime, "scheduledAwayCheck") }
     
+    // Manual Away Logic Mappings
     def numMappings = settings.numAwayMappings ? settings.numAwayMappings as Integer : 0
     for (int i = 1; i <= numMappings; i++) {
         if (settings["awayMappingSwitch_${i}"]) { subscribe(settings["awayMappingSwitch_${i}"], "switch.on", awaySwitchOnHandler) }
         if (settings["awayMappingPresence_${i}"]) { subscribe(settings["awayMappingPresence_${i}"], "presence", awayPresenceHandler) }
     }
     
+    // Local Voice Zone (Room) Subscriptions
     def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
     for (int i = 1; i <= numRoomsSet; i++) {
         if (settings["roomGoodNightSwitch_${i}"]) {
             subscribe(settings["roomGoodNightSwitch_${i}"], "switch.on", goodNightOnHandler)
             subscribe(settings["roomGoodNightSwitch_${i}"], "switch.off", goodNightOffHandler)
         }
+        
+        // Setup for Verified and Motion Driven Wakeup Modes
         def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
         if (mode != "1. Immediate (When Good Night Switch turns OFF)") {
             if (settings["roomMotion_${i}"]) subscribe(settings["roomMotion_${i}"], "motion.active", roomMotionHandler)
         }
     }
     
+    // Calendar Integration Engine
     if (settings.enableCalendar) {
         if (settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice && settings.calEventTimeAttr) {
             subscribe(settings.calendarDevice, settings.calEventTimeAttr, calendarTimeHandler)
@@ -1005,17 +1029,16 @@ def initialize() {
                 else runEvery1Hour("pollCalendars")
                 
                 pollCalendars() // Run it immediately on boot
-                log.info "Calendar engine initialized using background .ics polling."
-            } else {
-                log.info "Calendar background polling disabled. Relying strictly on Google Webhook pushes."
             }
         }
     }
     
+    // Organic Breaking News Engine
     if (settings.enableBreakingNews && settings.breakingNewsFeed) {
         scheduleNextNewsPoll()
     }
     
+    // Status Tile Update
     if (settings.dashboardStatusDevice) {
         settings.dashboardStatusDevice.sendEvent(name: "appStatus", value: "Running and Active", descriptionText: "Voice Butler is active", isStateChange: true)
     }
@@ -1386,10 +1409,22 @@ def executeCalendarAlert(data) {
             def buffer = settings.leaveNowBuffer ?: 5
             def minutesUntilEvent = ((eventStart - now) / 60000).toInteger()
 
+            def gasData = getCheapestGas()
+
             // If drive time + buffer is greater than or equal to the time left...
             if ((minsToDrive + buffer) >= minutesUntilEvent) {
                 travelWarning = "CRITICAL: If you don't leave now, you will be late for ${title}. Traffic is heavy, and it currently takes ${minsToDrive} minutes to get to ${location}."
-                travelWarning += getCheapestGas() // Adds the gas scout info
+                if (gasData) travelWarning += gasData.speech 
+            }
+            
+            // Send the Push Notification ONLY during the 1-hour Proactive check so we don't spam their phone 3 times
+            if (data.isProactive && settings.enableTravelPush && settings.notificationDevice) {
+                def pushMsg = "Event: ${title}\nLocation: ${location}"
+                if (gasData) pushMsg += "\n\nCheapest Gas on the way:\n${gasData.rawName}\n${gasData.rawAddress}"
+                settings.notificationDevice.each { dev ->
+                    try { dev.deviceNotification(pushMsg) } catch(e) {}
+                }
+                addToHistory("PUSH: Travel intel sent to phones for ${title}.")
             }
         }
     }
@@ -2133,30 +2168,27 @@ def unifiProtectHandler(evt) {
 }
 
 // --- BUTLER EVENT TRACKING & REPORTING ---
-def countDoorbellHandler(evt) {
-    def awayList = [settings.butlerAwayModes].flatten().findAll { it != null }
-    if (awayList.contains(location.mode)) state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
-}
-
 def countMotionHandler(evt) {
-    def nightList = [settings.butlerNightModes].flatten().findAll { it != null }
-    if (nightList.contains(location.mode)) state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
+    ensureStateMaps()
+    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
+    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
+    
+    // --- THE FIX: Count motion if in Night Mode OR Away Mode ---
+    if (location.mode in nightModes || location.mode in awayModes || location.mode == "Away") {
+        state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
+        state.pendingMorningReport = true
+    }
 }
 
-def butlerLrMotionHandler(evt) {
+def countDoorbellHandler(evt) {
     ensureStateMaps()
-    if (evt.value == "active") {
-        def arrModes = [settings.butlerArrivalModes].flatten().findAll { it != null }
-        def mornModes = [settings.butlerMorningModes].flatten().findAll { it != null }
-        
-        if (state.pendingArrivalReport && (!arrModes || arrModes.contains(location.mode))) {
-            state.pendingArrivalReport = false 
-            runIn(settings.butlerReportDelay != null ? settings.butlerReportDelay.toInteger() : 120, "playButlerReport", [data: [type: "Arrival", count: state.awayDoorbellCount], overwrite: true])
-        }
-        if (state.pendingMorningReport && (!mornModes || mornModes.contains(location.mode))) {
-            state.pendingMorningReport = false 
-            runIn(settings.butlerReportDelay != null ? settings.butlerReportDelay.toInteger() : 120, "playButlerReport", [data: [type: "Morning", count: state.nightMotionCount], overwrite: true])
-        }
+    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
+    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
+    
+    // --- THE FIX: Count doorbells if in Away Mode OR Night Mode ---
+    if (location.mode in awayModes || location.mode in nightModes || location.mode == "Away") {
+        state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
+        state.pendingArrivalReport = true
     }
 }
 
@@ -2699,14 +2731,20 @@ def scheduledAwayCheck() {
 // --- CENTRAL GREETING BUILDER ---
 def buildRoomGreeting(rNum, type, context = [:]) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
-    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: "Guest")
+    
+    // --- FIX: Prioritize Occupant Name over Room Name to avoid "Master Bedroom" greeting ---
+    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: rName)
     def displayOccName = applyAlias(occName)
+    
     def parts = []
     def roomKey = "room_${rNum}" // Unique ID for the memory filter
+    def isTest = context.isTest ?: false // --- FIX: Catch the Test Flag to prevent Memory Poisoning ---
 
     def rawMsg = ""
     if (type == "Good Night") {
-        if (settings["useCustomRoomMessages_${rNum}"]) {
+        if (context.isNewArrival) {
+            rawMsg = "Welcome home, %name%. Your space is prepared."
+        } else if (settings["useCustomRoomMessages_${rNum}"]) {
             def msgs = []
             for (int m = 1; m <= 10; m++) { if (settings["gnMessage_${rNum}_${m}"]) msgs << settings["gnMessage_${rNum}_${m}"] }
             rawMsg = msgs ? msgs[new Random().nextInt(msgs.size())] : getDefaultMessages("Good Night")[0]
@@ -2733,10 +2771,10 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     // --- AI SLEEP HABIT CHECK ---
     if (type == "Good Night" && occName != "Guest") {
         def splitOcc = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-        splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
+        if (!isTest) splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
         
         def primaryOcc = splitOcc[0]
-        if (state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
+        if (state.learnedHabits && state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
             def expected = state.learnedHabits[primaryOcc].avgSleepMins
             def cal2 = Calendar.getInstance(location.timeZone)
             def nowMins = (cal2.get(Calendar.HOUR_OF_DAY) * 60) + cal2.get(Calendar.MINUTE)
@@ -2760,7 +2798,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
     if (settings.enableHolidays && type != "Good Night") {
         def holiday = getTodayHoliday()
-        if (context.isTest && !holiday) holiday = "a Holiday"
+        if (isTest && !holiday) holiday = "a Holiday"
         if (holiday) {
             def hMsg = settings.holidayMessage ?: "By the way, don't forget today is %holiday%!"
             parts << hMsg.replace('%holiday%', holiday)
@@ -2772,6 +2810,9 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     def dow = cal.get(Calendar.DAY_OF_WEEK)
     def dowString = new Date().format("EEEE", location.timeZone)
 
+    // ==============================================
+    //               GOOD MORNING LOGIC
+    // ==============================================
     if (type == "Good Morning") {
         def timeDateEnabled = settings["roomTimeDate_${rNum}"]
         def agendaEnabled = settings["roomAgendaEnable_${rNum}"]
@@ -2793,22 +2834,23 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
         if (settings["roomAnnounceNightMotion_${rNum}"]) {
             def count = state.lastNightMotionCount ?: 0
-            if (count > 0 || context.isTest) {
-                def c = context.isTest ? 3 : count
+            if (count > 0 || isTest) {
+                def c = isTest ? 3 : count
                 parts << "Please note, there were ${c} motion events on the porch last night."
             }
         }
 
         if (settings["roomAnnounceAwayDoorbell_${rNum}"]) {
             def count = state.lastAwayDoorbellCount ?: 0
-            if (count > 0 || context.isTest) {
-                def c = context.isTest ? 1 : count
+            if (count > 0 || isTest) {
+                def c = isTest ? 1 : count
                 parts << "Also, the doorbell rang ${c} times while the house was vacant yesterday."
             }
         }
 
         if (wDevice && settings["roomWeatherGM_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey) 
+            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
+            def wText = getWeatherReport(wDevice, roomKey, isTest) 
             if (wText) {
                 def weatherBlock = getBridge("weather") + wText
                 if (settings["roomWardrobe_${rNum}"]) {
@@ -2822,18 +2864,18 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             if (wardText) parts << getBridge("weather") + wardText
         }
 
-        if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || context.isTest)) {
+        if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || isTest)) {
             def bText = getBoredomBuster(wDevice)
             if (bText) parts << bText
         }
 
         if (settings["roomNewsEnable_${rNum}"]) {
-            def newsText = getRoomNews(rNum, context.isTest)
+            def newsText = getRoomNews(rNum, isTest)
             if (newsText) parts << getBridge("news") + newsText
         }
 
         if (settings["roomAnnounceMaintenance_${rNum}"] && settings["roomMaintenanceDevice_${rNum}"]) {
-            def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"])
+            def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"], isTest)
             if (mText) parts << mText
         }
 
@@ -2841,7 +2883,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             parts << getKidsFunFact(rNum)
         }
         
-        // --- UPDATED: BUTLER NOTES (MORNING) ---
+        // --- BUTLER NOTES (MORNING) ---
         if (settings.announceNotesMorning && state.butlerNotes && state.butlerNotes.size() > 0) {
             def pendingMorningNotes = state.butlerNotes.findAll { (it.when == "Morning" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(displayOccName) || it.target.equalsIgnoreCase(occName)) }
             if (pendingMorningNotes.size() > 0) {
@@ -2858,8 +2900,10 @@ def buildRoomGreeting(rNum, type, context = [:]) {
                 }
                 
                 parts << getBridge("general") + readStr
-                state.butlerNotes.removeAll { pendingMorningNotes.contains(it) }
-                addToHistory("NOTES: Delivered morning/missed notes to ${displayOccName}.")
+                if (!isTest) {
+                    state.butlerNotes.removeAll { pendingMorningNotes.contains(it) }
+                    addToHistory("NOTES: Delivered morning/missed notes to ${displayOccName}.")
+                }
             }
         }
         // ---------------------------------------
@@ -2867,27 +2911,38 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
             def inboxMsgs = state.messageInbox.join(", and ")
             parts << getBridge("general") + "while you were asleep, ${inboxMsgs}."
-            state.messageInbox = [] 
-            addToHistory("INBOX: Delivered stashed messages during Morning Briefing.")
+            if (!isTest) {
+                state.messageInbox = [] 
+                addToHistory("INBOX: Delivered stashed messages during Morning Briefing.")
+            }
         }
     }
 
+    // ==============================================
+    //               GOOD NIGHT LOGIC
+    // ==============================================
     if (type == "Good Night") {
         if (settings["roomKidsWeekend_${rNum}"]) {
-            if (dow == Calendar.FRIDAY || dow == Calendar.SATURDAY || context.isTest) {
+            if (dow == Calendar.FRIDAY || dow == Calendar.SATURDAY || isTest) {
                 parts << "Since tomorrow is the weekend, there is no school! Sleep well and sleep in."
             }
         }
         
         if (settings["roomPerimeterCheck_${rNum}"]) {
-            def perimText = getPerimeterReport(roomKey)
+            // --- FIX: Pass the isTest flag so Security isn't suppressed ---
+            def perimText = getPerimeterReport(roomKey, isTest)
             if (perimText) parts << perimText
         }
 
         if (wDevice && settings["roomWeatherGN_${rNum}"]) {
-            def wText = getWeatherReport(wDevice, roomKey)
+            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
+            def wText = getWeatherReport(wDevice, roomKey, isTest)
             if (wText) parts << wText
         }
+        
+        // --- ADDED: Wind-Down Calendar Feature ---
+        def tomorrowMsg = getTomorrowPreview()
+        if (tomorrowMsg) parts << tomorrowMsg
 
         if (settings["roomKidsNightWatch_${rNum}"]) {
             def monsterList = [
@@ -2972,25 +3027,33 @@ def executeGoodMorningSequence(data) {
     }
 }
 
-def testRoomGreeting(int i, String type) {
-    def rName = settings["roomName_${i}"] ?: "Room ${i}"
+def testRoomGreeting(rNum, type, isNewArrival = false) {
+    ensureStateMaps()
+    def userName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
+    def msg = ""
     
-    def targetSpeaker = settings["roomSpeaker_${i}"]
-    def volSetting = type == "Good Night" ? settings["roomVolumeGN_${i}"] : settings["roomVolumeGM_${i}"]
-    def targetVol = volSetting != null ? volSetting : settings["roomVolume_${i}"]
-
-    if (!targetSpeaker && globalIndoorSpeaker) {
-        targetSpeaker = globalIndoorSpeaker
-        targetVol = globalVolume
+    if (type == "Good Night") {
+        if (isNewArrival) {
+            msg = "Welcome home, ${userName}. Your space is prepared. Sleep well."
+        } else {
+            def msgs = []
+            for (int i = 1; i <= 3; i++) { if (settings["roomGNMsg_${rNum}_${i}"]) msgs << settings["roomGNMsg_${rNum}_${i}"] }
+            if (!msgs) msgs = ["Good night, %user%.", "Sleep well, %user%."]
+            msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
+        }
+    } else {
+        // Good Morning Logic
+        def msgs = []
+        for (int i = 1; i <= 3; i++) { if (settings["roomGMMsg_${rNum}_${i}"]) msgs << settings["roomGMMsg_${rNum}_${i}"] }
+        if (!msgs) msgs = ["Good morning, %user%.", "Rise and shine, %user%."]
+        msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
     }
 
+    def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
+    def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+    
     if (targetSpeaker) {
-        def finalMsg = buildRoomGreeting(i, type, [isTest: true])
-        def volLog = targetVol != null ? "${targetVol}%" : "Hardware Default"
-        log.info "TESTING ${type} GREETING FOR ${rName}: '${finalMsg}' at ${volLog} volume."
-        enqueueTTS(targetSpeaker, finalMsg, targetVol, 1)
-    } else {
-        log.warn "Cannot test greeting for ${rName} - no speaker assigned."
+        enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 1)
     }
 }
 
@@ -3471,7 +3534,17 @@ def appButtonHandler(btn) {
             if (settings["roomNewsEnable_${i}"]) syncRoomNews(i)
         }
     } else if (btn == "btnTestGoogleApi") {
-        testGoogleIntegration() // <--- THIS MAKES THE BUTTON WORK
+        testGoogleIntegration() 
+    } else if (btn == "btnTestQuickExit") {
+        def gasData = getCheapestGas()
+        def msg = "Farewell. The security perimeter is active. Have a safe trip."
+        if (gasData && gasData.speech) msg += gasData.speech
+        executeRoutedTTS(msg, settings.quickExitRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.quickExitVolume ?: settings.globalVolume, 1, true)
+        if (settings.enableTravelPush && settings.notificationDevice && gasData?.rawAddress) {
+            settings.notificationDevice.each { dev ->
+                try { dev.deviceNotification("Test Alert - Gas: ${gasData.rawName} (${gasData.rawAddress})") } catch(e) {}
+            }
+        }
     } else if (btn == "btnTestGlobal") {
         enqueueTTS(globalIndoorSpeaker, applyDynamicVars("This is a test of the global indoor speakers. The time is %time%."), globalVolume, 1)
     } else if (btn == "btnTestOutdoor") {
@@ -3509,17 +3582,28 @@ def appButtonHandler(btn) {
 
 
 def testGoogleIntegration() {
-    // We use a real street address as the fallback so the Distance Matrix GPS doesn't fail
     def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
     log.info "TEST: Pinging Google for travel to ${testDest}..."
     
     def mins = getTravelInfo(testDest)
-    def gas = getCheapestGas()
+    def gasData = getCheapestGas()
     
     def msg = ""
     if (mins != null) {
         msg = "Google API Test Successful. It currently takes ${mins} minutes to get to your destination from your home."
-        if (gas) { msg += gas }
+        if (gasData) { msg += gasData.speech }
+        
+        // --- SEND THE TEST PUSH NOTIFICATION WITH LINK ---
+        if (settings.enableTravelPush && settings.notificationDevice) {
+            def pushMsg = "TEST ALERT - Travel Intel:\nDestination: ${testDest}\nDrive Time: ${mins} minutes"
+            if (gasData?.rawAddress) {
+                pushMsg += "\n\nCheapest Gas:\n${gasData.rawName}\n${gasData.rawAddress}\nTap to Navigate: ${gasData.navLink}"
+            }
+            settings.notificationDevice.each { dev ->
+                try { dev.deviceNotification(pushMsg) } catch(e) {}
+            }
+        }
+        
     } else {
         msg = "Google API Test Failed. Please check your API Key, Home Address, and Hubitat Logs."
     }
@@ -3530,7 +3614,6 @@ def testGoogleIntegration() {
     
     addToHistory("TEST: Google Maps/Gas logic check performed.")
 }
-
 
 def addToHistory(String msg) {
     ensureStateMaps()
@@ -4237,13 +4320,13 @@ def getTravelInfo(destination) {
 }
 
 def getCheapestGas() {
-    if (!settings.googleMapsApiKey || !settings.homeAddress) return ""
-    if (!checkAndIncrementApiLimit()) return ""
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return null
+    if (!checkAndIncrementApiLimit()) return null
     
     def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
     def url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=cheapest+gas+near+${encodedHome}&key=${settings.googleMapsApiKey}"
     
-    def gasResult = "" // <-- Hold the value outside the closure!
+    def gasResult = null 
     
     try {
         httpGet([uri: url, timeout: 10]) { resp ->
@@ -4251,35 +4334,58 @@ def getCheapestGas() {
                 def topStation = resp.data.results[0]
                 def addressObj = topStation.formatted_address ?: ""
                 def streetOnly = addressObj.contains(",") ? addressObj.split(',')[0] : addressObj
-                gasResult = " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}." // <-- Assign it here
+                
+                // NEW: Build a direct, clickable Google Maps link using the Place ID
+                def placeId = topStation.place_id ?: ""
+                def encodedName = java.net.URLEncoder.encode(topStation.name, "UTF-8")
+                def mapLink = "https://www.google.com/maps/search/?api=1&query=${encodedName}&query_place_id=${placeId}"
+                
+                gasResult = [
+                    speech: " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}.",
+                    rawName: topStation.name,
+                    rawAddress: addressObj,
+                    navLink: mapLink // <-- Storing the link here!
+                ]
             }
         }
     } catch (e) { 
         if (settings.enableDebug) log.warn "Gas Scout Error: ${e}" 
     }
     
-    return gasResult // <-- Safely return it to the Butler!
+    return gasResult 
 }
 
 def goodNightOnHandler(evt) {
     ensureStateMaps()
-    def deviceId = evt.device.id
+    def dev = evt.getDevice()
+    def rNum = 0
     
-    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
-        if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
-            def occName = settings["roomOccupantName_${i}"]
-            
-            // Auto-Arrive the room occupant if the house thinks they are away
-            if (occName && occName != "Guest" && !state.hasArrivedToday[occName]) {
-                state.hasArrivedToday[occName] = true
-                state.resetReasons[occName] = "Auto-Arrived via Good Night Switch"
-                addToHistory("SYSTEM: Auto-arrived ${occName} because ${rName} Good Night switch was turned ON.")
-            }
-            
-            def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
-            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i], overwrite: false])
-            return
+    // Find which room this switch belongs to
+    def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
+    for (int i = 1; i <= numRoomsSet; i++) {
+        if (settings["roomGoodNightSwitch_${i}"]?.id == dev.id) { rNum = i; break }
+    }
+    
+    if (rNum > 0) {
+        def presenceDev = settings["fallbackPresence_${rNum}"] 
+        def isArrival = false
+        
+        // Failsafe: Mark as arrived if they don't have a hardware sensor
+        if (!presenceDev && state.hasArrivedToday[rNum] != true) {
+            state.hasArrivedToday[rNum] = true
+            state.hasDepartedToday[rNum] = false
+            isArrival = true
+        }
+        
+        // --- THE FIX: Call the full engine, not the test function! ---
+        def fullMsg = buildRoomGreeting(rNum, "Good Night", [isNewArrival: isArrival, isTest: false])
+        
+        def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
+        def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+        
+        if (targetSpeaker && fullMsg) {
+            enqueueTTS(targetSpeaker, fullMsg, vol, 1)
+            addToHistory("ROOM ENGINE: Good Night Routine executed for Room ${rNum}.")
         }
     }
 }
