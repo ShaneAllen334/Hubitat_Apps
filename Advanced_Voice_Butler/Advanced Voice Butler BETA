@@ -55,6 +55,15 @@ def mainPage() {
     
     dynamicPage(name: "mainPage", title: "Voice Butler Configuration", install: true, uninstall: true) {
         
+        // --- HABIT DATABASE SCRUB ---
+        // Removes old "Group" entries (e.g. Shane and Christy) to keep the roster clean
+        if (state.learnedHabits) {
+            def keysToRemove = []
+            state.learnedHabits.each { k, v -> if (k.contains(" and ") || k.contains("&") || k.contains(",")) keysToRemove << k }
+            keysToRemove.each { state.learnedHabits.remove(it) }
+        }
+        // ----------------------------
+
         def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
         
         def lockUsers = []
@@ -291,7 +300,7 @@ def mainPage() {
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
 
-            section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
+        section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
             input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
             input "arrivalVolume", "number", title: "Welcome Home Announcement Volume (0-100)", required: false
             input "arrivalFoyerSpeaker", "capability.speechSynthesis", title: "Foyer / Entryway Speaker (Plays Full Greeting)", required: false
@@ -378,6 +387,15 @@ def mainPage() {
                         paragraph "<div style='padding:8px; background-color:#d4edda; border:1px solid #c3e6cb; color:#155724; border-radius:4px;'><i><b>Webhook Mode Active:</b> The app is listening for instant pushes from your Google Script. Background polling is disabled.</i></div>"
                     }
                 }
+                
+                // --- MOVED: Travel & Mapping Intelligence is now outside the local-only condition ---
+                paragraph "<hr>"
+                paragraph "<b>🌍 Travel & Mapping Intelligence</b>"
+                input "googleMapsApiKey", "text", title: "Google Maps API Key", description: "Enter your key from Google Cloud Console", required: false
+                input "homeAddress", "text", title: "Home Address", description: "e.g., 123 Main St, Your City, State", required: false
+                input "leaveNowBuffer", "number", title: "Leave Now Buffer (Minutes)", defaultValue: 5, description: "Warning threshold before you MUST leave."
+                paragraph "<hr>"
+                
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "calAlertIntervals", "enum", title: "Warning Intervals", options: ["3 Hours", "2 Hours", "1 Hour", "30 Minutes", "15 Minutes"], multiple: true, required: false
                 input "calRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
@@ -391,7 +409,7 @@ def mainPage() {
             }
         }
 
-            section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
+        section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
             paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
             input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
             
@@ -534,7 +552,7 @@ def mainPage() {
             }
         }
         
-            section("Meal Time Routine (Dinner Voice Butler)", hideable: true, hidden: true) {
+        section("Meal Time Routine (Dinner Voice Butler)", hideable: true, hidden: true) {
             input "enableMealTime", "bool", title: "Enable Meal Time Routine?", defaultValue: false, submitOnChange: true
             if (enableMealTime) {
                 input "mealTimeSwitch", "capability.switch", title: "Meal Time Trigger Switch", required: true
@@ -663,7 +681,6 @@ def mainPage() {
             if (enableHolidays) { input "holidayMessage", "text", title: "Holiday Message Format", defaultValue: "By the way, don't forget today is %holiday%!" }
             
             paragraph "<hr>"
-            // --- MOTHER'S & FATHER'S DAY SETTINGS ---
             input "enableParentsDay", "bool", title: "Enable Parent's Day Reminders? (Call Mom/Dad)", defaultValue: false, submitOnChange: true
             if (enableParentsDay) {
                 input "mothersDayUser", "enum", title: "Who should be reminded to call Mom on Mother's Day?", options: lockUsers, multiple: true, required: false
@@ -691,9 +708,7 @@ def mainPage() {
                     paragraph "<b>Birthday Profile ${i}</b>"
                     input "bdayName_${i}", "text", title: "Person's Name ${i}", required: false
                     
-                    // --- NEW: Per-Profile Type Selector ---
                     input "bdayType_${i}", "enum", title: "Profile Type", options: ["Kid (30-Day Countdown)", "Adult (5-Day Gift Warning)"], defaultValue: "Kid (30-Day Countdown)", submitOnChange: true
-                    // --------------------------------------
                     
                     input "bdayMonth_${i}", "enum", title: "Birth Month ${i}", options: months, required: false
                     input "bdayDay_${i}", "number", title: "Birth Day ${i} (1-31)", range: "1..31", required: false
@@ -725,8 +740,21 @@ def mainPage() {
             input "btnForceReset", "button", title: "🔄 Force Reset All Daily Statuses"
             input "awayIgnoreModes", "mode", title: "Ignore 'Away' Triggers during these Modes", description: "Prevent being marked away during Night or Sleep modes.", multiple: true, required: false
         }
+
+        section("Screen Time Manager", hideable: true, hidden: true) {
+            input "enableScreenTime", "bool", title: "Enable Screen Time Alerts?", defaultValue: false, submitOnChange: true
+            if (enableScreenTime) {
+                input "screenTimeSwitch", "capability.switch", title: "Screen Time Virtual Switch", required: true
+                input "screenTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Screen Time Speaker", required: false
+                input "screenTimeVolume", "number", title: "Alert Volume (0-100)", required: false
+                input "screenTimeRoutingMode", "enum", title: "Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                for (int d = 1; d <= 5; d++) { input "screenTimeMsg_${d}", "text", title: "Alert Message ${d}", required: false, defaultValue: getDefaultMessages("ScreenTime")[d-1] }
+                input "btnTestScreenTime", "button", title: "▶️ Test Screen Time Audio"
+            }
+        }
     }
 }
+
 def roomPage(params) {
     def rNum = params?.roomNum ?: state.currentRoom ?: 1
     state.currentRoom = rNum
@@ -1197,9 +1225,8 @@ def iCalResponseHandler(response, data) {
         return
     }
     try {
-        def text = ""
-        if (response.data instanceof String || response.data instanceof GString) text = response.data.toString()
-        else text = response.data.text
+        // Asynchronous Hubitat responses require .getData() to guarantee safe string extraction
+        def text = response.getData() ?: ""
         
         // Remove line folding (CRLF followed by space/tab)
         text = text.replaceAll(/\r?\n[ \t]/, "")
@@ -1210,9 +1237,9 @@ def iCalResponseHandler(response, data) {
         
         def events = text.findAll(/(?s)BEGIN:VEVENT.*?END:VEVENT/)
         events.each { evtStr ->
-            // Improved Regex: Safely ignores properties like ;LANGUAGE=en-us: or ;TZID=America/Chicago:
             def summaryMatch = evtStr =~ /SUMMARY[^:]*:([^\r\n]+)/
             def dtstartMatch = evtStr =~ /DTSTART[^:]*:([^\r\n]+)/
+            def locationMatch = evtStr =~ /LOCATION[^:]*:([^\r\n]+)/
             
             if (summaryMatch && dtstartMatch) {
                 def eName = summaryMatch[0][1].trim()
@@ -1232,22 +1259,23 @@ def iCalResponseHandler(response, data) {
                     } else {
                         def format = tStr.endsWith("Z") ? "yyyyMMdd'T'HHmmss'Z'" : "yyyyMMdd'T'HHmmss"
                         def tz = tStr.endsWith("Z") ? TimeZone.getTimeZone("UTC") : location.timeZone
-                        
-                        // Safe Hubitat-compatible date parsing
                         def sdf = new java.text.SimpleDateFormat(format)
                         sdf.setTimeZone(tz)
                         eDate = sdf.parse(tStr)
                     }
                     
-                    if (settings.enableDebug) log.debug "Calendar Parser: Evaluated '${eName}' at ${eDate} (Parsed from ${tStr})"
-                    
                     if (eDate.time > nowMs && eDate.time < nextEventTime) {
                         nextEventTime = eDate.time
                         nextEventName = eName
+                        
+                        if (locationMatch) {
+                            def rawLoc = locationMatch[0][1].trim()
+                            state.nextEventLocation = rawLoc.replace("\\,", ",").replace("\\;", ";")
+                        } else {
+                            state.nextEventLocation = null
+                        }
                     }
-                } catch(Exception dateEx) {
-                    log.warn "Calendar Parse: Failed to parse date string ${tStr} for event ${eName}. Error: ${dateEx.message}"
-                }
+                } catch(Exception dateEx) {}
             }
         }
         
@@ -1256,6 +1284,7 @@ def iCalResponseHandler(response, data) {
         } else {
             state.nextEventName = "No Upcoming Events"
             state.nextEventTimeStr = "--"
+            state.nextEventLocation = null
             state.calendarSyncTime = new Date().format("h:mm a", location.timeZone)
         }
     } catch (Exception e) { log.error "iCal Parse Error: ${e}" }
@@ -1346,47 +1375,52 @@ def executeCalendarAlert(data) {
     ensureStateMaps()
     def title = data.title
     def timeStr = data.timeStr
+    def location = state.nextEventLocation
     
-    // 1. Enforce Allowed Modes for ALL calendar alerts
-    def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
-    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
-        stashMessage("you had a calendar event for ${title}")
-        return
-    }
-    
-    // 2. If this is the EXACT start time, enforce the "Someone Must Be Home" rule
-    if (timeStr == "0 Minutes") {
-        if (getPresentUsers().size() == 0) {
-            stashMessage("your schedule showed ${title} starting at that time")
-            return
+    // --- TRAVEL TIME LOGIC ---
+    def travelWarning = ""
+    if (location && (timeStr == "30 Minutes" || timeStr == "15 Minutes" || data.isProactive)) {
+        def minsToDrive = getTravelInfo(location)
+        if (minsToDrive) {
+            def now = new Date().time
+            def eventStart = state.nextEventEpoch
+            def buffer = settings.leaveNowBuffer ?: 5
+            def minutesUntilEvent = ((eventStart - now) / 60000).toInteger()
+
+            // If drive time + buffer is greater than or equal to the time left...
+            if ((minsToDrive + buffer) >= minutesUntilEvent) {
+                travelWarning = "CRITICAL: If you don't leave now, you will be late for ${title}. Traffic is heavy, and it currently takes ${minsToDrive} minutes to get to ${location}."
+                travelWarning += getCheapestGas() // Adds the gas scout info
+            }
         }
     }
-    
-    def smartContext = getSmartEventContext(title)
-    if (smartContext.reason) {
-        log.info "AI SECRECY: Suppressing Calendar Alert! ${smartContext.reason}"
-        addToHistory("AI SECRECY: Suppressed calendar alert for '${title}' because ${smartContext.reason}")
-        return 
-    }
-    
-    def messages = []
-    for (int d = 1; d <= 4; d++) { if (settings["calMessage_${d}"]) messages << settings["calMessage_${d}"] }
-    if (!messages) messages = getDefaultMessages("Calendar")
-    
-    // 3. Adjust grammar gracefully if the event is starting right now
-    def rawMsg = messages[new Random().nextInt(messages.size())]
-    if (timeStr == "0 Minutes") {
-        rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
+
+    // 1. Enforce Allowed Modes
+    def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
+    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+
+    def finalMsg = ""
+    if (travelWarning) {
+        finalMsg = applyDynamicVars(travelWarning)
     } else {
-        rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
+        // Standard Calendar Message Logic
+        def messages = []
+        for (int d = 1; d <= 4; d++) { if (settings["calMessage_${d}"]) messages << settings["calMessage_${d}"] }
+        if (!messages) messages = getDefaultMessages("Calendar")
+        def rawMsg = messages[new Random().nextInt(messages.size())]
+        
+        if (timeStr == "0 Minutes") {
+            rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
+        } else {
+            rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
+        }
+        finalMsg = applyDynamicVars(rawMsg)
     }
-    
-    def randomMsg = applyDynamicVars(rawMsg)
-    if (smartContext.text) randomMsg += " " + smartContext.text
-    
-    executeRoutedTTS(randomMsg, settings.calRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
-    addToHistory("CALENDAR ALERT: Event approaching/starting. Queued: '${randomMsg}'")
+
+    executeRoutedTTS(finalMsg, settings.calRoutingMode, settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
+    addToHistory("TRAVEL CONCIERGE: ${finalMsg}")
 }
+
 // --- AI HABIT & ANOMALY ENGINE ---
 def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = "global") {
     if (!factText) return ""
@@ -2896,13 +2930,21 @@ def goodNightOffHandler(evt) {
     
     for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
         if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
             def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
             
-            if (mode == "1. Immediate (When Good Night Switch turns OFF)") { triggerGoodMorningSequence(i) } 
-            else if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") { state.waitingForMotion["${i}"] = true } 
+            if (mode == "1. Immediate (When Good Night Switch turns OFF)") { 
+                triggerGoodMorningSequence(i) 
+            } 
+            else if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") { 
+                state.waitingForMotion["${i}"] = true 
+            } 
             else if (mode == "3. Motion Driven (Trigger when Motion activates while switch is ON)") {
-                if (!state.roomAlreadyAwake["${i}"]) { state.roomAlreadyAwake["${i}"] = true; triggerGoodMorningSequence(i) }
+                // Failsafe: If the switch turns off but they never triggered motion, play it now
+                if (!state.roomAlreadyAwake["${i}"]) { 
+                    triggerGoodMorningSequence(i) 
+                }
+                // Reset the awake flag for tomorrow night
+                state.roomAlreadyAwake["${i}"] = false 
             }
             return
         }
@@ -4140,5 +4182,109 @@ def readLocalFile(fileName) {
     } catch (e) {
         if (settings.enableDebug) log.error "readLocalFile failed for ${fileName}: ${e}"
         return null
+    }
+}
+
+def getTravelInfo(destination) {
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return null
+    if (!checkAndIncrementApiLimit()) return null
+    
+    def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
+    def encodedDest = java.net.URLEncoder.encode(destination, "UTF-8")
+    def url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodedHome}&destinations=${encodedDest}&departure_time=now&key=${settings.googleMapsApiKey}"
+    
+    try {
+        httpGet([uri: url, timeout: 10]) { resp ->
+            // Safely check if the response structure actually exists
+            if (resp.status == 200 && resp.data?.rows && resp.data.rows[0]?.elements) {
+                def element = resp.data.rows[0].elements[0]
+                if (element?.status == "OK") {
+                    // Try to get traffic duration, fallback to normal duration, fallback to 0
+                    def trafficSecs = element.duration_in_traffic?.value ?: element.duration?.value ?: 0
+                    return (trafficSecs / 60).toInteger()
+                }
+            }
+        }
+    } catch (e) { 
+        if (settings.enableDebug) log.warn "Travel Info Error: ${e}" 
+    }
+    return null
+}
+
+def getCheapestGas() {
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return ""
+    if (!checkAndIncrementApiLimit()) return ""
+    
+    def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
+    def url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=cheapest+gas+near+${encodedHome}&key=${settings.googleMapsApiKey}"
+    
+    try {
+        httpGet([uri: url, timeout: 10]) { resp ->
+            // Safely check that the results array actually has items before grabbing index [0]
+            if (resp.status == 200 && resp.data?.results && resp.data.results.size() > 0) {
+                def topStation = resp.data.results[0]
+                def addressObj = topStation.formatted_address ?: ""
+                def streetOnly = addressObj.contains(",") ? addressObj.split(',')[0] : addressObj
+                return " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}."
+            }
+        }
+    } catch (e) { 
+        if (settings.enableDebug) log.warn "Gas Scout Error: ${e}" 
+    }
+    return ""
+}
+
+def goodNightOnHandler(evt) {
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    
+    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
+        if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
+            def rName = settings["roomName_${i}"] ?: "Room ${i}"
+            def occName = settings["roomOccupantName_${i}"]
+            
+            // Auto-Arrive the room occupant if the house thinks they are away
+            if (occName && occName != "Guest" && !state.hasArrivedToday[occName]) {
+                state.hasArrivedToday[occName] = true
+                state.resetReasons[occName] = "Auto-Arrived via Good Night Switch"
+                addToHistory("SYSTEM: Auto-arrived ${occName} because ${rName} Good Night switch was turned ON.")
+            }
+            
+            def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
+            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i], overwrite: false])
+            return
+        }
+    }
+}
+
+def roomMotionHandler(evt) {
+    if (evt.value != "active") return
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    
+    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
+        def mSensors = [settings["roomMotion_${i}"]].flatten().findAll { it != null }
+        
+        if (mSensors.any { it.id == deviceId }) {
+            def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
+            
+            // Mode 2: Waiting for motion AFTER the switch was turned off
+            if (mode == "2. Verified (Wait for switch OFF, then wait for Motion)") {
+                if (state.waitingForMotion["${i}"]) {
+                    state.waitingForMotion["${i}"] = false
+                    triggerGoodMorningSequence(i)
+                }
+            } 
+            // Mode 3: Waiting for motion BEFORE the switch is turned off
+            else if (mode == "3. Motion Driven (Trigger when Motion activates while switch is ON)") {
+                def gnSwitch = settings["roomGoodNightSwitch_${i}"]
+                if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+                    if (!state.roomAlreadyAwake["${i}"]) {
+                        state.roomAlreadyAwake["${i}"] = true
+                        triggerGoodMorningSequence(i)
+                    }
+                }
+            }
+        }
     }
 }
