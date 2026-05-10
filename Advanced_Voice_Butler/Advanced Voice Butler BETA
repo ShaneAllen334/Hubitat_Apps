@@ -282,6 +282,14 @@ def mainPage() {
             input "notificationDevice", "capability.notification", title: "Silent Mode Notification Devices", multiple: true, required: false
             input "ttsTTL", "number", title: "Message Expiration / Time-To-Live (Minutes)", defaultValue: 5, required: false
             
+            // --- FIX 1: THE PHANTOM QUIET HOURS ---
+            paragraph "<hr>"
+            paragraph "<b>Quiet Hours Muting</b>"
+            input "quietHoursStart", "time", title: "Quiet Hours Start Time", required: false
+            input "quietHoursEnd", "time", title: "Quiet Hours End Time", required: false
+            input "quietVolume", "number", title: "Quiet Hours Max Volume (0-100)", required: false
+            // --------------------------------------
+            
             paragraph "<hr>"
             input "globalIndoorSpeaker", "capability.speechSynthesis", title: "Global Indoor Speaker(s)", multiple: true, required: false
             input "globalVolume", "number", title: "Global Speaker Volume (0-100)", required: false
@@ -299,6 +307,15 @@ def mainPage() {
             input "wakeupPadDelay", "number", title: "Speaker Amp Warm-up Delay (Seconds)", defaultValue: 0
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
+        
+        // --- FIX 3A: GLOBAL LIVING ROOM REPORT INPUTS ---
+        section("Global Foyer / Living Room Morning Report", hideable: true, hidden: true) {
+            paragraph "<i>Used to deliver Global Incident Reports if you walk into the main living space in the morning before triggering a local room routine.</i>"
+            input "butlerLrMotion", "capability.motionSensor", title: "Living Room Motion Sensor", required: false
+            input "butlerLrSpeaker", "capability.speechSynthesis", title: "Living Room Speaker", required: false
+            input "butlerLrVolume", "number", title: "Announcement Volume (0-100)", required: false
+        }
+        // ------------------------------------------------
 
         section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
             input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
@@ -991,7 +1008,11 @@ def initialize() {
 
     // Global Mode & Motion Tracking
     subscribe(location, "mode", modeChangeHandler)
-    if (butlerLrMotion) subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler)
+    
+    // --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) SUBSCRIPTION ---
+    if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler) }
+    // ----------------------------------------------------------------------
+    
     if (awayCheckTime) { schedule(awayCheckTime, "scheduledAwayCheck") }
     
     // Manual Away Logic Mappings
@@ -1456,8 +1477,10 @@ def executeCalendarAlert(data) {
 }
 
 // --- AI HABIT & ANOMALY ENGINE ---
-def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = "global") {
+def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = "global", boolean isTest = false) {
     if (!factText) return ""
+    if (isTest) return factText // <--- Prevents memory poisoning during tests
+    
     ensureStateMaps()
     def now = new Date().time
     
@@ -1466,12 +1489,11 @@ def checkAndRegisterFact(String factText, int ttlHours = 4, String contextKey = 
     state.spokenFacts.each { k, v -> if (now > v) keysToRemove << k }
     keysToRemove.each { state.spokenFacts.remove(it) }
     
-    // Create a unique memory hash for the specific room/context
     def factHash = contextKey + "_" + factText.hashCode().toString()
     
     if (state.spokenFacts[factHash] && now < state.spokenFacts[factHash]) {
         if (settings.enableDebug) log.debug "MEMORY FILTER: Suppressed repeated fact for context '${contextKey}'"
-        return "" // The Butler remembers it already said this to this specific room!
+        return "" 
     } else {
         state.spokenFacts[factHash] = now + (ttlHours * 3600000)
         return factText
@@ -1718,7 +1740,7 @@ def applyDynamicVars(String msg) {
 }
 
 // --- WEATHER HELPER ---
-def getWeatherReport(wDevice, String contextKey = "global") {
+def getWeatherReport(wDevice, String contextKey = "global", boolean isTest = false) {
     if (!wDevice) return ""
     def wText = ""
     try {
@@ -1736,8 +1758,7 @@ def getWeatherReport(wDevice, String contextKey = "global") {
         }
     } catch (Exception e) {}
     
-    // Pass the contextKey so the memory is tied to the specific room
-    return wText ? checkAndRegisterFact(wText, 3, contextKey) : ""
+    return wText ? checkAndRegisterFact(wText, 3, contextKey, isTest) : ""
 }
 
 // --- TTS ENGINE & PRIORITY QUEUE ---
@@ -2586,6 +2607,17 @@ def arrivalHandler(evt) {
         }
         
         greetingToPlay = applyDynamicVars(greetingToPlay)
+
+        // --- FIX 3B: GLOBAL INCIDENT WARNINGS (ARRIVAL DOORBELL) ---
+        def doorbellCount = state.awayDoorbellCount ?: state.lastAwayDoorbellCount ?: 0
+        if (state.pendingArrivalReport && doorbellCount > 0) {
+            greetingToPlay += " Also, there were ${doorbellCount} doorbell rings while you were away. Please check the cameras."
+            state.pendingArrivalReport = false 
+            state.awayDoorbellCount = 0
+            state.lastAwayDoorbellCount = 0
+            addToHistory("INCIDENT REPORT: Delivered Global Away Doorbell warning on arrival.")
+        }
+        // -----------------------------------------------------------
         
         if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
             def allowedMail = [settings.mailAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
@@ -2606,7 +2638,6 @@ def arrivalHandler(evt) {
             }
         }
 
-        // --- UPDATED: BUTLER NOTES (ARRIVAL) ---
         if (settings.announceNotesArrival && state.butlerNotes && state.butlerNotes.size() > 0) {
             def pendingArrivalNotes = state.butlerNotes.findAll { (it.when == "Arrival" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(actualUserName) || it.target.equalsIgnoreCase(displayUserName)) }
             if (pendingArrivalNotes.size() > 0) {
@@ -2627,7 +2658,6 @@ def arrivalHandler(evt) {
                 addToHistory("NOTES: Delivered arrival/missed notes to ${displayUserName}.")
             }
         }
-        // ---------------------------------------
         
         if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
             def inboxMsgs = state.messageInbox.join(", and ")
@@ -2730,20 +2760,49 @@ def scheduledAwayCheck() {
 
 // --- CENTRAL GREETING BUILDER ---
 def buildRoomGreeting(rNum, type, context = [:]) {
+    ensureStateMaps()
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
+    def rawOccName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: rName)
+    def isTest = context.isTest ?: false 
+
+    // --- NEW: DYNAMIC PRESENCE FILTERING ---
+    // Split the names (e.g., "Shane and Christy" -> ["Shane", "Christy"])
+    def splitOcc = rawOccName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+    def presentOcc = []
     
-    // --- FIX: Prioritize Occupant Name over Room Name to avoid "Master Bedroom" greeting ---
-    def occName = context.dynamicName ?: (settings["roomOccupantName_${rNum}"] ?: rName)
-    def displayOccName = applyAlias(occName)
+    if (isTest || rawOccName == rName) {
+        presentOcc = splitOcc // In a test, or if it's just "Master Bedroom", assume everyone is there
+    } else {
+        // Only greet the people who are actually marked as Arrived
+        splitOcc.each { n ->
+            if (state.hasArrivedToday[n] == true) presentOcc << n
+        }
+        // Failsafe: if no one is marked home but the switch was hit, default to all assigned users
+        if (presentOcc.size() == 0) presentOcc = splitOcc 
+    }
     
+    // Format the final display name with correct grammar
+    def displayOccName = ""
+    if (presentOcc.size() == 1) displayOccName = applyAlias(presentOcc[0])
+    else if (presentOcc.size() == 2) displayOccName = "${applyAlias(presentOcc[0])} and ${applyAlias(presentOcc[1])}"
+    else {
+        def last = presentOcc.pop()
+        displayOccName = "${presentOcc.collect{applyAlias(it)}.join(', ')}, and ${applyAlias(last)}"
+        presentOcc.push(last) // Put it back just in case
+    }
+    // ---------------------------------------
+
     def parts = []
     def roomKey = "room_${rNum}" // Unique ID for the memory filter
-    def isTest = context.isTest ?: false // --- FIX: Catch the Test Flag to prevent Memory Poisoning ---
+    
+    // Global variable to determine if this is a kid's room
+    def isKidRoom = settings["roomKidsMode_${rNum}"] || settings["roomKidsNightWatch_${rNum}"]
 
     def rawMsg = ""
     if (type == "Good Night") {
         if (context.isNewArrival) {
-            rawMsg = "Welcome home, %name%. Your space is prepared."
+            // --- THE APOLOGY FIX ---
+            rawMsg = "Pardon me, I didn't catch you coming in earlier. Welcome home, %name%. Your space is prepared."
         } else if (settings["useCustomRoomMessages_${rNum}"]) {
             def msgs = []
             for (int m = 1; m <= 10; m++) { if (settings["gnMessage_${rNum}_${m}"]) msgs << settings["gnMessage_${rNum}_${m}"] }
@@ -2769,11 +2828,12 @@ def buildRoomGreeting(rNum, type, context = [:]) {
     baseString += rawMsg.replace("%name%", displayOccName).replace("%room%", rName)
 
     // --- AI SLEEP HABIT CHECK ---
-    if (type == "Good Night" && occName != "Guest") {
-        def splitOcc = occName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
-        if (!isTest) splitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
+    // Use rawOccName so the habit tracks the core users, not just who is home tonight
+    if (type == "Good Night" && rawOccName != "Guest") {
+        def splitHabitOcc = rawOccName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+        if (!isTest) splitHabitOcc.each { n -> updateHabit(n, new Date().time, "sleep") }
         
-        def primaryOcc = splitOcc[0]
+        def primaryOcc = splitHabitOcc[0]
         if (state.learnedHabits && state.learnedHabits[primaryOcc]?.avgSleepMins && state.learnedHabits[primaryOcc].sleepCount > 3) {
             def expected = state.learnedHabits[primaryOcc].avgSleepMins
             def cal2 = Calendar.getInstance(location.timeZone)
@@ -2788,7 +2848,8 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
     parts << baseString
 
-    def bdayMsg = getBirthdayMessage(occName, type == "Good Night" ? "Night" : "Morning")
+    // Use rawOccName for birthdays and anniversaries so it doesn't skip them if someone sneaks in
+    def bdayMsg = getBirthdayMessage(rawOccName, type == "Good Night" ? "Night" : "Morning")
     if (bdayMsg) parts << bdayMsg
 
     if (settings["roomEnableAnniversary_${rNum}"]) {
@@ -2849,7 +2910,6 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
 
         if (wDevice && settings["roomWeatherGM_${rNum}"]) {
-            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
             def wText = getWeatherReport(wDevice, roomKey, isTest) 
             if (wText) {
                 def weatherBlock = getBridge("weather") + wText
@@ -2885,7 +2945,8 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         
         // --- BUTLER NOTES (MORNING) ---
         if (settings.announceNotesMorning && state.butlerNotes && state.butlerNotes.size() > 0) {
-            def pendingMorningNotes = state.butlerNotes.findAll { (it.when == "Morning" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(displayOccName) || it.target.equalsIgnoreCase(occName)) }
+            // We use displayOccName here so it only reads notes for the people currently in the room
+            def pendingMorningNotes = state.butlerNotes.findAll { (it.when == "Morning" || it.when == "Pending") && (it.target == "Anyone" || it.target.equalsIgnoreCase(displayOccName) || it.target.equalsIgnoreCase(rawOccName)) }
             if (pendingMorningNotes.size() > 0) {
                 def readStr = "I have ${pendingMorningNotes.size()} notes saved for you. "
                 pendingMorningNotes.eachWithIndex { note, idx ->
@@ -2908,7 +2969,8 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
         // ---------------------------------------
         
-        if (settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
+        // --- ADULT ONLY: MESSAGE INBOX (MORNING) ---
+        if (!isKidRoom && settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
             def inboxMsgs = state.messageInbox.join(", and ")
             parts << getBridge("general") + "while you were asleep, ${inboxMsgs}."
             if (!isTest) {
@@ -2929,18 +2991,15 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
         
         if (settings["roomPerimeterCheck_${rNum}"]) {
-            // --- FIX: Pass the isTest flag so Security isn't suppressed ---
             def perimText = getPerimeterReport(roomKey, isTest)
             if (perimText) parts << perimText
         }
 
         if (wDevice && settings["roomWeatherGN_${rNum}"]) {
-            // --- FIX: Pass the isTest flag so Weather isn't suppressed ---
             def wText = getWeatherReport(wDevice, roomKey, isTest)
             if (wText) parts << wText
         }
         
-        // --- ADDED: Wind-Down Calendar Feature ---
         def tomorrowMsg = getTomorrowPreview()
         if (tomorrowMsg) parts << tomorrowMsg
 
@@ -2955,6 +3014,17 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             ]
             parts << monsterList[new Random().nextInt(monsterList.size())]
         }
+        
+        // --- FIX 2: ADULT ONLY INBOX ON LATE ARRIVAL (GOOD NIGHT SWITCH) ---
+        if (context.isNewArrival && !isKidRoom && settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
+            def inboxMsgs = state.messageInbox.join(", and ")
+            parts << getBridge("general") + "while you were away, ${inboxMsgs}."
+            if (!isTest) {
+                state.messageInbox = [] 
+                addToHistory("INBOX: Delivered stashed messages during Late Night Arrival.")
+            }
+        }
+        // -------------------------------------------------------------------
     }
 
     def finalMsg = parts.join(" ")
@@ -3825,14 +3895,13 @@ def mailClearedHandler(evt) {
     addToHistory("SYSTEM: Mail retrieved. Escalation counter reset.")
 }
 
-def getMaintenanceReport(mDevice) {
+def getMaintenanceReport(mDevice, boolean isTest = false) {
     if (!mDevice) return ""
     try {
         def maxOverdue = mDevice.currentValue("maxOverdueDays") as Integer ?: 0
         def tasks = mDevice.currentValue("overdueTasks") ?: ""
 
         if (maxOverdue > 0 && tasks != "") {
-            // Build proper grammar for lists
             def taskList = tasks.split(",").collect { it.trim() }
             def taskString = ""
             def plural = taskList.size() > 1
@@ -3846,7 +3915,6 @@ def getMaintenanceReport(mDevice) {
                 taskString = "${taskList.join(', ')}, and ${last}"
             }
 
-            // The Tone Escalator
             if (maxOverdue <= 3) {
                 return "Just a friendly reminder %name%, the ${taskString} ${requireRequires} your attention when you have a moment."
             } else if (maxOverdue <= 7) {
@@ -4137,42 +4205,28 @@ def executeTimeNote(data) {
     }
 }
 
-def getPerimeterReport(String contextKey = "global") {
+def getPerimeterReport(String contextKey = "global", boolean isTest = false) {
     def openDoors = []
     def unlockedLocks = []
     
     // 1. Scan for open contact sensors
-    // We look through all settings to find any assigned contact sensors
     settings.each { k, v ->
         if (v instanceof com.hubitat.app.DeviceWrapper) {
-            if (v.hasCapability("ContactSensor") && v.currentValue("contact") == "open") {
-                openDoors << v.displayName
-            }
+            if (v.hasCapability("ContactSensor") && v.currentValue("contact") == "open") openDoors << v.displayName
         } else if (v instanceof List) {
-            v.each { dev ->
-                if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("ContactSensor") && dev.currentValue("contact") == "open") {
-                    openDoors << dev.displayName
-                }
-            }
+            v.each { dev -> if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("ContactSensor") && dev.currentValue("contact") == "open") openDoors << dev.displayName }
         }
     }
     
     // 2. Scan for unlocked locks
     settings.each { k, v ->
         if (v instanceof com.hubitat.app.DeviceWrapper) {
-            if (v.hasCapability("Lock") && v.currentValue("lock") == "unlocked") {
-                unlockedLocks << v.displayName
-            }
+            if (v.hasCapability("Lock") && v.currentValue("lock") == "unlocked") unlockedLocks << v.displayName
         } else if (v instanceof List) {
-            v.each { dev ->
-                if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("Lock") && dev.currentValue("lock") == "unlocked") {
-                    unlockedLocks << dev.displayName
-                }
-            }
+            v.each { dev -> if (dev instanceof com.hubitat.app.DeviceWrapper && dev.hasCapability("Lock") && dev.currentValue("lock") == "unlocked") unlockedLocks << dev.displayName }
         }
     }
     
-    // 3. Build the report string
     def report = ""
     if (openDoors.size() > 0 || unlockedLocks.size() > 0) {
         report = "Security note: "
@@ -4186,13 +4240,10 @@ def getPerimeterReport(String contextKey = "global") {
         }
         report += "I will monitor the perimeter while you rest."
     } else {
-        // Optional: If everything is secure, you can return a confirmation, 
-        // but usually, silence is better for the Perimeter Check unless there is a problem.
         return "" 
     }
     
-    // 4. Use the Memory Filter so it doesn't repeat the SAME alert to the SAME room
-    return checkAndRegisterFact(report, 2, contextKey)
+    return checkAndRegisterFact(report, 2, contextKey, isTest)
 }
 
 // --- NEWS RETRIEVAL HELPER ---
@@ -4369,15 +4420,22 @@ def goodNightOnHandler(evt) {
     if (rNum > 0) {
         def presenceDev = settings["fallbackPresence_${rNum}"] 
         def isArrival = false
+        def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
+        def occNameSetting = settings["roomOccupantName_${rNum}"] ?: rName
+        def splitNames = occNameSetting.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
         
         // Failsafe: Mark as arrived if they don't have a hardware sensor
-        if (!presenceDev && state.hasArrivedToday[rNum] != true) {
-            state.hasArrivedToday[rNum] = true
-            state.hasDepartedToday[rNum] = false
-            isArrival = true
+        if (!presenceDev) {
+            splitNames.each { n ->
+                if (state.hasArrivedToday[n] != true) {
+                    state.hasArrivedToday[n] = true
+                    state.hasDepartedToday[n] = false
+                    state.resetReasons[n] = "Good Night Switch Failsafe"
+                    isArrival = true
+                }
+            }
         }
         
-        // --- THE FIX: Call the full engine, not the test function! ---
         def fullMsg = buildRoomGreeting(rNum, "Good Night", [isNewArrival: isArrival, isTest: false])
         
         def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
@@ -4436,4 +4494,46 @@ def checkAndIncrementApiLimit() {
     }
     state.apiCallCount = (state.apiCallCount ?: 0) + 1
     return true
+}
+
+def getTomorrowPreview() {
+    if (!state.nextEventName || !state.nextEventEpoch) return ""
+    
+    def now = new Date()
+    def tomorrow = now + 1
+    def startOfTomorrow = tomorrow.clone()
+    startOfTomorrow.set(hourOfDay: 0, minute: 0, second: 0)
+    def endOfTomorrow = tomorrow.clone()
+    endOfTomorrow.set(hourOfDay: 23, minute: 59, second: 59)
+
+    if (state.nextEventEpoch >= startOfTomorrow.time && state.nextEventEpoch <= endOfTomorrow.time) {
+        def timeStr = new Date(state.nextEventEpoch).format("h:mm a", location.timeZone)
+        return "As a heads up for tomorrow, your first event is ${state.nextEventName} at ${timeStr}."
+    }
+    return ""
+}
+
+// --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) ---
+def butlerLrMotionHandler(evt) {
+    ensureStateMaps()
+    if (evt.value != "active") return
+    
+    def now = new Date()
+    def hour = now.format("H", location.timeZone).toInteger()
+    
+    // Only trigger in the morning between 4 AM and 11 AM
+    if (hour >= 4 && hour < 11) {
+        if (state.pendingMorningReport && state.lastNightMotionCount > 0) {
+            def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
+            def vol = settings.butlerLrVolume ?: globalVolume
+            if (targetSpeaker) {
+                def msg = "Good morning. Please note, there were ${state.lastNightMotionCount} motion events at the front door last night. Please check the cameras."
+                enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 4)
+                
+                state.pendingMorningReport = false
+                state.lastNightMotionCount = 0
+                addToHistory("INCIDENT REPORT: Delivered Global Night Motion warning in Living Room.")
+            }
+        }
+    }
 }
