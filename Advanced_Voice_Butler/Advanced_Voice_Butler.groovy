@@ -555,6 +555,16 @@ def mainPage() {
             }
         }
 
+            section("Master Perimeter & Estate Security", hideable: true, hidden: true) {
+            paragraph "<i>Designate all critical access points across the property you wish the Butler to guard. This includes primary house doors, secondary gates, and livestock coops. The Butler will automatically verify these are secured during the Good Night routine.</i>"
+            input "estateDoors", "capability.contactSensor", title: "All Estate Doors, Gates & Coops", multiple: true, required: false
+            input "estateLocks", "capability.lock", title: "All Estate Smart Locks", multiple: true, required: false
+            
+            paragraph "<hr>"
+            paragraph "<b>Advanced Weather Logic</b>"
+            input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
+        }
+        
         section("Local Voice Zones (Rooms)", hideable: true, hidden: true) {
             input "numRooms", "number", title: "Number of Local Voice Zones (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
         }
