@@ -398,6 +398,7 @@ def mainPage() {
                 // --- THIS IS THE MISSING BUTTON AND FAILSAFE ---
                 input "apiCallLimit", "number", title: "Monthly API Call Limit", defaultValue: 500, description: "Failsafe limit to prevent billing charges."
                 input "btnTestGoogleApi", "button", title: "▶️ Test Google API Connection"
+                input "enableTravelPush", "bool", title: "Send Event & Gas Addresses to Phones via Push?", description: "Requires 'Silent Mode Notification Devices' to be configured in Section 1.", defaultValue: false, submitOnChange: true
                 
                 def apiCount = state.apiCallCount ?: 0
                 def apiLimit = settings.apiCallLimit ?: 500
@@ -487,6 +488,18 @@ def mainPage() {
                 input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
                 input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
                 input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+            }
+        }
+        
+       section("Quick Exit (Away Mode Farewell)", hideable: true, hidden: true) {
+            paragraph "<i>If the house enters Away Mode, the next door opened within 5 minutes will trigger a farewell message and a gas price scout.</i>"
+            input "enableQuickExit", "bool", title: "Enable Quick Exit Farewell?", defaultValue: false, submitOnChange: true
+            if (enableQuickExit) {
+                input "quickExitDoors", "capability.contactSensor", title: "Exit Doors", multiple: true, required: true
+                input "quickExitModes", "mode", title: "Away Modes to Watch For", multiple: true, required: true
+                input "quickExitRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "quickExitVolume", "number", title: "Farewell Volume (0-100)", required: false
+                input "btnTestQuickExit", "button", title: "▶️ Test Quick Exit Audio"
             }
         }
         
@@ -929,29 +942,36 @@ def initialize() {
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
     
-    // --- NEW: Midday Maintenance Scheduler ---
+    // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
         schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
         // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
         def cal = Calendar.getInstance(location.timeZone)
         if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
     }
-    // -----------------------------------------
+
+    // --- NEW: Quick Exit (Away Mode Farewell) ---
+    if (settings.enableQuickExit && settings.quickExitDoors) {
+        subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
+    }
     
+    // Vital Checks & Internet Safety
     if (settings.enableInternetCheck) { runEvery5Minutes("checkInternetConnection"); checkInternetConnection() }
+    
+    // Perimeter & Visitor Handlers
     if (frontDoorbell) { subscribe(frontDoorbell, "pushed", visitorHandler); subscribe(frontDoorbell, "pushed", countDoorbellHandler) }
     if (frontDoorMotion) { subscribe(frontDoorMotion, "motion.active", visitorHandler); subscribe(frontDoorMotion, "motion.active", countMotionHandler) }
     if (settings.enableDaytimeFollowUp && settings.daytimeDoorContact) { subscribe(settings.daytimeDoorContact, "contact.open", daytimeDoorHandler) }
     
+    // Intruder Deterrent Subscriptions
     if (enableIntruder) {
         if (intruderMotion) subscribe(intruderMotion, "motion.active", intruderMotionHandler)
         if (intruderBypassDoors) subscribe(intruderBypassDoors, "contact.open", intruderDoorHandler)
         if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, unifiProtectHandler) }
     }
     
+    // Smart Lock & Presence Arrival Handlers
     if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
-
-    // --- Arrival Sensor Fallback Subscriptions ---
     def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
     for (int i = 1; i <= numPres; i++) {
         if (settings["fallbackPresence_${i}"]) {
@@ -959,6 +979,7 @@ def initialize() {
         }
     }
     
+    // Household Routine Handlers (Mail, Meals, Departures, Screen Time)
     if (settings.enableMailCheck && settings.mailSwitch) { 
         subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler)
         subscribe(settings.mailSwitch, "switch.off", mailClearedHandler)
@@ -966,33 +987,36 @@ def initialize() {
     if (settings.enableMealTime && settings.mealTimeSwitch) { subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) }
     if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
     if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
+    if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler) }
 
-    if (settings.enableOffice && settings.officeSwitch) {
-        subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler)
-    }
-
+    // Global Mode & Motion Tracking
     subscribe(location, "mode", modeChangeHandler)
     if (butlerLrMotion) subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler)
     if (awayCheckTime) { schedule(awayCheckTime, "scheduledAwayCheck") }
     
+    // Manual Away Logic Mappings
     def numMappings = settings.numAwayMappings ? settings.numAwayMappings as Integer : 0
     for (int i = 1; i <= numMappings; i++) {
         if (settings["awayMappingSwitch_${i}"]) { subscribe(settings["awayMappingSwitch_${i}"], "switch.on", awaySwitchOnHandler) }
         if (settings["awayMappingPresence_${i}"]) { subscribe(settings["awayMappingPresence_${i}"], "presence", awayPresenceHandler) }
     }
     
+    // Local Voice Zone (Room) Subscriptions
     def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
     for (int i = 1; i <= numRoomsSet; i++) {
         if (settings["roomGoodNightSwitch_${i}"]) {
             subscribe(settings["roomGoodNightSwitch_${i}"], "switch.on", goodNightOnHandler)
             subscribe(settings["roomGoodNightSwitch_${i}"], "switch.off", goodNightOffHandler)
         }
+        
+        // Setup for Verified and Motion Driven Wakeup Modes
         def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
         if (mode != "1. Immediate (When Good Night Switch turns OFF)") {
             if (settings["roomMotion_${i}"]) subscribe(settings["roomMotion_${i}"], "motion.active", roomMotionHandler)
         }
     }
     
+    // Calendar Integration Engine
     if (settings.enableCalendar) {
         if (settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice && settings.calEventTimeAttr) {
             subscribe(settings.calendarDevice, settings.calEventTimeAttr, calendarTimeHandler)
@@ -1005,17 +1029,16 @@ def initialize() {
                 else runEvery1Hour("pollCalendars")
                 
                 pollCalendars() // Run it immediately on boot
-                log.info "Calendar engine initialized using background .ics polling."
-            } else {
-                log.info "Calendar background polling disabled. Relying strictly on Google Webhook pushes."
             }
         }
     }
     
+    // Organic Breaking News Engine
     if (settings.enableBreakingNews && settings.breakingNewsFeed) {
         scheduleNextNewsPoll()
     }
     
+    // Status Tile Update
     if (settings.dashboardStatusDevice) {
         settings.dashboardStatusDevice.sendEvent(name: "appStatus", value: "Running and Active", descriptionText: "Voice Butler is active", isStateChange: true)
     }
@@ -1386,10 +1409,22 @@ def executeCalendarAlert(data) {
             def buffer = settings.leaveNowBuffer ?: 5
             def minutesUntilEvent = ((eventStart - now) / 60000).toInteger()
 
+            def gasData = getCheapestGas()
+
             // If drive time + buffer is greater than or equal to the time left...
             if ((minsToDrive + buffer) >= minutesUntilEvent) {
                 travelWarning = "CRITICAL: If you don't leave now, you will be late for ${title}. Traffic is heavy, and it currently takes ${minsToDrive} minutes to get to ${location}."
-                travelWarning += getCheapestGas() // Adds the gas scout info
+                if (gasData) travelWarning += gasData.speech 
+            }
+            
+            // Send the Push Notification ONLY during the 1-hour Proactive check so we don't spam their phone 3 times
+            if (data.isProactive && settings.enableTravelPush && settings.notificationDevice) {
+                def pushMsg = "Event: ${title}\nLocation: ${location}"
+                if (gasData) pushMsg += "\n\nCheapest Gas on the way:\n${gasData.rawName}\n${gasData.rawAddress}"
+                settings.notificationDevice.each { dev ->
+                    try { dev.deviceNotification(pushMsg) } catch(e) {}
+                }
+                addToHistory("PUSH: Travel intel sent to phones for ${title}.")
             }
         }
     }
@@ -2972,25 +3007,33 @@ def executeGoodMorningSequence(data) {
     }
 }
 
-def testRoomGreeting(int i, String type) {
-    def rName = settings["roomName_${i}"] ?: "Room ${i}"
+def testRoomGreeting(rNum, type, isNewArrival = false) {
+    ensureStateMaps()
+    def userName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
+    def msg = ""
     
-    def targetSpeaker = settings["roomSpeaker_${i}"]
-    def volSetting = type == "Good Night" ? settings["roomVolumeGN_${i}"] : settings["roomVolumeGM_${i}"]
-    def targetVol = volSetting != null ? volSetting : settings["roomVolume_${i}"]
-
-    if (!targetSpeaker && globalIndoorSpeaker) {
-        targetSpeaker = globalIndoorSpeaker
-        targetVol = globalVolume
+    if (type == "Good Night") {
+        if (isNewArrival) {
+            msg = "Welcome home, ${userName}. Your space is prepared. Sleep well."
+        } else {
+            def msgs = []
+            for (int i = 1; i <= 3; i++) { if (settings["roomGNMsg_${rNum}_${i}"]) msgs << settings["roomGNMsg_${rNum}_${i}"] }
+            if (!msgs) msgs = ["Good night, %user%.", "Sleep well, %user%."]
+            msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
+        }
+    } else {
+        // Good Morning Logic
+        def msgs = []
+        for (int i = 1; i <= 3; i++) { if (settings["roomGMMsg_${rNum}_${i}"]) msgs << settings["roomGMMsg_${rNum}_${i}"] }
+        if (!msgs) msgs = ["Good morning, %user%.", "Rise and shine, %user%."]
+        msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
     }
 
+    def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
+    def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+    
     if (targetSpeaker) {
-        def finalMsg = buildRoomGreeting(i, type, [isTest: true])
-        def volLog = targetVol != null ? "${targetVol}%" : "Hardware Default"
-        log.info "TESTING ${type} GREETING FOR ${rName}: '${finalMsg}' at ${volLog} volume."
-        enqueueTTS(targetSpeaker, finalMsg, targetVol, 1)
-    } else {
-        log.warn "Cannot test greeting for ${rName} - no speaker assigned."
+        enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 1)
     }
 }
 
@@ -3471,7 +3514,17 @@ def appButtonHandler(btn) {
             if (settings["roomNewsEnable_${i}"]) syncRoomNews(i)
         }
     } else if (btn == "btnTestGoogleApi") {
-        testGoogleIntegration() // <--- THIS MAKES THE BUTTON WORK
+        testGoogleIntegration() 
+    } else if (btn == "btnTestQuickExit") {
+        def gasData = getCheapestGas()
+        def msg = "Farewell. The security perimeter is active. Have a safe trip."
+        if (gasData && gasData.speech) msg += gasData.speech
+        executeRoutedTTS(msg, settings.quickExitRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.quickExitVolume ?: settings.globalVolume, 1, true)
+        if (settings.enableTravelPush && settings.notificationDevice && gasData?.rawAddress) {
+            settings.notificationDevice.each { dev ->
+                try { dev.deviceNotification("Test Alert - Gas: ${gasData.rawName} (${gasData.rawAddress})") } catch(e) {}
+            }
+        }
     } else if (btn == "btnTestGlobal") {
         enqueueTTS(globalIndoorSpeaker, applyDynamicVars("This is a test of the global indoor speakers. The time is %time%."), globalVolume, 1)
     } else if (btn == "btnTestOutdoor") {
@@ -3509,17 +3562,28 @@ def appButtonHandler(btn) {
 
 
 def testGoogleIntegration() {
-    // We use a real street address as the fallback so the Distance Matrix GPS doesn't fail
     def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
     log.info "TEST: Pinging Google for travel to ${testDest}..."
     
     def mins = getTravelInfo(testDest)
-    def gas = getCheapestGas()
+    def gasData = getCheapestGas()
     
     def msg = ""
     if (mins != null) {
         msg = "Google API Test Successful. It currently takes ${mins} minutes to get to your destination from your home."
-        if (gas) { msg += gas }
+        if (gasData) { msg += gasData.speech }
+        
+        // --- SEND THE TEST PUSH NOTIFICATION WITH LINK ---
+        if (settings.enableTravelPush && settings.notificationDevice) {
+            def pushMsg = "TEST ALERT - Travel Intel:\nDestination: ${testDest}\nDrive Time: ${mins} minutes"
+            if (gasData?.rawAddress) {
+                pushMsg += "\n\nCheapest Gas:\n${gasData.rawName}\n${gasData.rawAddress}\nTap to Navigate: ${gasData.navLink}"
+            }
+            settings.notificationDevice.each { dev ->
+                try { dev.deviceNotification(pushMsg) } catch(e) {}
+            }
+        }
+        
     } else {
         msg = "Google API Test Failed. Please check your API Key, Home Address, and Hubitat Logs."
     }
@@ -3530,7 +3594,6 @@ def testGoogleIntegration() {
     
     addToHistory("TEST: Google Maps/Gas logic check performed.")
 }
-
 
 def addToHistory(String msg) {
     ensureStateMaps()
@@ -4237,13 +4300,13 @@ def getTravelInfo(destination) {
 }
 
 def getCheapestGas() {
-    if (!settings.googleMapsApiKey || !settings.homeAddress) return ""
-    if (!checkAndIncrementApiLimit()) return ""
+    if (!settings.googleMapsApiKey || !settings.homeAddress) return null
+    if (!checkAndIncrementApiLimit()) return null
     
     def encodedHome = java.net.URLEncoder.encode(settings.homeAddress, "UTF-8")
     def url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=cheapest+gas+near+${encodedHome}&key=${settings.googleMapsApiKey}"
     
-    def gasResult = "" // <-- Hold the value outside the closure!
+    def gasResult = null 
     
     try {
         httpGet([uri: url, timeout: 10]) { resp ->
@@ -4251,35 +4314,59 @@ def getCheapestGas() {
                 def topStation = resp.data.results[0]
                 def addressObj = topStation.formatted_address ?: ""
                 def streetOnly = addressObj.contains(",") ? addressObj.split(',')[0] : addressObj
-                gasResult = " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}." // <-- Assign it here
+                
+                // NEW: Build a direct, clickable Google Maps link using the Place ID
+                def placeId = topStation.place_id ?: ""
+                def encodedName = java.net.URLEncoder.encode(topStation.name, "UTF-8")
+                def mapLink = "https://www.google.com/maps/search/?api=1&query=${encodedName}&query_place_id=${placeId}"
+                
+                gasResult = [
+                    speech: " By the way, the best value for fuel on your way appears to be at ${topStation.name} on ${streetOnly}.",
+                    rawName: topStation.name,
+                    rawAddress: addressObj,
+                    navLink: mapLink // <-- Storing the link here!
+                ]
             }
         }
     } catch (e) { 
         if (settings.enableDebug) log.warn "Gas Scout Error: ${e}" 
     }
     
-    return gasResult // <-- Safely return it to the Butler!
+    return gasResult 
 }
 
 def goodNightOnHandler(evt) {
     ensureStateMaps()
-    def deviceId = evt.device.id
+    def dev = evt.getDevice()
+    def rNum = 0
     
-    for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
-        if (settings["roomGoodNightSwitch_${i}"]?.id == deviceId) {
-            def rName = settings["roomName_${i}"] ?: "Room ${i}"
-            def occName = settings["roomOccupantName_${i}"]
-            
-            // Auto-Arrive the room occupant if the house thinks they are away
-            if (occName && occName != "Guest" && !state.hasArrivedToday[occName]) {
-                state.hasArrivedToday[occName] = true
-                state.resetReasons[occName] = "Auto-Arrived via Good Night Switch"
-                addToHistory("SYSTEM: Auto-arrived ${occName} because ${rName} Good Night switch was turned ON.")
+    // Find which room this switch belongs to
+    def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
+    for (int i = 1; i <= numRoomsSet; i++) {
+        if (settings["roomGoodNightSwitch_${i}"]?.id == dev.id) { rNum = i; break }
+    }
+    
+    if (rNum > 0) {
+        def userName = settings["roomName_${rNum}"] ?: "User ${rNum}"
+        def presenceDev = settings["fallbackPresence_${rNum}"] // Check for assigned hardware sensor
+        
+        // --- SMART ARRIVAL FAILSAFE ---
+        // Only force arrival if they DON'T have a hardware presence sensor
+        if (!presenceDev) {
+            if (state.hasArrivedToday[rNum] != true) {
+                state.hasArrivedToday[rNum] = true
+                state.hasDepartedToday[rNum] = false
+                addToHistory("ROOM ENGINE: ${userName} auto-arrived via Good Night Switch (No hardware sensor detected).")
+                
+                // Only greet the person who just arrived
+                testRoomGreeting(rNum, "Good Night", true) 
+            } else {
+                // Standard Good Night if they were already home
+                testRoomGreeting(rNum, "Good Night", false)
             }
-            
-            def delaySec = settings["delayGreetingGN_${i}"] != null ? settings["delayGreetingGN_${i}"].toInteger() : 5
-            runIn(delaySec, "executeGoodNightSequence", [data: [roomNum: i], overwrite: false])
-            return
+        } else {
+            // They HAVE a hardware sensor. Let the sensor handle their status.
+            testRoomGreeting(rNum, "Good Night", false)
         }
     }
 }
