@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.8
+ * Version 1.9
  */
 definition(
     name: "Advanced Voice Butler",
@@ -26,6 +26,9 @@ mappings {
     path("/notes") { action: [GET: "serveNotesPage"] }
     path("/notes/add") { action: [POST: "addNoteEndpoint"] }
     path("/notes/clear") { action: [POST: "clearNotesEndpoint"] }
+    path("/directory/announce") { action: [POST: "announceDirectoryEndpoint"] }
+    path("/agenda/update") { action: [POST: "updateAgendaEndpoint"] }
+    path("/wifi/announce") { action: [POST: "announceWifiEndpoint"] } // <-- ADD THIS
 }
 
 def getRoutingOptions() {
@@ -565,6 +568,36 @@ def mainPage() {
             input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
         }
         
+        section("Guest Wi-Fi Details", hideable: true, hidden: true) {
+            input "enableWifiPortal", "bool", title: "Enable Wi-Fi Info in Portal?", defaultValue: false, submitOnChange: true
+            if (enableWifiPortal) {
+                paragraph "<i>Add your Guest Wi-Fi details here to display a quick-announce button on the web portal.</i>"
+                input "wifiSSID", "text", title: "Wi-Fi Network Name (SSID)", required: false
+                input "wifiPassword", "text", title: "Wi-Fi Password", required: false
+                input "wifiRoutingMode", "enum", title: "Announcement Routing", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
+                input "wifiVolume", "number", title: "Announcement Volume (0-100)", required: false
+            }
+        }
+        
+        section("Estate Directory & Emergency Contacts", hideable: true, hidden: true) {
+            input "enableDirectory", "bool", title: "Enable Estate Directory?", defaultValue: false, submitOnChange: true
+            if (enableDirectory) {
+                paragraph "<i>Create a digital Rolodex. Pair a virtual switch to a contact. When turned ON via a dashboard or voice assistant, the Butler will announce the details and push them to your phones.</i>"
+                input "directoryRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
+                input "directoryVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "numContacts", "number", title: "Number of Contacts (1-10)", defaultValue: 1, range: "1..10", submitOnChange: true
+
+                if (numContacts > 0) {
+                    for (int i = 1; i <= (numContacts as Integer); i++) {
+                        paragraph "<b>Contact Profile ${i}</b>"
+                        input "contactName_${i}", "text", title: "Service Name (e.g., Plumber, Pediatrician)", required: false
+                        input "contactInfo_${i}", "text", title: "Contact Info / Phone Number", required: false
+                        input "contactSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
+                    }
+                }
+            }
+        }
+        
         section("Local Voice Zones (Rooms)", hideable: true, hidden: true) {
             input "numRooms", "number", title: "Number of Local Voice Zones (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
         }
@@ -1016,6 +1049,16 @@ def initialize() {
     if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
     if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler) }
 
+    // --- Estate Directory Subscriptions ---
+    if (settings.enableDirectory) {
+        def numC = settings.numContacts ? settings.numContacts as Integer : 0
+        for (int i = 1; i <= numC; i++) {
+            if (settings["contactSwitch_${i}"]) {
+                subscribe(settings["contactSwitch_${i}"], "switch.on", directorySwitchHandler)
+            }
+        }
+    }
+    
     // Global Mode & Motion Tracking
     subscribe(location, "mode", modeChangeHandler)
     
@@ -2201,11 +2244,8 @@ def unifiProtectHandler(evt) {
 // --- BUTLER EVENT TRACKING & REPORTING ---
 def countMotionHandler(evt) {
     ensureStateMaps()
-    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
-    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
-    
-    // --- THE FIX: Count motion if in Night Mode OR Away Mode ---
-    if (location.mode in nightModes || location.mode in awayModes || location.mode == "Away") {
+    def nightModes = [settings.intruderModes].flatten().findAll { it != null }
+    if (location.mode in nightModes || location.mode == "Night") {
         state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
         state.pendingMorningReport = true
     }
@@ -2213,11 +2253,8 @@ def countMotionHandler(evt) {
 
 def countDoorbellHandler(evt) {
     ensureStateMaps()
-    def nightModes = [settings.butlerNightModes].flatten().findAll { it != null }
-    def awayModes = [settings.butlerAwayModes].flatten().findAll { it != null }
-    
-    // --- THE FIX: Count doorbells if in Away Mode OR Night Mode ---
-    if (location.mode in awayModes || location.mode in nightModes || location.mode == "Away") {
+    def awayModes = [settings.quickExitModes].flatten().findAll { it != null }
+    if (location.mode in awayModes || location.mode == "Away") {
         state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
         state.pendingArrivalReport = true
     }
@@ -2871,7 +2908,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         def holiday = getTodayHoliday()
         if (isTest && !holiday) holiday = "a Holiday"
         if (holiday) {
-            def hMsg = settings.holidayMessage ?: "By the way, don't forget today is %holiday%!"
+            def hMsg = settings.holidayMessage ?: "Also, don't forget today is %holiday%!"
             parts << hMsg.replace('%holiday%', holiday)
         }
     }
@@ -2890,7 +2927,9 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         def agendaText = settings["roomAgenda${dowString}_${rNum}"]
 
         if (timeDateEnabled && agendaEnabled && agendaText) {
-            def agendaStr = getBridge("agenda") + "The current time is %time% on %date%, and your agenda for today is: ${agendaText}."
+            // --- FIX: AGENDA FLOW (Time only, cleaner transition) ---
+            def timeNow = new Date().format("h:mm a", location.timeZone)
+            def agendaStr = getBridge("agenda") + "It is currently ${timeNow}, and your agenda for today is: ${agendaText}."
             def smartContext = getSmartEventContext(agendaText)
             if (smartContext.text && smartContext.text != "SECRET") agendaStr += " " + smartContext.text
             parts << agendaStr
@@ -2941,12 +2980,22 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
         if (settings["roomNewsEnable_${rNum}"]) {
             def newsText = getRoomNews(rNum, isTest)
-            if (newsText) parts << getBridge("news") + newsText
+            if (newsText) {
+                // --- FIX: NEWS SLASHES ---
+                def cleanNews = newsText.trim()
+                cleanNews = cleanNews.replaceAll(/\s*\/\s*/, ". In other news, ") 
+                if (!cleanNews.endsWith(".")) cleanNews += "."
+                parts << getBridge("news") + cleanNews
+            }
         }
 
         if (settings["roomAnnounceMaintenance_${rNum}"] && settings["roomMaintenanceDevice_${rNum}"]) {
             def mText = getMaintenanceReport(settings["roomMaintenanceDevice_${rNum}"], isTest)
-            if (mText) parts << mText
+            if (mText) {
+                // --- FIX: MAINTENANCE VARIABLE ---
+                mText = mText.replace("%name%", displayOccName)
+                parts << mText
+            }
         }
 
         if (settings["roomKidsMode_${rNum}"]) {
@@ -3036,8 +3085,18 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         }
         // -------------------------------------------------------------------
     }
-
-    def finalMsg = parts.join(" ")
+    
+def finalMsg = parts.join(" ")
+    
+    // --- THE GRAMMAR POLISHER ---
+    // Fix double punctuation and spacing issues caused by modular injection
+    finalMsg = finalMsg.replaceAll(/\!\./, "!") // Fixes "Church Day!."
+    finalMsg = finalMsg.replaceAll(/\?\./, "?") // Fixes "?."
+    finalMsg = finalMsg.replaceAll(/\.\./, ".") // Fixes ".."
+    finalMsg = finalMsg.replaceAll(/\s+/, " ")  // Removes accidental double spaces
+    finalMsg = finalMsg.trim()
+    // ----------------------------
+    
     return applyDynamicVars(finalMsg)
 }
 
@@ -3046,14 +3105,14 @@ def executeGoodNightSequence(data) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
     
     def targetSpeaker = settings["roomSpeaker_${rNum}"]
-    def targetVol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+    // THE FIX: Fallback to Global Volume, not a broken variable
+    def targetVol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings.globalVolume
     
     if (!targetSpeaker && globalIndoorSpeaker) { targetSpeaker = globalIndoorSpeaker; targetVol = globalVolume }
     
     if (targetSpeaker) {
         def finalMsg = buildRoomGreeting(rNum, "Good Night", data)
         enqueueTTS(targetSpeaker, finalMsg, targetVol, 4)
-        // FIX: Added history logging for Good Night
         addToHistory("ROOM GREETING: Good Night sequence triggered for ${rName}. Queued: '${finalMsg}'")
     }
 }
@@ -3095,45 +3154,41 @@ def executeGoodMorningSequence(data) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
     
     def targetSpeaker = settings["roomSpeaker_${rNum}"]
-    def targetVol = settings["roomVolumeGM_${rNum}"] != null ? settings["roomVolumeGM_${rNum}"] : settings["roomVolume_${rNum}"]
+    // THE FIX: Fallback to Global Volume, not a broken variable
+    def targetVol = settings["roomVolumeGM_${rNum}"] != null ? settings["roomVolumeGM_${rNum}"] : settings.globalVolume
     
     if (!targetSpeaker && globalIndoorSpeaker) { targetSpeaker = globalIndoorSpeaker; targetVol = globalVolume }
     
     if (targetSpeaker) {
         def finalMsg = buildRoomGreeting(rNum, "Good Morning", data)
         enqueueTTS(targetSpeaker, finalMsg, targetVol, 4)
-        // FIX: Added history logging for Good Morning
         addToHistory("ROOM GREETING: Good Morning sequence triggered for ${rName}. Queued: '${finalMsg}'")
     }
 }
 
 def testRoomGreeting(rNum, type, isNewArrival = false) {
     ensureStateMaps()
-    def userName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
-    def msg = ""
+    // Ensure rNum is treated as an Integer for reliable settings lookups
+    def roomIdx = rNum.toInteger()
+    def targetSpeaker = settings["roomSpeaker_${roomIdx}"] ?: globalIndoorSpeaker
     
-    if (type == "Good Night") {
-        if (isNewArrival) {
-            msg = "Welcome home, ${userName}. Your space is prepared. Sleep well."
-        } else {
-            def msgs = []
-            for (int i = 1; i <= 3; i++) { if (settings["roomGNMsg_${rNum}_${i}"]) msgs << settings["roomGNMsg_${rNum}_${i}"] }
-            if (!msgs) msgs = ["Good night, %user%.", "Sleep well, %user%."]
-            msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
-        }
+    def vol = null
+    if (type == "Good Morning") {
+        vol = settings["roomVolumeGM_${roomIdx}"] != null ? settings["roomVolumeGM_${roomIdx}"] : settings.globalVolume
     } else {
-        // Good Morning Logic
-        def msgs = []
-        for (int i = 1; i <= 3; i++) { if (settings["roomGMMsg_${rNum}_${i}"]) msgs << settings["roomGMMsg_${rNum}_${i}"] }
-        if (!msgs) msgs = ["Good morning, %user%.", "Rise and shine, %user%."]
-        msg = msgs[new Random().nextInt(msgs.size())].replace("%user%", userName)
+        vol = settings["roomVolumeGN_${roomIdx}"] != null ? settings["roomVolumeGN_${roomIdx}"] : settings.globalVolume
     }
-
-    def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
-    def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
     
     if (targetSpeaker) {
-        enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 1)
+        // This now calls buildRoomGreeting which includes the Grammar Polisher regex
+        def finalMsg = buildRoomGreeting(roomIdx, type, [isNewArrival: isNewArrival, isTest: true])
+        
+        enqueueTTS(targetSpeaker, finalMsg, vol, 1)
+        
+        // Log the final polished result so you can see the punctuation fixes in the console
+        log.info "TESTING ${type.toUpperCase()} (${settings["roomName_${roomIdx}"]}): '${finalMsg}' at Volume: ${vol}"
+    } else {
+        log.warn "Cannot test Room Greeting - no speaker assigned for Room ${roomIdx}."
     }
 }
 
@@ -3892,10 +3947,10 @@ def handleGoogleCalendar() {
 
 def getBridge(String type = "general") {
     def bridges = []
-    if (type == "weather") bridges = ["Looking at the weather,", "For the forecast,", "Outside right now,"]
-    else if (type == "news") bridges = ["Moving on to the news,", "Here are the latest headlines:", "In the news today,"]
-    else if (type == "agenda") bridges = ["Looking at your schedule,", "For your agenda today,", "Checking your calendar,"]
-    else bridges = ["Also,", "Additionally,", "Before I forget,", "One other thing,"]
+    if (type == "weather") bridges = ["Turning to the weather.", "Here is your forecast.", "Checking the conditions outside."]
+    else if (type == "news") bridges = ["Moving on to the news.", "Here are the latest headlines.", "In the news today:"]
+    else if (type == "agenda") bridges = ["Let's take a look at your schedule.", "Here is your agenda for today.", "Checking your calendar."]
+    else bridges = ["Also,", "Additionally,", "One other thing,"]
     return bridges[new Random().nextInt(bridges.size())] + " "
 }
 
@@ -4034,34 +4089,110 @@ def getMiddayMaintenanceReport(mDevice) {
 // --- NEW: NOTES PORTAL WEB HANDLERS ---
 def serveNotesPage() {
     try {
+        ensureStateMaps()
         def trackedNames = getTrackedUsers()
         def userOptions = ""
         trackedNames.each { u -> userOptions += "<option value='${u}'>${u}</option>" }
 
         def apiUrl = getFullApiServerUrl()
 
-        // FIX: Protect against legacy string notes crashing the page
         if (state.butlerNotes && state.butlerNotes.size() > 0 && state.butlerNotes[0] instanceof String) {
             state.butlerNotes = []
         }
 
-        // Use StringBuilder for safe, crash-free HTML rendering in Hubitat
+        // --- 1. DYNAMICALLY BUILD PRESENCE CARDS (BULLETPROOF LOGIC) ---
+        def presenceHtml = "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>"
+        if (trackedNames.size() > 0) {
+            trackedNames.each { u ->
+                // FIX: Check for both boolean and string "true", and ensure they haven't departed since arriving
+                def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[u] == true || state.hasArrivedToday[u] == "true")
+                def departed = state.hasDepartedToday != null && (state.hasDepartedToday[u] == true || state.hasDepartedToday[u] == "true")
+                def isHome = arrived && !departed
+                
+                def statusColor = isHome ? "#27ae60" : "#c0392b"
+                def statusIcon = isHome ? "🏠 Home" : "🚗 Away"
+                presenceHtml += "<div style='background-color: #1e1e1e; padding: 10px; border-radius: 4px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px;'><b>${u}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
+            }
+        } else {
+            presenceHtml += "<p style='color:#aaa; font-style:italic;'>No presence users configured.</p>"
+        }
+        presenceHtml += "</div>"
+        
+        // --- 2. DYNAMICALLY BUILD ROOM OPTIONS FOR AGENDA ---
+        def roomOptionsHtml = ""
+        def numR = settings.numRooms ? settings.numRooms as Integer : 0
+        for (int i = 1; i <= numR; i++) {
+            def rName = settings["roomName_${i}"] ?: "Room ${i}"
+            roomOptionsHtml += "<option value='${i}'>${rName}</option>"
+        }
+
+        // --- 3. DYNAMICALLY BUILD THE DIRECTORY CARDS ---
+        def numC = settings.numContacts ? settings.numContacts as Integer : 0
+        def directoryHtml = ""
+        if (settings.enableDirectory && numC > 0) {
+            directoryHtml += "<h3 style='margin-top: 30px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📞 Request Announcement</h3>"
+            for (int i = 1; i <= numC; i++) {
+                def cName = settings["contactName_${i}"]
+                def cInfo = settings["contactInfo_${i}"]
+                if (cName && cInfo) {
+                    directoryHtml += """
+                        <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #8e44ad; background: #222;'>
+                            <div style='flex-grow: 1; padding-right: 10px;'><b>${cName}</b><br><span style='color:#aaa;'>${cInfo}</span></div>
+                            <form action="${apiUrl}/directory/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                                <input type="hidden" name="contactId" value="${i}">
+                                <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #8e44ad; color: #fff; border-radius: 6px;">Announce</button>
+                            </form>
+                        </div>
+                    """
+                }
+            }
+        }
+
+        // --- 4. DYNAMICALLY BUILD THE WI-FI CARD ---
+        def wifiHtml = ""
+        if (settings.enableWifiPortal && settings.wifiSSID) {
+            wifiHtml = """
+                <h3 style='margin-top: 30px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📶 Guest Wi-Fi</h3>
+                <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #3498db; background: #222;'>
+                    <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
+                    <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                        <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
+                    </form>
+                </div>
+            """
+        }
+
+        // --- MAIN HTML BUILDER ---
         def html = new StringBuilder()
         html.append("""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Butler Notes</title>
+            <meta charset="UTF-8">
+            <title>Butler Portal</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-                body { font-family: sans-serif; padding: 20px; background-color: #f4f4f9; color: #333; }
-                .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-                textarea { width: 100%; height: 100px; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: sans-serif; }
-                select, input[type="time"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: sans-serif; }
-                button { background-color: #0b3b60; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-bottom: 10px; font-weight: bold; }
-                button.clear { background-color: #c0392b; }
-                .note-list { margin-top: 20px; text-align: left; }
-                .note-item { background: #e9ecef; padding: 12px; border-radius: 4px; margin-bottom: 8px; border-left: 4px solid #0b3b60; font-size: 14px; line-height: 1.4; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background-color: #0d0d0d; color: #e0e0e0; }
+                .container { max-width: 600px; margin: 0 auto; background: #151515; padding: 25px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); }
+                
+                /* Chat-style inputs */
+                textarea { width: 100%; height: 80px; padding: 15px; margin-bottom: 15px; border: 1px solid #333; border-radius: 12px; box-sizing: border-box; font-family: inherit; font-size: 16px; background-color: #222; color: #ffffff; resize: none; }
+                textarea:focus { outline: none; border-color: #1f618d; }
+                select, input[type="time"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
+                
+                /* Buttons */
+                button { background-color: #1f618d; color: white; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; font-weight: 600; transition: background 0.2s; }
+                button:hover { background-color: #1a5276; }
+                button.clear { background-color: transparent; color: #c0392b; border: 1px solid #c0392b; margin-top: 10px; }
+                
+                /* Accordion for Dashboard features */
+                details { background: #1a1a1a; padding: 15px; border-radius: 8px; margin-top: 40px; border: 1px solid #333; }
+                summary { font-weight: bold; color: #82b1ff; cursor: pointer; outline: none; font-size: 15px; }
+                summary::marker { color: #82b1ff; }
+                
+                .note-list { margin-top: 25px; text-align: left; }
+                .note-item { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #1f618d; font-size: 15px; line-height: 1.5; }
+                option { background-color: #222; color: #ffffff; }
             </style>
             <script>
                 function toggleTime() {
@@ -4072,23 +4203,30 @@ def serveNotesPage() {
         </head>
         <body>
             <div class="container">
-                <h2 style="text-align: center; color: #0b3b60; margin-top: 0;">Leave a Note</h2>
-                <p style="text-align: center; font-size: 13px; color: #666;">These notes will be read aloud by the Butler at the selected time or event.</p>
-                <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
-                    
-                    <label><b>Who is leaving this note?</b></label>
-                    <select name="senderName">
-                        <option value="Someone">Select your name...</option>
-                        ${userOptions}
-                    </select>
+                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Direct Line</h2>
+                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Dispatch messages via the Voice Butler</p>
 
-                    <label><b>Who is this note for?</b></label>
-                    <select name="targetUser">
-                        <option value='Anyone'>Anyone</option>
-                        ${userOptions}
-                    </select>
+                <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
+                    <textarea name="noteText" placeholder="What would you like the Butler to say?..." required></textarea>
                     
-                    <label><b>When should I deliver it?</b></label>
+                    <div style="display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <label style="font-size: 12px; color: #aaa;">From:</label>
+                            <select name="senderName">
+                                <option value="Someone">Select...</option>
+                                ${userOptions}
+                            </select>
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="font-size: 12px; color: #aaa;">To:</label>
+                            <select name="targetUser">
+                                <option value='Anyone'>Anyone</option>
+                                ${userOptions}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <label style="font-size: 12px; color: #aaa;">Delivery Trigger:</label>
                     <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
                         <option value="Arrival">When they arrive home</option>
                         <option value="Morning">During their morning briefing</option>
@@ -4096,30 +4234,58 @@ def serveNotesPage() {
                     </select>
                     
                     <div id="timeDiv" style="display:none;">
-                        <label><b>Select Time:</b></label>
+                        <label style="font-size: 12px; color: #aaa;">Time:</label>
                         <input type="time" name="deliveryTime">
                     </div>
 
-                    <textarea name="noteText" placeholder="e.g., Don't forget to take out the trash..." required></textarea>
-                    <button type="submit">Save Note</button>
+                    <button type="submit">Dispatch Message</button>
                 </form>
-                <form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST">
-                    <button type="submit" class="clear">Clear All Notes</button>
-                </form>
-        """)
+
+                """)
         
         if (state.butlerNotes && state.butlerNotes.size() > 0) {
-            html.append("<div class='note-list'><h3 style='margin-bottom: 10px;'>Pending Notes:</h3>")
+            html.append("<div class='note-list'><h4 style='margin-bottom: 10px; color:#aaa; font-size: 13px; text-transform: uppercase;'>Pending Deliveries</h4>")
             state.butlerNotes.each { note -> 
                 def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
-                html.append("<div class='note-item'><b>From ${note.sender} to ${note.target}</b>${timeTxt}: ${note.text}</div>")
+                html.append("<div class='note-item'><b>From ${note.sender} to ${note.target}</b>${timeTxt}<br><span style='color:#ccc;'>\"${note.text}\"</span></div>")
             }
-            html.append("</div>")
-        } else {
-            html.append("<p style='text-align:center; color:#666; margin-top: 30px; font-style: italic;'>No pending notes.</p>")
+            html.append("""
+                <form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST">
+                    <button type="submit" class="clear">Clear Delivery Queue</button>
+                </form>
+            </div>""")
         }
         
+        // WIFI SECTION
+        html.append(wifiHtml)
+
+        // DIRECTORY SECTION
+        html.append(directoryHtml)
+
+        // HIDDEN DASHBOARD ACCORDION
         html.append("""
+                <details>
+                    <summary>⚙️ Butler Memory & Settings</summary>
+                    
+                    <div style="margin-top: 15px;">
+                        <h4 style='margin-bottom: 5px; color:#fff; font-size: 14px;'>Current Presence</h4>
+                        ${presenceHtml}
+                    </div>
+
+                    <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
+
+                    <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
+                    <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
+                        <select name="roomSelect" required style="padding: 8px;">
+                            ${roomOptionsHtml}
+                        </select>
+                        <select name="daySelect" required style="padding: 8px;">
+                            <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
+                        </select>
+                        <textarea name="agendaText" placeholder="New agenda items..." required style="height: 50px; margin-bottom: 10px;"></textarea>
+                        <button type="submit" style="background-color: #333; padding: 10px;">Update Memory</button>
+                    </form>
+                </details>
             </div>
         </body>
         </html>
@@ -4129,7 +4295,7 @@ def serveNotesPage() {
         
     } catch (Exception e) {
         log.error "Notes Portal Crash: ${e}"
-        return render(contentType: "text/html", data: "<h3>Portal Error:</h3><p>${e}</p><p>Please check your Hubitat logs.</p>", status: 500)
+        return render(contentType: "text/html", data: "<h3 style='color:white;'>Portal Error:</h3><p style='color:white;'>${e}</p><p style='color:white;'>Please check your Hubitat logs.</p>", status: 500)
     }
 }
 
@@ -4421,7 +4587,6 @@ def goodNightOnHandler(evt) {
     def dev = evt.getDevice()
     def rNum = 0
     
-    // Find which room this switch belongs to
     def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
     for (int i = 1; i <= numRoomsSet; i++) {
         if (settings["roomGoodNightSwitch_${i}"]?.id == dev.id) { rNum = i; break }
@@ -4434,7 +4599,6 @@ def goodNightOnHandler(evt) {
         def occNameSetting = settings["roomOccupantName_${rNum}"] ?: rName
         def splitNames = occNameSetting.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
         
-        // Failsafe: Mark as arrived if they don't have a hardware sensor
         if (!presenceDev) {
             splitNames.each { n ->
                 if (state.hasArrivedToday[n] != true) {
@@ -4449,7 +4613,8 @@ def goodNightOnHandler(evt) {
         def fullMsg = buildRoomGreeting(rNum, "Good Night", [isNewArrival: isArrival, isTest: false])
         
         def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
-        def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings["roomVolume_${rNum}"]
+        // THE FIX: Fallback to Global Volume
+        def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings.globalVolume
         
         if (targetSpeaker && fullMsg) {
             enqueueTTS(targetSpeaker, fullMsg, vol, 1)
@@ -4546,4 +4711,183 @@ def butlerLrMotionHandler(evt) {
             }
         }
     }
+}
+// --- QUICK EXIT (FAREWELL & GAS SCOUT) ---
+def quickExitDoorHandler(evt) {
+    if (evt.value != "open") return
+    ensureStateMaps()
+    
+    def qModes = [settings.quickExitModes].flatten().findAll { it != null }
+    if (qModes.size() == 0 || !qModes.contains(location.mode)) return
+    
+    // 1. Verify the mode changed to Away within the last 5 minutes
+    def modeState = location.currentState("mode")
+    def modeChangeTime = modeState?.date?.time ?: 0
+    def now = new Date().time
+    
+    if ((now - modeChangeTime) > 300000) { 
+        if (settings.enableDebug) log.debug "QUICK EXIT: Ignored. House entered Away mode more than 5 minutes ago."
+        return
+    }
+    
+    // 2. Prevent spamming if the door is opened multiple times
+    def lastQuickExit = state.lastQuickExitTime ?: 0
+    if ((now - lastQuickExit) < 120000) return 
+    state.lastQuickExitTime = now
+    
+    // 3. Fetch Gas & Build Farewell
+    def gasData = getCheapestGas()
+    def msg = "Farewell. The security perimeter is active. Have a safe trip."
+    if (gasData && gasData.speech) msg += gasData.speech
+    
+    // 4. Play Audio (Fast-tracked so it plays instantly)
+    executeRoutedTTS(msg, settings.quickExitRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.quickExitVolume ?: settings.outdoorVolume, 1, true)
+    
+    // 5. Send Push Notification if enabled
+    if (settings.enableTravelPush && settings.notificationDevice && gasData?.rawAddress) {
+        settings.notificationDevice.each { dev ->
+            try { dev.deviceNotification("Travel Alert - Gas: ${gasData.rawName} (${gasData.rawAddress})") } catch(e) {}
+        }
+    }
+    addToHistory("QUICK EXIT: Farewell and gas scout triggered.")
+}
+
+// --- ESTATE DIRECTORY HANDLER ---
+// --- REFACTORED SWITCH HANDLER ---
+def directorySwitchHandler(evt) {
+    ensureStateMaps()
+    def devId = evt.device.id
+    def matchIdx = 0
+
+    def numC = settings.numContacts ? settings.numContacts as Integer : 0
+    for (int i = 1; i <= numC; i++) {
+        if (settings["contactSwitch_${i}"]?.id == devId) {
+            matchIdx = i; break
+        }
+    }
+
+    if (matchIdx > 0) {
+        // Auto-turn off the switch so it acts like a momentary button!
+        try { settings["contactSwitch_${matchIdx}"].off() } catch(e) {}
+        executeDirectoryAnnouncement(matchIdx)
+    }
+}
+
+// --- WEB ENDPOINT FOR DIRECTORY ---
+def announceDirectoryEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request.body ?: ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        def cId = params.contactId ? params.contactId.toInteger() : 0
+        if (cId > 0) {
+            executeDirectoryAnnouncement(cId)
+        }
+    } catch (Exception e) {
+        log.warn "Failed to trigger directory from web portal: ${e}"
+    }
+    return serveNotesPage() // Refresh the page instantly
+}
+
+// --- CENTRAL DIRECTORY ANNOUNCEMENT ENGINE ---
+def executeDirectoryAnnouncement(int matchIdx) {
+    if (matchIdx <= 0) return
+    def cName = settings["contactName_${matchIdx}"] ?: "the requested service"
+    def cInfo = settings["contactInfo_${matchIdx}"] ?: "No information provided."
+
+    // 1. Check if anyone is home
+    def presentFolks = getPresentUsers()
+    def isAnyoneHome = presentFolks.size() > 0
+
+    // 2. Build the TTS Message
+    def msg = "%interruption%, the contact information for ${cName} is: ${cInfo}."
+    if (settings.notificationDevice && isAnyoneHome) {
+        msg += " I have also sent these details to your mobile device."
+    }
+
+    // 3. Play Audio
+    def targetVol = settings.directoryVolume != null ? settings.directoryVolume : settings.globalVolume
+    executeRoutedTTS(applyDynamicVars(msg), settings.directoryRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
+
+    // 4. Send Targeted Push Notification
+    if (settings.notificationDevice && isAnyoneHome) {
+        def pushMsg = "📖 ESTATE DIRECTORY\nService: ${cName}\nDetails: ${cInfo}"
+        settings.notificationDevice.each { dev ->
+            try { dev.deviceNotification(pushMsg) } catch(e) {}
+        }
+    }
+
+    addToHistory("DIRECTORY: Contact info for ${cName} announced and pushed.")
+}
+
+def cleanDeviceName(String name) {
+    if (!name) return ""
+    // Strips out technical jargon so "Front Door Lock" becomes "Front Door"
+    return name.replaceAll(/(?i)\s*(open|close|contact|motion|water|temperature|humidity)\s*sensor$/, "")
+               .replaceAll(/(?i)\s*sensor$/, "")
+               .replaceAll(/(?i)\s*lock$/, "")
+               .trim()
+}
+
+// --- WEB ENDPOINT FOR AGENDA UPDATES ---
+def updateAgendaEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request.body ?: ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def rNum = params.roomSelect
+        def dayStr = params.daySelect
+        def newAgenda = params.agendaText ?: ""
+
+        if (rNum && dayStr) {
+            // This command dynamically overwrites the Hubitat input setting without opening the app!
+            app.updateSetting("roomAgenda${dayStr}_${rNum}", [type: "text", value: newAgenda])
+            if (settings.enableDebug) log.info "PORTAL: Agenda updated for Room ${rNum} on ${dayStr} to: ${newAgenda}"
+        }
+    } catch (Exception e) {
+        log.warn "Failed to update agenda from web portal: ${e}"
+    }
+    return serveNotesPage() // Refresh the page instantly to show success
+}
+
+// --- WI-FI ANNOUNCEMENT ENGINE ---
+def announceWifiEndpoint() {
+    try {
+        ensureStateMaps()
+        executeWifiAnnouncement()
+    } catch (Exception e) {
+        log.warn "Failed to trigger Wi-Fi announcement from portal: ${e}"
+    }
+    return serveNotesPage() // Refresh the page instantly
+}
+
+def executeWifiAnnouncement() {
+    def ssid = settings.wifiSSID ?: "Unknown Network"
+    def pwd = settings.wifiPassword ?: "Unknown Password"
+    
+    def presentFolks = getPresentUsers()
+    def isAnyoneHome = presentFolks.size() > 0
+
+    def msg = "%interruption%, the guest Wi-Fi network is ${ssid}, and the password is: ${pwd}."
+    if (settings.notificationDevice && isAnyoneHome) {
+        msg += " I have also sent these details to your mobile device for easy copying."
+    }
+
+    def targetVol = settings.wifiVolume != null ? settings.wifiVolume : settings.globalVolume
+    executeRoutedTTS(applyDynamicVars(msg), settings.wifiRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
+
+    if (settings.notificationDevice && isAnyoneHome) {
+        def pushMsg = "📶 GUEST WI-FI\nNetwork: ${ssid}\nPassword: ${pwd}"
+        settings.notificationDevice.each { dev ->
+            try { dev.deviceNotification(pushMsg) } catch(e) {}
+        }
+    }
+    addToHistory("WIFI: Network details announced and pushed via portal.")
 }
