@@ -1,172 +1,137 @@
-Advanced Voice Butler: Google Integration Guide (Updated)
+Advanced Voice Butler: Google Ecosystem Integration Guide (Omni-Update)
 
-This comprehensive guide details the technical configuration required to bridge the Advanced Voice Butler ecosystem with Google Workspace. By utilizing a serverless Google Apps Script, the system achieves zero-polling, real-time synchronization for calendar events, priority email routing, package tracking, and Ooma voicemail transcriptions.
+This guide details the technical configuration required to bridge the Advanced Voice Butler with Google Workspace and Google Cloud. By combining a Serverless Apps Script with the Google Maps Platform, the Butler achieves real-time synchronization for calendar events, priority email routing, and proactive travel intelligence—including traffic-aware departure alerts and gas price scouting.
+
+---
 
 Phase 1: Hubitat Cloud Endpoint Preparation
-Before configuring the external script, the Hubitat environment must be authorized to receive secure inbound webhooks.
+Before configuring external scripts, Hubitat must be authorized to receive secure inbound webhooks.
 
-Navigate to the Apps Code section within the Hubitat administrative interface and select the Advanced Voice Butler application.
+1. Navigate to Apps Code in Hubitat and select the Advanced Voice Butler application.
+2. Select Enable OAuth in App. (No redirect URIs are required).
+3. Click Update.
+4. Open the Advanced Voice Butler app instance. Navigate to the Live System Dashboard to retrieve your Cloud Webhook URL. Copy the base URL (e.g., everything before /email or /calendar) for use in Phase 3.
 
-Locate and engage the OAuth configuration protocol.
+---
 
-Select Enable OAuth in App. There is no requirement to define redirect URIs for this specific implementation.
+Phase 2: Google Maps Platform & Travel Intelligence (New)
+The Butler uses Google’s professional mapping tools to calculate drive times and find fuel. Note: Google requires a billing account (credit card) to activate these APIs, but provides a $200 monthly credit which covers all Butler activity for free.
 
-Commit the changes by selecting Update.
+1. Create a Project: Go to the Google Cloud Console (https://console.cloud.google.com/) and create a project named "Butler Intelligence."
+2. Enable Billing: Go to Billing and link a payment method. This activates the $200/mo free credit.
+3. Enable APIs: Navigate to APIs & Services > Library and search for and Enable the following:
+    * Distance Matrix API (Calculates traffic-aware drive times).
+    * Places API (Finds the cheapest gas stations).
+4. Generate Credentials: Go to APIs & Services > Credentials. Click + Create Credentials > API Key. Copy this key.
+5. Configure Hubitat:
+    * In the Voice Butler app, expand Calendar & Appointment Reminders.
+    * Paste your API Key.
+    * Enter your Home Address (Format: 2530 Williams Rd, Wetumpka, AL 36092).
+    * Set a Monthly API Call Limit (e.g., 500) as a hard failsafe to ensure you never exceed the free tier.
 
-Access the active Voice Butler application instance via the main Apps menu. Navigate to the Live System Dashboard to retrieve the newly generated Cloud Webhook URL. Copy the base URL (excluding the specific endpoint paths like /email or /calendar) for use in Phase 3.
-
-Phase 2: Gmail Filter and Search Parameters
-The Voice Butler's Master Wrapper is pre-configured with algorithmic search strings to isolate specific types of communications automatically.
-
-Package Deliveries: The script automatically scans for subject lines containing "out for delivery", "package arriving", or "scheduled for delivery".
-
-Ooma Voicemails: The script automatically targets emails specifically from notify@ooma.com with the subject "New Voicemail".
-
-Important Emails: By default, the script looks for is:unread is:important. If you prefer absolute precision and wish to avoid algorithmic false positives, you can create a custom label (e.g., Butler-Alert) and update the script's search string to is:unread label:Butler-Alert.
+---
 
 Phase 3: Google Apps Script Deployment
-The serverless function acts as the intermediary, securely pushing verified events from the Google ecosystem directly into the Hubitat TTS queue. The updated architecture utilizes a "Master Wrapper" to process all services in a single execution, significantly lowering your Google CPU usage.
+This script securely pushes verified events from your Gmail and Calendar directly to the Hubitat TTS queue.
 
-Access the Google Apps Script portal at script.google.com and initialize a New Project.
+1. Access script.google.com and initialize a New Project.
+2. Inject the following payload, replacing YOUR_SECURE_HUBITAT_CLOUD_URL_HERE with your URL from Phase 1.
 
-Clear the default workspace and inject the following JavaScript payload. Ensure the HUBITAT_BASE_URL constant is updated with the secure endpoint retrieved during Phase 1.
-
-// --- ADVANCED VOICE BUTLER BRIDGE ---
-// Your secure Hubitat Cloud API Endpoint
+// --- ADVANCED VOICE BUTLER MASTER BRIDGE ---
 const HUBITAT_BASE_URL = "YOUR_SECURE_HUBITAT_CLOUD_URL_HERE"; 
 
-// This is the MASTER function. Set your 5-minute Time-Driven trigger to run THIS function only!
 function checkImportantEmails() {
-  // Look for unread emails labeled "important" (Change to 'is:unread label:Butler-Alert' if using custom labels)
   const threads = GmailApp.search('is:unread is:important', 0, 1);
-  
   if (threads.length > 0) {
     const message = threads[0].getMessages()[0];
-    
     const payload = {
       sender: message.getFrom(),
       subject: message.getSubject(),
-      snippet: message.getPlainBody().substring(0, 150) + "..." // Read the first 150 characters
+      snippet: message.getPlainBody().substring(0, 150) + "..."
     };
-    
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload)
-    };
-    
-    // Inject the /email path into your URL and send to Hubitat
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), options);
-    
-    // Mark as read so the Butler doesn't repeat it on the next loop
+    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
+    });
     message.markRead(); 
   }
-  
-  // Instantly check for voicemails, deliveries, and calendar updates right after checking emails
   checkOomaVoicemails();
   checkDeliveryEmails();
   pushCalendarUpdates();
 }
 
 function checkOomaVoicemails() {
-  // Searches for unread Ooma notifications
   const threads = GmailApp.search('is:unread from:notify@ooma.com subject:"New Voicemail"', 0, 1);
-  
   if (threads.length > 0) {
     const message = threads[0].getMessages()[0];
     const subject = message.getSubject();
     const body = message.getPlainBody();
-    
-    // Ooma subjects usually look like: New Voicemail from NAME (555-555-5555)
-    // We strip "New Voicemail from" to just get the caller
     const caller = subject.replace("New Voicemail from", "").trim();
-    
-    // Attempt to grab the transcription (usually starts after "Message:")
     let transcription = "No transcription available.";
     if (body.includes("Message:")) {
       transcription = body.split("Message:")[1].split("To listen to")[0].trim();
     }
-
-    const payload = {
-      isVoicemail: true,
-      sender: caller,
-      msgContent: transcription,
-      time: Utilities.formatDate(message.getDate(), "GMT-5", "h:mm a") // Adjust for your timezone
-    };
-    
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload)
-    };
-    
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), options);
+    const payload = { isVoicemail: true, sender: caller, msgContent: transcription };
+    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
+    });
     message.markRead(); 
   }
 }
 
 function checkDeliveryEmails() {
-  // Looks for common delivery phrases. Adjust keywords as needed!
   const threads = GmailApp.search('is:unread (subject:"out for delivery" OR subject:"package arriving" OR subject:"scheduled for delivery")', 0, 1);
-  
   if (threads.length > 0) {
     const message = threads[0].getMessages()[0];
-    const payload = {
-      isDelivery: true, // This flag triggers the specific Butler package phrasing
-      sender: message.getFrom(),
-      subject: message.getSubject()
-    };
-    
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload)
-    };
-    
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), options);
+    const payload = { isDelivery: true, sender: message.getFrom(), subject: message.getSubject() };
+    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
+    });
     message.markRead(); 
   }
 }
 
 function pushCalendarUpdates() {
   const now = new Date();
-  // Look 5 days ahead
   const events = CalendarApp.getDefaultCalendar().getEvents(now, new Date(now.getTime() + (5 * 24 * 60 * 60 * 1000)));
-  
   let upcoming = [];
   for (let i = 0; i < events.length; i++) {
     let evt = events[i];
-    
-    // 1. Bypass the "All-Day" Trap (Ignores things like holidays taking up the #1 slot)
     if (evt.isAllDayEvent()) continue;
-    
-    // 2. Bypass the "Ongoing Event" Trap (Ignores events that already started)
     let startTime = evt.getStartTime().getTime();
     if (startTime <= now.getTime()) continue;
-    
-    // Build the array of valid upcoming events
-    upcoming.push({
-      title: evt.getTitle(),
-      epoch: startTime
-    });
-    
-    // 3. Keep a maximum of 5 upcoming events in the queue
+    upcoming.push({ title: evt.getTitle(), epoch: startTime, location: evt.getLocation() });
     if (upcoming.length >= 5) break;
   }
-  
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ events: upcoming })
-  };
-  
-  // Inject the /calendar path and send the array to Hubitat
-  UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/calendar?"), options);
+  UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/calendar?"), {
+    method: 'post', contentType: 'application/json', payload: JSON.stringify({ events: upcoming })
+  });
 }
 
+---
 
-Target Function,Event Source,Trigger Type,Execution Interval
-checkImportantEmails,Time-driven,Minutes timer,Every 5 minutes
+Phase 4: Setting the Automation Trigger
+To keep the Butler updated without manual refreshing:
 
-Authorization Note:
-Upon saving this trigger, the Google Workspace environment will request explicit authorization to execute these functions. Proceed through the advanced security warnings to grant the necessary permissions for inbox read access, calendar read access, and outbound network requests to Hubitat.
+1. In the Apps Script editor, click the Triggers (Clock Icon) in the left sidebar.
+2. Click + Add Trigger.
+3. Set "Choose which function to run" to checkImportantEmails.
+4. Set "Select event source" to Time-driven.
+5. Set "Select type of time based trigger" to Minutes timer.
+6. Set "Select minute interval" to Every 5 minutes.
+7. Click Save and authorize the script when prompted.
+
+---
+
+Phase 5: Verification and Testing
+The Butler includes built-in diagnostic tools to ensure your integration is successful.
+
+* Google API Test: Click the ▶️ Test Google API Connection button in the Hubitat UI. The Butler should speak your current drive time to a local destination and send a push notification to your phone with a clickable Google Maps navigation link for the cheapest gas.
+* Calendar Sync: Add an event to your Google Calendar with a specific address in the Location field. Click 🔄 Force Sync Calendar in Hubitat. The Butler should now show that event as his "Next Destination."
+* Quick Exit Test: Put your house into Away Mode. Open an exit door. The Butler should bid you farewell and immediately push the drive-time/gas intel for your next calendar event to your mobile device.
+
+---
+
+Feature Summary for Community Testing
+* Context-Aware Departures: Only triggers gas/travel intel if the house is in "Away" status and a door is opened.
+* Proactive Traffic Alerts: Interrupts 1 hour before events if current traffic dictates you must leave immediately.
+* Hardware-First Presence: Intelligent "Auto-Arrival" for users without hardware sensors via bedroom "Good Night" switches, while respecting existing Zigbee/Z-Wave presence data for tracked users.
