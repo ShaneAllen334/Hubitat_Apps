@@ -273,8 +273,15 @@ def mainPage() {
         }
         // --------------------------------
         
-        section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
+            section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
             input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
+            
+            paragraph "<b>Primary Triggers</b>"
+            input "frontDoorbell", "capability.pushableButton", title: "Front Doorbell Button", required: false
+            // FIX: Added 'multiple: true' so you can select an unlimited number of porch/door sensors
+            input "frontDoorMotion", "capability.motionSensor", title: "Front Porch/Door Motion Sensor(s)", multiple: true, required: false
+            
+            paragraph "<hr>"
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
             input "enableInbox", "bool", title: "Enable 'Silver Platter' Message Inbox (Hold missed alerts)?", defaultValue: false, submitOnChange: true
             input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
@@ -285,7 +292,7 @@ def mainPage() {
             input "notificationDevice", "capability.notification", title: "Silent Mode Notification Devices", multiple: true, required: false
             input "ttsTTL", "number", title: "Message Expiration / Time-To-Live (Minutes)", defaultValue: 5, required: false
             
-            // --- FIX 1: THE PHANTOM QUIET HOURS ---
+            // --- THE PHANTOM QUIET HOURS ---
             paragraph "<hr>"
             paragraph "<b>Quiet Hours Muting</b>"
             input "quietHoursStart", "time", title: "Quiet Hours Start Time", required: false
@@ -610,7 +617,7 @@ def mainPage() {
             }
         }
 
-        section("Indoor Doorbell / Intercom Routing", hideable: true, hidden: true) {
+       section("Indoor Doorbell / Intercom Routing", hideable: true, hidden: true) {
             input "enableIndoorRouting", "bool", title: "Enable Targeted Indoor Routing?", defaultValue: false, submitOnChange: true
             if (enableIndoorRouting) {
                 input "indoorDoorbellMsg", "text", title: "Announcement Message", defaultValue: "This is %butler%. %interruption%, but there is a visitor at the front door."
@@ -628,6 +635,7 @@ def mainPage() {
                         input "routeSpeaker_${i}", "capability.speechSynthesis", title: "Target Speaker", required: false
                         input "routeVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
                         input "routeTVSwitch_${i}", "capability.actuator", title: "Entertainment / TV Device", required: false
+                        input "routeGNSwitch_${i}", "capability.switch", title: "Mute Zone when this Switch is ON (Good Night)", required: false // <-- NEW MUTE SWITCH
                     }
                 }
                 def inPrev = applyDynamicVars(settings.indoorDoorbellMsg ?: "This is %butler%. %interruption%, but there is a visitor at the front door.")
@@ -1119,6 +1127,7 @@ def initialize() {
 }
 
 // --- CENTRAL ROUTING ENGINE ---
+// --- CENTRAL ROUTING ENGINE ---
 def executeRoutedTTS(String msg, String mode, indoorVol, outdoorVol, int priority = 2, boolean fastTrack = false, dedicatedSpeaker = null) {
     def played = false
     def anyRouted = false
@@ -1130,6 +1139,15 @@ def executeRoutedTTS(String msg, String mode, indoorVol, outdoorVol, int priorit
         for (int i = 1; i <= numRoutes; i++) {
             def mSensors = [settings["routeMotion_${i}"]].flatten().findAll { it != null }
             if (mSensors && mSensors.any { it.currentValue("motion") == "active" }) {
+                
+                // --- NEW: LOCALIZED DO NOT DISTURB ---
+                def gnSwitch = settings["routeGNSwitch_${i}"]
+                if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
+                    if (settings.enableDebug) log.debug "ROUTING: Skipped ${settings["routeRoomName_${i}"] ?: "Zone ${i}"} (Good Night Switch is ON)."
+                    continue // Skip to the next room!
+                }
+                // -------------------------------------
+                
                 if (settings["routeSpeaker_${i}"]) {
                     allTargetSpeakers << [spk: settings["routeSpeaker_${i}"], vol: (settings["routeVolume_${i}"] ?: indoorVol)]
                     anyRouted = true
@@ -2144,6 +2162,10 @@ def canTriggerIntruder() {
 
 def intruderMotionHandler(evt) {
     ensureStateMaps()
+    
+    // FIX: Send data directly to the Morning Report Tracker!
+    countMotionHandler(evt) 
+    
     if (!canTriggerIntruder()) return
     if (settings.smartCameraDevice && settings.smartAttribute) {
         runIn(6, "executeGenericIntruder", [data: [deviceName: evt.device.displayName], overwrite: true])
@@ -2209,6 +2231,9 @@ def unifiProtectHandler(evt) {
     }
     // ------------------------------------
     
+    // FIX: Send Smart Detection data to the Morning Report Tracker!
+    countMotionHandler(evt) 
+    
     if (!canTriggerIntruder()) return
     
     unschedule("executeGenericIntruder")
@@ -2248,6 +2273,7 @@ def countMotionHandler(evt) {
     if (location.mode in nightModes || location.mode == "Night") {
         state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
         state.pendingMorningReport = true
+        if (settings.enableDebug) log.info "INCIDENT TRACKER: Logged Night Motion. Count is now ${state.nightMotionCount}"
     }
 }
 
@@ -4869,10 +4895,19 @@ def announceWifiEndpoint() {
 }
 
 def executeWifiAnnouncement() {
+    ensureStateMaps() // Ensure all maps exist before proceeding
+    
     def ssid = settings.wifiSSID ?: "Unknown Network"
     def pwd = settings.wifiPassword ?: "Unknown Password"
     
-    def presentFolks = getPresentUsers()
+    // Safety check for present users
+    def presentFolks = []
+    try {
+        presentFolks = getPresentUsers()
+    } catch (e) {
+        if (settings.enableDebug) log.warn "WIFI: Presence check failed, defaulting to empty list."
+    }
+    
     def isAnyoneHome = presentFolks.size() > 0
 
     def msg = "%interruption%, the guest Wi-Fi network is ${ssid}, and the password is: ${pwd}."
@@ -4880,9 +4915,13 @@ def executeWifiAnnouncement() {
         msg += " I have also sent these details to your mobile device for easy copying."
     }
 
+    // Determine volume
     def targetVol = settings.wifiVolume != null ? settings.wifiVolume : settings.globalVolume
+    
+    // Execute routing
     executeRoutedTTS(applyDynamicVars(msg), settings.wifiRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
 
+    // Send Push
     if (settings.notificationDevice && isAnyoneHome) {
         def pushMsg = "📶 GUEST WI-FI\nNetwork: ${ssid}\nPassword: ${pwd}"
         settings.notificationDevice.each { dev ->
