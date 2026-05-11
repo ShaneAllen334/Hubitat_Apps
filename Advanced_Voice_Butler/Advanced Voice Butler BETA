@@ -3546,6 +3546,8 @@ def getBirthdayMessage(String arrivingUser, String type) {
 
     for (int i = 1; i <= numBdays; i++) {
         def bName = settings["bdayName_${i}"] ?: ""
+        if (!bName) continue
+        
         def bType = settings["bdayType_${i}"] ?: "Kid (30-Day Countdown)"
         def bMonthInt = settings["bdayMonth_${i}"]?.toInteger()
         def bDayInt = settings["bdayDay_${i}"]?.toInteger()
@@ -3554,16 +3556,23 @@ def getBirthdayMessage(String arrivingUser, String type) {
         def notifyUserSetting = settings["bdayNotifyUser_${i}"]
         def nUsers = [notifyUserSetting].flatten().findAll { it != null }.collect { it.toLowerCase() }
         
-        // Determine if an authorized user is home or arriving
+        // Check if the person in the room IS the birthday person
+        def isBirthdayPerson = arrivingUser.toLowerCase().contains(bName.toLowerCase()) || arrivingUser.toLowerCase().contains(applyAlias(bName).toLowerCase())
+        
+        // Check if the people in the room are the designated "Notify Users" (e.g., Parents)
         def isTargetPresent = nUsers.isEmpty() || nUsers.contains(arrivingUser.toLowerCase()) || nUsers.any { nu -> state.hasArrivedToday?.keySet()?.any { k -> k.toLowerCase() == nu } }
+
+        // If the person in the room is neither the birthday person NOR the designated notified user, skip.
+        if (!isBirthdayPerson && !isTargetPresent) continue
 
         // 1. Exact Birthday Match
         if (bMonthInt == currentMonth && bDayInt == currentDay) {
-            if (isTargetPresent) {
-                // Prevent telling the birthday person to call themselves
-                if (bName.toLowerCase() != arrivingUser.toLowerCase()) {
-                    return "By the way, today is ${bName}'s birthday. Please remember to give them a call!"
-                }
+            if (isBirthdayPerson) {
+                if (type == "Arrival") return settings.bdayMsgArrival?.replace("%name%", applyAlias(bName)) ?: "Happy Birthday ${applyAlias(bName)}!"
+                else if (type == "Morning") return settings.bdayMsgMorning?.replace("%name%", applyAlias(bName)) ?: "Happy Birthday ${applyAlias(bName)}! I hope you have a fantastic day."
+                else return "Happy Birthday ${applyAlias(bName)}."
+            } else {
+                return "By the way, today is ${applyAlias(bName)}'s birthday. Please remember to wish them a Happy Birthday!"
             }
         }
         
@@ -3585,9 +3594,11 @@ def getBirthdayMessage(String arrivingUser, String type) {
             
             // Count down if it is exactly 30 days or less
             if (daysUntil > 0 && daysUntil <= 30) {
-                if (isTargetPresent) {
+                if (isBirthdayPerson) {
                     def cdMsg = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
                     return cdMsg.replace("%days%", daysUntil.toString()).replace("%name%", applyAlias(bName))
+                } else if (isTargetPresent) {
+                    return "As a quick reminder, ${applyAlias(bName)}'s birthday is coming up in exactly ${daysUntil} days."
                 }
             }
         }
@@ -3597,8 +3608,8 @@ def getBirthdayMessage(String arrivingUser, String type) {
             def cal = Calendar.getInstance(location.timeZone)
             cal.add(Calendar.DAY_OF_YEAR, 5)
             if (cal.get(Calendar.MONTH) + 1 == bMonthInt && cal.get(Calendar.DAY_OF_MONTH) == bDayInt) {
-                if (isTargetPresent) {
-                     return "As a quick reminder, ${bName}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
+                if (!isBirthdayPerson && isTargetPresent) {
+                     return "As a quick reminder, ${applyAlias(bName)}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
                 }
             }
         }
