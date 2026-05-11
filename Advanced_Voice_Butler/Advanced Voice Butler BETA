@@ -5441,3 +5441,48 @@ def buildGlobalHealthReport(boolean checkPresence = true) {
 
     return "%interruption%, as a wellness reminder: " + finalSentences.join(" ")
 }
+
+def getHealthReminders(String userName) {
+    if (!settings.numHealthProfiles || settings.numHealthProfiles == 0) return ""
+    def reminders = []
+    def now = new Date().time
+    
+    // Time thresholds in milliseconds
+    def sixMonthsMs = 15768000000L 
+    def oneYearMs = 31536000000L
+
+    for (int i = 1; i <= settings.numHealthProfiles; i++) {
+        def hUser = settings["healthUser_${i}"]
+        // Check if the profile matches the person currently in the room
+        if (hUser && (userName.toLowerCase().contains(hUser.toLowerCase()) || userName.toLowerCase().contains(applyAlias(hUser).toLowerCase()))) {
+            
+            // Check Dental (Overdue after 6 months)
+            if (settings["lastDental_${i}"]) {
+                try {
+                    def dDate = new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastDental_${i}"]).time
+                    if (now - dDate > sixMonthsMs) reminders << "a dental cleaning"
+                } catch(e) { log.warn "Voice Butler: Invalid Dental Date for ${hUser}" }
+            }
+            // Check Medical (Overdue after 1 year)
+            if (settings["lastMedical_${i}"]) {
+                try {
+                    def mDate = new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastMedical_${i}"]).time
+                    if (now - mDate > oneYearMs) reminders << "an annual physical"
+                } catch(e) {}
+            }
+            // Check Vision (Overdue after 1 year)
+            if (settings["lastVision_${i}"]) {
+                try {
+                    def vDate = new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastVision_${i}"]).time
+                    if (now - vDate > oneYearMs) reminders << "an eye exam"
+                } catch(e) {}
+            }
+        }
+    }
+
+    if (reminders.size() > 0) {
+        def rStr = reminders.size() == 1 ? reminders[0] : (reminders.size() == 2 ? "${reminders[0]} and ${reminders[1]}" : "${reminders[0..-2].join(', ')}, and ${reminders.last()}")
+        return "As a wellness reminder, it has been a while since your last visit, so I recommend scheduling ${rStr} soon."
+    }
+    return ""
+}
