@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.9
+ * Version 1.10
  */
 definition(
     name: "Advanced Voice Butler",
@@ -28,7 +28,10 @@ mappings {
     path("/notes/clear") { action: [POST: "clearNotesEndpoint"] }
     path("/directory/announce") { action: [POST: "announceDirectoryEndpoint"] }
     path("/agenda/update") { action: [POST: "updateAgendaEndpoint"] }
-    path("/wifi/announce") { action: [POST: "announceWifiEndpoint"] } // <-- ADD THIS
+    path("/wifi/announce") { action: [POST: "announceWifiEndpoint"] }
+    path("/pa/announce") { action: [POST: "instantPAEndpoint"] }
+    path("/presence/depart") { action: [POST: "manualDepartEndpoint"] }
+    path("/reply/quick") { action: [POST: "quickReplyEndpoint"] } // <-- UPDATED PATH
 }
 
 def getRoutingOptions() {
@@ -189,8 +192,13 @@ def mainPage() {
             if (state.learnedHabits && state.learnedHabits.size() > 0) {
                 state.learnedHabits.each { uName, habitData ->
                     def timeStr = habitData.avgDepartureMins ? formatMinsToTime(habitData.avgDepartureMins) : "Learning..."
+                    
+                    // FIX: Use bulletproof logic for the AI Tracker
+                    def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[uName] == true || state.hasArrivedToday[uName] == "true")
+                    def departed = state.hasDepartedToday != null && (state.hasDepartedToday[uName] == true || state.hasDepartedToday[uName] == "true")
+                    
                     def statStr = ""
-                    if (!state.hasArrivedToday[uName]) statStr = "<span style='color: #27ae60;'>Departed</span>"
+                    if (departed || !arrived) statStr = "<span style='color: #27ae60;'>Departed</span>"
                     else if (state.anomalyAlertedToday[uName]) statStr = "<span style='color: #c0392b; font-weight: bold;'>Anomaly (Running Late)</span>"
                     else statStr = "<span style='color: #7f8c8d;'>Home / Waiting</span>"
                     
@@ -228,9 +236,22 @@ def mainPage() {
             allNames = allNames.unique().sort()
             
             allNames.each { uName ->
-                def hasArrived = state.hasArrivedToday ? state.hasArrivedToday[uName] : false
-                def arrStatus = hasArrived ? "<span style='color: #27ae60; font-weight: bold;'>Arrived</span>" : "<span style='color: #7f8c8d;'>Waiting...</span>"
-                def contextText = hasArrived ? "Present" : (state.resetReasons?."${uName}" ?: state.globalResetReason ?: "Awaiting First Entry")
+                // FIX: Use bulletproof logic for the Live House Roster
+                def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[uName] == true || state.hasArrivedToday[uName] == "true")
+                def departed = state.hasDepartedToday != null && (state.hasDepartedToday[uName] == true || state.hasDepartedToday[uName] == "true")
+                def isHome = arrived && !departed
+                
+                def arrStatus = isHome ? "<span style='color: #27ae60; font-weight: bold;'>Arrived</span>" : "<span style='color: #7f8c8d;'>Waiting...</span>"
+                
+                def contextText = ""
+                if (isHome) {
+                    contextText = "Present"
+                } else if (departed) {
+                    contextText = "Departed Today"
+                } else {
+                    contextText = state.resetReasons?."${uName}" ?: state.globalResetReason ?: "Awaiting First Entry"
+                }
+                
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${applyAlias(uName)}</b></td><td style='padding: 8px;'>${arrStatus}</td><td style='padding: 8px; color: #555;'><i>${contextText}</i></td></tr>"
             }
             statusText += "</table>"
@@ -273,7 +294,22 @@ def mainPage() {
         }
         // --------------------------------
         
-            section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
+        // --- NEW: QUICK REPLIES ---
+        section("Portal Quick Replies (Outdoor Intercom)", hideable: true, hidden: true) {
+            paragraph "<i>Create up to 6 pre-set messages that you can trigger instantly from the web portal. These will announce on the Outdoor Speaker and automatically cancel any pending unanswered doorbell follow-ups.</i>"
+            input "numQuickReplies", "number", title: "Number of Quick Replies (0-6)", defaultValue: 0, range: "0..6", submitOnChange: true
+            
+            if (numQuickReplies > 0) {
+                for (int i = 1; i <= (numQuickReplies as Integer); i++) {
+                    paragraph "<b>Quick Reply Button ${i}</b>"
+                    input "quickReplyName_${i}", "text", title: "Button Label (e.g., Leave Package)", required: false
+                    input "quickReplyText_${i}", "text", title: "Spoken Message", required: false, defaultValue: "Please leave the package at the front door. Thank you."
+                }
+            }
+        }
+        // --------------------------
+        
+        section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
             input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
             
             paragraph "<b>Primary Triggers</b>"
@@ -395,6 +431,34 @@ def mainPage() {
             paragraph "<div style='${prevStyle}'><b>Live Arrival Preview:</b><br><i>${arrPrev}</i>${inPrevStr}</div>"
         }
 
+        section("Health & Wellness Concierge", hideable: true, hidden: true) {
+            paragraph "<i>Track medical and dental appointments for household members. The Butler can remind them during the morning briefing or dynamically during a user-defined daytime window.</i>"
+            
+            input "enableHealthMorning", "bool", title: "Announce in Morning Briefing (Per Room)?", defaultValue: true
+            input "enableHealthWindow", "bool", title: "Announce during Daytime Window (Global)?", defaultValue: false, submitOnChange: true
+
+            if (enableHealthWindow) {
+                input "healthWindowStart", "time", title: "Window Start Time", required: true
+                input "healthWindowEnd", "time", title: "Window End Time", required: true
+                input "healthRoutingMode", "enum", title: "Window Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "healthVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "btnTestHealth", "button", title: "▶️ Test Health Reminder"
+            }
+
+            paragraph "<hr>"
+            input "numHealthProfiles", "number", title: "Number of Health Profiles (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
+
+            if (numHealthProfiles > 0) {
+                for (int i = 1; i <= (numHealthProfiles as Integer); i++) {
+                    paragraph "<b>Health Profile ${i}</b>"
+                    input "healthUser_${i}", "text", title: "User Name (Matches Lock/Presence)", required: false
+                    input "lastDental_${i}", "text", title: "Last Dental Cleaning (YYYY-MM-DD)", description: "Triggers after 6 months", required: false
+                    input "lastMedical_${i}", "text", title: "Last Annual Physical (YYYY-MM-DD)", description: "Triggers after 1 year", required: false
+                    input "lastVision_${i}", "text", title: "Last Vision/Eye Exam (YYYY-MM-DD)", description: "Triggers after 1 year", required: false
+                }
+            }
+        }
+        
         section("Calendar & Appointment Reminders", hideable: true, hidden: true) {
             paragraph "<i><b>Note:</b> For Google Calendar, use the 'Secret address in iCal format' (.ics link) found in your calendar settings.</i>"
             input "enableCalendar", "bool", title: "Enable Calendar Reminders?", defaultValue: false, submitOnChange: true
@@ -565,7 +629,7 @@ def mainPage() {
             }
         }
 
-            section("Master Perimeter & Estate Security", hideable: true, hidden: true) {
+        section("Master Perimeter & Estate Security", hideable: true, hidden: true) {
             paragraph "<i>Designate all critical access points across the property you wish the Butler to guard. This includes primary house doors, secondary gates, and livestock coops. The Butler will automatically verify these are secured during the Good Night routine.</i>"
             input "estateDoors", "capability.contactSensor", title: "All Estate Doors, Gates & Coops", multiple: true, required: false
             input "estateLocks", "capability.lock", title: "All Estate Smart Locks", multiple: true, required: false
@@ -620,6 +684,9 @@ def mainPage() {
        section("Indoor Doorbell / Intercom Routing", hideable: true, hidden: true) {
             input "enableIndoorRouting", "bool", title: "Enable Targeted Indoor Routing?", defaultValue: false, submitOnChange: true
             if (enableIndoorRouting) {
+                // FIX: Added the missing Follow-Me Occupancy Timeout config
+                input "followMeTimeout", "number", title: "Follow-Me Occupancy Window (Minutes)", defaultValue: 5, description: "Keep room active for X minutes after last motion."
+                
                 input "indoorDoorbellMsg", "text", title: "Announcement Message", defaultValue: "This is %butler%. %interruption%, but there is a visitor at the front door."
                 input "indoorDoorbellRoutingMode", "enum", title: "Indoor Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
                 input "indoorRouteMuteDND", "bool", title: "Mute During Do Not Disturb?", defaultValue: true
@@ -629,12 +696,17 @@ def mainPage() {
 
                 if (numRoutingRooms > 0) {
                     for (int i = 1; i <= (numRoutingRooms as Integer); i++) {
-                        paragraph "<b>Routing Zone ${i}</b>"
+                        // FIX: Added the missing Last Active indicator
+                        def lastAct = state.lastZoneMotion ? state.lastZoneMotion["${i}"] : 0
+                        def sinceStr = lastAct ? "${Math.round((new Date().time - lastAct)/60000)}m ago" : "Never"
+                        paragraph "<b>Routing Zone ${i}</b> (Last Active: ${sinceStr})"
+                        
                         input "routeRoomName_${i}", "text", title: "Zone Name", required: false, defaultValue: "Zone ${i}"
                         input "routeMotion_${i}", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
                         input "routeSpeaker_${i}", "capability.speechSynthesis", title: "Target Speaker", required: false
                         input "routeVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
-                        input "routeTVSwitch_${i}", "capability.actuator", title: "Entertainment / TV Device", required: false
+                        // FIX: Updated to 'capability.switch' for Roku TV compatibility
+                        input "routeTVSwitch_${i}", "capability.switch", title: "Entertainment / TV Device (Roku, TV, etc.)", multiple: true, required: false
                         input "routeGNSwitch_${i}", "capability.switch", title: "Mute Zone when this Switch is ON (Good Night)", required: false // <-- NEW MUTE SWITCH
                     }
                 }
@@ -646,10 +718,20 @@ def mainPage() {
         section("Meal Time Routine (Dinner Voice Butler)", hideable: true, hidden: true) {
             input "enableMealTime", "bool", title: "Enable Meal Time Routine?", defaultValue: false, submitOnChange: true
             if (enableMealTime) {
-                input "mealTimeSwitch", "capability.switch", title: "Meal Time Trigger Switch", required: true
+                input "mealTimeSwitch", "capability.switch", title: "Meal Time Trigger Switch", required: false
+                
+                // --- NEW: MEAL TIME BUTTON TRIGGER ---
+                input "mealTimeButton", "capability.pushableButton", title: "Meal Time Trigger Button", required: false, submitOnChange: true
+                if (mealTimeButton) {
+                    input "mealTimeButtonNumber", "number", title: "Button Number", defaultValue: 1, required: true
+                    input "mealTimeButtonAction", "enum", title: "Button Action", options: ["pushed", "held", "doubleTapped", "released"], defaultValue: "pushed", required: true
+                    paragraph "<i>Note: Button presses bypass Global routing and exclusively announce to 'Follow-Me (Active Rooms Only)'.</i>"
+                }
+                // -------------------------------------
+
                 input "mealTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Meal Time Speaker", required: false
                 input "mealTimeVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "mealTimeRoutingMode", "enum", title: "Dinner Bell Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "mealTimeRoutingMode", "enum", title: "Dinner Bell Routing Mode (For Switch/Test)", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
                 
                 input "mealTimeDinnerBell", "text", title: "Base Message", defaultValue: "%interruption%, but dinner is now served.", required: false
                 input "mealTimeAbsentee", "bool", title: "Enable Absentee Roll Call?", defaultValue: false
@@ -657,12 +739,10 @@ def mainPage() {
                 input "mealTimeNewsWeather", "bool", title: "Enable Evening Digest (News & Weather)?", defaultValue: false, submitOnChange: true
                 if (mealTimeNewsWeather) { input "mealTimeNewsFeed", "text", title: "RSS News Feed URL", defaultValue: "https://feeds.npr.org/1001/rss.xml"; input "mealTimeWeatherDevice", "capability.temperatureMeasurement", title: "Weather / Temperature Device", required: false }
                 
-                // --- NEW: THE MISSING INPUTS ---
                 input "enableMealQuestions", "bool", title: "Enable Meal Time Conversation Starters?", defaultValue: false, submitOnChange: true
                 if (enableMealQuestions) {
                     input "mealTimeQuestionsFile", "text", title: "Custom Questions File (.txt)", description: "e.g. dinner_questions.txt", required: false
                 }
-                // -------------------------------
 
                 input "btnTestMealNews", "button", title: "▶️ Test Evening News Fetch"
                 input "btnTestMealTime", "button", title: "▶️ Test Meal Time Audio"
@@ -672,6 +752,28 @@ def mainPage() {
                 paragraph "<div style='${prevStyle}'><b>Live Meal Time Preview:</b><br><i>${mealPrev}</i></div>"
             }
         }
+
+        // --- NEW: HEADED HOME FEATURE ---
+        section("Headed Home (On The Way) Announcements", hideable: true, hidden: true) {
+            input "enableHeadedHome", "bool", title: "Enable Headed Home Announcements?", defaultValue: false, submitOnChange: true
+            if (enableHeadedHome) {
+                paragraph "<i>Assign a virtual switch for each user. When turned ON (e.g. via a Google Home or Alexa driving routine), the Butler will announce they are on their way.</i>"
+                input "numHeadedHome", "number", title: "Number of Headed Home Profiles (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
+                
+                if (numHeadedHome > 0) {
+                    for (int i = 1; i <= (numHeadedHome as Integer); i++) {
+                        paragraph "<b>Headed Home Profile ${i}</b>"
+                        input "hhUser_${i}", "text", title: "User Name (replaces %name%)", required: false
+                        input "hhSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
+                        input "hhRouting_${i}", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                        input "hhVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
+                        input "hhMessage_${i}", "text", title: "Announcement Message", defaultValue: "%interruption%, but %name% is on their way home.", required: false
+                        input "btnTestHeadedHome_${i}", "button", title: "▶️ Test Headed Home Audio ${i}"
+                    }
+                }
+            }
+        }
+        // --------------------------------
 
         section("Guest / Party Mode (Doorbell Intercept)", hideable: true, hidden: true) {
             input "enablePartyMode", "bool", title: "Enable Guest/Party Mode Doorbell?", defaultValue: false, submitOnChange: true
@@ -852,10 +954,15 @@ def roomPage(params) {
     def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
     
     dynamicPage(name: "roomPage", title: "Room Voice Setup", install: false, uninstall: false, previousPage: "mainPage") {
-        section("Zone Identification & Occupant", hideable: true, hidden: true) {
+            section("Zone Identification & Occupant", hideable: true, hidden: true) {
             input "roomName_${rNum}", "text", title: "Custom Room Name", defaultValue: "Bedroom ${rNum}", submitOnChange: true
             input "roomOccupantName_${rNum}", "text", title: "Primary Occupant Name(s)", defaultValue: "Guest", required: false
             input "roomSpeaker_${rNum}", "capability.speechSynthesis", title: "Dedicated Room Speaker", required: false
+            
+            // --- NEW: GLOBAL SPEAKER TOGGLE ---
+            input "roomGlobalMorning_${rNum}", "bool", title: "Also play Good Morning on Global Indoor Speaker?", defaultValue: false
+            // ----------------------------------
+            
             input "btnTestRoomSpk_${rNum}", "button", title: "▶️ Test Room Speaker Link"
             input "roomVolumeGN_${rNum}", "number", title: "Good Night Volume (0-100)", required: false
             input "roomVolumeGM_${rNum}", "number", title: "Good Morning Volume (0-100)", required: false
@@ -1018,6 +1125,12 @@ def initialize() {
         if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
     }
 
+    // --- Health Window Scheduler ---
+    if (settings.enableHealthWindow && settings.healthWindowStart && settings.healthWindowEnd) {
+        schedule("0 5 0 * * ?", "scheduleHealthWindow")
+        scheduleHealthWindow() // Run on init to queue today's check
+    }
+    
     // --- NEW: Quick Exit (Away Mode Farewell) ---
     if (settings.enableQuickExit && settings.quickExitDoors) {
         subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
@@ -1052,7 +1165,18 @@ def initialize() {
         subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler)
         subscribe(settings.mailSwitch, "switch.off", mailClearedHandler)
     }
-    if (settings.enableMealTime && settings.mealTimeSwitch) { subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) }
+    // --- NEW HEADED HOME SUBSCRIPTIONS ---
+    if (settings.enableHeadedHome) {
+        def numHH = settings.numHeadedHome ? settings.numHeadedHome as Integer : 0
+        for (int i = 1; i <= numHH; i++) {
+            if (settings["hhSwitch_${i}"]) subscribe(settings["hhSwitch_${i}"], "switch.on", headedHomeHandler)
+        }
+    }
+    // --- UPDATED MEAL TIME SUBSCRIPTIONS ---
+    if (settings.enableMealTime) { 
+        if (settings.mealTimeSwitch) subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) 
+        if (settings.mealTimeButton && settings.mealTimeButtonAction) subscribe(settings.mealTimeButton, settings.mealTimeButtonAction, mealTimeButtonHandler)
+    }
     if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
     if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
     if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler) }
@@ -1642,15 +1766,29 @@ def mailSwitchHandler(evt) {
     addToHistory("SYSTEM: Mail delivery logged via switch.")
 }
 
-// --- MEAL TIME HANDLER ---
+// --- MEAL TIME HANDLERS ---
+def mealTimeButtonHandler(evt) {
+    def btnNum = settings.mealTimeButtonNumber ?: 1
+    if (evt.value.toString() == btnNum.toString()) {
+        mealTimeHandler([value: "button_trigger"])
+    }
+}
+
 def mealTimeHandler(evt) {
-    if (evt.value != "on" && evt.value != "test") return
+    if (evt.value != "on" && evt.value != "test" && evt.value != "button_trigger") return
     ensureStateMaps()
     
     def now = new Date().time
     def lastMeal = state.lastMealTimeEvent ?: 0
     if ((now - lastMeal) < 60000 && evt.value != "test") return
     state.lastMealTimeEvent = now
+    
+    // Determine the routing mode based on how it was triggered
+    def rMode = settings.mealTimeRoutingMode ?: "Global Indoor Speaker Only"
+    if (evt.value == "button_trigger") {
+        rMode = "Follow-Me (Active Rooms Only)"
+        addToHistory("MEAL TIME: Triggered via physical button. Constraining to Active Rooms Only.")
+    }
     
     // --- PART 1: THE DINNER BELL & ROLL CALL (Chime Active) ---
     def bellMsg = settings.mealTimeDinnerBell ?: "%interruption%, but dinner is now served."
@@ -1678,8 +1816,8 @@ def mealTimeHandler(evt) {
             bellMsg += " Please note that ${names} have not yet returned home."
         }
     }
-    // Send Part 1 (FastTrack = false: This triggers the initial chime)
-    executeRoutedTTS(applyDynamicVars(bellMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 2, false, settings.mealTimeSpeaker)
+    // Send Part 1
+    executeRoutedTTS(applyDynamicVars(bellMsg), rMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 2, false, settings.mealTimeSpeaker)
 
     // --- PART 2: THE NEWS DIGEST (Fast Tracked / No Chime) ---
     if (settings.mealTimeNewsWeather) {
@@ -1704,19 +1842,48 @@ def mealTimeHandler(evt) {
             }
         } catch (Exception e) {}
         if (newsMsg) {
-            // Send Part 2 (FastTrack = true: No chime, immediate follow-up)
-            executeRoutedTTS(applyDynamicVars(newsMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 3, true, settings.mealTimeSpeaker)
+            executeRoutedTTS(applyDynamicVars(newsMsg), rMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 3, true, settings.mealTimeSpeaker)
         }
     }
 
     // --- PART 3: THE CONVERSATION STARTER (Fast Tracked / No Chime) ---
     if (settings.enableMealQuestions) {
         def questionMsg = getMealTimeQuestion()
-        // Send Part 3 (FastTrack = true: No chime, immediate follow-up)
-        executeRoutedTTS(applyDynamicVars(questionMsg), settings.mealTimeRoutingMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 4, true, settings.mealTimeSpeaker)
+        executeRoutedTTS(applyDynamicVars(questionMsg), rMode, settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 4, true, settings.mealTimeSpeaker)
     }
     
-    addToHistory("MEAL TIME: Routine triggered in 3 parts for clarity.")
+    if (evt.value != "button_trigger") addToHistory("MEAL TIME: Routine triggered in 3 parts for clarity.")
+}
+
+// --- HEADED HOME HANDLERS ---
+def headedHomeHandler(evt) {
+    ensureStateMaps()
+    def devId = evt.device.id
+    def matchIdx = 0
+    def numHH = settings.numHeadedHome ? settings.numHeadedHome as Integer : 0
+    
+    for (int i = 1; i <= numHH; i++) {
+        if (settings["hhSwitch_${i}"]?.id == devId) { matchIdx = i; break }
+    }
+    
+    if (matchIdx > 0) {
+        // Auto-turn off the virtual switch so it functions like a momentary trigger
+        try { settings["hhSwitch_${matchIdx}"].off() } catch(e) {} 
+        executeHeadedHome(matchIdx)
+    }
+}
+
+def executeHeadedHome(int idx) {
+    def uName = settings["hhUser_${idx}"] ?: "Someone"
+    def displayUserName = applyAlias(uName)
+    def msg = settings["hhMessage_${idx}"] ?: "%interruption%, but %name% is on their way home."
+    
+    def finalMsg = applyDynamicVars(msg.replace("%name%", displayUserName))
+    def rMode = settings["hhRouting_${idx}"] ?: "Global Indoor Speaker Only"
+    def targetVol = settings["hhVolume_${idx}"] != null ? settings["hhVolume_${idx}"] : settings.globalVolume
+    
+    executeRoutedTTS(finalMsg, rMode, targetVol, settings.outdoorVolume, 2)
+    addToHistory("HEADED HOME: Announced ${displayUserName} is on their way.")
 }
 
 def testMealNews() {
@@ -1941,6 +2108,9 @@ def executeTTS(item) {
     def finalMsg = msg.replace("&", "and")
     def padSecs = settings.wakeupPadDelay != null ? settings.wakeupPadDelay.toInteger() : 0
     
+    // --- STAGE 1: VOLUME ADJUSTMENT (Simultaneous) ---
+    def restoredVolumes = []
+    def volumeChanged = false
     speakers.each { spk ->
         try {
             def currentVol = spk.currentValue("volume")
@@ -1949,39 +2119,55 @@ def executeTTS(item) {
             
             def targetVol = finalVol != null ? (finalVol as Integer) : currentVol
             
-            if (padSecs > 0 && !fastTrack) {
-                try { spk.setVolume(targetVol as Integer) } catch(Exception ve) {}
-                pauseExecution(padSecs * 1000)
-            } else if (targetVol != null && currentVol != targetVol) {
-                try { spk.setVolume(targetVol as Integer); if (!fastTrack) pauseExecution(1000) else pauseExecution(50) } catch(Exception ve) {}
+            if (targetVol != null && currentVol != targetVol) {
+                spk.setVolume(targetVol as Integer)
+                restoredVolumes << [id: spk.id, vol: currentVol]
+                volumeChanged = true
             }
-            
-            if (settings.enableChime && settings.chimeUrl && !fastTrack && spk.hasCommand("playTrack")) {
-                try { spk.playTrack(settings.chimeUrl); pauseExecution(1500) } catch(Exception ce) {}
-            }
-            
+        } catch (Exception ve) {}
+    }
+    
+    // Single Global Pause for volume hardware to catch up
+    if (padSecs > 0 && !fastTrack) {
+        pauseExecution(padSecs * 1000)
+    } else if (volumeChanged) {
+        if (!fastTrack) pauseExecution(1000) else pauseExecution(50)
+    }
+
+    // --- STAGE 2: PRE-SPEECH CHIME (Simultaneous) ---
+    def chimePlayed = false
+    if (settings.enableChime && settings.chimeUrl && !fastTrack) {
+        speakers.each { spk ->
+            try {
+                if (spk.hasCommand("playTrack")) {
+                    spk.playTrack(settings.chimeUrl)
+                    chimePlayed = true
+                }
+            } catch(Exception ce) {}
+        }
+    }
+    
+    // Single Global Pause for chime file to play
+    if (chimePlayed) pauseExecution(1500)
+    
+    // --- STAGE 3: SPEECH (Simultaneous) ---
+    speakers.each { spk ->
+        try {
             spk.speak(finalMsg)
-            
-            if (currentVol != null && targetVol != null && currentVol != targetVol) {
-                // FIXED: Adjusted to 7 chars/sec + chime allowance if needed
-                def volDelay = Math.max(10, (finalMsg.length() / 7).toInteger() + (fastTrack ? 6 : 10))
-                runIn(volDelay, "restoreVolumeTask", [data: [speakerId: spk.id, oldVol: currentVol], overwrite: false])
-            }
         } catch (Exception e) {}
     }
     
-    // --- TIMING ENGINE UPGRADE ---
-    // 1. Calculate length of the spoken message
-    def speechDuration = Math.max(6, (finalMsg.length() / 7).toInteger()) * 1000
-    
-    // 2. IMPORTANT: If we played a chime, add 2.5 seconds to the total duration
-    // This prevents the next message in the queue from interrupting the current one.
-    if (settings.enableChime && !fastTrack) {
-        speechDuration += 2500
+    // --- STAGE 4: RESTORE TASKS ---
+    if (restoredVolumes.size() > 0) {
+        def volDelay = Math.max(10, (finalMsg.length() / 7).toInteger() + (fastTrack ? 6 : 10))
+        // Calls the new restoreMultiVolumeTask
+        runIn(volDelay, "restoreMultiVolumeTask", [data: [volumes: restoredVolumes], overwrite: false])
     }
     
+    def speechDuration = Math.max(6, (finalMsg.length() / 7).toInteger()) * 1000
+    if (chimePlayed) speechDuration += 2500
+    
     if (mediaToResume.size() > 0) {
-        // Increased buffer to +6 seconds for natural music fade-in
         def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 6
         runIn(resumeDelay, "restoreMediaTask", [data: [resumeList: mediaToResume.collect { [id: it.dev.id, cmd: it.cmd] }], overwrite: false])
     }
@@ -2013,6 +2199,18 @@ def restoreVolumeTask(data) {
         def spk = getAllSpeakers().find { it.id == id }
         if (spk && vol != null) { try { spk.setVolume(vol as Integer) } catch(Exception e) {} }
         state.originalVolumes.remove(id)
+    }
+}
+
+def restoreMultiVolumeTask(data) {
+    def vols = data.volumes ?: []
+    def allSpks = getAllSpeakers()
+    vols.each { item ->
+        def spk = allSpks.find { it.id == item.id }
+        if (spk && item.vol != null) { 
+            try { spk.setVolume(item.vol as Integer) } catch(Exception e) {} 
+        }
+        state.originalVolumes.remove(item.id)
     }
 }
 
@@ -3180,23 +3378,49 @@ def executeGoodMorningSequence(data) {
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
     
     def targetSpeaker = settings["roomSpeaker_${rNum}"]
-    // THE FIX: Fallback to Global Volume, not a broken variable
     def targetVol = settings["roomVolumeGM_${rNum}"] != null ? settings["roomVolumeGM_${rNum}"] : settings.globalVolume
     
-    if (!targetSpeaker && globalIndoorSpeaker) { targetSpeaker = globalIndoorSpeaker; targetVol = globalVolume }
+    def allSpeakers = []
+    if (targetSpeaker) allSpeakers << targetSpeaker
     
-    if (targetSpeaker) {
+    // --- SIMULTANEOUS GLOBAL ROUTING ---
+    if (settings["roomGlobalMorning_${rNum}"] && globalIndoorSpeaker) {
+        allSpeakers.addAll([globalIndoorSpeaker].flatten().findAll { it != null })
+    }
+    
+    // Failsafe if no room speaker was set
+    if (allSpeakers.size() == 0 && globalIndoorSpeaker) { 
+        allSpeakers.addAll([globalIndoorSpeaker].flatten().findAll { it != null })
+        targetVol = globalVolume 
+    }
+    
+    // Strictly filter out duplicates in case the Master Bedroom is also in the Global list
+    allSpeakers = allSpeakers.flatten().findAll { it != null }.unique { it.id }
+    
+    if (allSpeakers.size() > 0) {
         def finalMsg = buildRoomGreeting(rNum, "Good Morning", data)
-        enqueueTTS(targetSpeaker, finalMsg, targetVol, 4)
+        enqueueTTS(allSpeakers, finalMsg, targetVol, 4)
         addToHistory("ROOM GREETING: Good Morning sequence triggered for ${rName}. Queued: '${finalMsg}'")
     }
 }
 
 def testRoomGreeting(rNum, type, isNewArrival = false) {
     ensureStateMaps()
-    // Ensure rNum is treated as an Integer for reliable settings lookups
     def roomIdx = rNum.toInteger()
-    def targetSpeaker = settings["roomSpeaker_${roomIdx}"] ?: globalIndoorSpeaker
+    def targetSpeaker = settings["roomSpeaker_${roomIdx}"]
+    
+    def allSpeakers = []
+    if (targetSpeaker) allSpeakers << targetSpeaker
+    
+    if (type == "Good Morning" && settings["roomGlobalMorning_${roomIdx}"] && globalIndoorSpeaker) {
+        allSpeakers.addAll([globalIndoorSpeaker].flatten().findAll { it != null })
+    }
+    
+    if (allSpeakers.size() == 0 && globalIndoorSpeaker) {
+        allSpeakers.addAll([globalIndoorSpeaker].flatten().findAll { it != null })
+    }
+    
+    allSpeakers = allSpeakers.flatten().findAll { it != null }.unique { it.id }
     
     def vol = null
     if (type == "Good Morning") {
@@ -3205,13 +3429,9 @@ def testRoomGreeting(rNum, type, isNewArrival = false) {
         vol = settings["roomVolumeGN_${roomIdx}"] != null ? settings["roomVolumeGN_${roomIdx}"] : settings.globalVolume
     }
     
-    if (targetSpeaker) {
-        // This now calls buildRoomGreeting which includes the Grammar Polisher regex
+    if (allSpeakers.size() > 0) {
         def finalMsg = buildRoomGreeting(roomIdx, type, [isNewArrival: isNewArrival, isTest: true])
-        
-        enqueueTTS(targetSpeaker, finalMsg, vol, 1)
-        
-        // Log the final polished result so you can see the punctuation fixes in the console
+        enqueueTTS(allSpeakers, finalMsg, vol, 1)
         log.info "TESTING ${type.toUpperCase()} (${settings["roomName_${roomIdx}"]}): '${finalMsg}' at Volume: ${vol}"
     } else {
         log.warn "Cannot test Room Greeting - no speaker assigned for Room ${roomIdx}."
@@ -3750,6 +3970,8 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
     else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
     else if (btn == "btnClearNotes") clearNotesEndpoint()
+    else if (btn.startsWith("btnTestHeadedHome_")) executeHeadedHome(btn.split("_")[1].toInteger())    
+    else if (btn == "btnTestHealth") executeHealthWindow(true)    
 }
 
 
@@ -4137,18 +4359,30 @@ def serveNotesPage() {
             state.butlerNotes = []
         }
 
-        // --- 1. DYNAMICALLY BUILD PRESENCE CARDS (BULLETPROOF LOGIC) ---
+        // --- 1. DYNAMICALLY BUILD PRESENCE CARDS WITH MANUAL OVERRIDE ---
         def presenceHtml = "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>"
         if (trackedNames.size() > 0) {
             trackedNames.each { u ->
-                // FIX: Check for both boolean and string "true", and ensure they haven't departed since arriving
                 def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[u] == true || state.hasArrivedToday[u] == "true")
                 def departed = state.hasDepartedToday != null && (state.hasDepartedToday[u] == true || state.hasDepartedToday[u] == "true")
                 def isHome = arrived && !departed
                 
                 def statusColor = isHome ? "#27ae60" : "#c0392b"
                 def statusIcon = isHome ? "🏠 Home" : "🚗 Away"
-                presenceHtml += "<div style='background-color: #1e1e1e; padding: 10px; border-radius: 4px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px;'><b>${u}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
+                
+                presenceHtml += "<div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; justify-content: space-between; align-items: center;'>"
+                presenceHtml += "<div><b>${u}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
+                
+                // If they are home, show the manual "Mark Away" button
+                if (isHome) {
+                    presenceHtml += """
+                        <form action="${apiUrl}/presence/depart?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                            <input type="hidden" name="targetUser" value="${u}">
+                            <button type="submit" style="padding: 6px 10px; margin: 0; width: auto; font-size: 12px; background-color: #c0392b; color: #fff; border-radius: 4px;">Mark Away</button>
+                        </form>
+                    """
+                }
+                presenceHtml += "</div>"
             }
         } else {
             presenceHtml += "<p style='color:#aaa; font-style:italic;'>No presence users configured.</p>"
@@ -4193,10 +4427,30 @@ def serveNotesPage() {
                 <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #3498db; background: #222;'>
                     <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
                     <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                        <input type="hidden" name="dummyData" value="trigger">
                         <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
                     </form>
                 </div>
             """
+        }
+
+        // --- 5. DYNAMICALLY BUILD QUICK REPLIES ---
+        def quickReplyHtml = ""
+        def numQR = settings.numQuickReplies ? settings.numQuickReplies as Integer : 0
+        if (numQR > 0) {
+            quickReplyHtml += "<h3 style='margin-top: 10px; margin-bottom: 10px; color:#f39c12; border-bottom: 2px solid #333; padding-bottom: 5px;'>⚡ Quick Replies (Outdoor)</h3>"
+            quickReplyHtml += "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 35px;'>"
+            for (int i = 1; i <= numQR; i++) {
+                def qrName = settings["quickReplyName_${i}"] ?: "Reply ${i}"
+                quickReplyHtml += """
+                    <form action="${apiUrl}/reply/quick?access_token=${state.accessToken}" method="POST" style="margin:0; flex: 1 1 calc(50% - 10px);">
+                        <input type="hidden" name="dummyData" value="trigger">
+                        <input type="hidden" name="replyId" value="${i}">
+                        <button type="submit" style="background-color: #f39c12; color: #fff; padding: 10px; border-radius: 6px; font-size: 14px; width: 100%; height: 100%;">${qrName}</button>
+                    </form>
+                """
+            }
+            quickReplyHtml += "</div>"
         }
 
         // --- MAIN HTML BUILDER ---
@@ -4215,12 +4469,14 @@ def serveNotesPage() {
                 /* Chat-style inputs */
                 textarea { width: 100%; height: 80px; padding: 15px; margin-bottom: 15px; border: 1px solid #333; border-radius: 12px; box-sizing: border-box; font-family: inherit; font-size: 16px; background-color: #222; color: #ffffff; resize: none; }
                 textarea:focus { outline: none; border-color: #1f618d; }
-                select, input[type="time"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
+                select, input[type="time"], input[type="text"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
                 
                 /* Buttons */
                 button { background-color: #1f618d; color: white; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; font-weight: 600; transition: background 0.2s; }
                 button:hover { background-color: #1a5276; }
                 button.clear { background-color: transparent; color: #c0392b; border: 1px solid #c0392b; margin-top: 10px; }
+                button.danger { background-color: #c0392b; }
+                button.danger:hover { background-color: #922b21; }
                 
                 /* Accordion for Dashboard features */
                 details { background: #1a1a1a; padding: 15px; border-radius: 8px; margin-top: 40px; border: 1px solid #333; }
@@ -4240,11 +4496,28 @@ def serveNotesPage() {
         </head>
         <body>
             <div class="container">
-                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Direct Line</h2>
-                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Dispatch messages via the Voice Butler</p>
+                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Estate Command Deck</h2>
+                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Manage messaging, context, and live broadcasts.</p>
 
+                ${quickReplyHtml}
+
+                <h3 style='margin-top: 10px; margin-bottom: 10px; color:#e74c3c; border-bottom: 2px solid #333; padding-bottom: 5px;'>🎙️ Live Intercom (PA)</h3>
+                <form action="${apiUrl}/pa/announce?access_token=${state.accessToken}" method="POST" style="margin-bottom: 35px;">
+                    <textarea name="paText" placeholder="Type a message to be announced immediately..." required style="height: 60px; border-color: #555;"></textarea>
+                    
+                    <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
+                    <select name="paRoute">
+                        <option value="Global Indoor Speaker Only">All Indoor Speakers</option>
+                        <option value="Outdoor Speaker Only">Outdoor Speaker</option>
+                        <option value="Outdoor + Global Indoor">Everywhere (Indoor + Outdoor)</option>
+                    </select>
+
+                    <button type="submit" class="danger">Broadcast Now</button>
+                </form>
+
+                <h3 style='margin-top: 10px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📝 Schedule a Note</h3>
                 <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
-                    <textarea name="noteText" placeholder="What would you like the Butler to say?..." required></textarea>
+                    <textarea name="noteText" placeholder="What would you like the Butler to say later?..." required></textarea>
                     
                     <div style="display: flex; gap: 10px;">
                         <div style="flex: 1;">
@@ -4275,10 +4548,10 @@ def serveNotesPage() {
                         <input type="time" name="deliveryTime">
                     </div>
 
-                    <button type="submit">Dispatch Message</button>
+                    <button type="submit">Queue Message</button>
                 </form>
 
-                """)
+        """)
         
         if (state.butlerNotes && state.butlerNotes.size() > 0) {
             html.append("<div class='note-list'><h4 style='margin-bottom: 10px; color:#aaa; font-size: 13px; text-transform: uppercase;'>Pending Deliveries</h4>")
@@ -4336,10 +4609,15 @@ def serveNotesPage() {
     }
 }
 
+def getRedirectHtml() {
+    // FIX: Using ../notes tells the browser to go up one directory level from /wifi/announce back to the main /notes page
+    return """<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=../notes?access_token=${state.accessToken}"></head><body style="background-color:#0d0d0d;color:#fff;text-align:center;padding-top:50px;font-family:sans-serif;"><h3>Executing command...</h3></body></html>"""
+}
+
 def addNoteEndpoint() {
     try {
         ensureStateMaps()
-        def bodyText = request.body ?: ""
+        def bodyText = request?.body ? request.body.toString() : ""
         def newNote = [id: java.util.UUID.randomUUID().toString(), addedAt: new Date().time]
         
         def params = bodyText.split('&').collectEntries {
@@ -4376,7 +4654,7 @@ def addNoteEndpoint() {
         log.warn "Failed to parse or add note: ${e}" 
     }
     
-    return serveNotesPage()
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
 
 def clearNotesEndpoint() {
@@ -4385,7 +4663,7 @@ def clearNotesEndpoint() {
         addToHistory("NOTES: All notes cleared via web portal.")
     } catch(Exception e) {}
     
-    return serveNotesPage()
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
 
 def formatNotesForReading() {
@@ -4814,19 +5092,23 @@ def directorySwitchHandler(evt) {
 def announceDirectoryEndpoint() {
     try {
         ensureStateMaps()
-        def bodyText = request.body ?: ""
+        def bodyText = request?.body ? request.body.toString() : ""
         def params = bodyText.split('&').collectEntries {
             def parts = it.split('=')
             [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
         }
         def cId = params.contactId ? params.contactId.toInteger() : 0
         if (cId > 0) {
-            executeDirectoryAnnouncement(cId)
+            runIn(1, "asyncDirectoryExecution", [data: [id: cId], overwrite: false])
         }
     } catch (Exception e) {
         log.warn "Failed to trigger directory from web portal: ${e}"
     }
-    return serveNotesPage() // Refresh the page instantly
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def asyncDirectoryExecution(data) {
+    executeDirectoryAnnouncement(data.id as Integer)
 }
 
 // --- CENTRAL DIRECTORY ANNOUNCEMENT ENGINE ---
@@ -4873,7 +5155,7 @@ def cleanDeviceName(String name) {
 def updateAgendaEndpoint() {
     try {
         ensureStateMaps()
-        def bodyText = request.body ?: ""
+        def bodyText = request?.body ? request.body.toString() : ""
         def params = bodyText.split('&').collectEntries {
             def parts = it.split('=')
             [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
@@ -4884,60 +5166,278 @@ def updateAgendaEndpoint() {
         def newAgenda = params.agendaText ?: ""
 
         if (rNum && dayStr) {
-            // This command dynamically overwrites the Hubitat input setting without opening the app!
             app.updateSetting("roomAgenda${dayStr}_${rNum}", [type: "text", value: newAgenda])
             if (settings.enableDebug) log.info "PORTAL: Agenda updated for Room ${rNum} on ${dayStr} to: ${newAgenda}"
         }
     } catch (Exception e) {
         log.warn "Failed to update agenda from web portal: ${e}"
     }
-    return serveNotesPage() // Refresh the page instantly to show success
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
 
 // --- WI-FI ANNOUNCEMENT ENGINE ---
 def announceWifiEndpoint() {
     try {
         ensureStateMaps()
-        executeWifiAnnouncement()
+        // Force Hubitat to clear the request buffer so it doesn't hang
+        def safeBody = request?.body ? request.body.toString() : "" 
+        
+        runIn(1, "executeWifiAnnouncement", [overwrite: false])
     } catch (Exception e) {
-        log.warn "Failed to trigger Wi-Fi announcement from portal: ${e}"
+        log.warn "Wi-Fi Portal Error: ${e}"
     }
-    return serveNotesPage() // Refresh the page instantly
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
 
 def executeWifiAnnouncement() {
-    ensureStateMaps() // Ensure all maps exist before proceeding
+    ensureStateMaps()
     
     def ssid = settings.wifiSSID ?: "Unknown Network"
-    def pwd = settings.wifiPassword ?: "Unknown Password"
+    def rawPwd = settings.wifiPassword ?: "Unknown Password"
     
-    // Safety check for present users
+    // Translate special characters into spoken words so the TTS XML parser doesn't crash
+    def spokenPwd = rawPwd.replace("&", " ampersand ")
+                          .replace("<", " less than ")
+                          .replace(">", " greater than ")
+                          .replace("\"", " quote ")
+                          .replace("'", " apostrophe ")
+                          .replace("%", " percent ")
+                          .replace("\$", " dollar sign ")
+                          .replace("@", " at symbol ")
+                          .replace("!", " exclamation point ")
+                          .replace("?", " question mark ")
+                          .replace("*", " asterisk ")
+                          .replace("#", " hashtag ")
+                          .replace("-", " dash ")
+                          .replace("_", " underscore ")
+
     def presentFolks = []
-    try {
-        presentFolks = getPresentUsers()
-    } catch (e) {
-        if (settings.enableDebug) log.warn "WIFI: Presence check failed, defaulting to empty list."
-    }
-    
+    try { presentFolks = getPresentUsers() } catch (e) {}
     def isAnyoneHome = presentFolks.size() > 0
 
-    def msg = "%interruption%, the guest Wi-Fi network is ${ssid}, and the password is: ${pwd}."
+    def msg = "%interruption%, the guest Wi-Fi network is ${ssid}, and the password is: ${spokenPwd}."
     if (settings.notificationDevice && isAnyoneHome) {
-        msg += " I have also sent these details to your mobile device for easy copying."
+        msg += " I have also sent the exact details to your mobile device for easy copying."
     }
 
-    // Determine volume
     def targetVol = settings.wifiVolume != null ? settings.wifiVolume : settings.globalVolume
     
-    // Execute routing
+    // Execute routing with the safe spoken password
     executeRoutedTTS(applyDynamicVars(msg), settings.wifiRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
 
-    // Send Push
+    // Push the raw, unedited password to the phones
     if (settings.notificationDevice && isAnyoneHome) {
-        def pushMsg = "📶 GUEST WI-FI\nNetwork: ${ssid}\nPassword: ${pwd}"
+        def pushMsg = "📶 GUEST WI-FI\nNetwork: ${ssid}\nPassword: ${rawPwd}"
         settings.notificationDevice.each { dev ->
             try { dev.deviceNotification(pushMsg) } catch(e) {}
         }
     }
     addToHistory("WIFI: Network details announced and pushed via portal.")
+}
+
+// --- LIVE INTERCOM (PA) ENGINE ---
+def instantPAEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def msg = params.paText ?: ""
+        def route = params.paRoute ?: "Global Indoor Speaker Only"
+        
+        if (msg.trim().length() > 0) {
+            runIn(1, "asyncPAExecution", [data: [msg: msg, route: route], overwrite: false])
+        }
+    } catch (Exception e) {
+        log.warn "Portal PA Error: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def asyncPAExecution(data) {
+    executeRoutedTTS(applyDynamicVars(data.msg), data.route, settings.globalVolume, settings.outdoorVolume, 1, false)
+    addToHistory("LIVE PA: Broadcast dispatched to ${data.route}. Queued: '${data.msg}'")
+}
+
+// --- MANUAL DEPARTURE OVERRIDE ---
+def manualDepartEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def target = params.targetUser ?: ""
+        if (target && state.hasArrivedToday[target]) {
+            state.hasArrivedToday.remove(target)
+            state.hasDepartedToday[target] = true
+            state.lastDepartureTime[target] = new Date().time
+            state.resetReasons[target] = "Marked Away via Portal"
+            addToHistory("PORTAL: ${target} was manually marked as departed.")
+        }
+    } catch (Exception e) {
+        log.warn "Portal Depart Error: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+// --- QUICK REPLY ENGINE ---
+def quickReplyEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def rId = params.replyId ? params.replyId.toInteger() : 0
+        if (rId > 0) {
+            runIn(1, "asyncQuickReplyExecution", [data: [id: rId], overwrite: false])
+        }
+    } catch (Exception e) {
+        log.warn "Failed to trigger Quick Reply from web portal: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def asyncQuickReplyExecution(data) {
+    def idx = data.id as Integer
+    def msg = settings["quickReplyText_${idx}"]
+    
+    if (msg) {
+        // --- CANCEL AUTOMATED RESPONSES ---
+        // This stops the Butler from playing the "No Answer" message since you replied
+        unschedule("playDaytimeFollowUp")
+        
+        def finalMsg = applyDynamicVars(msg)
+        def targetVol = settings.outdoorVolume ?: settings.globalVolume
+        
+        if (outdoorSpeaker) {
+            // Priority 1 + FastTrack (true) to skip the chime and answer them instantly
+            enqueueTTS(outdoorSpeaker, finalMsg, targetVol, 1, true)
+            addToHistory("QUICK REPLY: Portal button '${settings["quickReplyName_${idx}"]}' triggered. Queued: '${finalMsg}'")
+        } else {
+            log.warn "Quick Reply failed: No outdoor speaker is assigned in the app."
+        }
+    }
+}
+
+def scheduleHealthWindow() {
+    if (!settings.enableHealthWindow || !settings.healthWindowStart || !settings.healthWindowEnd) return
+    try {
+        def startCal = Calendar.getInstance(location.timeZone)
+        startCal.setTime(toDateTime(settings.healthWindowStart))
+        def startMins = (startCal.get(Calendar.HOUR_OF_DAY) * 60) + startCal.get(Calendar.MINUTE)
+
+        def endCal = Calendar.getInstance(location.timeZone)
+        endCal.setTime(toDateTime(settings.healthWindowEnd))
+        def endMins = (endCal.get(Calendar.HOUR_OF_DAY) * 60) + endCal.get(Calendar.MINUTE)
+
+        if (endMins <= startMins) endMins += 1440
+
+        def diff = endMins - startMins
+        if (diff > 0) {
+            def randomMins = startMins + new Random().nextInt(diff)
+            def runCal = Calendar.getInstance(location.timeZone)
+            runCal.set(Calendar.HOUR_OF_DAY, (randomMins / 60).toInteger() % 24)
+            runCal.set(Calendar.MINUTE, randomMins % 60)
+            runCal.set(Calendar.SECOND, 0)
+
+            // Ensure it only schedules if the random time hasn't already passed today
+            if (runCal.getTime().time > new Date().time) {
+                runOnce(runCal.getTime(), "executeHealthWindow", [overwrite: true])
+                if (settings.enableDebug) log.debug "SYSTEM: Scheduled Health Window Reminder for ${runCal.getTime().format('h:mm a', location.timeZone)}"
+            }
+        }
+    } catch (e) { log.warn "Failed to schedule health window: ${e}" }
+}
+
+def executeHealthWindow(isTest = false) {
+    ensureStateMaps()
+    def msg = buildGlobalHealthReport(!isTest) // Pass false if it's a test to ignore presence checks
+
+    if (!msg) {
+        if (isTest) executeRoutedTTS("There are currently no overdue health appointments for anyone present in the home.", settings.healthRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.healthVolume ?: settings.globalVolume, 2)
+        return
+    }
+
+    // Memory filter: 168 hours = 7 days. The Butler will only nag you once a week.
+    def filteredMsg = checkAndRegisterFact(msg, 168, "health_window_global", isTest)
+    
+    if (filteredMsg) {
+        def targetVol = settings.healthVolume != null ? settings.healthVolume : settings.globalVolume
+        executeRoutedTTS(applyDynamicVars(filteredMsg), settings.healthRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+        addToHistory("HEALTH: Executed daytime window reminder.")
+    } else if (isTest) {
+        executeRoutedTTS("The health reminder is currently in its 7-day cooldown period. It will be suppressed until next week.", settings.healthRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.healthVolume ?: settings.globalVolume, 2)
+    }
+}
+
+def buildGlobalHealthReport(boolean checkPresence = true) {
+    if (!settings.numHealthProfiles || settings.numHealthProfiles == 0) return ""
+    ensureStateMaps()
+    def now = new Date().time
+    def sixMonthsMs = 15768000000L
+    def oneYearMs = 31536000000L
+
+    def presentUsers = checkPresence ? getPresentUsers() : []
+    def userNeeds = [:]
+
+    // 1. Gather all overdue appointments for users currently home
+    for (int i = 1; i <= settings.numHealthProfiles; i++) {
+        def hUser = settings["healthUser_${i}"]
+        if (!hUser) continue
+
+        def isHome = !checkPresence || presentUsers.any { it.equalsIgnoreCase(hUser) || it.equalsIgnoreCase(applyAlias(hUser)) }
+        if (!isHome) continue
+
+        def dispName = applyAlias(hUser)
+        def needs = []
+
+        if (settings["lastDental_${i}"]) {
+            try { if (now - new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastDental_${i}"]).time > sixMonthsMs) needs << "a dental appointment" } catch(e){}
+        }
+        if (settings["lastMedical_${i}"]) {
+            try { if (now - new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastMedical_${i}"]).time > oneYearMs) needs << "an annual physical" } catch(e){}
+        }
+        if (settings["lastVision_${i}"]) {
+            try { if (now - new java.text.SimpleDateFormat("yyyy-MM-dd").parse(settings["lastVision_${i}"]).time > oneYearMs) needs << "an eye exam" } catch(e){}
+        }
+
+        if (needs.size() > 0) userNeeds[dispName] = needs
+    }
+
+    if (userNeeds.size() == 0) return ""
+
+    // 2. Group the data by "Need" instead of by "User" for cleaner grammar
+    def needsToUsers = [:]
+    userNeeds.each { name, needs ->
+        needs.each { n ->
+            if (!needsToUsers[n]) needsToUsers[n] = []
+            needsToUsers[n] << name
+        }
+    }
+
+    // 3. Assemble the sentences dynamically based on how many people need it
+    def finalSentences = []
+    needsToUsers.each { need, names ->
+        def namesStr = ""
+        if (names.size() == 1) namesStr = names[0]
+        else if (names.size() == 2) namesStr = "${names[0]} and ${names[1]}"
+        else namesStr = "${names[0..-2].join(', ')}, and ${names.last()}"
+
+        def pronoun = "you"
+        if (names.size() == 2) pronoun = "both of you"
+        else if (names.size() >= 3) pronoun = "all ${names.size()} of you"
+
+        finalSentences << "${namesStr}, ${pronoun} require ${need}."
+    }
+
+    return "%interruption%, as a wellness reminder: " + finalSentences.join(" ")
 }
