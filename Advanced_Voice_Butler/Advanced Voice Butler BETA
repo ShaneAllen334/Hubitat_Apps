@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.10
+ * Version 2.0
  */
 definition(
     name: "Advanced Voice Butler",
@@ -212,9 +212,13 @@ def mainPage() {
             // --- Incident Log ---
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Butler Incident Log</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Active Count</th><th style='padding: 8px;'>Last (Morning Report)</th></tr>"
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${state.lastNightMotionCount ?: 0}</td></tr>"
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${state.lastAwayDoorbellCount ?: 0}</td></tr>"
+            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Events Tracked</th><th style='padding: 8px;'>Status</th></tr>"
+            
+            def nmStatus = state.pendingMorningReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${nmStatus}</td></tr>"
+            
+            def adStatus = state.pendingArrivalReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${adStatus}</td></tr>"
             statusText += "</table>"
             
             // --- Presence ---
@@ -537,6 +541,19 @@ def mainPage() {
             }
         }
         
+        section("Smart Package Detection (UniFi Protect)", hideable: true, hidden: true) {
+            input "enableSmartPackage", "bool", title: "Enable Smart Package Detection?", defaultValue: false, submitOnChange: true
+            if (enableSmartPackage) {
+                paragraph "<i>Using a UniFi Protect or similar smart camera, the Butler will announce when a package is detected.</i>"
+                input "packageCameraDevice", "capability.sensor", title: "Smart Camera Device", required: true
+                input "packageAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType", required: true
+                input "packageRoutingMode", "enum", title: "Indoor Audio Routing", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "packageVolume", "number", title: "Indoor Announcement Volume (0-100)", required: false
+                input "packageOutdoorMessage", "bool", title: "Play a 'Thank You' message on the Outdoor Speaker?", defaultValue: true
+                input "btnTestPackage", "button", title: "▶️ Test Package Announcement"
+            }
+        }
+        
         section("Organic Breaking News Intercept", hideable: true, hidden: true) {
             input "enableBreakingNews", "bool", title: "Enable Organic News Intercept?", defaultValue: false, submitOnChange: true
             if (enableBreakingNews) {
@@ -624,6 +641,13 @@ def mainPage() {
                     input "depType_${i}", "enum", title: "Profile Type", options: ["Work", "School", "General"], defaultValue: "Work", submitOnChange: true
                     input "depSwitch_${i}", "capability.switch", title: "Context Switch (e.g. Work Day)", required: false
                     input "depSickSwitch_${i}", "capability.switch", title: "Sick Day Override Switch", required: false
+                    // --- NEW: COMMUTE TIME SETTINGS ---
+                    input "depEnableTraffic_${i}", "bool", title: "Enable Commute/Traffic Time?", defaultValue: false, submitOnChange: true
+                    if (settings["depEnableTraffic_${i}"]) {
+                        input "depDestination_${i}", "text", title: "Destination Address (Work/School)", required: true, description: "e.g., 123 Office Park, City, State"
+                        paragraph "<i>Note: Requires Google Maps API Key to be configured in the Calendar section.</i>"
+                    }
+                    // ----------------------------------
                     input "depModes_${i}", "mode", title: "Allowed House Modes", multiple: true, required: false
                     input "depTimeStart_${i}", "time", title: "Departure Window Start", required: false
                     input "depTimeEnd_${i}", "time", title: "Departure Window End", required: false
@@ -931,6 +955,65 @@ def mainPage() {
             paragraph "<div style='${prevStyle}'><b>Live Special Events Preview:</b><br><b>Today's Holiday:</b> <i>${holText}</i><br><b>Birthday Countdown Format:</b> <i>${bdayText.replace('%days%', '12').replace('%name%', 'Test User')}</i></div>"
         }
         
+        section("Local Farmers Market & Butcher Scout", hideable: true, hidden: true) {
+            input "enableMarketReminder", "bool", title: "Enable Farmers Market Reminders?", defaultValue: false, submitOnChange: true
+            if (enableMarketReminder) {
+                paragraph "<i>The Butler will announce when the local market opens during the specified season.</i>"
+                input "marketName", "text", title: "Name of the Farmers Market", defaultValue: "the Farmers Market", required: true
+                
+                def months = ["01":"January", "02":"February", "03":"March", "04":"April", "05":"May", "06":"June", "07":"July", "08":"August", "09":"September", "10":"October", "11":"November", "12":"December"]
+                input "marketSeasonStart", "enum", title: "Season Start Month", options: months, defaultValue: "05", required: true
+                input "marketSeasonEnd", "enum", title: "Season End Month", options: months, defaultValue: "09", required: true
+                
+                input "marketDays", "enum", title: "Operating Days", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: true
+                input "marketOpenTime", "time", title: "Opening Time (Announcement Time)", required: true
+                
+                paragraph "<hr>"
+                input "enableButcherReminder", "bool", title: "Append Local Butcher Recommendations?", defaultValue: false, submitOnChange: true
+                if (enableButcherReminder) {
+                    input "butcherName", "text", title: "Name of the Butcher", defaultValue: "the local butcher", required: true
+                }
+                
+                paragraph "<hr>"
+                input "marketRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "marketVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "btnTestMarket", "button", title: "▶️ Test Market Audio"
+            }
+        }
+        
+        section("Cinema & Streaming Scout (Friday Premieres)", hideable: true, hidden: true) {
+            input "enableCinemaScout", "bool", title: "Enable Friday Cinema Scout?", defaultValue: false, submitOnChange: true
+            if (enableCinemaScout) {
+                paragraph "<i>Every Friday evening, the Butler will ask Gemini for the latest theatrical releases and Netflix arrivals to kick off the weekend.</i>"
+                input "cinemaTime", "time", title: "Announcement Time (e.g., 5:00 PM)", required: true
+                input "cinemaRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "cinemaVolume", "number", title: "Announcement Volume (0-100)", required: false
+                
+                paragraph "<b>🧠 Generative AI Integration</b>"
+                input "geminiApiKey", "text", title: "Google Gemini API Key", description: "Get a free key from Google AI Studio", required: true
+                
+                input "btnTestCinema", "button", title: "▶️ Test AI Cinema Scout"
+            }
+        }
+        
+        section("Grocery Day Scout (Weekly Ad Tracker)", hideable: true, hidden: true) {
+            input "enableGroceryScout", "bool", title: "Enable Grocery Day Scout?", defaultValue: false, submitOnChange: true
+            if (enableGroceryScout) {
+                paragraph "<i>The Butler will actively search live weekly ads for Aldi, Publix, and Walmart, then notify you of the best deals based on your preferences.</i>"
+                
+                input "groceryDay", "enum", title: "Which Day to Announce?", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], required: true, defaultValue: "Wednesday"
+                input "groceryTime", "time", title: "Announcement Time", required: true
+                
+                paragraph "<b>🛒 Deal Preferences</b>"
+                input "groceryPrefs", "enum", title: "What type of deals do you want?", options: ["Meats & Proteins", "Organic Produce", "Fresh Fruits & Veggies", "Pantry Staples", "Snacks & Drinks", "Household Goods", "BOGO Deals", "Everything"], multiple: true, required: true, defaultValue: ["Everything"]
+
+                input "groceryRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "groceryVolume", "number", title: "Announcement Volume (0-100)", required: false
+                
+                input "btnTestGrocery", "button", title: "▶️ Test Grocery Scout"
+            }
+        }
+        
         section("User Aliases (Secret Identities)", hideable: true, hidden: true) {
             input "numAliases", "number", title: "Number of Aliases (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
             if (numAliases > 0) {
@@ -1151,6 +1234,16 @@ def initialize() {
         scheduleHealthWindow() // Run on init to queue today's check
     }
     
+    // --- Farmers Market Scheduler ---
+    if (settings.enableMarketReminder && settings.marketOpenTime) {
+        schedule(settings.marketOpenTime, "executeMarketReminder")
+    }
+    
+    // --- Cinema & Streaming Scheduler ---
+    if (settings.enableCinemaScout && settings.cinemaTime) {
+        schedule(settings.cinemaTime, "executeCinemaScout")
+    }
+    
     // --- NEW: Quick Exit (Away Mode Farewell) ---
     if (settings.enableQuickExit && settings.quickExitDoors) {
         subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
@@ -1171,6 +1264,11 @@ def initialize() {
         if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, unifiProtectHandler) }
     }
     
+    // --- NEW: SMART PACKAGE SUBSCRIPTION ---
+    if (settings.enableSmartPackage && settings.packageCameraDevice && settings.packageAttribute) {
+        subscribe(settings.packageCameraDevice, settings.packageAttribute, unifiPackageHandler)
+    }
+    
     // Smart Lock & Presence Arrival Handlers
     if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
     def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
@@ -1178,6 +1276,11 @@ def initialize() {
         if (settings["fallbackPresence_${i}"]) {
             subscribe(settings["fallbackPresence_${i}"], "presence.present", presenceFallbackHandler)
         }
+    }
+    
+    // --- Grocery Scout Scheduler ---
+    if (settings.enableGroceryScout && settings.groceryTime && settings.groceryDay) {
+        schedule(settings.groceryTime, "executeGroceryScout")
     }
     
     // Household Routine Handlers (Mail, Meals, Departures, Screen Time)
@@ -1576,13 +1679,20 @@ def calendarTimeHandler(evt, passedTitle = null) {
         // 1. Schedule standard intervals
         def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
         intervals.each { interval ->
-            def offsetMs = (interval == "1 Hour" ? 3600000 : interval == "30 Minutes" ? 1800000 : 900000)
+            def offsetMs = 0
+            if (interval == "3 Hours") offsetMs = 3 * 3600000
+            else if (interval == "2 Hours") offsetMs = 2 * 3600000
+            else if (interval == "1 Hour") offsetMs = 3600000
+            else if (interval == "30 Minutes") offsetMs = 30 * 60000
+            else if (interval == "15 Minutes") offsetMs = 15 * 60000
+            
             def alertTime = eventEpoch - offsetMs
-            if (alertTime > now) runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
+            if (alertTime > now) {
+                runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
+            }
         }
 
         // 2. NEW: THE PROACTIVE TRAVEL CHECK
-        // Butler pings Google 1 hour before the event to see if traffic is so bad you need to leave NOW.
         def travelCheckTime = eventEpoch - 3600000 
         if (travelCheckTime > now) {
             runOnce(new Date(travelCheckTime), "executeCalendarAlert", [data: [title: title, timeStr: "Travel Check", isProactive: true], overwrite: false])
@@ -1633,7 +1743,10 @@ def executeCalendarAlert(data) {
     ensureStateMaps()
     def title = data.title
     def timeStr = data.timeStr
+    def isTest = data.isTest ?: false
     def location = state.nextEventLocation
+    
+    log.info "Voice Butler: Executing Calendar Routine for '${title}' (${timeStr})."
     
     // --- TRAVEL TIME LOGIC ---
     def travelWarning = ""
@@ -1667,7 +1780,10 @@ def executeCalendarAlert(data) {
 
     // 1. Enforce Allowed Modes
     def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
-    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+    if (!isTest && allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
+        log.info "Voice Butler: Calendar Alert for '${title}' suppressed due to restricted House Mode."
+        return
+    }
 
     def finalMsg = ""
     if (travelWarning) {
@@ -1688,7 +1804,8 @@ def executeCalendarAlert(data) {
     }
 
     executeRoutedTTS(finalMsg, settings.calRoutingMode, settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
-    addToHistory("TRAVEL CONCIERGE: ${finalMsg}")
+    def prefix = isTest ? "TEST TRAVEL CONCIERGE: " : "TRAVEL CONCIERGE: "
+    addToHistory("${prefix}${finalMsg}")
 }
 
 // --- AI HABIT & ANOMALY ENGINE ---
@@ -2173,8 +2290,13 @@ def executeTTS(item) {
     // --- STAGE 3: SPEECH (Simultaneous) ---
     speakers.each { spk ->
         try {
-            spk.speak(finalMsg)
-        } catch (Exception e) {}
+            if (spk.hasCommand("playTextAndRestore")) {
+                def targetVol = finalVol != null ? (finalVol as Integer) : (spk.currentValue("volume") as Integer)
+                spk.playTextAndRestore(finalMsg, targetVol)
+            } else {
+                spk.speak(finalMsg)
+            }
+        } catch (Exception e) { log.warn "TTS Command Error: ${e}" }
     }
     
     // --- STAGE 4: RESTORE TASKS ---
@@ -2194,6 +2316,7 @@ def executeTTS(item) {
     
     return speechDuration
 }
+
 def restoreMediaTask(data) {
     def resumeList = data.resumeList ?: []
     def allMedia = []
@@ -2333,6 +2456,18 @@ def departureHandler(evt) {
             }
             // -----------------------
             
+            // --- NEW: COMMUTE / TRAFFIC TIME ---
+            if (settings["depEnableTraffic_${idx}"] && settings["depDestination_${idx}"]) {
+                def dest = settings["depDestination_${idx}"]
+                def mins = getTravelInfo(dest)
+                if (mins != null) {
+                    def destName = settings["depType_${idx}"]?.toLowerCase() ?: "your destination"
+                    if (destName == "general") destName = "your destination"
+                    finalMsg += " Current traffic indicates it will take approximately ${mins} minutes to get to ${destName}."
+                }
+            }
+            // -----------------------------------
+            
             def delay = settings["depDelay_${idx}"] != null ? settings["depDelay_${idx}"].toInteger() : 5
             def outVol = settings["depVolume_${idx}"] ?: settings.outdoorVolume
             def rMode = settings["depRoutingMode_${idx}"] ?: "Outdoor Speaker Only"
@@ -2415,40 +2550,6 @@ def unifiProtectHandler(evt) {
     def detectStr = evt.value?.toLowerCase() ?: ""
     if (detectStr == "none" || detectStr == "waiting" || detectStr == "null" || detectStr == "") return
     
-    // --- NEW: SMART PACKAGE CONCIERGE ---
-    if (detectStr.contains("package")) {
-        // Respect the dedicated Package Tracking toggle!
-        if (settings.enableDeliveryTracking == false) {
-            if (settings.enableDebug) log.debug "GOOGLE DELIVERY: Suppressed (Package Tracking is toggled OFF)."
-            return
-        }
-        
-        if (getPresentUsers().size() == 0) {
-            stashMessage("a package was delivered to the house")
-            return
-        }
-        
-        def debounceMs = 5 * 60000 // 5 minute cooldown for packages
-        def lastPkg = state.lastPackageAlert ?: 0
-        if ((new Date().time - lastPkg) > debounceMs) {
-            state.lastPackageAlert = new Date().time
-            
-            // 1. Thank the driver outside
-            if (outdoorSpeaker) {
-                def outMsg = "Thank you for the delivery. Please leave the package right there."
-                enqueueTTS(outdoorSpeaker, outMsg, settings.outdoorVolume, 2, true)
-            }
-            
-            // 2. Alert the house inside
-            def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
-            executeRoutedTTS(applyDynamicVars(inMsg), "Global Indoor Speaker Only", settings.globalVolume, 0, 2)
-            
-            addToHistory("SMART CAMERA: Package delivery detected and announced.")
-        }
-        return
-    }
-    // ------------------------------------
-    
     // FIX: Send Smart Detection data to the Morning Report Tracker!
     countMotionHandler(evt) 
     
@@ -2482,6 +2583,46 @@ def unifiProtectHandler(evt) {
     
     // Added 'true' at the end to fast-track the alert and skip the chime
     executeRoutedTTS(randomMsg, settings.intruderRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, targetVol, 1, true)
+}
+
+def unifiPackageHandler(evt) {
+    ensureStateMaps()
+    def detectStr = evt.value?.toLowerCase() ?: ""
+    if (!detectStr.contains("package")) return
+    
+    executePackageAlert()
+}
+
+def executePackageAlert(isTest=false) {
+    ensureStateMaps()
+    if (!settings.enableSmartPackage && !isTest) return
+    
+    def presentFolks = getPresentUsers()
+    if (presentFolks.size() == 0 && !isTest) {
+        stashMessage("a package was delivered to the house")
+        return
+    }
+    
+    // 5-minute debounce to prevent camera spam
+    def debounceMs = 5 * 60000 
+    def lastPkg = state.lastPackageAlert ?: 0
+    if (!isTest && ((new Date().time - lastPkg) < debounceMs)) return
+    state.lastPackageAlert = new Date().time
+    
+    // 1. Thank the driver outside
+    if (settings.packageOutdoorMessage && outdoorSpeaker) {
+        def outMsg = "Thank you for the delivery. Please leave the package right there."
+        enqueueTTS(outdoorSpeaker, outMsg, settings.outdoorVolume, 2, true)
+    }
+    
+    // 2. Alert the house inside
+    def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
+    if (isTest) inMsg = "This is a test of the UniFi Protect package detection. " + inMsg
+    
+    def targetVol = settings.packageVolume != null ? settings.packageVolume : settings.globalVolume
+    executeRoutedTTS(applyDynamicVars(inMsg), settings.packageRoutingMode ?: "Global Indoor Speaker Only", targetVol, 0, 2)
+    
+    addToHistory("SMART CAMERA: Package delivery detected and announced.")
 }
 
 // --- BUTLER EVENT TRACKING & REPORTING ---
@@ -2900,12 +3041,11 @@ def arrivalHandler(evt) {
         greetingToPlay = applyDynamicVars(greetingToPlay)
 
         // --- FIX 3B: GLOBAL INCIDENT WARNINGS (ARRIVAL DOORBELL) ---
-        def doorbellCount = state.awayDoorbellCount ?: state.lastAwayDoorbellCount ?: 0
+        def doorbellCount = state.awayDoorbellCount ?: 0
         if (state.pendingArrivalReport && doorbellCount > 0) {
             greetingToPlay += " Also, there were ${doorbellCount} doorbell rings while you were away. Please check the cameras."
             state.pendingArrivalReport = false 
             state.awayDoorbellCount = 0
-            state.lastAwayDoorbellCount = 0
             addToHistory("INCIDENT REPORT: Delivered Global Away Doorbell warning on arrival.")
         }
         // -----------------------------------------------------------
@@ -3886,7 +4026,6 @@ def midnightReset() {
     state.hasArrivedToday.each { uName, arrived ->
         if (arrived == true) {
             newHasArrived[uName] = true
-            // We set the context to 'Present' so the dashboard doesn't show a reset message
             newResetReasons[uName] = "Present" 
         }
     }
@@ -3899,16 +4038,9 @@ def midnightReset() {
     // Set the global status for anyone NOT already home
     state.globalResetReason = "Awaiting First Entry"
     
-    // 3. LOG ROTATION (For the Morning Briefings)
-    state.lastNightMotionCount = state.nightMotionCount ?: 0
-    state.lastAwayDoorbellCount = state.awayDoorbellCount ?: 0
-    state.nightMotionCount = 0
-    state.awayDoorbellCount = 0
+    // 3. DAILY TRACKER RESETS
     state.anomalyAlertedToday = [:]
-    
-    // --- OPTION 3: PROGRESSIVE ESCALATION RESET ---
     state.reminderCounts = [:]
-    // ----------------------------------------------
     
     // 4. QUEUE MAINTENANCE
     state.ttsQueue = []
@@ -3971,7 +4103,8 @@ def appButtonHandler(btn) {
         for (int d = 1; d <= 5; d++) { if (settings["screenTimeMsg_${d}"]) msgs << settings["screenTimeMsg_${d}"] }
         if (!msgs) msgs = getDefaultMessages("ScreenTime")
         executeRoutedTTS(applyDynamicVars(msgs[new Random().nextInt(msgs.size())]), settings.screenTimeRoutingMode ?: "Global Indoor Speaker Only", settings.screenTimeVolume ?: globalVolume, settings.outdoorVolume, 1, false, settings.screenTimeSpeaker)
-    } else if (btn == "btnTestCalendar") executeCalendarAlert([title: "a test appointment", timeStr: "1 Hour"])
+    }
+    else if (btn == "btnTestCalendar") executeCalendarAlert([title: "a test appointment", timeStr: "1 Hour", isTest: true])
     else if (btn.startsWith("btnTestRoomNews_")) testRoomNews(btn.split("_")[1].toInteger())
     else if (btn.startsWith("btnTestRoomSpk_")) {
         def rNum = btn.split("_")[1].toInteger()
@@ -3990,10 +4123,13 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
     else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
     else if (btn == "btnClearNotes") clearNotesEndpoint()
-    else if (btn.startsWith("btnTestHeadedHome_")) executeHeadedHome(btn.split("_")[1].toInteger())    
-    else if (btn == "btnTestHealth") executeHealthWindow(true)    
+    else if (btn.startsWith("btnTestHeadedHome_")) executeHeadedHome(btn.split("_")[1].toInteger(), true)
+    else if (btn == "btnTestHealth") executeHealthWindow(true)
+    else if (btn == "btnTestPackage") executePackageAlert(true)
+    else if (btn == "btnTestMarket") executeMarketReminder(true)
+    else if (btn == "btnTestCinema") executeCinemaScout(true)
+    else if (btn == "btnTestGrocery") executeGroceryScout(true)    
 }
-
 
 def testGoogleIntegration() {
     def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
@@ -4032,8 +4168,15 @@ def testGoogleIntegration() {
 def addToHistory(String msg) {
     ensureStateMaps()
     def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
-    state.historyLog.add(0, "[${timestamp}] ${msg}")
-    if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
+    
+    // Hubitat Quirks Fix: Extract list, modify, and push back to force a database commit
+    def currentLog = state.historyLog ?: []
+    currentLog.add(0, "[${timestamp}] ${msg}")
+    if (currentLog.size() > 30) currentLog = currentLog.take(30)
+    state.historyLog = currentLog
+    
+    // Mirror to Hubitat's native Logs tab so it's always visible!
+    log.info "Voice Butler History: ${msg}"
 }
 
 def checkInternetConnection() {
@@ -5052,15 +5195,15 @@ def butlerLrMotionHandler(evt) {
     
     // Only trigger in the morning between 4 AM and 11 AM
     if (hour >= 4 && hour < 11) {
-        if (state.pendingMorningReport && state.lastNightMotionCount > 0) {
+        if (state.pendingMorningReport && (state.nightMotionCount ?: 0) > 0) {
             def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
             def vol = settings.butlerLrVolume ?: globalVolume
             if (targetSpeaker) {
-                def msg = "Good morning. Please note, there were ${state.lastNightMotionCount} motion events at the front door last night. Please check the cameras."
+                def msg = "Good morning. Please note, there were ${state.nightMotionCount} motion events at the front door last night. Please check the cameras."
                 enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 4)
                 
                 state.pendingMorningReport = false
-                state.lastNightMotionCount = 0
+                state.nightMotionCount = 0
                 addToHistory("INCIDENT REPORT: Delivered Global Night Motion warning in Living Room.")
             }
         }
@@ -5568,4 +5711,277 @@ def realTimeTaskHandler(evt) {
         executeRoutedTTS(finalMsg, settings.realTimeTaskRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
         addToHistory("TASK ALERT: Announced newly due task: ${taskStr}")
     }
+}
+
+// --- AI CINEMA & STREAMING SCOUT (GEMINI INTEGRATION) ---
+def executeCinemaScout(isTest = false) {
+    ensureStateMaps()
+    if (!settings.enableCinemaScout && !isTest) return
+    
+    // 1. Only run automatically on Fridays
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
+    if (!isTest && dow != Calendar.FRIDAY) {
+        if (settings.enableDebug) log.debug "CINEMA SCOUT: Ignored (Today is not Friday)."
+        return
+    }
+
+    // 2. Suppress if the house is empty
+    if (!isTest) {
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) {
+            addToHistory("CINEMA SCOUT: Suppressed. House is currently empty.")
+            return
+        }
+    }
+
+    if (!settings.geminiApiKey) {
+        log.warn "Voice Butler: Cinema Scout failed. No Gemini API Key provided."
+        return
+    }
+
+    // 3. The Prompt Payload for Gemini (Now with Live Clock Injection)
+    def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
+    def systemPrompt = "Today is ${todayStr}. You are a live data-retrieval assistant for a high-end smart home. I need the weekend entertainment update for THIS EXACT WEEK. Identify the top 2 movies currently premiering or trending in US movie theaters right now, the top 2 new movies or highly anticipated shows just added to Netflix US this week, 1 new or trending Family Movie, and 1 new or trending Kid Friendly Movie. Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. Format exactly like this: {\"theaters\": \"Movie 1 and Movie 2\", \"netflix\": \"Show A and Movie B\", \"family\": \"Movie C\", \"kids\": \"Movie D\"}"
+
+    def requestBody = [
+        contents: [
+            [
+                role: "user",
+                parts: [
+                    [text: systemPrompt]
+                ]
+            ]
+        ],
+        // Forces Gemini to browse the live internet instead of relying on training data
+        tools: [
+            [ googleSearch: [:] ]
+        ],
+        generationConfig: [
+            temperature: 0.2 // Keep it factual and strict
+        ]
+    ]
+
+    // Using the highly available gemini-2.5-flash model
+    def params = [
+        uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: groovy.json.JsonOutput.toJson(requestBody),
+        timeout: 20
+    ]
+
+    if (isTest) log.info "CINEMA SCOUT: Pinging Google Gemini API for the latest movies..."
+
+    // 4. Ping Gemini and Process the Response
+    try {
+        httpPost(params) { resp ->
+            if (resp.status == 200 && resp.data) {
+                // Extract Gemini's text response
+                def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                
+                // Strip out any accidental markdown formatting the LLM might have added
+                geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
+```/, "").trim()
+                
+                // Parse the clean JSON object Gemini sent back
+                def movieData = new groovy.json.JsonSlurper().parseText(geminiText)
+                
+                def theaterTitle = movieData.theaters ?: "several new releases"
+                def netflixTitle = movieData.netflix ?: "new streaming content"
+                def familyTitle = movieData.family ?: "a great family film"
+                def kidsTitle = movieData.kids ?: "a fun animated movie"
+
+                // 5. Assemble and Announce
+                def greeting = getDynamicGreeting()
+                def msg = "%interruption%, ${greeting}, the weekend has finally arrived. For your entertainment, the top movies in theaters right now are ${theaterTitle}. For staying in, the top streaming updates are: ${netflixTitle}. If you are planning a family movie night, consider ${familyTitle}. And for the little ones, ${kidsTitle} is highly recommended."
+                def targetVol = settings.cinemaVolume != null ? settings.cinemaVolume : settings.globalVolume
+                executeRoutedTTS(applyDynamicVars(msg), settings.cinemaRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                
+                def prefix = isTest ? "TEST CINEMA SCOUT: " : "CINEMA SCOUT: "
+                addToHistory("${prefix}Announced AI-curated movie and Netflix releases.")
+                
+                // --- PUSH NOTIFICATION BLOCK ---
+                if (settings.notificationDevice) {
+                    def pushMsg = "🎥 WEEKEND PREMIERES\n"
+                    pushMsg += "Theaters: ${theaterTitle}\n"
+                    pushMsg += "Streaming: ${netflixTitle}\n"
+                    pushMsg += "Family Night: ${familyTitle}\n"
+                    pushMsg += "Kid Friendly: ${kidsTitle}"
+                    settings.notificationDevice.each { dev ->
+                        try { dev.deviceNotification(pushMsg) } catch(err) {}
+                    }
+                }
+
+                if (isTest) log.info "TESTING CINEMA SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
+            } else {
+                log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
+            }
+        }
+    } catch (e) { 
+        log.warn "Voice Butler: Gemini API Call Failed - ${e}" 
+        if (isTest) log.info "CINEMA SCOUT TEST FAILED: Ensure your API key is correct and check Hubitat logs."
+    }
+}
+
+// --- GROCERY DAY SCOUT (GEMINI INTEGRATION) ---
+def executeGroceryScout(isTest = false) {
+    ensureStateMaps()
+    if (!settings.enableGroceryScout && !isTest) return
+
+    // 1. Day of Week Check
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def calendar = Calendar.getInstance(tz)
+    def dowInt = calendar.get(Calendar.DAY_OF_WEEK)
+    def daysMap = ["Sunday":1, "Monday":2, "Tuesday":3, "Wednesday":4, "Thursday":5, "Friday":6, "Saturday":7]
+
+    if (!isTest && settings.groceryDay) {
+        if (dowInt != daysMap[settings.groceryDay]) {
+            if (settings.enableDebug) log.debug "GROCERY SCOUT: Ignored (Today is not ${settings.groceryDay})."
+            return
+        }
+    }
+
+    // 2. Suppress if the house is empty
+    if (!isTest) {
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) {
+            addToHistory("GROCERY SCOUT: Suppressed. House is currently empty.")
+            return
+        }
+    }
+
+    if (!settings.geminiApiKey) {
+        log.warn "Voice Butler: Grocery Scout failed. No Gemini API Key provided."
+        return
+    }
+
+    // 3. Build Preferences and Prompt (Added Costco)
+    def prefsStr = settings.groceryPrefs ? settings.groceryPrefs.join(", ") : "general grocery items"
+    def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
+
+    def systemPrompt = """Today is ${todayStr}. You are a proactive home manager. I need the best grocery deals for this exact week.
+    Search the live, current weekly circular ads and warehouse savings for Aldi, Publix, Walmart, and Costco in the US.
+    The user is specifically looking for deals matching these categories: ${prefsStr}.
+    Find 2 to 4 of the absolute best current deals from EACH of the 4 stores. Be specific about the price if possible (e.g., "\$1.99/lb Chicken Breast").
+    Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. 
+    Format exactly like this:
+    {
+      "aldi": ["Deal 1", "Deal 2"],
+      "publix": ["Deal 1", "Deal 2"],
+      "walmart": ["Deal 1", "Deal 2"],
+      "costco": ["Deal 1", "Deal 2"]
+    }"""
+
+    def requestBody = [
+        contents: [ [ role: "user", parts: [ [text: systemPrompt] ] ] ],
+        tools: [ [ googleSearch: [:] ] ], // Forces live internet browsing
+        generationConfig: [ temperature: 0.2 ]
+    ]
+
+    def params = [
+        uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: groovy.json.JsonOutput.toJson(requestBody),
+        timeout: 25 // Allowed a little extra time for the AI to read 4 different grocery sites
+    ]
+
+    if (isTest) log.info "GROCERY SCOUT: Pinging Gemini for live weekly ads..."
+
+    // 4. Ping Gemini and Process (With Developer-Grade Retry Logic)
+    def maxRetries = 2
+    def attempt = 0
+    def success = false
+
+    while (attempt < maxRetries && !success) {
+        attempt++
+        try {
+            httpPost(params) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    success = true // Mark as successful to exit the loop
+                    
+                    def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
+```/, "").trim()
+                    
+                    def dealsData = new groovy.json.JsonSlurper().parseText(geminiText)
+                    
+                    // Safe extraction into Lists (Added Costco)
+                    def aldiDeals = dealsData.aldi ?: []
+                    def publixDeals = dealsData.publix ?: []
+                    def walmartDeals = dealsData.walmart ?: []
+                    def costcoDeals = dealsData.costco ?: []
+
+                    def aldiCount = aldiDeals.size()
+                    def publixCount = publixDeals.size()
+                    def walmartCount = walmartDeals.size()
+                    def costcoCount = costcoDeals.size()
+                    def totalDeals = aldiCount + publixCount + walmartCount + costcoCount
+
+                    // 5. Assemble Spoken Summary
+                    def greeting = getDynamicGreeting()
+                    def msg = ""
+                    if (totalDeals > 0) {
+                    msg = "%interruption%, ${greeting}, I have scanned the weekly ads based on your preferences. I found ${aldiCount} deals at Aldi, ${publixCount} at Publix, ${walmartCount} at Walmart, and ${costcoCount} at Costco that you might want to grab during your grocery run. I've sent the complete lists to your phone."
+                    } else {
+                    msg = "%interruption%, ${greeting}, I scanned the weekly ads, but I didn't find any standout deals matching your preferences today."
+                    }
+
+                    def targetVol = settings.groceryVolume != null ? settings.groceryVolume : settings.globalVolume
+                    executeRoutedTTS(applyDynamicVars(msg), settings.groceryRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                    
+                    def prefix = isTest ? "TEST GROCERY SCOUT: " : "GROCERY SCOUT: "
+                    addToHistory("${prefix}Announced ${totalDeals} grocery deals.")
+                    
+                    // 6. Split Push Notifications (One per store for better scannability)
+                    if (settings.notificationDevice && totalDeals > 0) {
+                        def storeData = [
+                            [label: "ALDI", deals: aldiDeals],
+                            [label: "PUBLIX", deals: publixDeals],
+                            [label: "WALMART", deals: walmartDeals],
+                            [label: "COSTCO", deals: costcoDeals]
+                        ]
+
+                        storeData.each { store ->
+                            if (store.deals.size() > 0) {
+                                def storeMsg = "🛒 ${store.label} DEALS\n• " + store.deals.join("\n• ")
+                                settings.notificationDevice.each { dev ->
+                                    try { 
+                                        dev.deviceNotification(storeMsg.trim()) 
+                                    } catch(err) {
+                                        log.warn "Voice Butler: Failed to send ${store.label} notification to ${dev.displayName}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (isTest) log.info "TESTING GROCERY SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
+                } else {
+                    log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
+                }
+            }
+        } catch (groovyx.net.http.HttpResponseException e) { 
+            log.warn "Voice Butler: Grocery Scout API HTTP Error (Attempt ${attempt}/${maxRetries}) - ${e.statusCode} ${e.message}"
+            if (attempt < maxRetries) {
+                if (isTest) log.info "GROCERY SCOUT: Google server busy (503). Retrying in 3 seconds..."
+                pauseExecution(3000)
+            } else {
+                if (isTest) log.info "GROCERY SCOUT TEST FAILED: Google API is temporarily unavailable."
+            }
+        } catch (Exception e) {
+            log.warn "Voice Butler: Grocery Scout General Error - ${e}"
+            break // Break on hard code errors so we don't loop endlessly
+        }
+    }
+}
+
+def getDynamicGreeting() {
+    def presentFolks = getPresentUsers() // Uses your existing presence check
+    if (presentFolks.size() == 0) return "everyone"
+    if (presentFolks.size() == 1) return presentFolks[0]
+    
+    // If multiple people, join them with 'and'
+    return presentFolks.join(" and ")
 }
