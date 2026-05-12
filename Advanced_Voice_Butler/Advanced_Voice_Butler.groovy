@@ -570,15 +570,29 @@ def mainPage() {
             }
         }
 
-        section("Midday Maintenance Reminder", hideable: true, hidden: true) {
-            input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
-            if (enableMiddayMaintenance) {
-                paragraph "<i>The Butler will secretly pick a random time between 11:00 AM and 3:00 PM every day to politely remind you of any overdue tasks. It will remain silent if the house is empty or if guests are present.</i>"
-                input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: true
-                input "middayMaintenanceModes", "mode", title: "Allowed Modes for Reminder", multiple: true, required: false
-                input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-                input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+        section("Household Maintenance & Task Alerts", hideable: true, hidden: true) {
+            input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: false, submitOnChange: true
+            
+            if (middayMaintenanceDevice) {
+                input "taskDashboardUrl", "text", title: "Dashboard Shortcut URL (Adds a link to the Web Portal)", description: "e.g., https://cloud.hubitat.com/api/...", required: false
+                
+                paragraph "<hr>"
+                input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
+                if (enableMiddayMaintenance) {
+                    paragraph "<i>The Butler will secretly pick a random time between 11:00 AM and 3:00 PM every day to politely remind you of any overdue tasks. It will remain silent if the house is empty or if guests are present.</i>"
+                    input "middayMaintenanceModes", "mode", title: "Allowed Modes for Reminder", multiple: true, required: false
+                    input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                    input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
+                    input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+                }
+
+                paragraph "<hr>"
+                input "enableRealTimeTasks", "bool", title: "Enable Real-Time 'Newly Due' Task Alerts?", defaultValue: false, submitOnChange: true
+                if (enableRealTimeTasks) {
+                    paragraph "<i>The Butler will instantly announce the moment a task switches to 'due'.</i>"
+                    input "realTimeTaskRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                    input "realTimeTaskVolume", "number", title: "Announcement Volume (0-100)", required: false
+                }
             }
         }
         
@@ -1109,6 +1123,7 @@ def ensureStateMaps() {
     if (state.reminderCounts == null) state.reminderCounts = [:]
     if (state.messageInbox == null) state.messageInbox = []
     if (state.butlerNotes == null) state.butlerNotes = []
+    if (state.lastOverdueTasks == null) state.lastOverdueTasks = []
 }
 
 def initialize() {
@@ -1117,12 +1132,17 @@ def initialize() {
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
     
-    // --- Midday Maintenance Scheduler ---
+// --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
         schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
         // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
         def cal = Calendar.getInstance(location.timeZone)
         if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
+    }
+    
+    // --- NEW: Real-Time Task Subscription ---
+    if (settings.enableRealTimeTasks && settings.middayMaintenanceDevice) {
+        subscribe(settings.middayMaintenanceDevice, "overdueTasks", realTimeTaskHandler)
     }
 
     // --- Health Window Scheduler ---
@@ -4453,6 +4473,26 @@ def serveNotesPage() {
             quickReplyHtml += "</div>"
         }
 
+        // --- 6. DYNAMICALLY BUILD TASK DASHBOARD SHORTCUT ---
+        def dashboardBtnHtml = ""
+        if (settings.taskDashboardUrl) {
+            dashboardBtnHtml = """
+                <div style='margin-bottom: 25px;'>
+                    <a href="${settings.taskDashboardUrl}" target="_blank" style="text-decoration: none;">
+                        <button type="button" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                            ✅ Open Maintenance Dashboard
+                        </button>
+                    </a>
+                </div>
+            """
+        }
+
+        // --- 7. DYNAMICALLY BUILD PA ROUTING OPTIONS ---
+        def paRoutingHtml = ""
+        getRoutingOptions().each { r ->
+            paRoutingHtml += "<option value=\"${r}\">${r}</option>"
+        }
+
         // --- MAIN HTML BUILDER ---
         def html = new StringBuilder()
         html.append("""
@@ -4499,6 +4539,8 @@ def serveNotesPage() {
                 <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Estate Command Deck</h2>
                 <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Manage messaging, context, and live broadcasts.</p>
 
+                ${dashboardBtnHtml}
+
                 ${quickReplyHtml}
 
                 <h3 style='margin-top: 10px; margin-bottom: 10px; color:#e74c3c; border-bottom: 2px solid #333; padding-bottom: 5px;'>🎙️ Live Intercom (PA)</h3>
@@ -4507,9 +4549,7 @@ def serveNotesPage() {
                     
                     <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
                     <select name="paRoute">
-                        <option value="Global Indoor Speaker Only">All Indoor Speakers</option>
-                        <option value="Outdoor Speaker Only">Outdoor Speaker</option>
-                        <option value="Outdoor + Global Indoor">Everywhere (Indoor + Outdoor)</option>
+                        ${paRoutingHtml}
                     </select>
 
                     <button type="submit" class="danger">Broadcast Now</button>
@@ -4908,32 +4948,31 @@ def goodNightOnHandler(evt) {
     }
     
     if (rNum > 0) {
-        def presenceDev = settings["fallbackPresence_${rNum}"] 
         def isArrival = false
         def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
         def occNameSetting = settings["roomOccupantName_${rNum}"] ?: rName
         def splitNames = occNameSetting.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
         
-        if (!presenceDev) {
-            splitNames.each { n ->
-                if (state.hasArrivedToday[n] != true) {
-                    state.hasArrivedToday[n] = true
-                    state.hasDepartedToday[n] = false
-                    state.resetReasons[n] = "Good Night Switch Failsafe"
-                    isArrival = true
-                }
+        // FIX: Removed the broken global presence sensor check. 
+        // This now properly checks the live roster and corrects it.
+        splitNames.each { n ->
+            def isHome = (state.hasArrivedToday[n] == true || state.hasArrivedToday[n] == "true") && !(state.hasDepartedToday[n] == true || state.hasDepartedToday[n] == "true")
+            if (!isHome) {
+                state.hasArrivedToday[n] = true
+                state.hasDepartedToday.remove(n)
+                state.resetReasons[n] = "Good Night Failsafe"
+                isArrival = true
             }
         }
         
         def fullMsg = buildRoomGreeting(rNum, "Good Night", [isNewArrival: isArrival, isTest: false])
         
         def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
-        // THE FIX: Fallback to Global Volume
         def vol = settings["roomVolumeGN_${rNum}"] != null ? settings["roomVolumeGN_${rNum}"] : settings.globalVolume
         
         if (targetSpeaker && fullMsg) {
             enqueueTTS(targetSpeaker, fullMsg, vol, 1)
-            addToHistory("ROOM ENGINE: Good Night Routine executed for Room ${rNum}.")
+            addToHistory("ROOM ENGINE: Good Night Routine executed for ${rName}. Queued: '${fullMsg}'")
         }
     }
 }
@@ -5485,4 +5524,48 @@ def getHealthReminders(String userName) {
         return "As a wellness reminder, it has been a while since your last visit, so I recommend scheduling ${rStr} soon."
     }
     return ""
+}
+
+def realTimeTaskHandler(evt) {
+    ensureStateMaps()
+    def currentTasksStr = evt.value ?: ""
+    def currentTasks = currentTasksStr.split(",").collect { it.trim() }.findAll { it != "" }
+    
+    def previousTasks = state.lastOverdueTasks ?: []
+    // Find tasks that are in the new list but weren't in the old list
+    def newTasks = currentTasks - previousTasks
+    
+    // Update the memory for next time
+    state.lastOverdueTasks = currentTasks
+    
+    if (newTasks.size() > 0) {
+        // Suppress if the house is empty
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) return 
+        
+        // Respect the midday maintenance mode restrictions if set
+        def allowedModes = [settings.middayMaintenanceModes].flatten().findAll { it != null }
+        if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+        
+        def taskStr = ""
+        if (newTasks.size() == 1) taskStr = newTasks[0]
+        else if (newTasks.size() == 2) taskStr = "${newTasks[0]} and ${newTasks[1]}"
+        else {
+            def last = newTasks.pop()
+            taskStr = "${newTasks.join(', ')}, and ${last}"
+        }
+        
+        def msgs = [
+            "%interruption%, but the ${taskStr} has just become due. Please complete it at your earliest convenience.",
+            "Pardon me, a new maintenance item requires your attention. The ${taskStr} is now due.",
+            "Excuse me, the ${taskStr} has just been added to the due list. Please address it when you have a moment."
+        ]
+        def randomMsg = msgs[new Random().nextInt(msgs.size())]
+        
+        def finalMsg = applyDynamicVars(randomMsg)
+        def targetVol = settings.realTimeTaskVolume != null ? settings.realTimeTaskVolume : settings.globalVolume
+        
+        executeRoutedTTS(finalMsg, settings.realTimeTaskRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+        addToHistory("TASK ALERT: Announced newly due task: ${taskStr}")
+    }
 }
