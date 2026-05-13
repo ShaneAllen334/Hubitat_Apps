@@ -1801,7 +1801,8 @@ def executeCalendarAlert(data) {
 
             // If drive time + buffer is greater than or equal to the time left...
             if ((minsToDrive + buffer) >= minutesUntilEvent) {
-                travelWarning = "CRITICAL: If you don't leave now, you will be late for ${title}. Traffic is heavy, and it currently takes ${minsToDrive} minutes to get to ${location}."
+                // THE FIX: Professional, polite, but urgent warning.
+                travelWarning = "Pardon the urgent interruption. If you do not leave now, you will be late for ${title}. Traffic is currently heavy, and it will take approximately ${minsToDrive} minutes to reach ${location}."
                 if (gasData) travelWarning += gasData.speech 
             }
             
@@ -2074,11 +2075,11 @@ def testMealNews() {
                 if (items && items.size() >= 2) {
                     def title1 = items[0].title.text().trim().replace("&", "and").replace("\"", "")
                     def title2 = items[1].title.text().trim().replace("&", "and").replace("\"", "")
-                    finalMsg = "Testing evening news fetch. In the news this evening: ${title1}. In other news, ${title2}."
+                    finalMsg = "This is a test of my connection to the evening news desk. In the news today: ${title1}. In other news, ${title2}."
                 }
             }
         }
-    } catch (Exception e) { finalMsg = "Error fetching news." }
+    } catch (Exception e) { finalMsg = "I am currently unable to reach the news desk to retrieve the latest headlines." }
     
     if (finalMsg) executeRoutedTTS(finalMsg, settings.mealTimeRoutingMode ?: "Global Indoor Speaker Only", settings.mealTimeVolume ?: settings.globalVolume, settings.outdoorVolume, 1, false, settings.mealTimeSpeaker)
 }
@@ -2658,7 +2659,7 @@ def executePackageAlert(isTest=false) {
     
     // 2. Alert the house inside
     def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
-    if (isTest) inMsg = "This is a test of the UniFi Protect package detection. " + inMsg
+    if (isTest) inMsg = "This is a test of the perimeter camera system. " + inMsg
     
     def targetVol = settings.packageVolume != null ? settings.packageVolume : settings.globalVolume
     executeRoutedTTS(applyDynamicVars(inMsg), settings.packageRoutingMode ?: "Global Indoor Speaker Only", targetVol, 0, 2)
@@ -3660,11 +3661,11 @@ def testRoomNews(rNum) {
                 if (items && items.size() >= 2) {
                     def title1 = items[0].title.text().trim().replace("&", "and").replace("\"", "")
                     def title2 = items[1].title.text().trim().replace("&", "and").replace("\"", "")
-                    finalMsg = "Here is your morning news briefing test. ${title1}. In other news, ${title2}."
+                    finalMsg = "This is a test of my connection to the morning news desk. ${title1}. In other news, ${title2}."
                 }
             }
         }
-    } catch (Exception e) { log.warn "Voice Butler: Room News Fetch Error - ${e}"; finalMsg = "Error fetching news." }
+    } catch (Exception e) { log.warn "Voice Butler: Room News Fetch Error - ${e}"; finalMsg = "I am currently unable to reach the news desk to retrieve the latest headlines." }
     
     if (finalMsg) {
         def targetSpeaker = settings["roomSpeaker_${rNum}"] ?: globalIndoorSpeaker
@@ -4145,7 +4146,7 @@ def appButtonHandler(btn) {
     } else if (btn == "btnTestIndoorRouting") {
         executeRoutedTTS(applyDynamicVars(settings.indoorDoorbellMsg ?: "This is %butler%. %interruption%, but there is a visitor at the front door."), settings.indoorDoorbellRoutingMode ?: "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 1)
     } else if (btn == "btnTestMealNews") testMealNews()
-    else if (btn == "btnTestBreakingNews") executeBreakingNews("The Hubitat Voice Butler successfully received a breaking news transmission", true)
+    else if (btn == "btnTestBreakingNews") executeBreakingNews("I have successfully connected to the global news wire.", true)
     else if (btn == "btnTestMealTime") mealTimeHandler([value: "test"])
     else if (btn == "btnTestScreenTime") {
         def msgs = []
@@ -4190,7 +4191,7 @@ def testGoogleIntegration() {
     
     def msg = ""
     if (mins != null) {
-        msg = "Google API Test Successful. It currently takes ${mins} minutes to get to your destination from your home."
+        msg = "My connection to the traffic and navigation network is fully operational. It currently takes ${mins} minutes to get to your destination from your home."
         if (gasData) { msg += gasData.speech }
         
         // --- SEND THE TEST PUSH NOTIFICATION WITH LINK ---
@@ -4205,14 +4206,14 @@ def testGoogleIntegration() {
         }
         
     } else {
-        msg = "Google API Test Failed. Please check your API Key, Home Address, and Hubitat Logs."
+        msg = "I am currently unable to access the traffic network. Please have the administrator verify my credentials."
     }
     
     def targetSpeaker = globalIndoorSpeaker
     if (!targetSpeaker && arrivalFoyerSpeaker) targetSpeaker = arrivalFoyerSpeaker
     if (targetSpeaker) enqueueTTS(targetSpeaker, msg, globalVolume, 1)
     
-    addToHistory("TEST: Google Maps/Gas logic check performed.")
+    addToHistory("TEST: Traffic and navigation logic check performed.")
 }
 
 def addToHistory(String msg) {
