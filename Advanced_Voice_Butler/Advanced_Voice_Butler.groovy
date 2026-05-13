@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.1
+ * Version 2.2
  */
 definition(
     name: "Advanced Voice Butler",
@@ -33,6 +33,12 @@ mappings {
     path("/presence/depart") { action: [POST: "manualDepartEndpoint"] }
     path("/reply/quick") { action: [POST: "quickReplyEndpoint"] }
     path("/guest/timer") { action: [POST: "guestTimerEndpoint"] }
+    
+    // --- RSVP SYSTEM MAPPINGS ---
+    path("/event/create") { action: [POST: "createEventEndpoint"] }
+    path("/event/delete") { action: [POST: "deleteEventEndpoint"] }
+    path("/rsvp") { action: [GET: "serveGuestRsvpPage"] }
+    path("/rsvp/submit") { action: [POST: "submitRsvpEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -1240,6 +1246,7 @@ def ensureStateMaps() {
     if (state.messageInbox == null) state.messageInbox = []
     if (state.butlerNotes == null) state.butlerNotes = []
     if (state.lastOverdueTasks == null) state.lastOverdueTasks = []
+    if (state.hostedEvents == null) state.hostedEvents = [:]
 }
 
 def initialize() {
@@ -1247,6 +1254,7 @@ def initialize() {
     schedule("0 0 0 * * ?", "midnightReset") 
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
+    subscribe(location, "voiceButlerStaffSync", "staffSyncHandler")
     
 // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
@@ -1356,6 +1364,10 @@ def initialize() {
     // Global Mode & Motion Tracking
     subscribe(location, "mode", modeChangeHandler)
     
+    // --- NEW: CROSS-APP TELEMETRY ---
+    subscribe(location, "voiceButlerMsg", crossAppMessageHandler)
+    subscribe(location, "voiceButlerStaffSync", staffSyncHandler) 
+    
     // --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) SUBSCRIPTION ---
     if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler) }
     // ----------------------------------------------------------------------
@@ -1412,7 +1424,6 @@ def initialize() {
     }
 }
 
-// --- CENTRAL ROUTING ENGINE ---
 // --- CENTRAL ROUTING ENGINE ---
 def executeRoutedTTS(String msg, String mode, indoorVol, outdoorVol, int priority = 2, boolean fastTrack = false, dedicatedSpeaker = null) {
     def played = false
@@ -3932,11 +3943,39 @@ def getTodayHoliday() {
 
 def getAnniversaryMessage(String type, String userName = "") {
     if (!settings.enableAnniversary || !settings.annivMonth || !settings.annivDay) return ""
+
+    // 1. Enforce Privacy: Only alert the couple
+    def allowedRoster = [settings.annivAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
+    if (settings.annivAllowedCustom) allowedRoster += settings.annivAllowedCustom.split(',').collect { it.trim().toLowerCase() }
+    
+    // If the roster is restricted and the current user isn't on it, stay silent.
+    if (!allowedRoster.isEmpty() && !allowedRoster.contains(userName.toLowerCase()) && !allowedRoster.contains(applyAlias(userName).toLowerCase())) {
+        return ""
+    }
+
     def now = new Date()
     def currentMonth = now.format("MM", location.timeZone).toInteger()
     def currentDay = now.format("dd", location.timeZone).toInteger()
 
-    if (settings.annivMonth.toInteger() == currentMonth && settings.annivDay.toInteger() == currentDay) {
+    def annivMonthInt = settings.annivMonth.toInteger()
+    def annivDayInt = settings.annivDay.toInteger()
+
+    // 2. Calculate exact days until the anniversary
+    def annivCal = Calendar.getInstance(location.timeZone)
+    annivCal.set(Calendar.MONTH, annivMonthInt - 1)
+    annivCal.set(Calendar.DAY_OF_MONTH, annivDayInt)
+    annivCal.set(Calendar.HOUR_OF_DAY, 0)
+    annivCal.set(Calendar.MINUTE, 0)
+    annivCal.set(Calendar.SECOND, 0)
+
+    if (annivCal.time.time < now.time && !(annivMonthInt == currentMonth && annivDayInt == currentDay)) {
+        annivCal.add(Calendar.YEAR, 1)
+    }
+
+    def daysUntil = Math.round((annivCal.time.time - now.time) / 86400000.0).toInteger()
+
+    // 3. Exact Day Greetings
+    if (daysUntil == 0) {
         switch(type) {
             case "Arrival": return settings.annivMsgArrival ?: "Happy Anniversary! Welcome home."
             case "Morning": return settings.annivMsgMorning ?: "Happy Anniversary! I hope you both have a fantastic day."
@@ -3944,6 +3983,13 @@ def getAnniversaryMessage(String type, String userName = "") {
             case "Night": return "Happy Anniversary. Sleep well."
         }
     }
+    
+    // 4. The 5-Day Advanced Warning
+    if (daysUntil > 0 && daysUntil <= 5 && (type == "Morning" || type == "Arrival")) {
+        def daysTxt = daysUntil == 1 ? "tomorrow" : "in exactly ${daysUntil} days"
+        return "As a critical reminder, your anniversary is ${daysTxt}. I advise finalizing any reservations or gifts immediately to ensure a seamless evening."
+    }
+
     return ""
 }
 
@@ -3958,12 +4004,6 @@ def stashMessage(String msg) {
         if (settings.enableDebug) log.debug "INBOX: Stashed message -> '${msg}'"
     }
 }
-
-/**
- * Advanced Voice Butler
- *
- * Author: ShaneAllen
- */
 
 def getBirthdayMessage(String arrivingUser, String type) {
     if (!settings.numBirthdays) return ""
@@ -3994,9 +4034,24 @@ def getBirthdayMessage(String arrivingUser, String type) {
 
         // If the person in the room is neither the birthday person NOR the designated notified user, skip.
         if (!isBirthdayPerson && !isTargetPresent) continue
+        
+        // Calculate EXACT days until birthday to fix the "exactly 5 days" bug
+        def bdayCal = Calendar.getInstance(location.timeZone)
+        bdayCal.set(Calendar.MONTH, bMonthInt - 1)
+        bdayCal.set(Calendar.DAY_OF_MONTH, bDayInt)
+        bdayCal.set(Calendar.HOUR_OF_DAY, 0)
+        bdayCal.set(Calendar.MINUTE, 0)
+        bdayCal.set(Calendar.SECOND, 0)
+        
+        // If the birthday passed earlier this year, look to next year
+        if (bdayCal.time.time < now.time && !(bMonthInt == currentMonth && bDayInt == currentDay)) {
+            bdayCal.add(Calendar.YEAR, 1)
+        }
+        
+        def daysUntil = Math.round((bdayCal.time.time - now.time) / 86400000.0).toInteger()
 
         // 1. Exact Birthday Match
-        if (bMonthInt == currentMonth && bDayInt == currentDay) {
+        if (daysUntil == 0) {
             if (isBirthdayPerson) {
                 if (type == "Arrival") return settings.bdayMsgArrival?.replace("%name%", applyAlias(bName)) ?: "Happy Birthday ${applyAlias(bName)}!"
                 else if (type == "Morning") return settings.bdayMsgMorning?.replace("%name%", applyAlias(bName)) ?: "Happy Birthday ${applyAlias(bName)}! I hope you have a fantastic day."
@@ -4006,42 +4061,16 @@ def getBirthdayMessage(String arrivingUser, String type) {
             }
         }
         
-        // 2. Birthday Month Countdown (Kids)
-        if (bType.contains("Kid") && (type == "Morning" || type == "Arrival")) {
-            def bdayCal = Calendar.getInstance(location.timeZone)
-            bdayCal.set(Calendar.MONTH, bMonthInt - 1)
-            bdayCal.set(Calendar.DAY_OF_MONTH, bDayInt)
-            bdayCal.set(Calendar.HOUR_OF_DAY, 0)
-            bdayCal.set(Calendar.MINUTE, 0)
-            bdayCal.set(Calendar.SECOND, 0)
-            
-            // If the birthday passed earlier this year, look to next year
-            if (bdayCal.time.time < now.time && !(bMonthInt == currentMonth && bDayInt == currentDay)) {
-                bdayCal.add(Calendar.YEAR, 1)
-            }
-            
-            def daysUntil = Math.round((bdayCal.time.time - now.time) / 86400000.0).toInteger()
-            
-            // Count down if it is exactly 30 days or less
-            if (daysUntil > 0 && daysUntil <= 30) {
-                if (isBirthdayPerson) {
-                    def cdMsg = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
-                    return cdMsg.replace("%days%", daysUntil.toString()).replace("%name%", applyAlias(bName))
-                } else if (isTargetPresent) {
-                    return "As a quick reminder, ${applyAlias(bName)}'s birthday is coming up in exactly ${daysUntil} days."
-                }
-            }
+        // 2. Parent / Notify User Warning (5 days or less - Applies to both Kids and Adults now!)
+        if (!isBirthdayPerson && isTargetPresent && daysUntil > 0 && daysUntil <= 5 && (type == "Morning" || type == "Arrival")) {
+            def daysTxt = daysUntil == 1 ? "tomorrow" : "in exactly ${daysUntil} days"
+            return "As a critical reminder, ${applyAlias(bName)}'s birthday is ${daysTxt}. Please verify your preparations and ensure a gift has been secured."
         }
         
-        // 3. The 5-Day Adult Gift Warning
-        if (bType.contains("Adult") && (type == "Morning" || type == "Arrival")) {
-            def cal = Calendar.getInstance(location.timeZone)
-            cal.add(Calendar.DAY_OF_YEAR, 5)
-            if (cal.get(Calendar.MONTH) + 1 == bMonthInt && cal.get(Calendar.DAY_OF_MONTH) == bDayInt) {
-                if (!isBirthdayPerson && isTargetPresent) {
-                     return "As a quick reminder, ${applyAlias(bName)}'s birthday is in exactly 5 days. Please ensure you have secured a gift."
-                }
-            }
+        // 3. Kid's 30-Day Countdown (Only plays to the Kid)
+        if (bType.contains("Kid") && isBirthdayPerson && daysUntil > 0 && daysUntil <= 30 && (type == "Morning" || type == "Arrival")) {
+            def cdMsg = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
+            return cdMsg.replace("%days%", daysUntil.toString()).replace("%name%", applyAlias(bName))
         }
     }
     
@@ -4074,7 +4103,7 @@ def midnightReset() {
     // 1. INTELLIGENT CARRY-OVER
     // We look at everyone currently home and move them to the new day's roster immediately.
     state.hasArrivedToday.each { uName, arrived ->
-        if (arrived == true) {
+        if (arrived == true || arrived == "true") {
             newHasArrived[uName] = true
             newResetReasons[uName] = "Present" 
         }
@@ -4097,6 +4126,15 @@ def midnightReset() {
     state.speakingUntil = 0
     state.currentPriority = 99
     state.originalVolumes = [:] 
+
+    // --- EVENT CLEANUP (Deletes events 24 hours after they occur) ---
+    def nowMs = new Date().time
+    def eventsToRemove = []
+    state.hostedEvents?.each { id, ev ->
+        if (nowMs > (ev.dateEpoch + 86400000)) eventsToRemove << id
+    }
+    eventsToRemove.each { state.hostedEvents.remove(it) }
+    // ----------------------------------------------------------------
     
     def residentList = newHasArrived.keySet().join(', ')
     addToHistory("SYSTEM: Midnight transition complete. Residents carried over: ${residentList ?: 'None'}")
@@ -4560,7 +4598,6 @@ def getMiddayMaintenanceReport(mDevice) {
 }
 
 // --- NEW: NOTES PORTAL WEB HANDLERS ---
-// --- NEW: NOTES PORTAL WEB HANDLERS ---
 def serveNotesPage() {
     try {
         ensureStateMaps()
@@ -4576,11 +4613,98 @@ def serveNotesPage() {
             state.butlerNotes = []
         }
 
+        // --- 0. DYNAMICALLY BUILD STAFF SCHEDULE ---
+        def staffHtml = ""
+        if (state.cleaningStaffData) {
+            def lastClean = state.cleaningStaffData.lastFullClean ?: new Date().time
+            def maxIdle = state.cleaningStaffData.maxIdle ?: 3
+            
+            def daysIdle = Math.floor((new Date().time - lastClean) / 86400000).toInteger()
+            def daysRemaining = maxIdle - daysIdle
+            if (daysRemaining < 0) daysRemaining = 0
+            
+            def statusColor = daysRemaining == 0 ? "#e67e22" : "#27ae60"
+            def statusText = daysRemaining == 0 ? "Deploying Imminently" : "Standby (${daysRemaining} Days)"
+            def dayPlural = daysRemaining == 1 ? "day" : "days"
+            
+            staffHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColor}; margin-bottom: 15px; font-size: 14px;'>"
+            staffHtml += "<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>🧹 Cleaning Staff Schedule</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>"
+            staffHtml += "<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>"
+            staffHtml += "</div>"
+        }
+
+        // --- 0.5 DYNAMICALLY BUILD RSVP EVENT CARDS ---
+        def rsvpHtml = "<details style='margin-bottom: 15px;'><summary>🥂 Party & Event Invitations</summary><div style='padding-top: 15px;'>"
+        
+        rsvpHtml += """
+            <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #f39c12;'>
+                <b style='color:#f39c12;'>Create New Event</b>
+                <form action="${apiUrl}/event/create?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
+                    <input type="text" name="eventTitle" placeholder="Event Title (e.g., Summer Dinner Party)" required style="margin-bottom: 10px;">
+                    <input type="text" name="eventLocation" placeholder="Location (Leave blank for the Estate)" style="margin-bottom: 10px;">
+                    <div style="display: flex; gap: 10px;">
+                        <input type="date" name="eventDate" required style="flex: 1; margin-bottom: 10px;">
+                        <input type="time" name="eventTime" required style="flex: 1; margin-bottom: 10px;">
+                    </div>
+                    <button type="submit" style="background-color: #f39c12; padding: 10px;">Generate Digital Invitation</button>
+                </form>
+            </div>
+        """
+        
+        if (state.hostedEvents && state.hostedEvents.size() > 0) {
+            state.hostedEvents.each { eId, ev ->
+                def eventUrl = "${apiUrl}/rsvp?id=${eId}&access_token=${state.accessToken}"
+                def displayDate = new Date(ev.dateEpoch).format("EEE, MMM d 'at' h:mm a", location.timeZone)
+                def preWrittenMsg = java.net.URLEncoder.encode("You're invited to ${ev.title}! Please view the details and RSVP here: ${eventUrl}", "UTF-8")
+                
+                rsvpHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>"
+                rsvpHtml += "<div style='display: flex; justify-content: space-between; align-items: flex-start;'>"
+                rsvpHtml += "<div><b style='font-size: 16px; color:#fff;'>${ev.title}</b><br><span style='color:#aaa; font-size: 13px;'>${displayDate}</span></div>"
+                rsvpHtml += "<form action='${apiUrl}/event/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='eventId' value='${eId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>"
+                rsvpHtml += "</div>"
+                
+                def locDisplay = ev.location ?: "The Schwarzman Estate"
+                rsvpHtml += "<div style='margin-top: 5px; font-size: 13px; color: #888;'>📍 ${locDisplay}</div>"
+                
+                rsvpHtml += "<div style='margin: 15px 0; padding: 10px; background: #2a2a2a; border-radius: 6px; font-size: 12px; word-break: break-all;'>"
+                rsvpHtml += "<b style='color:#3498db;'>Shareable Link:</b><br><a href='${eventUrl}' target='_blank' style='color:#3498db;'>${eventUrl}</a>"
+                rsvpHtml += "</div>"
+                
+                // --- HOST QUICK SHARE (Native App Links) ---
+                rsvpHtml += "<div style='border-top: 1px solid #333; padding-top: 10px; margin-bottom: 15px;'>"
+                rsvpHtml += "<b style='color:#aaa; font-size: 13px;'>Host Quick Share:</b>"
+                rsvpHtml += "<div style='display: flex; gap: 10px; margin-top: 5px;'>"
+                rsvpHtml += "<a href='sms:?&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>💬 Text Guest</div></a>"
+                rsvpHtml += "<a href='mailto:?subject=Invitation: ${ev.title}&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>✉️ Email Guest</div></a>"
+                rsvpHtml += "</div>"
+                rsvpHtml += "</div>"
+                
+                if (ev.rsvps && ev.rsvps.size() > 0) {
+                    rsvpHtml += "<b style='color:#fff; font-size: 13px;'>Guest Responses:</b><div style='margin-top: 10px;'>"
+                    ev.rsvps.each { rsvp ->
+                        def rColor = rsvp.status == "Accepted" ? "#27ae60" : "#c0392b"
+                        def partyText = rsvp.guestCount ? "Party of ${rsvp.guestCount}" : "Party of 1"
+                        
+                        rsvpHtml += "<div style='background: #2a2a2a; padding: 8px; border-left: 3px solid ${rColor}; margin-bottom: 5px; font-size: 13px;'>"
+                        rsvpHtml += "<b>${rsvp.name}</b> <span style='color:${rColor};'>(${rsvp.status} — ${partyText})</span>"
+                        if (rsvp.restrictions) rsvpHtml += "<br><span style='color:#e67e22;'>⚠ Restrictions: ${rsvp.restrictions}</span>"
+                        if (rsvp.message) rsvpHtml += "<br><i style='color:#aaa;'>\"${rsvp.message}\"</i>"
+                        rsvpHtml += "</div>"
+                    }
+                    rsvpHtml += "</div>"
+                } else {
+                    rsvpHtml += "<i style='color:#777; font-size: 13px;'>No RSVPs received yet.</i>"
+                }
+                rsvpHtml += "</div>"
+            }
+        }
+        rsvpHtml += "</div></details>"
+
         // --- 1. DYNAMICALLY BUILD PRESENCE CARDS ---
         def presenceHtml = "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>"
         if (trackedNames.size() > 0) {
             trackedNames.each { u ->
-                def dispName = applyAlias(u) // FIX: Get the display name for the UI
+                def dispName = applyAlias(u) 
                 
                 def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[u] == true || state.hasArrivedToday[u] == "true")
                 def departed = state.hasDepartedToday != null && (state.hasDepartedToday[u] == true || state.hasDepartedToday[u] == "true")
@@ -4728,6 +4852,10 @@ def serveNotesPage() {
                 <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
 
                 ${dashboardBtnHtml}
+                
+                ${staffHtml}
+                
+                ${rsvpHtml}
 
                 <details style="margin-bottom: 15px;">
                     <summary>⏱️ Guest Departure Timer</summary>
@@ -6253,4 +6381,245 @@ def executeVehicleReminder() {
         executeRoutedTTS(applyDynamicVars(msg), settings.vehicleRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
         addToHistory("VEHICLE CARE: Delivered afternoon reminder to wash cars.")
     }
+}
+
+// --- CROSS-APP INTEGRATION RECEIVER ---
+def crossAppMessageHandler(evt) {
+    ensureStateMaps()
+    
+    // Check if the message came from the Vacuum Controller
+    if (evt.value == "vacuum") {
+        def liveMsg = evt.descriptionText
+        def stashMsg = evt.data 
+        
+        if (!liveMsg) return
+
+        def presentFolks = getPresentUsers()
+        
+        // SCENARIO 1: The house is completely empty
+        if (presentFolks.size() == 0) {
+            if (stashMsg) stashMessage(stashMsg)
+            addToHistory("CROSS-APP (Vacuum): House is empty. Stashed action for arrival inbox: '${stashMsg}'")
+            return
+        } 
+        
+        // SCENARIO 2: People are home. Check for Do Not Disturb.
+        def dndModesList = [settings.dndModes].flatten().findAll { it != null }
+        if (dndModesList.contains(location.mode) || (dndSwitch?.currentValue("switch") == "on")) {
+            if (stashMsg) stashMessage(stashMsg)
+            addToHistory("CROSS-APP (Vacuum): Suppressed live announcement due to DND/Night Mode. Stashed for morning inbox.")
+            return
+        }
+        
+        // SCENARIO 3: The house is active and ready for a live announcement
+        def finalMsg = "%interruption%. Just keeping you informed: " + liveMsg
+        executeRoutedTTS(applyDynamicVars(finalMsg), "Global Indoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2)
+        addToHistory("CROSS-APP (Vacuum): Live dispatch announcement executed: '${liveMsg}'")
+    }
+}
+
+// --- STAFF SCHEDULE RECEIVER ---
+def staffSyncHandler(evt) {
+    ensureStateMaps()
+    try {
+        if (evt.data) {
+            state.cleaningStaffData = new groovy.json.JsonSlurper().parseText(evt.data)
+            if (settings.enableDebug) log.debug "CROSS-APP: Butler successfully received the updated Cleaning Staff schedule."
+        }
+    } catch (e) { log.warn "Voice Butler: Error parsing staff sync: ${e}" }
+}
+
+// ==========================================
+// DIGITAL CONCIERGE RSVP SYSTEM
+// ==========================================
+
+def createEventEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        if (params.eventTitle && params.eventDate && params.eventTime) {
+            if (state.hostedEvents == null) state.hostedEvents = [:]
+            def eventId = java.util.UUID.randomUUID().toString().substring(0, 8)
+            
+            def timeParts = params.eventTime.split(":")
+            def dateParts = params.eventDate.split("-")
+            def cal = Calendar.getInstance(location.timeZone)
+            cal.set(dateParts[0].toInteger(), dateParts[1].toInteger() - 1, dateParts[2].toInteger(), timeParts[0].toInteger(), timeParts[1].toInteger(), 0)
+            
+            // Default to the estate if they leave the location blank
+            def eLoc = params.eventLocation ?: "The Schwarzman Estate"
+            
+            state.hostedEvents[eventId] = [
+                title: params.eventTitle,
+                dateStr: params.eventDate,
+                timeStr: params.eventTime,
+                location: eLoc,
+                dateEpoch: cal.getTime().time,
+                rsvps: []
+            ]
+            addToHistory("RSVP SYSTEM: Created new event '${params.eventTitle}' at ${eLoc}.")
+        }
+    } catch (e) { log.warn "Event Creation Error: ${e}" }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def deleteEventEndpoint() {
+    try {
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        if (params.eventId && state.hostedEvents[params.eventId]) {
+            state.hostedEvents.remove(params.eventId)
+            addToHistory("RSVP SYSTEM: Event deleted manually via portal.")
+        }
+    } catch(e) {}
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def serveGuestRsvpPage() {
+    def eId = params?.id
+    def event = state.hostedEvents ? state.hostedEvents[eId] : null
+    
+    if (!event) {
+        return render(contentType: "text/html", data: "<h2 style='text-align:center; font-family:sans-serif; margin-top:50px;'>This invitation is no longer active.</h2>", status: 404)
+    }
+    
+    def apiUrl = getFullApiServerUrl()
+    def displayDate = new Date(event.dateEpoch).format("EEEE, MMMM d 'at' h:mm a", location.timeZone)
+    
+    // Generate a clickable map link
+    def locString = event.location ?: "The Schwarzman Estate"
+    def mapLink = "https://maps.google.com/?q=${java.net.URLEncoder.encode(locString, 'UTF-8')}"
+    
+    def html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Invitation RSVP</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: 'Georgia', serif; padding: 20px; background-color: #f9f9f9; color: #333; }
+            .invite-card { max-width: 500px; margin: 40px auto; background: #fff; padding: 40px 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); border-top: 6px solid #1f618d; text-align: center; }
+            h1 { color: #1f618d; font-size: 24px; margin-bottom: 5px; font-weight: normal; }
+            h2 { font-size: 28px; margin: 10px 0; color: #222; }
+            .date-time { font-size: 16px; color: #666; margin-bottom: 10px; font-style: italic; }
+            .location-link { margin-bottom: 30px; font-size: 15px; }
+            .location-link a { color: #3498db; text-decoration: none; font-family: sans-serif; font-weight: bold; }
+            .location-link a:hover { text-decoration: underline; }
+            input[type="text"], input[type="number"], textarea, select { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-family: sans-serif; font-size: 15px; }
+            textarea { height: 80px; resize: none; }
+            button { background-color: #1f618d; color: white; border: none; padding: 15px 20px; border-radius: 6px; cursor: pointer; width: 100%; font-size: 16px; font-family: sans-serif; font-weight: bold; transition: background 0.2s; }
+            button:hover { background-color: #154360; }
+            label { display: block; text-align: left; margin-bottom: 5px; font-family: sans-serif; font-size: 13px; color: #555; font-weight: bold; }
+            .row { display: flex; gap: 10px; }
+            .row > div { flex: 1; }
+        </style>
+    </head>
+    <body>
+        <div class="invite-card">
+            <h1>The Schwarzmans</h1>
+            <p style="font-size: 14px; color: #777; margin-top:0;">cordially invite you to</p>
+            <h2>${event.title}</h2>
+            <div class="date-time">${displayDate}</div>
+            <div class="location-link"><a href="${mapLink}" target="_blank">📍 ${locString}</a></div>
+            
+            <form action="${apiUrl}/rsvp/submit?access_token=${state.accessToken}" method="POST">
+                <input type="hidden" name="eventId" value="${eId}">
+                
+                <label>Guest Name(s)</label>
+                <input type="text" name="guestName" placeholder="e.g., John & Jane Doe" required>
+                
+                <div class="row">
+                    <div>
+                        <label>Attending?</label>
+                        <select name="attendance" required>
+                            <option value="Accepted">Joyfully Accept</option>
+                            <option value="Declined">Regretfully Decline</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Party Size</label>
+                        <input type="number" name="guestCount" value="1" min="1" max="20" required>
+                    </div>
+                </div>
+                
+                <label>Dietary Restrictions or Allergies (Optional)</label>
+                <input type="text" name="restrictions" placeholder="e.g., Gluten-free, Peanut allergy">
+                
+                <label>Message for the Hosts (Optional)</label>
+                <textarea name="message" placeholder="Can't wait to see you!"></textarea>
+                
+                <button type="submit">Submit RSVP</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+    return render(contentType: "text/html", data: html, status: 200)
+}
+
+def submitRsvpEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def eId = params.eventId
+        if (eId && state.hostedEvents[eId]) {
+            def gName = params.guestName ?: "A guest"
+            def gStatus = params.attendance ?: "Responded"
+            def gCount = params.guestCount ?: "1"
+            def gRestrictions = params.restrictions ?: ""
+            def gMsg = params.message ?: ""
+            
+            state.hostedEvents[eId].rsvps << [
+                name: gName,
+                status: gStatus,
+                guestCount: gCount,
+                restrictions: gRestrictions,
+                message: gMsg,
+                timestamp: new Date().time
+            ]
+            
+            // Inform the Butler of the party size
+            def msgText = "${gName}, a party of ${gCount}, has ${gStatus.toLowerCase()} the invitation to ${state.hostedEvents[eId].title}."
+            if (gRestrictions) msgText += " They noted the following restriction: ${gRestrictions}."
+            if (gMsg) msgText += " They also left a message: ${gMsg}"
+            
+            def presentFolks = getPresentUsers()
+            def dndModesList = [settings.dndModes].flatten().findAll { it != null }
+            def isDnd = dndModesList.contains(location.mode) || (dndSwitch?.currentValue("switch") == "on")
+            
+            if (presentFolks.size() > 0 && !isDnd) {
+                def finalMsg = "%interruption%. Incoming RSVP: " + msgText
+                executeRoutedTTS(applyDynamicVars(finalMsg), "Global Indoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2)
+                addToHistory("RSVP SYSTEM: Live announcement for ${gName}'s response.")
+            } else {
+                stashMessage("RSVP Received: " + msgText)
+                addToHistory("RSVP SYSTEM: Stashed response from ${gName} for event '${state.hostedEvents[eId].title}'.")
+            }
+            
+            def successHtml = """
+            <!DOCTYPE html><html><body style="background-color:#f9f9f9; text-align:center; padding-top:100px; font-family:'Georgia',serif; color:#333;">
+            <h1 style="color:#27ae60; font-size:40px; margin-bottom:10px;">✓</h1>
+            <h2>Thank You</h2>
+            <p>Your response has been delivered to the Butler.</p>
+            </body></html>
+            """
+            return render(contentType: "text/html", data: successHtml, status: 200)
+        }
+    } catch(e) { log.error "RSVP Submit Error: ${e}" }
+    
+    return render(contentType: "text/html", data: "<h2>An error occurred processing your RSVP.</h2>", status: 500)
 }
