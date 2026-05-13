@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.10
+ * Version 2.1
  */
 definition(
     name: "Advanced Voice Butler",
@@ -31,7 +31,8 @@ mappings {
     path("/wifi/announce") { action: [POST: "announceWifiEndpoint"] }
     path("/pa/announce") { action: [POST: "instantPAEndpoint"] }
     path("/presence/depart") { action: [POST: "manualDepartEndpoint"] }
-    path("/reply/quick") { action: [POST: "quickReplyEndpoint"] } // <-- UPDATED PATH
+    path("/reply/quick") { action: [POST: "quickReplyEndpoint"] }
+    path("/guest/timer") { action: [POST: "guestTimerEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -212,9 +213,13 @@ def mainPage() {
             // --- Incident Log ---
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Butler Incident Log</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Active Count</th><th style='padding: 8px;'>Last (Morning Report)</th></tr>"
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${state.lastNightMotionCount ?: 0}</td></tr>"
-            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${state.lastAwayDoorbellCount ?: 0}</td></tr>"
+            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Events Tracked</th><th style='padding: 8px;'>Status</th></tr>"
+            
+            def nmStatus = state.pendingMorningReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${nmStatus}</td></tr>"
+            
+            def adStatus = state.pendingArrivalReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
+            statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${adStatus}</td></tr>"
             statusText += "</table>"
             
             // --- Presence ---
@@ -537,6 +542,19 @@ def mainPage() {
             }
         }
         
+        section("Smart Package Detection (UniFi Protect)", hideable: true, hidden: true) {
+            input "enableSmartPackage", "bool", title: "Enable Smart Package Detection?", defaultValue: false, submitOnChange: true
+            if (enableSmartPackage) {
+                paragraph "<i>Using a UniFi Protect or similar smart camera, the Butler will announce when a package is detected.</i>"
+                input "packageCameraDevice", "capability.sensor", title: "Smart Camera Device", required: true
+                input "packageAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType", required: true
+                input "packageRoutingMode", "enum", title: "Indoor Audio Routing", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "packageVolume", "number", title: "Indoor Announcement Volume (0-100)", required: false
+                input "packageOutdoorMessage", "bool", title: "Play a 'Thank You' message on the Outdoor Speaker?", defaultValue: true
+                input "btnTestPackage", "button", title: "▶️ Test Package Announcement"
+            }
+        }
+        
         section("Organic Breaking News Intercept", hideable: true, hidden: true) {
             input "enableBreakingNews", "bool", title: "Enable Organic News Intercept?", defaultValue: false, submitOnChange: true
             if (enableBreakingNews) {
@@ -624,6 +642,13 @@ def mainPage() {
                     input "depType_${i}", "enum", title: "Profile Type", options: ["Work", "School", "General"], defaultValue: "Work", submitOnChange: true
                     input "depSwitch_${i}", "capability.switch", title: "Context Switch (e.g. Work Day)", required: false
                     input "depSickSwitch_${i}", "capability.switch", title: "Sick Day Override Switch", required: false
+                    // --- NEW: COMMUTE TIME SETTINGS ---
+                    input "depEnableTraffic_${i}", "bool", title: "Enable Commute/Traffic Time?", defaultValue: false, submitOnChange: true
+                    if (settings["depEnableTraffic_${i}"]) {
+                        input "depDestination_${i}", "text", title: "Destination Address (Work/School)", required: true, description: "e.g., 123 Office Park, City, State"
+                        paragraph "<i>Note: Requires Google Maps API Key to be configured in the Calendar section.</i>"
+                    }
+                    // ----------------------------------
                     input "depModes_${i}", "mode", title: "Allowed House Modes", multiple: true, required: false
                     input "depTimeStart_${i}", "time", title: "Departure Window Start", required: false
                     input "depTimeEnd_${i}", "time", title: "Departure Window End", required: false
@@ -931,6 +956,97 @@ def mainPage() {
             paragraph "<div style='${prevStyle}'><b>Live Special Events Preview:</b><br><b>Today's Holiday:</b> <i>${holText}</i><br><b>Birthday Countdown Format:</b> <i>${bdayText.replace('%days%', '12').replace('%name%', 'Test User')}</i></div>"
         }
         
+        section("Local Farmers Market & Butcher Scout", hideable: true, hidden: true) {
+            input "enableMarketReminder", "bool", title: "Enable Farmers Market Reminders?", defaultValue: false, submitOnChange: true
+            if (enableMarketReminder) {
+                paragraph "<i>The Butler will announce when the local market opens during the specified season.</i>"
+                input "marketName", "text", title: "Name of the Farmers Market", defaultValue: "the Farmers Market", required: true
+                
+                def months = ["01":"January", "02":"February", "03":"March", "04":"April", "05":"May", "06":"June", "07":"July", "08":"August", "09":"September", "10":"October", "11":"November", "12":"December"]
+                input "marketSeasonStart", "enum", title: "Season Start Month", options: months, defaultValue: "05", required: true
+                input "marketSeasonEnd", "enum", title: "Season End Month", options: months, defaultValue: "09", required: true
+                
+                input "marketDays", "enum", title: "Operating Days", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], multiple: true, required: true
+                input "marketOpenTime", "time", title: "Opening Time (Announcement Time)", required: true
+                
+                paragraph "<hr>"
+                input "enableButcherReminder", "bool", title: "Append Local Butcher Recommendations?", defaultValue: false, submitOnChange: true
+                if (enableButcherReminder) {
+                    input "butcherName", "text", title: "Name of the Butcher", defaultValue: "the local butcher", required: true
+                }
+                
+                paragraph "<hr>"
+                input "marketRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "marketVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "btnTestMarket", "button", title: "▶️ Test Market Audio"
+            }
+        }
+        
+        section("Cinema & Streaming Scout (Friday Premieres)", hideable: true, hidden: true) {
+            input "enableCinemaScout", "bool", title: "Enable Friday Cinema Scout?", defaultValue: false, submitOnChange: true
+            if (enableCinemaScout) {
+                paragraph "<i>Every Friday evening, the Butler will ask Gemini for the latest theatrical releases and Netflix arrivals to kick off the weekend.</i>"
+                input "cinemaTime", "time", title: "Announcement Time (e.g., 5:00 PM)", required: true
+                input "cinemaRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "cinemaVolume", "number", title: "Announcement Volume (0-100)", required: false
+                
+                paragraph "<b>🧠 Generative AI Integration</b>"
+                input "geminiApiKey", "text", title: "Google Gemini API Key", description: "Get a free key from Google AI Studio", required: true
+                
+                input "btnTestCinema", "button", title: "▶️ Test AI Cinema Scout"
+            }
+        }
+        
+        section("Grocery Day Scout (Weekly Ad Tracker)", hideable: true, hidden: true) {
+            input "enableGroceryScout", "bool", title: "Enable Grocery Day Scout?", defaultValue: false, submitOnChange: true
+            if (enableGroceryScout) {
+                paragraph "<i>The Butler will actively search live weekly ads for Aldi, Publix, and Walmart, then notify you of the best deals based on your preferences.</i>"
+                
+                input "groceryDay", "enum", title: "Which Day to Announce?", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], required: true, defaultValue: "Wednesday"
+                input "groceryTime", "time", title: "Announcement Time", required: true
+                
+                paragraph "<b>🛒 Deal Preferences</b>"
+                input "groceryPrefs", "enum", title: "What type of deals do you want?", options: ["Meats & Proteins", "Organic Produce", "Fresh Fruits & Veggies", "Pantry Staples", "Snacks & Drinks", "Household Goods", "BOGO Deals", "Everything"], multiple: true, required: true, defaultValue: ["Everything"]
+
+                input "groceryRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "groceryVolume", "number", title: "Announcement Volume (0-100)", required: false
+                
+                input "btnTestGrocery", "button", title: "▶️ Test Grocery Scout"
+            }
+        }
+        
+        section("Vehicle Care & Weather Scout", hideable: true, hidden: true) {
+            input "enableVehicleCare", "bool", title: "Enable AI Vehicle Care (Car Wash Scout)?", defaultValue: false, submitOnChange: true
+            if (enableVehicleCare) {
+                paragraph "<i>Every Monday morning, the Butler asks Gemini to analyze the 7-day forecast and pick the best consecutive clear-weather day to wash the vehicles. It will announce this dynamically during that day's Morning Briefing and again at noon.</i>"
+                input "vehicleReminderTime", "time", title: "Fallback Announcement Time (e.g., 12:00 PM)", required: true
+                input "vehicleRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "vehicleVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "btnTestVehicleScout", "button", title: "▶️ Test Gemini Car Wash Fetch"
+            }
+        }
+
+        // --- ADD FALLBACK PRESENCE UI HERE ---
+        section("Fallback Presence Engine (Kids/Room Based)", hideable: true, hidden: true) {
+            paragraph "Use sustained room motion during a specific time window to mark a user as 'Arrived' if they missed the door greeting."
+            input "enableFallbackPresence", "bool", title: "Enable Fallback Presence?", defaultValue: false, submitOnChange: true
+            
+            if (enableFallbackPresence) {
+                input "fallbackUser", "text", title: "User Name (e.g., Leanne / Princess)", required: true
+                input "fallbackMotionSensors", "capability.motionSensor", title: "Room & Closet Motion Sensors", multiple: true, required: true
+                input "fallbackSpeaker", "capability.speechSynthesis", title: "Target Bedroom Speaker", multiple: false, required: true
+                
+                paragraph "<b>Timing & Debounce</b>"
+                input "fallbackDuration", "number", title: "Required Sustained Motion (Minutes)", defaultValue: 5, required: true
+                input "fallbackDebounce", "number", title: "Inactive Debounce (Seconds) to catch fast sensors", defaultValue: 60, required: true
+                
+                paragraph "<b>School Arrival Window</b>"
+                input "fallbackStartTime", "time", title: "Window Start (e.g., 3:00 PM)", required: true
+                input "fallbackEndTime", "time", title: "Window End (e.g., 4:30 PM)", required: true
+                input "fallbackDays", "enum", title: "Active Days", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], multiple: true, defaultValue: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            }
+        }
+        
         section("User Aliases (Secret Identities)", hideable: true, hidden: true) {
             input "numAliases", "number", title: "Number of Aliases (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
             if (numAliases > 0) {
@@ -1151,6 +1267,16 @@ def initialize() {
         scheduleHealthWindow() // Run on init to queue today's check
     }
     
+    // --- Farmers Market Scheduler ---
+    if (settings.enableMarketReminder && settings.marketOpenTime) {
+        schedule(settings.marketOpenTime, "executeMarketReminder")
+    }
+    
+    // --- Cinema & Streaming Scheduler ---
+    if (settings.enableCinemaScout && settings.cinemaTime) {
+        schedule(settings.cinemaTime, "executeCinemaScout")
+    }
+    
     // --- NEW: Quick Exit (Away Mode Farewell) ---
     if (settings.enableQuickExit && settings.quickExitDoors) {
         subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
@@ -1171,6 +1297,17 @@ def initialize() {
         if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, unifiProtectHandler) }
     }
     
+    // --- Fallback Presence Subscriptions ---
+    if (settings.enableFallbackPresence && settings.fallbackMotionSensors) {
+        subscribe(settings.fallbackMotionSensors, "motion", "fallbackMotionHandler")
+        state.fallbackTrackingActive = false // Ensure clean state on boot
+    }
+    
+    // --- NEW: SMART PACKAGE SUBSCRIPTION ---
+    if (settings.enableSmartPackage && settings.packageCameraDevice && settings.packageAttribute) {
+        subscribe(settings.packageCameraDevice, settings.packageAttribute, unifiPackageHandler)
+    }
+    
     // Smart Lock & Presence Arrival Handlers
     if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
     def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
@@ -1178,6 +1315,11 @@ def initialize() {
         if (settings["fallbackPresence_${i}"]) {
             subscribe(settings["fallbackPresence_${i}"], "presence.present", presenceFallbackHandler)
         }
+    }
+    
+    // --- Grocery Scout Scheduler ---
+    if (settings.enableGroceryScout && settings.groceryTime && settings.groceryDay) {
+        schedule(settings.groceryTime, "executeGroceryScout")
     }
     
     // Household Routine Handlers (Mail, Meals, Departures, Screen Time)
@@ -1576,13 +1718,20 @@ def calendarTimeHandler(evt, passedTitle = null) {
         // 1. Schedule standard intervals
         def intervals = [settings.calAlertIntervals].flatten().findAll { it != null }
         intervals.each { interval ->
-            def offsetMs = (interval == "1 Hour" ? 3600000 : interval == "30 Minutes" ? 1800000 : 900000)
+            def offsetMs = 0
+            if (interval == "3 Hours") offsetMs = 3 * 3600000
+            else if (interval == "2 Hours") offsetMs = 2 * 3600000
+            else if (interval == "1 Hour") offsetMs = 3600000
+            else if (interval == "30 Minutes") offsetMs = 30 * 60000
+            else if (interval == "15 Minutes") offsetMs = 15 * 60000
+            
             def alertTime = eventEpoch - offsetMs
-            if (alertTime > now) runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
+            if (alertTime > now) {
+                runOnce(new Date(alertTime), "executeCalendarAlert", [data: [title: title, timeStr: interval], overwrite: false])
+            }
         }
 
         // 2. NEW: THE PROACTIVE TRAVEL CHECK
-        // Butler pings Google 1 hour before the event to see if traffic is so bad you need to leave NOW.
         def travelCheckTime = eventEpoch - 3600000 
         if (travelCheckTime > now) {
             runOnce(new Date(travelCheckTime), "executeCalendarAlert", [data: [title: title, timeStr: "Travel Check", isProactive: true], overwrite: false])
@@ -1633,7 +1782,10 @@ def executeCalendarAlert(data) {
     ensureStateMaps()
     def title = data.title
     def timeStr = data.timeStr
+    def isTest = data.isTest ?: false
     def location = state.nextEventLocation
+    
+    log.info "Voice Butler: Executing Calendar Routine for '${title}' (${timeStr})."
     
     // --- TRAVEL TIME LOGIC ---
     def travelWarning = ""
@@ -1667,7 +1819,10 @@ def executeCalendarAlert(data) {
 
     // 1. Enforce Allowed Modes
     def allowedModes = [settings.calAlertModes].flatten().findAll { it != null }
-    if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) return
+    if (!isTest && allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
+        log.info "Voice Butler: Calendar Alert for '${title}' suppressed due to restricted House Mode."
+        return
+    }
 
     def finalMsg = ""
     if (travelWarning) {
@@ -1688,7 +1843,8 @@ def executeCalendarAlert(data) {
     }
 
     executeRoutedTTS(finalMsg, settings.calRoutingMode, settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
-    addToHistory("TRAVEL CONCIERGE: ${finalMsg}")
+    def prefix = isTest ? "TEST TRAVEL CONCIERGE: " : "TRAVEL CONCIERGE: "
+    addToHistory("${prefix}${finalMsg}")
 }
 
 // --- AI HABIT & ANOMALY ENGINE ---
@@ -1765,7 +1921,8 @@ def checkAnomalies() {
         if (habitData.avgDepartureMins && state.hasArrivedToday[uName]) {
             if (!state.anomalyAlertedToday[uName]) {
                 def expected = habitData.avgDepartureMins
-                if (nowMins > (expected + 15)) { 
+                // CRITICAL FIX: The 120-minute cap ensures late arrivals don't trigger the warning!
+                if (nowMins > (expected + 15) && nowMins < (expected + 120)) { 
                     def expectedTimeStr = formatMinsToTime(expected)
                     def dispName = applyAlias(uName)
                     def msg = "Pardon me, ${dispName}. I noticed you normally depart around ${expectedTimeStr}, and you are still home. Are we running behind schedule today?"
@@ -1929,7 +2086,6 @@ def testMealNews() {
 // --- ALIAS & DYNAMIC HELPERS ---
 def getTrackedUsers() {
     def allNames = []
-    // FIX: Properly scoped settings to prevent Endpoint Crashes
     if (settings.arrivalMode == "Automatic (Reads lock memory)") {
         settings.trackedLockCodes?.each { codeName ->
             if (codeName.toLowerCase() == "admin code" && settings.adminUserAlias) { allNames << settings.adminUserAlias } else { allNames << codeName }
@@ -1940,7 +2096,7 @@ def getTrackedUsers() {
         }
     }
     allNames += (state.hasArrivedToday ?: [:]).keySet().findAll { it != "global" }
-    return allNames.unique().collect { applyAlias(it) }.sort()
+    return allNames.unique().sort()
 }
 
 def getPresentUsers() {
@@ -2173,27 +2329,35 @@ def executeTTS(item) {
     // --- STAGE 3: SPEECH (Simultaneous) ---
     speakers.each { spk ->
         try {
+            // We reverted to .speak() because native playTextAndRestore has a strict 
+            // driver timeout that cuts off long, AI-generated announcements.
             spk.speak(finalMsg)
-        } catch (Exception e) {}
+        } catch (Exception e) { log.warn "TTS Command Error: ${e}" }
     }
     
     // --- STAGE 4: RESTORE TASKS ---
     if (restoredVolumes.size() > 0) {
-        def volDelay = Math.max(10, (finalMsg.length() / 7).toInteger() + (fastTrack ? 6 : 10))
-        // Calls the new restoreMultiVolumeTask
-        runIn(volDelay, "restoreMultiVolumeTask", [data: [volumes: restoredVolumes], overwrite: false])
+        // Increased the buffer to accommodate slower, AI-generated speech patterns
+        def volDelay = Math.max(15, (finalMsg.length() / 5).toInteger() + 10)
+        
+        // CRITICAL FIX: overwrite: true cancels the volume drop of previous sentences
+        // if the Butler is asked to speak multiple things back-to-back.
+        runIn(volDelay, "restoreMultiVolumeTask", [data: [volumes: restoredVolumes], overwrite: true])
     }
     
-    def speechDuration = Math.max(6, (finalMsg.length() / 7).toInteger()) * 1000
+    def speechDuration = Math.max(10, (finalMsg.length() / 5).toInteger()) * 1000
     if (chimePlayed) speechDuration += 2500
     
     if (mediaToResume.size() > 0) {
-        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 6
-        runIn(resumeDelay, "restoreMediaTask", [data: [resumeList: mediaToResume.collect { [id: it.dev.id, cmd: it.cmd] }], overwrite: false])
+        def resumeDelay = Math.ceil(speechDuration / 1000.0).toInteger() + 5
+        
+        // CRITICAL FIX: overwrite: true
+        runIn(resumeDelay, "restoreMediaTask", [data: [resumeList: mediaToResume.collect { [id: it.dev.id, cmd: it.cmd] }], overwrite: true])
     }
     
     return speechDuration
 }
+
 def restoreMediaTask(data) {
     def resumeList = data.resumeList ?: []
     def allMedia = []
@@ -2333,6 +2497,18 @@ def departureHandler(evt) {
             }
             // -----------------------
             
+            // --- NEW: COMMUTE / TRAFFIC TIME ---
+            if (settings["depEnableTraffic_${idx}"] && settings["depDestination_${idx}"]) {
+                def dest = settings["depDestination_${idx}"]
+                def mins = getTravelInfo(dest)
+                if (mins != null) {
+                    def destName = settings["depType_${idx}"]?.toLowerCase() ?: "your destination"
+                    if (destName == "general") destName = "your destination"
+                    finalMsg += " Current traffic indicates it will take approximately ${mins} minutes to get to ${destName}."
+                }
+            }
+            // -----------------------------------
+            
             def delay = settings["depDelay_${idx}"] != null ? settings["depDelay_${idx}"].toInteger() : 5
             def outVol = settings["depVolume_${idx}"] ?: settings.outdoorVolume
             def rMode = settings["depRoutingMode_${idx}"] ?: "Outdoor Speaker Only"
@@ -2415,40 +2591,6 @@ def unifiProtectHandler(evt) {
     def detectStr = evt.value?.toLowerCase() ?: ""
     if (detectStr == "none" || detectStr == "waiting" || detectStr == "null" || detectStr == "") return
     
-    // --- NEW: SMART PACKAGE CONCIERGE ---
-    if (detectStr.contains("package")) {
-        // Respect the dedicated Package Tracking toggle!
-        if (settings.enableDeliveryTracking == false) {
-            if (settings.enableDebug) log.debug "GOOGLE DELIVERY: Suppressed (Package Tracking is toggled OFF)."
-            return
-        }
-        
-        if (getPresentUsers().size() == 0) {
-            stashMessage("a package was delivered to the house")
-            return
-        }
-        
-        def debounceMs = 5 * 60000 // 5 minute cooldown for packages
-        def lastPkg = state.lastPackageAlert ?: 0
-        if ((new Date().time - lastPkg) > debounceMs) {
-            state.lastPackageAlert = new Date().time
-            
-            // 1. Thank the driver outside
-            if (outdoorSpeaker) {
-                def outMsg = "Thank you for the delivery. Please leave the package right there."
-                enqueueTTS(outdoorSpeaker, outMsg, settings.outdoorVolume, 2, true)
-            }
-            
-            // 2. Alert the house inside
-            def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
-            executeRoutedTTS(applyDynamicVars(inMsg), "Global Indoor Speaker Only", settings.globalVolume, 0, 2)
-            
-            addToHistory("SMART CAMERA: Package delivery detected and announced.")
-        }
-        return
-    }
-    // ------------------------------------
-    
     // FIX: Send Smart Detection data to the Morning Report Tracker!
     countMotionHandler(evt) 
     
@@ -2482,6 +2624,46 @@ def unifiProtectHandler(evt) {
     
     // Added 'true' at the end to fast-track the alert and skip the chime
     executeRoutedTTS(randomMsg, settings.intruderRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, targetVol, 1, true)
+}
+
+def unifiPackageHandler(evt) {
+    ensureStateMaps()
+    def detectStr = evt.value?.toLowerCase() ?: ""
+    if (!detectStr.contains("package")) return
+    
+    executePackageAlert()
+}
+
+def executePackageAlert(isTest=false) {
+    ensureStateMaps()
+    if (!settings.enableSmartPackage && !isTest) return
+    
+    def presentFolks = getPresentUsers()
+    if (presentFolks.size() == 0 && !isTest) {
+        stashMessage("a package was delivered to the house")
+        return
+    }
+    
+    // 5-minute debounce to prevent camera spam
+    def debounceMs = 5 * 60000 
+    def lastPkg = state.lastPackageAlert ?: 0
+    if (!isTest && ((new Date().time - lastPkg) < debounceMs)) return
+    state.lastPackageAlert = new Date().time
+    
+    // 1. Thank the driver outside
+    if (settings.packageOutdoorMessage && outdoorSpeaker) {
+        def outMsg = "Thank you for the delivery. Please leave the package right there."
+        enqueueTTS(outdoorSpeaker, outMsg, settings.outdoorVolume, 2, true)
+    }
+    
+    // 2. Alert the house inside
+    def inMsg = "%interruption%, but the security camera has just detected a package delivery at the front door."
+    if (isTest) inMsg = "This is a test of the UniFi Protect package detection. " + inMsg
+    
+    def targetVol = settings.packageVolume != null ? settings.packageVolume : settings.globalVolume
+    executeRoutedTTS(applyDynamicVars(inMsg), settings.packageRoutingMode ?: "Global Indoor Speaker Only", targetVol, 0, 2)
+    
+    addToHistory("SMART CAMERA: Package delivery detected and announced.")
 }
 
 // --- BUTLER EVENT TRACKING & REPORTING ---
@@ -2900,12 +3082,11 @@ def arrivalHandler(evt) {
         greetingToPlay = applyDynamicVars(greetingToPlay)
 
         // --- FIX 3B: GLOBAL INCIDENT WARNINGS (ARRIVAL DOORBELL) ---
-        def doorbellCount = state.awayDoorbellCount ?: state.lastAwayDoorbellCount ?: 0
+        def doorbellCount = state.awayDoorbellCount ?: 0
         if (state.pendingArrivalReport && doorbellCount > 0) {
             greetingToPlay += " Also, there were ${doorbellCount} doorbell rings while you were away. Please check the cameras."
             state.pendingArrivalReport = false 
             state.awayDoorbellCount = 0
-            state.lastAwayDoorbellCount = 0
             addToHistory("INCIDENT REPORT: Delivered Global Away Doorbell warning on arrival.")
         }
         // -----------------------------------------------------------
@@ -3217,6 +3398,14 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             if (wardText) parts << getBridge("weather") + wardText
         }
 
+        // --- NEW: VEHICLE CARE SCOUT INJECTION ---
+        if (settings.enableVehicleCare && state.carWashDay) {
+            if (dow == state.carWashDay) {
+                parts << getBridge("general") + "the weekly forecast indicates today is the ideal day to wash the vehicles and clean them out."
+            }
+        }
+        // -----------------------------------------
+
         if (settings["roomBoredomBuster_${rNum}"] && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY || isTest)) {
             def bText = getBoredomBuster(wDevice)
             if (bText) parts << bText
@@ -3330,7 +3519,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         // -------------------------------------------------------------------
     }
     
-def finalMsg = parts.join(" ")
+    def finalMsg = parts.join(" ")
     
     // --- THE GRAMMAR POLISHER ---
     // Fix double punctuation and spacing issues caused by modular injection
@@ -3343,7 +3532,7 @@ def finalMsg = parts.join(" ")
     
     return applyDynamicVars(finalMsg)
 }
-
+    
 def executeGoodNightSequence(data) {
     def rNum = data.roomNum
     def rName = settings["roomName_${rNum}"] ?: "Room ${rNum}"
@@ -3886,7 +4075,6 @@ def midnightReset() {
     state.hasArrivedToday.each { uName, arrived ->
         if (arrived == true) {
             newHasArrived[uName] = true
-            // We set the context to 'Present' so the dashboard doesn't show a reset message
             newResetReasons[uName] = "Present" 
         }
     }
@@ -3899,16 +4087,9 @@ def midnightReset() {
     // Set the global status for anyone NOT already home
     state.globalResetReason = "Awaiting First Entry"
     
-    // 3. LOG ROTATION (For the Morning Briefings)
-    state.lastNightMotionCount = state.nightMotionCount ?: 0
-    state.lastAwayDoorbellCount = state.awayDoorbellCount ?: 0
-    state.nightMotionCount = 0
-    state.awayDoorbellCount = 0
+    // 3. DAILY TRACKER RESETS
     state.anomalyAlertedToday = [:]
-    
-    // --- OPTION 3: PROGRESSIVE ESCALATION RESET ---
     state.reminderCounts = [:]
-    // ----------------------------------------------
     
     // 4. QUEUE MAINTENANCE
     state.ttsQueue = []
@@ -3971,7 +4152,8 @@ def appButtonHandler(btn) {
         for (int d = 1; d <= 5; d++) { if (settings["screenTimeMsg_${d}"]) msgs << settings["screenTimeMsg_${d}"] }
         if (!msgs) msgs = getDefaultMessages("ScreenTime")
         executeRoutedTTS(applyDynamicVars(msgs[new Random().nextInt(msgs.size())]), settings.screenTimeRoutingMode ?: "Global Indoor Speaker Only", settings.screenTimeVolume ?: globalVolume, settings.outdoorVolume, 1, false, settings.screenTimeSpeaker)
-    } else if (btn == "btnTestCalendar") executeCalendarAlert([title: "a test appointment", timeStr: "1 Hour"])
+    }
+    else if (btn == "btnTestCalendar") executeCalendarAlert([title: "a test appointment", timeStr: "1 Hour", isTest: true])
     else if (btn.startsWith("btnTestRoomNews_")) testRoomNews(btn.split("_")[1].toInteger())
     else if (btn.startsWith("btnTestRoomSpk_")) {
         def rNum = btn.split("_")[1].toInteger()
@@ -3990,10 +4172,14 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestMorningReport") playButlerReport([type: "Morning", count: 3])
     else if (btn == "btnTestArrivalReport") playButlerReport([type: "Arrival", count: 2])
     else if (btn == "btnClearNotes") clearNotesEndpoint()
-    else if (btn.startsWith("btnTestHeadedHome_")) executeHeadedHome(btn.split("_")[1].toInteger())    
-    else if (btn == "btnTestHealth") executeHealthWindow(true)    
+    else if (btn.startsWith("btnTestHeadedHome_")) executeHeadedHome(btn.split("_")[1].toInteger(), true)
+    else if (btn == "btnTestHealth") executeHealthWindow(true)
+    else if (btn == "btnTestPackage") executePackageAlert(true)
+    else if (btn == "btnTestMarket") executeMarketReminder(true)
+    else if (btn == "btnTestCinema") executeCinemaScout(true)
+    else if (btn == "btnTestGrocery") executeGroceryScout(true) 
+    else if (btn == "btnTestVehicleScout") executeVehicleScout(true) 
 }
-
 
 def testGoogleIntegration() {
     def testDest = state.nextEventLocation ?: "4538 US-231, Wetumpka, AL 36092"
@@ -4032,8 +4218,15 @@ def testGoogleIntegration() {
 def addToHistory(String msg) {
     ensureStateMaps()
     def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
-    state.historyLog.add(0, "[${timestamp}] ${msg}")
-    if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
+    
+    // Hubitat Quirks Fix: Extract list, modify, and push back to force a database commit
+    def currentLog = state.historyLog ?: []
+    currentLog.add(0, "[${timestamp}] ${msg}")
+    if (currentLog.size() > 30) currentLog = currentLog.take(30)
+    state.historyLog = currentLog
+    
+    // Mirror to Hubitat's native Logs tab so it's always visible!
+    log.info "Voice Butler History: ${msg}"
 }
 
 def checkInternetConnection() {
@@ -4366,12 +4559,15 @@ def getMiddayMaintenanceReport(mDevice) {
 }
 
 // --- NEW: NOTES PORTAL WEB HANDLERS ---
+// --- NEW: NOTES PORTAL WEB HANDLERS ---
 def serveNotesPage() {
     try {
         ensureStateMaps()
         def trackedNames = getTrackedUsers()
         def userOptions = ""
-        trackedNames.each { u -> userOptions += "<option value='${u}'>${u}</option>" }
+        
+        // FIX: Display Alias in the drop down, but submit the Real Name to the system
+        trackedNames.each { u -> userOptions += "<option value='${u}'>${applyAlias(u)}</option>" }
 
         def apiUrl = getFullApiServerUrl()
 
@@ -4379,21 +4575,20 @@ def serveNotesPage() {
             state.butlerNotes = []
         }
 
-        // --- 1. DYNAMICALLY BUILD PRESENCE CARDS WITH MANUAL OVERRIDE ---
+        // --- 1. DYNAMICALLY BUILD PRESENCE CARDS ---
         def presenceHtml = "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>"
         if (trackedNames.size() > 0) {
             trackedNames.each { u ->
+                def dispName = applyAlias(u) // FIX: Get the display name for the UI
+                
                 def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[u] == true || state.hasArrivedToday[u] == "true")
                 def departed = state.hasDepartedToday != null && (state.hasDepartedToday[u] == true || state.hasDepartedToday[u] == "true")
                 def isHome = arrived && !departed
-                
                 def statusColor = isHome ? "#27ae60" : "#c0392b"
                 def statusIcon = isHome ? "🏠 Home" : "🚗 Away"
                 
                 presenceHtml += "<div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; justify-content: space-between; align-items: center;'>"
-                presenceHtml += "<div><b>${u}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
-                
-                // If they are home, show the manual "Mark Away" button
+                presenceHtml += "<div><b>${dispName}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
                 if (isHome) {
                     presenceHtml += """
                         <form action="${apiUrl}/presence/depart?access_token=${state.accessToken}" method="POST" style="margin:0;">
@@ -4409,7 +4604,7 @@ def serveNotesPage() {
         }
         presenceHtml += "</div>"
         
-        // --- 2. DYNAMICALLY BUILD ROOM OPTIONS FOR AGENDA ---
+        // --- 2. DYNAMICALLY BUILD ROOM OPTIONS ---
         def roomOptionsHtml = ""
         def numR = settings.numRooms ? settings.numRooms as Integer : 0
         for (int i = 1; i <= numR; i++) {
@@ -4417,11 +4612,11 @@ def serveNotesPage() {
             roomOptionsHtml += "<option value='${i}'>${rName}</option>"
         }
 
-        // --- 3. DYNAMICALLY BUILD THE DIRECTORY CARDS ---
+        // --- 3. DYNAMICALLY BUILD DIRECTORY ---
         def numC = settings.numContacts ? settings.numContacts as Integer : 0
         def directoryHtml = ""
         if (settings.enableDirectory && numC > 0) {
-            directoryHtml += "<h3 style='margin-top: 30px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📞 Request Announcement</h3>"
+            directoryHtml += "<details style='margin-bottom: 15px;'><summary>📞 Request Service Announcement</summary><div style='padding-top: 15px;'>"
             for (int i = 1; i <= numC; i++) {
                 def cName = settings["contactName_${i}"]
                 def cInfo = settings["contactInfo_${i}"]
@@ -4437,20 +4632,23 @@ def serveNotesPage() {
                     """
                 }
             }
+            directoryHtml += "</div></details>"
         }
 
-        // --- 4. DYNAMICALLY BUILD THE WI-FI CARD ---
+        // --- 4. DYNAMICALLY BUILD WI-FI CARD ---
         def wifiHtml = ""
         if (settings.enableWifiPortal && settings.wifiSSID) {
             wifiHtml = """
-                <h3 style='margin-top: 30px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📶 Guest Wi-Fi</h3>
-                <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #3498db; background: #222;'>
-                    <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
-                    <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
-                        <input type="hidden" name="dummyData" value="trigger">
-                        <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
-                    </form>
-                </div>
+                <details style='margin-bottom: 15px;'><summary>📶 Guest Wi-Fi Sharing</summary>
+                <div style='padding-top: 15px;'>
+                    <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #3498db; background: #222;'>
+                        <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
+                        <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                            <input type="hidden" name="dummyData" value="trigger">
+                            <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
+                        </form>
+                    </div>
+                </div></details>
             """
         }
 
@@ -4458,8 +4656,7 @@ def serveNotesPage() {
         def quickReplyHtml = ""
         def numQR = settings.numQuickReplies ? settings.numQuickReplies as Integer : 0
         if (numQR > 0) {
-            quickReplyHtml += "<h3 style='margin-top: 10px; margin-bottom: 10px; color:#f39c12; border-bottom: 2px solid #333; padding-bottom: 5px;'>⚡ Quick Replies (Outdoor)</h3>"
-            quickReplyHtml += "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 35px;'>"
+            quickReplyHtml += "<details style='margin-bottom: 15px;'><summary>⚡ Quick Replies (Outdoor)</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;'>"
             for (int i = 1; i <= numQR; i++) {
                 def qrName = settings["quickReplyName_${i}"] ?: "Reply ${i}"
                 quickReplyHtml += """
@@ -4470,14 +4667,14 @@ def serveNotesPage() {
                     </form>
                 """
             }
-            quickReplyHtml += "</div>"
+            quickReplyHtml += "</div></div></details>"
         }
 
-        // --- 6. DYNAMICALLY BUILD TASK DASHBOARD SHORTCUT ---
+        // --- 6. DASHBOARD SHORTCUT ---
         def dashboardBtnHtml = ""
         if (settings.taskDashboardUrl) {
             dashboardBtnHtml = """
-                <div style='margin-bottom: 25px;'>
+                <div style='margin-bottom: 15px;'>
                     <a href="${settings.taskDashboardUrl}" target="_blank" style="text-decoration: none;">
                         <button type="button" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
                             ✅ Open Maintenance Dashboard
@@ -4487,11 +4684,8 @@ def serveNotesPage() {
             """
         }
 
-        // --- 7. DYNAMICALLY BUILD PA ROUTING OPTIONS ---
         def paRoutingHtml = ""
-        getRoutingOptions().each { r ->
-            paRoutingHtml += "<option value=\"${r}\">${r}</option>"
-        }
+        getRoutingOptions().each { r -> paRoutingHtml += "<option value=\"${r}\">${r}</option>" }
 
         // --- MAIN HTML BUILDER ---
         def html = new StringBuilder()
@@ -4505,24 +4699,16 @@ def serveNotesPage() {
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background-color: #0d0d0d; color: #e0e0e0; }
                 .container { max-width: 600px; margin: 0 auto; background: #151515; padding: 25px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); }
-                
-                /* Chat-style inputs */
                 textarea { width: 100%; height: 80px; padding: 15px; margin-bottom: 15px; border: 1px solid #333; border-radius: 12px; box-sizing: border-box; font-family: inherit; font-size: 16px; background-color: #222; color: #ffffff; resize: none; }
                 textarea:focus { outline: none; border-color: #1f618d; }
-                select, input[type="time"], input[type="text"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
-                
-                /* Buttons */
+                select, input[type="time"], input[type="text"], input[type="number"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
                 button { background-color: #1f618d; color: white; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; font-weight: 600; transition: background 0.2s; }
                 button:hover { background-color: #1a5276; }
                 button.clear { background-color: transparent; color: #c0392b; border: 1px solid #c0392b; margin-top: 10px; }
                 button.danger { background-color: #c0392b; }
                 button.danger:hover { background-color: #922b21; }
-                
-                /* Accordion for Dashboard features */
-                details { background: #1a1a1a; padding: 15px; border-radius: 8px; margin-top: 40px; border: 1px solid #333; }
-                summary { font-weight: bold; color: #82b1ff; cursor: pointer; outline: none; font-size: 15px; }
-                summary::marker { color: #82b1ff; }
-                
+                details { background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #333; }
+                summary { font-weight: bold; font-size: 16px; color: #e0e0e0; cursor: pointer; outline: none; display: flex; align-items: center; }
                 .note-list { margin-top: 25px; text-align: left; }
                 .note-item { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #1f618d; font-size: 15px; line-height: 1.5; }
                 option { background-color: #222; color: #ffffff; }
@@ -4536,61 +4722,62 @@ def serveNotesPage() {
         </head>
         <body>
             <div class="container">
+                <div style="text-align:center; font-size: 60px; margin-bottom: 10px; line-height:1;">🤵🏻</div>
                 <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Estate Command Deck</h2>
-                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Manage messaging, context, and live broadcasts.</p>
+                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
 
                 ${dashboardBtnHtml}
 
+                <details style="margin-bottom: 15px;">
+                    <summary>⏱️ Guest Departure Timer</summary>
+                    <div style="padding-top: 15px;">
+                        <form action="${apiUrl}/guest/timer?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Guest's Name:</label>
+                            <input type="text" name="guestName" placeholder="E.g., John" required>
+                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Minutes until departure:</label>
+                            <input type="number" name="guestDuration" placeholder="E.g., 60" required>
+                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Speaker Selection:</label>
+                            <select name="guestRoutingMode">${paRoutingHtml}</select>
+                            <button type="submit" style="background-color: #27ae60; margin-top: 5px;">▶️ Start Timer</button>
+                        </form>
+                    </div>
+                </details>
+
                 ${quickReplyHtml}
 
-                <h3 style='margin-top: 10px; margin-bottom: 10px; color:#e74c3c; border-bottom: 2px solid #333; padding-bottom: 5px;'>🎙️ Live Intercom (PA)</h3>
-                <form action="${apiUrl}/pa/announce?access_token=${state.accessToken}" method="POST" style="margin-bottom: 35px;">
-                    <textarea name="paText" placeholder="Type a message to be announced immediately..." required style="height: 60px; border-color: #555;"></textarea>
-                    
-                    <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
-                    <select name="paRoute">
-                        ${paRoutingHtml}
-                    </select>
-
-                    <button type="submit" class="danger">Broadcast Now</button>
-                </form>
-
-                <h3 style='margin-top: 10px; margin-bottom: 10px; color:#82b1ff; border-bottom: 2px solid #333; padding-bottom: 5px;'>📝 Schedule a Note</h3>
-                <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
-                    <textarea name="noteText" placeholder="What would you like the Butler to say later?..." required></textarea>
-                    
-                    <div style="display: flex; gap: 10px;">
-                        <div style="flex: 1;">
-                            <label style="font-size: 12px; color: #aaa;">From:</label>
-                            <select name="senderName">
-                                <option value="Someone">Select...</option>
-                                ${userOptions}
-                            </select>
-                        </div>
-                        <div style="flex: 1;">
-                            <label style="font-size: 12px; color: #aaa;">To:</label>
-                            <select name="targetUser">
-                                <option value='Anyone'>Anyone</option>
-                                ${userOptions}
-                            </select>
-                        </div>
+                <details style="margin-bottom: 15px;">
+                    <summary>🎙️ Live Intercom (PA)</summary>
+                    <div style="padding-top: 15px;">
+                        <form action="${apiUrl}/pa/announce?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                            <textarea name="paText" placeholder="Type a message to be announced immediately..." required></textarea>
+                            <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
+                            <select name="paRoute">${paRoutingHtml}</select>
+                            <button type="submit" class="danger">Broadcast Now</button>
+                        </form>
                     </div>
-                    
-                    <label style="font-size: 12px; color: #aaa;">Delivery Trigger:</label>
-                    <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
-                        <option value="Arrival">When they arrive home</option>
-                        <option value="Morning">During their morning briefing</option>
-                        <option value="Time">At a specific time</option>
-                    </select>
-                    
-                    <div id="timeDiv" style="display:none;">
-                        <label style="font-size: 12px; color: #aaa;">Time:</label>
-                        <input type="time" name="deliveryTime">
-                    </div>
+                </details>
 
-                    <button type="submit">Queue Message</button>
-                </form>
-
+                <details style="margin-bottom: 15px;">
+                    <summary>📝 Schedule a Note</summary>
+                    <div style="padding-top: 15px;">
+                        <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
+                            <textarea name="noteText" placeholder="What would you like the Butler to say later?..." required></textarea>
+                            <div style="display: flex; gap: 10px;">
+                                <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">From:</label><select name="senderName"><option value="Someone">Select...</option>${userOptions}</select></div>
+                                <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">To:</label><select name="targetUser"><option value='Anyone'>Anyone</option>${userOptions}</select></div>
+                            </div>
+                            <label style="font-size: 12px; color: #aaa;">Delivery Trigger:</label>
+                            <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
+                                <option value="Arrival">When they arrive home</option>
+                                <option value="Morning">During their morning briefing</option>
+                                <option value="Time">At a specific time</option>
+                            </select>
+                            <div id="timeDiv" style="display:none;">
+                                <label style="font-size: 12px; color: #aaa;">Time:</label>
+                                <input type="time" name="deliveryTime">
+                            </div>
+                            <button type="submit">Queue Message</button>
+                        </form>
         """)
         
         if (state.butlerNotes && state.butlerNotes.size() > 0) {
@@ -4599,36 +4786,25 @@ def serveNotesPage() {
                 def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
                 html.append("<div class='note-item'><b>From ${note.sender} to ${note.target}</b>${timeTxt}<br><span style='color:#ccc;'>\"${note.text}\"</span></div>")
             }
-            html.append("""
-                <form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST">
-                    <button type="submit" class="clear">Clear Delivery Queue</button>
-                </form>
-            </div>""")
+            html.append("""<form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST"><button type="submit" class="clear">Clear Delivery Queue</button></form></div>""")
         }
+        html.append("</div></details>")
         
-        // WIFI SECTION
         html.append(wifiHtml)
-
-        // DIRECTORY SECTION
         html.append(directoryHtml)
 
         // HIDDEN DASHBOARD ACCORDION
         html.append("""
                 <details>
                     <summary>⚙️ Butler Memory & Settings</summary>
-                    
                     <div style="margin-top: 15px;">
                         <h4 style='margin-bottom: 5px; color:#fff; font-size: 14px;'>Current Presence</h4>
                         ${presenceHtml}
                     </div>
-
                     <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
-
                     <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
                     <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
-                        <select name="roomSelect" required style="padding: 8px;">
-                            ${roomOptionsHtml}
-                        </select>
+                        <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml}</select>
                         <select name="daySelect" required style="padding: 8px;">
                             <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
                         </select>
@@ -4642,7 +4818,6 @@ def serveNotesPage() {
         """)
         
         return render(contentType: "text/html", data: html.toString(), status: 200)
-        
     } catch (Exception e) {
         log.error "Notes Portal Crash: ${e}"
         return render(contentType: "text/html", data: "<h3 style='color:white;'>Portal Error:</h3><p style='color:white;'>${e}</p><p style='color:white;'>Please check your Hubitat logs.</p>", status: 500)
@@ -5052,15 +5227,15 @@ def butlerLrMotionHandler(evt) {
     
     // Only trigger in the morning between 4 AM and 11 AM
     if (hour >= 4 && hour < 11) {
-        if (state.pendingMorningReport && state.lastNightMotionCount > 0) {
+        if (state.pendingMorningReport && (state.nightMotionCount ?: 0) > 0) {
             def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
             def vol = settings.butlerLrVolume ?: globalVolume
             if (targetSpeaker) {
-                def msg = "Good morning. Please note, there were ${state.lastNightMotionCount} motion events at the front door last night. Please check the cameras."
+                def msg = "Good morning. Please note, there were ${state.nightMotionCount} motion events at the front door last night. Please check the cameras."
                 enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 4)
                 
                 state.pendingMorningReport = false
-                state.lastNightMotionCount = 0
+                state.nightMotionCount = 0
                 addToHistory("INCIDENT REPORT: Delivered Global Night Motion warning in Living Room.")
             }
         }
@@ -5567,5 +5742,514 @@ def realTimeTaskHandler(evt) {
         
         executeRoutedTTS(finalMsg, settings.realTimeTaskRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
         addToHistory("TASK ALERT: Announced newly due task: ${taskStr}")
+    }
+}
+
+// --- AI CINEMA & STREAMING SCOUT (GEMINI INTEGRATION) ---
+def executeCinemaScout(isTest = false) {
+    ensureStateMaps()
+    if (!settings.enableCinemaScout && !isTest) return
+    
+    // 1. Only run automatically on Fridays
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
+    if (!isTest && dow != Calendar.FRIDAY) {
+        if (settings.enableDebug) log.debug "CINEMA SCOUT: Ignored (Today is not Friday)."
+        return
+    }
+
+    // 2. Suppress if the house is empty
+    if (!isTest) {
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) {
+            addToHistory("CINEMA SCOUT: Suppressed. House is currently empty.")
+            return
+        }
+    }
+
+    if (!settings.geminiApiKey) {
+        log.warn "Voice Butler: Cinema Scout failed. No Gemini API Key provided."
+        return
+    }
+
+    // 3. The Prompt Payload for Gemini (Now with Live Clock Injection)
+    def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
+    def systemPrompt = "Today is ${todayStr}. You are a live data-retrieval assistant for a high-end smart home. I need the weekend entertainment update for THIS EXACT WEEK. Identify the top 2 movies currently premiering or trending in US movie theaters right now, the top 2 new movies or highly anticipated shows just added to Netflix US this week, 1 new or trending Family Movie, and 1 new or trending Kid Friendly Movie. Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. Format exactly like this: {\"theaters\": \"Movie 1 and Movie 2\", \"netflix\": \"Show A and Movie B\", \"family\": \"Movie C\", \"kids\": \"Movie D\"}"
+
+    def requestBody = [
+        contents: [
+            [
+                role: "user",
+                parts: [
+                    [text: systemPrompt]
+                ]
+            ]
+        ],
+        // Forces Gemini to browse the live internet instead of relying on training data
+        tools: [
+            [ googleSearch: [:] ]
+        ],
+        generationConfig: [
+            temperature: 0.2 // Keep it factual and strict
+        ]
+    ]
+
+    // Using the highly available gemini-2.5-flash model
+    def params = [
+        uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: groovy.json.JsonOutput.toJson(requestBody),
+        timeout: 20
+    ]
+
+    if (isTest) log.info "CINEMA SCOUT: Pinging Google Gemini API for the latest movies..."
+
+    // 4. Ping Gemini and Process the Response
+    try {
+        httpPost(params) { resp ->
+            if (resp.status == 200 && resp.data) {
+                // Extract Gemini's text response
+                def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                
+                // Strip out any accidental markdown formatting the LLM might have added
+                geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
+```/, "").trim()
+                
+                // Parse the clean JSON object Gemini sent back
+                def movieData = new groovy.json.JsonSlurper().parseText(geminiText)
+                
+                def theaterTitle = movieData.theaters ?: "several new releases"
+                def netflixTitle = movieData.netflix ?: "new streaming content"
+                def familyTitle = movieData.family ?: "a great family film"
+                def kidsTitle = movieData.kids ?: "a fun animated movie"
+
+                // 5. Assemble and Announce
+                def greeting = getDynamicGreeting()
+                def msg = "%interruption%, ${greeting}, the weekend has finally arrived. For your entertainment, the top movies in theaters right now are ${theaterTitle}. For staying in, the top streaming updates are: ${netflixTitle}. If you are planning a family movie night, consider ${familyTitle}. And for the little ones, ${kidsTitle} is highly recommended."
+                
+                // CRITICAL FIX: Only speak if the house is in an allowed mode
+                if (settings.cinemaModes == null || settings.cinemaModes.contains(location.mode)) {
+                    def targetVol = settings.cinemaVolume != null ? settings.cinemaVolume : settings.globalVolume
+                    executeRoutedTTS(applyDynamicVars(msg), settings.cinemaRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                } else {
+                    if (isTest || settings.enableDebug) log.info "CINEMA SCOUT: Spoken announcement skipped because house is in mode: ${location.mode}"
+                }
+                
+                def prefix = isTest ? "TEST CINEMA SCOUT: " : "CINEMA SCOUT: "
+                addToHistory("${prefix}Processed AI-curated movie and Netflix releases.")
+                
+                // --- PUSH NOTIFICATION BLOCK (ALWAYS SENDS) ---
+                if (settings.notificationDevice) {
+                    def pushMsg = "🎥 WEEKEND PREMIERES\n"
+                    pushMsg += "Theaters: ${theaterTitle}\n"
+                    pushMsg += "Streaming: ${netflixTitle}\n"
+                    pushMsg += "Family Night: ${familyTitle}\n"
+                    pushMsg += "Kid Friendly: ${kidsTitle}"
+                    settings.notificationDevice.each { dev ->
+                        try { dev.deviceNotification(pushMsg) } catch(err) {}
+                    }
+                }
+
+                if (isTest) log.info "TESTING CINEMA SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
+            } else {
+                log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
+            }
+        }
+    } catch (e) { 
+        log.warn "Voice Butler: Gemini API Call Failed - ${e}" 
+        if (isTest) log.info "CINEMA SCOUT TEST FAILED: Ensure your API key is correct and check Hubitat logs."
+    }
+}
+
+// --- GROCERY DAY SCOUT (GEMINI INTEGRATION) ---
+def executeGroceryScout(isTest = false) {
+    ensureStateMaps()
+    if (!settings.enableGroceryScout && !isTest) return
+
+    // 1. Day of Week Check
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def calendar = Calendar.getInstance(tz)
+    def dowInt = calendar.get(Calendar.DAY_OF_WEEK)
+    def daysMap = ["Sunday":1, "Monday":2, "Tuesday":3, "Wednesday":4, "Thursday":5, "Friday":6, "Saturday":7]
+
+    if (!isTest && settings.groceryDay) {
+        if (dowInt != daysMap[settings.groceryDay]) {
+            if (settings.enableDebug) log.debug "GROCERY SCOUT: Ignored (Today is not ${settings.groceryDay})."
+            return
+        }
+    }
+
+    // 2. Suppress if the house is empty
+    if (!isTest) {
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) {
+            addToHistory("GROCERY SCOUT: Suppressed. House is currently empty.")
+            return
+        }
+    }
+
+    if (!settings.geminiApiKey) {
+        log.warn "Voice Butler: Grocery Scout failed. No Gemini API Key provided."
+        return
+    }
+
+    // 3. Build Preferences and Prompt (Added Costco)
+    def prefsStr = settings.groceryPrefs ? settings.groceryPrefs.join(", ") : "general grocery items"
+    def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
+
+    def systemPrompt = """Today is ${todayStr}. You are a proactive home manager. I need the best grocery deals for this exact week.
+    Search the live, current weekly circular ads and warehouse savings for Aldi, Publix, Walmart, and Costco in the US.
+    The user is specifically looking for deals matching these categories: ${prefsStr}.
+    Find 2 to 4 of the absolute best current deals from EACH of the 4 stores. Be specific about the price if possible (e.g., "\$1.99/lb Chicken Breast").
+    Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. 
+    Format exactly like this:
+    {
+      "aldi": ["Deal 1", "Deal 2"],
+      "publix": ["Deal 1", "Deal 2"],
+      "walmart": ["Deal 1", "Deal 2"],
+      "costco": ["Deal 1", "Deal 2"]
+    }"""
+
+    def requestBody = [
+        contents: [ [ role: "user", parts: [ [text: systemPrompt] ] ] ],
+        tools: [ [ googleSearch: [:] ] ], // Forces live internet browsing
+        generationConfig: [ temperature: 0.2 ]
+    ]
+
+    def params = [
+        uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: groovy.json.JsonOutput.toJson(requestBody),
+        timeout: 25 // Allowed a little extra time for the AI to read 4 different grocery sites
+    ]
+
+    if (isTest) log.info "GROCERY SCOUT: Pinging Gemini for live weekly ads..."
+
+    // 4. Ping Gemini and Process (With Developer-Grade Retry Logic)
+    def maxRetries = 2
+    def attempt = 0
+    def success = false
+
+    while (attempt < maxRetries && !success) {
+        attempt++
+        try {
+            httpPost(params) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    success = true // Mark as successful to exit the loop
+                    
+                    def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/```/, "").trim()
+                    
+                    def dealsData = new groovy.json.JsonSlurper().parseText(geminiText)
+                    
+                    // Safe extraction into Lists (Added Costco)
+                    def aldiDeals = dealsData.aldi ?: []
+                    def publixDeals = dealsData.publix ?: []
+                    def walmartDeals = dealsData.walmart ?: []
+                    def costcoDeals = dealsData.costco ?: []
+
+                    def aldiCount = aldiDeals.size()
+                    def publixCount = publixDeals.size()
+                    def walmartCount = walmartDeals.size()
+                    def costcoCount = costcoDeals.size()
+                    def totalDeals = aldiCount + publixCount + walmartCount + costcoCount
+
+                    // 5. Assemble Spoken Summary
+                    def greeting = getDynamicGreeting()
+                    def msg = ""
+                    if (totalDeals > 0) {
+                        msg = "%interruption%, ${greeting}, I have scanned the weekly ads based on your preferences. I found ${aldiCount} deals at Aldi, ${publixCount} at Publix, ${walmartCount} at Walmart, and ${costcoCount} at Costco that you might want to grab during your grocery run. I've sent the complete lists to your phone."
+                    } else {
+                        msg = "%interruption%, ${greeting}, I scanned the weekly ads, but I didn't find any standout deals matching your preferences today."
+                    }
+
+                    // CRITICAL FIX: Only speak if the house is in an allowed mode
+                    if (settings.groceryModes == null || settings.groceryModes.contains(location.mode)) {
+                        def targetVol = settings.groceryVolume != null ? settings.groceryVolume : settings.globalVolume
+                        executeRoutedTTS(applyDynamicVars(msg), settings.groceryRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                    } else {
+                        if (isTest || settings.enableDebug) log.info "GROCERY SCOUT: Spoken announcement skipped because house is in mode: ${location.mode}"
+                    }
+                    
+                    def prefix = isTest ? "TEST GROCERY SCOUT: " : "GROCERY SCOUT: "
+                    addToHistory("${prefix}Processed ${totalDeals} grocery deals.")
+                    
+                    // 6. Split Push Notifications (ALWAYS SENDS, One per store for better scannability)
+                    if (settings.notificationDevice && totalDeals > 0) {
+                        def storeData = [
+                            [label: "ALDI", deals: aldiDeals],
+                            [label: "PUBLIX", deals: publixDeals],
+                            [label: "WALMART", deals: walmartDeals],
+                            [label: "COSTCO", deals: costcoDeals]
+                        ]
+
+                        storeData.each { store ->
+                            if (store.deals.size() > 0) {
+                                def storeMsg = "🛒 ${store.label} DEALS\n• " + store.deals.join("\n• ")
+                                settings.notificationDevice.each { dev ->
+                                    try { 
+                                        dev.deviceNotification(storeMsg.trim()) 
+                                    } catch(err) {
+                                        log.warn "Voice Butler: Failed to send ${store.label} notification to ${dev.displayName}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (isTest) log.info "TESTING GROCERY SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
+                } else {
+                    log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
+                }
+            }
+        } catch (groovyx.net.http.HttpResponseException e) { 
+            log.warn "Voice Butler: Grocery Scout API HTTP Error (Attempt ${attempt}/${maxRetries}) - ${e.statusCode} ${e.message}"
+            if (attempt < maxRetries) {
+                if (isTest) log.info "GROCERY SCOUT: Google server busy (503). Retrying in 3 seconds..."
+                pauseExecution(3000)
+            } else {
+                if (isTest) log.info "GROCERY SCOUT TEST FAILED: Google API is temporarily unavailable."
+            }
+        } catch (Exception e) {
+            log.warn "Voice Butler: Grocery Scout General Error - ${e}"
+            break // Break on hard code errors so we don't loop endlessly
+        }
+    }
+}
+
+def getDynamicGreeting() {
+    def presentFolks = getPresentUsers() // Uses your existing presence check
+    if (presentFolks.size() == 0) return "everyone"
+    if (presentFolks.size() == 1) return presentFolks[0]
+    
+    // If multiple people, join them with 'and'
+    return presentFolks.join(" and ")
+}
+
+// --- FALLBACK PRESENCE ENGINE (SUSTAINED MOTION & DEBOUNCE) ---
+
+def fallbackMotionHandler(evt) {
+    if (!settings.enableFallbackPresence) return
+    
+    def user = settings.fallbackUser ?: "Princess"
+    
+    // CRITICAL FIX: Checking the actual state map used by your app
+    if (state.hasArrivedToday && state.hasArrivedToday[user] == true) return 
+    
+    // 2. Verify Day Constraints (Weekdays)
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def calendar = Calendar.getInstance(tz)
+    def currentDay = calendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.US)
+    if (settings.fallbackDays && !settings.fallbackDays.contains(currentDay)) return
+    
+    // 3. Verify Time Window (After school hours)
+    if (settings.fallbackStartTime && settings.fallbackEndTime) {
+        if (!timeOfDayIsBetween(toDateTime(settings.fallbackStartTime), toDateTime(settings.fallbackEndTime), new Date(), tz)) {
+            return 
+        }
+    }
+
+    // 4. State Machine: Active vs Inactive with Debounce
+    if (evt.value == "active") {
+        unschedule("resetFallbackTimer")
+        if (!state.fallbackTrackingActive) {
+            state.fallbackTrackingActive = true
+            if (settings.enableDebug) log.debug "Voice Butler: Fallback presence tracking started for ${user}."
+            def durMins = settings.fallbackDuration ?: 5
+            runIn(durMins * 60, "executeFallbackArrival")
+        }
+    } else if (evt.value == "inactive") {
+        def anyActive = settings.fallbackMotionSensors.any { it.currentValue("motion") == "active" }
+        if (!anyActive && state.fallbackTrackingActive) {
+            def debounceSecs = settings.fallbackDebounce ?: 60
+            if (settings.enableDebug) log.debug "Voice Butler: Room quiet. Waiting ${debounceSecs}s (Debounce) before resetting ${user}'s timer."
+            runIn(debounceSecs, "resetFallbackTimer")
+        }
+    }
+}
+
+def resetFallbackTimer() {
+    // The debounce window expired without any new motion. She must not be in there.
+    if (settings.enableDebug) log.debug "Voice Butler: Fallback debounce expired. Resetting presence tracker."
+    state.fallbackTrackingActive = false
+    unschedule("executeFallbackArrival")
+}
+
+def executeFallbackArrival() {
+    state.fallbackTrackingActive = false 
+    def user = settings.fallbackUser ?: "Princess"
+    
+    // Double check she wasn't marked home by another method in the last 5 minutes
+    if (state.hasArrivedToday && state.hasArrivedToday[user] == true) return 
+    
+    log.info "Voice Butler: Sustained room motion confirmed. Executing fallback arrival for ${user}."
+    
+    // CRITICAL FIX: Force the system to mark her as Home using the correct Maps
+    state.hasArrivedToday[user] = true 
+    state.hasDepartedToday.remove(user)
+    state.resetReasons[user] = "Sustained Room Motion"
+    
+    def msg = "Pardon the intrusion, ${user}. I seem to have missed your arrival at the main door. Welcome home from school. I will cue your arrival briefing now."
+    
+    if (settings.fallbackSpeaker) {
+        try {
+            def targetVol = settings.globalVolume ?: 50
+            if (settings.fallbackSpeaker.hasCommand("playTextAndRestore")) {
+                settings.fallbackSpeaker.playTextAndRestore(msg, targetVol as Integer)
+            } else {
+                settings.fallbackSpeaker.speak(msg)
+            }
+        } catch(e) { 
+            log.warn "Voice Butler: Failed to speak fallback arrival on ${user}'s speaker - ${e}"
+        }
+    }
+    
+    addToHistory("FALLBACK PRESENCE: Marked ${user} as Arrived via sustained room motion.")
+}
+
+// --- GUEST TIMER WEB ENDPOINT & EXECUTION ---
+def guestTimerEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def gName = params.guestName ?: "Guest"
+        def gDur = params.guestDuration ? params.guestDuration.toInteger() : 0
+        def gRoute = params.guestRoutingMode ?: "Global Indoor Speaker Only"
+        
+        if (gDur > 0) {
+            log.info "Voice Butler: Guest timer started for ${gName} (${gDur} min)"
+            runIn(gDur * 60, "executeGuestEviction", [data: [name: gName, route: gRoute], overwrite: true])
+        }
+    } catch (Exception e) {
+        log.warn "Portal Guest Timer Error: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def executeGuestEviction(data) {
+    def name = data.name ?: "Guest"
+    def rMode = data.route ?: "Global Indoor Speaker Only"
+    def phrases = [
+        "Pardon the interruption, ${name}. The household's quiet hours are approaching, and I must begin the evening's closing procedures. It was a pleasure having you.",
+        "Excuse me, ${name}. My logs indicate that our scheduled visit has reached its conclusion. I wish you a safe journey home.",
+        "Forgive me for interrupting, ${name}, but the residence is scheduled for a security transition shortly. I must ask you to make your way to the exit.",
+        "${name}, it has been a delight. However, the master has requested I begin the home's reset for the night.",
+        "My apologies, ${name}. Butler services for today are now ending. I've ensured the path to the door is well-lit for your departure.",
+        "${name}, as per the household schedule, it is time for the residence to return to its private state. Thank you for your visit.",
+        "Pardon me, ${name}. I am under instruction to prepare the house for the family's private time now. I trust you had a pleasant stay.",
+        "Excuse the intrusion, ${name}. The allotted time for our gathering has expired. I hope to see you again soon.",
+        "${name}, the house is currently signaling the end of guest hours. I must kindly assist you in your departure.",
+        "Forgive my timing, ${name}, but I must begin the lockdown sequence for the evening. I wish you a very good night."
+    ]
+    
+    def randomMsg = phrases[new Random().nextInt(phrases.size())]
+    executeRoutedTTS(randomMsg, rMode, settings.globalVolume, settings.globalVolume, 1)
+}
+
+// --- AI VEHICLE CARE SCOUT (GEMINI INTEGRATION) ---
+def executeVehicleScout(isTest = false) {
+    ensureStateMaps()
+    if (!settings.enableVehicleCare && !isTest) return
+    
+    // 1. Only run automatically on Mondays
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
+    if (!isTest && dow != Calendar.MONDAY) return
+    
+    if (!settings.geminiApiKey) {
+        log.warn "Voice Butler: Vehicle Scout failed. No Gemini API Key provided."
+        return
+    }
+
+    def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
+    def systemPrompt = """Today is ${todayStr}. Look at the 7-day weather forecast for ${settings.homeAddress ?: location.zipCode ?: "the local area"}.
+    Identify the single best day this week (Monday through Sunday) to wash a car. Look for clear skies and the lowest chance of precipitation for consecutive days.
+    Return ONLY a raw JSON object formatted exactly like this:
+    { "dayOfWeekInt": 4, "dayName": "Wednesday", "reason": "it is followed by three days of clear skies" }
+    Make sure dayOfWeekInt matches standard Calendar values where Sunday=1, Monday=2, etc. Do not use markdown."""
+
+    def requestBody = [
+        contents: [ [ role: "user", parts: [ [text: systemPrompt] ] ] ],
+        tools: [ [ googleSearch: [:] ] ],
+        generationConfig: [ temperature: 0.2 ]
+    ]
+
+    def params = [
+        uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: groovy.json.JsonOutput.toJson(requestBody),
+        timeout: 25 
+    ]
+
+    if (isTest) log.info "VEHICLE SCOUT: Pinging Gemini for weekly forecast..."
+
+    def maxRetries = 2
+    def attempt = 0
+    def success = false
+
+    while (attempt < maxRetries && !success) {
+        attempt++
+        try {
+            httpPost(params) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    success = true
+                    def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/```/, "").trim()
+                    
+                    def weatherData = new groovy.json.JsonSlurper().parseText(geminiText)
+                    
+                    if (weatherData.dayOfWeekInt) {
+                        state.carWashDay = weatherData.dayOfWeekInt.toInteger()
+                        state.carWashReason = weatherData.reason ?: "favorable conditions"
+                        
+                        def prefix = isTest ? "TEST VEHICLE SCOUT: " : "VEHICLE SCOUT: "
+                        
+                        // THE FIX: The Butler takes full credit in the logs
+                        addToHistory("${prefix}Analyzed the forecast and selected ${weatherData.dayName} as the ideal car wash day.")
+                        
+                        // THE FIX: The Butler takes full credit in the spoken audio
+                        if (isTest) {
+                            log.info "${prefix}Success! Selected ${weatherData.dayName} because ${state.carWashReason}."
+                            def testMsg = "Vehicle Scout test complete. I have analyzed the weekly weather forecast and selected ${weatherData.dayName} as the ideal day to wash the vehicles, because ${state.carWashReason}."
+                            def targetVol = settings.vehicleVolume != null ? settings.vehicleVolume : settings.globalVolume
+                            executeRoutedTTS(applyDynamicVars(testMsg), settings.vehicleRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                        }
+                    }
+                }
+            }
+        } catch (groovyx.net.http.HttpResponseException e) { 
+            if (attempt < maxRetries) pauseExecution(3000)
+        } catch (Exception e) {
+            log.warn "Voice Butler: Vehicle Scout General Error - ${e}"
+            break
+        }
+    }
+}
+
+def executeVehicleReminder() {
+    if (!settings.enableVehicleCare || !state.carWashDay) return
+    
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
+    
+    // If today is the day Gemini picked, run the 12 PM fallback alert
+    if (dow == state.carWashDay) {
+        def presentFolks = getPresentUsers()
+        if (presentFolks.size() == 0) return 
+        
+        def greeting = getDynamicGreeting()
+        def msg = "%interruption%, ${greeting}, as a friendly reminder: based on the weekly weather forecast, today is the ideal day to wash the vehicles and clean them out."
+        
+        def targetVol = settings.vehicleVolume != null ? settings.vehicleVolume : settings.globalVolume
+        executeRoutedTTS(applyDynamicVars(msg), settings.vehicleRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+        addToHistory("VEHICLE CARE: Delivered afternoon reminder to wash cars.")
     }
 }
