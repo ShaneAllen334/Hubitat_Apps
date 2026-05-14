@@ -372,13 +372,11 @@ def mainPage() {
         }
         
              section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
-             // Moves the Butler Name from Section 1 to here
              input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
-    
-             // Adds the customizable Estate Name for the Portal and RSVP system
              input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
-    
              paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
+             
+             input "estateContext", "textarea", title: "Household Context for AI (Optional)", description: "Teach the Butler about your family, pets, or house rules so it can answer chat questions better."
          }
         
         // --- FIX 3A: GLOBAL LIVING ROOM REPORT INPUTS ---
@@ -4689,6 +4687,7 @@ def serveNotesPage() {
                         <b style='color:#2ecc71;'>Push Event to Google Calendar</b>
                         <form action="${apiUrl}/calendar/add?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
                             <input type="text" name="eventTitle" placeholder="Event Title" required style="margin-bottom: 10px;">
+                            <input type="text" name="eventLocation" placeholder="Location (Optional)" style="margin-bottom: 10px;">
                             <div style="display: flex; gap: 10px;">
                                 <input type="date" name="eventDate" required style="flex: 1; margin-bottom: 10px;">
                                 <input type="time" name="eventTime" required style="flex: 1; margin-bottom: 10px;">
@@ -4701,14 +4700,37 @@ def serveNotesPage() {
             </details>
         """
 
-        // --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
+// --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
         def chatHtml = """
             <details style='margin-bottom: 15px;'><summary>💬 Ask the Butler (AI Chat)</summary>
                 <div style='padding-top: 15px;'>
+                    
+                    <!-- CAPABILITIES AND LIMITATIONS MENU -->
+                    <details style='margin-bottom: 15px; background: #2a2a2a; border: 1px solid #444;'>
+                        <summary style='font-size: 14px; color: #3498db;'>ℹ️ What can I ask the Butler?</summary>
+                        <div style='padding-top: 10px; font-size: 13px; color: #ccc; line-height: 1.5;'>
+                            <b style='color: #27ae60;'>Things I CAN do:</b>
+                            <ul style='margin-top: 5px; padding-left: 20px; margin-bottom: 15px;'>
+                                <li><b>Local Concierge:</b> "Find a highly-rated plumber near me" or "Recommend a good Italian restaurant nearby."</li>
+                                <li><b>Household Status:</b> "Who is currently home?" or "When is my next calendar appointment?"</li>
+                                <li><b>Meal & Recipe Prep:</b> "I have chicken and rice. Give me a recipe for dinner."</li>
+                                <li><b>Troubleshooting:</b> "How do I reset a tripped circuit breaker?"</li>
+                            </ul>
+                            
+                            <b style='color: #e74c3c;'>Things I CANNOT do:</b>
+                            <ul style='margin-top: 5px; padding-left: 20px; margin-bottom: 5px;'>
+                                <li>I <b>cannot</b> physically control smart devices (e.g., turn off lights, adjust thermostats).</li>
+                                <li>I <b>cannot</b> unlock or lock the doors.</li>
+                                <li>I <b>cannot</b> view live security camera feeds.</li>
+                                <li>I <b>will not</b> answer questions regarding financial, medical, or highly sensitive personal data.</li>
+                            </ul>
+                        </div>
+                    </details>
+                    
                     <div id="chatResponse" style="background-color: #222; padding: 15px; border-radius: 8px; border-left: 4px solid #9b59b6; margin-bottom: 15px; font-size: 14px; min-height: 20px; color: #fff; line-height: 1.5;">
                         <i>I am at your service. What do you require?</i>
                     </div>
-                    <textarea id="chatInput" placeholder="Ask the butler a question about the house, schedule, or weather..." style="height: 60px; margin-bottom: 10px;"></textarea>
+                    <textarea id="chatInput" placeholder="Ask the butler a question about the house, local services, or schedule..." style="height: 60px; margin-bottom: 10px;"></textarea>
                     <button type="button" onclick="sendChat()" style="background-color: #9b59b6; padding: 10px;">Ask Butler</button>
                 </div>
             </details>
@@ -4725,7 +4747,9 @@ def serveNotesPage() {
                     })
                     .then(response => response.text())
                     .then(data => {
-                        document.getElementById('chatResponse').innerHTML = data;
+                        // Safely parse out basic markdown if Gemini tries to use it for lists
+                        var formattedData = data.replace(/\\*\\*(.*?)\\*\\*/g, '<b>\$1</b>').replace(/\\*(.*?)/g, '<br>• \$1');
+                        document.getElementById('chatResponse').innerHTML = formattedData;
                         document.getElementById('chatInput').value = '';
                     })
                     .catch(err => {
@@ -5071,7 +5095,7 @@ def serveNotesPage() {
         </head>
         <body>
             <div class="container">
-                <div style="text-align:center; font-size: 60px; margin-bottom: 10px; line-height:1;">🤵🏻</div>
+            <div style="text-align:center; font-size: 60px; margin-bottom: 10px; line-height:1;">🤵🏻</div>
                 <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">${estateDisplayName} Voice Butler</h2>
                 <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
 
@@ -6753,11 +6777,21 @@ def serveGuestRsvpPage() {
     def displayDate = new Date(event.dateEpoch).format("EEEE, MMMM d 'at' h:mm a", location.timeZone)
     
     // Extract dynamic estate name or fallback to default
-    def eName = settings.estateName ?: "The Schwarzmans"
+    def eName = settings.estateName ?: "The Family"
     
     // Generate a clickable map link using the dynamic estate name
     def locString = event.location ?: eName
     def mapLink = "https://maps.google.com/?q=${java.net.URLEncoder.encode(locString, 'UTF-8')}"
+    
+    // Build Calendar Export Data
+    def startDate = new Date(event.dateEpoch)
+    def endDate = new Date(event.dateEpoch + (4 * 3600000)) // Default 4 hours
+    def gStart = startDate.format("yyyyMMdd'T'HHmmss", location.timeZone)
+    def gEnd = endDate.format("yyyyMMdd'T'HHmmss", location.timeZone)
+    
+    def gCalLink = "https://calendar.google.com/calendar/render?action=TEMPLATE&text=${java.net.URLEncoder.encode(event.title, 'UTF-8')}&dates=${gStart}/${gEnd}&location=${java.net.URLEncoder.encode(locString, 'UTF-8')}"
+    def icsData = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nSUMMARY:${event.title}\nDTSTART:${gStart}\nDTEND:${gEnd}\nLOCATION:${locString}\nEND:VEVENT\nEND:VCALENDAR"
+    def icsUri = "data:text/calendar;charset=utf8," + java.net.URLEncoder.encode(icsData, 'UTF-8')
     
     def html = """
     <!DOCTYPE html>
@@ -6790,7 +6824,12 @@ def serveGuestRsvpPage() {
             <p style="font-size: 14px; color: #777; margin-top:0;">cordially invite you to</p>
             <h2>${event.title}</h2>
             <div class="date-time">${displayDate}</div>
-            <div class="location-link"><a href="${mapLink}" target="_blank">📍 ${locString}</a></div>
+            <div style="font-size: 15px; color: #555; margin-bottom: 15px;">📍 ${locString}</div>
+            <div style="display:flex; gap:10px; margin-bottom: 30px; justify-content: center; flex-wrap: wrap;">
+                <a href="${gCalLink}" target="_blank" style="background:#db4437; color:#fff; padding:10px 15px; border-radius:6px; text-decoration:none; font-family:sans-serif; font-weight:bold; font-size:13px;">📅 Save to Google</a>
+                <a href="${icsUri}" download="event.ics" style="background:#222; color:#fff; padding:10px 15px; border-radius:6px; text-decoration:none; font-family:sans-serif; font-weight:bold; font-size:13px;">📅 Apple / Outlook</a>
+                <a href="${mapLink}" target="_blank" style="background:#27ae60; color:#fff; padding:10px 15px; border-radius:6px; text-decoration:none; font-family:sans-serif; font-weight:bold; font-size:13px;">🗺️ Navigate</a>
+            </div>
             
             <form action="${apiUrl}/rsvp/submit?access_token=${state.accessToken}" method="POST">
                 <input type="hidden" name="eventId" value="${eId}">
@@ -6968,7 +7007,8 @@ def addCalendarEventEndpoint() {
                 title: formParams.eventTitle,
                 date: formParams.eventDate,
                 time: formParams.eventTime,
-                duration: formParams.eventDuration ?: "60"
+                duration: formParams.eventDuration ?: "60",
+                location: formParams.eventLocation ?: ""
             ]
             
             httpPost([
@@ -7010,23 +7050,35 @@ def butlerChatEndpoint() {
     def nextEvt = state.nextEventName && state.nextEventName != "No Upcoming Events" ? "${state.nextEventName} at ${state.nextEventTimeStr}" : "None"
     def mailStat = (settings.enableMailCheck && settings.mailSwitch?.currentValue("switch") == "on") ? "Mail is waiting in the box." : "No new mail."
     
-    // System Instructions to enforce the persona
+    // Inject the new Context and Location Search parameters
+    def houseContext = settings.estateContext ? "\n- Household Information: ${settings.estateContext}" : ""
+    def homeLoc = settings.homeAddress ?: location.zipCode ?: "the local area"
+    
+    // System Instructions to enforce the persona AND GUARDRAILS
     def systemPrompt = """You are ${bName}, a highly professional, polite, and concise British estate manager and butler. 
     Use the following live context about the smart home to answer the user's request. 
-    Context:
+    
+    CURRENT STATUS:
     - People currently home: ${present}
     - Next Calendar Event: ${nextEvt}
     - Mail Status: ${mailStat}
+    - Home Location: ${homeLoc}${houseContext}
     
-    Constraints:
-    - Do not use markdown formatting.
-    - Be brief (1-3 sentences).
-    - Address the user respectfully.
+    CAPABILITIES & INSTRUCTIONS:
+    - Address the user respectfully as "Sir", "Madam", or by name if known.
+    - If asked to find contractors (plumbers, HVAC, etc.), use your search tools to recommend 2-3 highly rated local businesses near ${homeLoc}, including their names and a brief reason why they are recommended.
+    - You may assist with recipes, local dining recommendations, general knowledge, and household troubleshooting.
+    
+    STRICT GUARDRAILS (LIMITATIONS):
+    - DO NOT use markdown formatting like hashtags or bolding. You may use standard bullet points.
+    - YOU CANNOT physically control smart home devices. If asked to turn off lights, adjust the thermostat, unlock doors, or view cameras, you must politely decline and state that you do not have physical access to the control systems.
+    - Keep responses concise (3-5 sentences maximum unless providing a list or recipe).
     """
     
     def requestBody = [
         system_instruction: [ parts: [ [text: systemPrompt] ] ],
         contents: [ [ role: "user", parts: [ [text: userMessage] ] ] ],
+        tools: [ [ googleSearch: [:] ] ], // Gives the AI internet access
         generationConfig: [ temperature: 0.4 ]
     ]
     
