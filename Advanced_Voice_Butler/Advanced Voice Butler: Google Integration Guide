@@ -135,3 +135,48 @@ Feature Summary for Community Testing
 * Context-Aware Departures: Only triggers gas/travel intel if the house is in "Away" status and a door is opened.
 * Proactive Traffic Alerts: Interrupts 1 hour before events if current traffic dictates you must leave immediately.
 * Hardware-First Presence: Intelligent "Auto-Arrival" for users without hardware sensors via bedroom "Good Night" switches, while respecting existing Zigbee/Z-Wave presence data for tracked users.
+
+
+Calendar Event Creation via Voice Butler
+Create the Google Apps Script Webhook
+Because Hubitat handles Google OAuth authentication poorly on its own, the safest and most reliable way to write an event to your calendar is to use a simple Google Apps Script as a bridge.
+
+Go to script.google.com.
+
+Click New Project.
+
+Delete the default code and paste this in:
+
+JavaScript
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var title = data.title;
+    var dateStr = data.date; // YYYY-MM-DD
+    var timeStr = data.time; // HH:mm
+    var durationMins = parseInt(data.duration) || 60;
+    
+    // Construct Date objects
+    var startTime = new Date(dateStr + "T" + timeStr + ":00");
+    var endTime = new Date(startTime.getTime() + (durationMins * 60000));
+    
+    // Write to your primary calendar
+    var calendar = CalendarApp.getDefaultCalendar();
+    calendar.createEvent(title, startTime, endTime);
+    
+    return ContentService.createTextOutput(JSON.stringify({"status": "success"})).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": error.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+Click Deploy -> New deployment in the top right.
+
+Choose Web app as the type.
+
+Set "Execute as" to Me.
+
+Set "Who has access" to Anyone. (Hubitat needs to be able to reach it).
+
+Click Deploy, authorize your account, and copy the Web app URL.
+
+Paste that URL into the new Google Apps Script Webhook URL field inside your Voice Butler Calendar settings in Hubitat.
