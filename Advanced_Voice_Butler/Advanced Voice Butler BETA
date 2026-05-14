@@ -4680,6 +4680,60 @@ def serveNotesPage() {
                 </div>
             """
         }
+        
+        // --- 0.1a DYNAMICALLY BUILD ADD CALENDAR WIDGET ---
+        def calendarAddHtml = """
+            <details style='margin-bottom: 15px;'><summary>➕ Add Calendar Event</summary>
+                <div style='padding-top: 15px;'>
+                    <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #2ecc71;'>
+                        <b style='color:#2ecc71;'>Push Event to Google Calendar</b>
+                        <form action="${apiUrl}/calendar/add?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
+                            <input type="text" name="eventTitle" placeholder="Event Title" required style="margin-bottom: 10px;">
+                            <div style="display: flex; gap: 10px;">
+                                <input type="date" name="eventDate" required style="flex: 1; margin-bottom: 10px;">
+                                <input type="time" name="eventTime" required style="flex: 1; margin-bottom: 10px;">
+                            </div>
+                            <input type="number" name="eventDuration" placeholder="Duration (Minutes)" value="60" required style="margin-bottom: 10px;">
+                            <button type="submit" style="background-color: #2ecc71; padding: 10px;">Add to Calendar</button>
+                        </form>
+                    </div>
+                </div>
+            </details>
+        """
+
+        // --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
+        def chatHtml = """
+            <details style='margin-bottom: 15px;'><summary>💬 Ask the Butler (AI Chat)</summary>
+                <div style='padding-top: 15px;'>
+                    <div id="chatResponse" style="background-color: #222; padding: 15px; border-radius: 8px; border-left: 4px solid #9b59b6; margin-bottom: 15px; font-size: 14px; min-height: 20px; color: #fff; line-height: 1.5;">
+                        <i>I am at your service. What do you require?</i>
+                    </div>
+                    <textarea id="chatInput" placeholder="Ask the butler a question about the house, schedule, or weather..." style="height: 60px; margin-bottom: 10px;"></textarea>
+                    <button type="button" onclick="sendChat()" style="background-color: #9b59b6; padding: 10px;">Ask Butler</button>
+                </div>
+            </details>
+            <script>
+                function sendChat() {
+                    var input = document.getElementById('chatInput').value;
+                    if (!input) return;
+                    document.getElementById('chatResponse').innerHTML = "<i>Thinking...</i>";
+                    
+                    fetch('${apiUrl}/chat?access_token=${state.accessToken}', {
+                        method: 'POST',
+                        body: 'message=' + encodeURIComponent(input),
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    })
+                    .then(response => response.text())
+                    .then(data => {
+                        document.getElementById('chatResponse').innerHTML = data;
+                        document.getElementById('chatInput').value = '';
+                    })
+                    .catch(err => {
+                        document.getElementById('chatResponse').innerHTML = "<span style='color:red;'>Connection to the Butler failed.</span>";
+                    });
+                }
+            </script>
+        """
 
         // --- 0.2 DYNAMICALLY BUILD MAIL STATUS ---
         def mailHtml = ""
@@ -5023,7 +5077,13 @@ def serveNotesPage() {
 
                 ${dashboardBtnHtml}
                 
+                ${chatHtml}
+
                 ${calendarHtml}
+                
+                ${staffHtml}
+
+                ${calendarAddHtml}
                 
                 ${mailHtml}
                 
@@ -6891,4 +6951,105 @@ def deleteQuickCodeEndpoint() {
         }
     } catch(e) {}
     return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+// --- CALENDAR ADD ENDPOINT ---
+def addCalendarEventEndpoint() {
+    try {
+        def formParams = params ?: [:]
+        def bodyText = request?.body ? request.body.toString() : ""
+        if (bodyText) {
+            bodyText.split('&').each {
+                def parts = it.split('=')
+                formParams[parts[0]] = parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""
+            }
+        }
+        
+        if (formParams.eventTitle && formParams.eventDate && formParams.eventTime && settings.googleAppScriptUrl) {
+            def payload = [
+                title: formParams.eventTitle,
+                date: formParams.eventDate,
+                time: formParams.eventTime,
+                duration: formParams.eventDuration ?: "60"
+            ]
+            
+            httpPost([
+                uri: settings.googleAppScriptUrl,
+                contentType: "application/json",
+                body: groovy.json.JsonOutput.toJson(payload)
+            ]) { resp -> 
+                log.info "Calendar Event Pushed: ${resp.status}"
+            }
+            addToHistory("CALENDAR: Added event '${formParams.eventTitle}' via Portal.")
+        } else {
+            log.warn "Voice Butler: Missing parameters or Google Apps Script URL not configured."
+        }
+    } catch(e) {
+        log.warn "Add Calendar Error: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+// --- GEMINI BUTLER CHAT ENDPOINT ---
+def butlerChatEndpoint() {
+    def formParams = params ?: [:]
+    def bodyText = request?.body ? request.body.toString() : ""
+    if (bodyText) {
+        bodyText.split('&').each {
+            def parts = it.split('=')
+            formParams[parts[0]] = parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""
+        }
+    }
+    
+    def userMessage = formParams.message ?: ""
+    if (!userMessage || !settings.geminiApiKey) {
+        return render(contentType: "text/plain", data: "I apologize, but my generative core is offline (Missing API Key).")
+    }
+    
+    // Dynamically fetch live home context for the AI
+    def present = getPresentUsers().join(", ") ?: "No one"
+    def bName = settings.butlerName ?: "Alfred"
+    def nextEvt = state.nextEventName && state.nextEventName != "No Upcoming Events" ? "${state.nextEventName} at ${state.nextEventTimeStr}" : "None"
+    def mailStat = (settings.enableMailCheck && settings.mailSwitch?.currentValue("switch") == "on") ? "Mail is waiting in the box." : "No new mail."
+    
+    // System Instructions to enforce the persona
+    def systemPrompt = """You are ${bName}, a highly professional, polite, and concise British estate manager and butler. 
+    Use the following live context about the smart home to answer the user's request. 
+    Context:
+    - People currently home: ${present}
+    - Next Calendar Event: ${nextEvt}
+    - Mail Status: ${mailStat}
+    
+    Constraints:
+    - Do not use markdown formatting.
+    - Be brief (1-3 sentences).
+    - Address the user respectfully.
+    """
+    
+    def requestBody = [
+        system_instruction: [ parts: [ [text: systemPrompt] ] ],
+        contents: [ [ role: "user", parts: [ [text: userMessage] ] ] ],
+        generationConfig: [ temperature: 0.4 ]
+    ]
+    
+    def responseText = "I apologize, an error occurred while processing your request."
+    
+    try {
+        httpPost([
+            uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+            requestContentType: "application/json",
+            contentType: "application/json",
+            body: groovy.json.JsonOutput.toJson(requestBody),
+            timeout: 30
+        ]) { resp ->
+            if (resp.status == 200 && resp.data) {
+                responseText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: "I am unsure how to respond."
+                responseText = responseText.replaceAll(/```.*/, "").trim()
+            }
+        }
+    } catch(e) {
+        log.warn "Butler Chat Error: ${e}"
+    }
+    
+    return render(contentType: "text/plain", data: responseText, status: 200)
 }
