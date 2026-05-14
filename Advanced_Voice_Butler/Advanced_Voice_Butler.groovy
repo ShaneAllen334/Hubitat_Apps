@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.2
+ * Version 2.5
  */
 definition(
     name: "Advanced Voice Butler",
@@ -39,6 +39,13 @@ mappings {
     path("/event/delete") { action: [POST: "deleteEventEndpoint"] }
     path("/rsvp") { action: [GET: "serveGuestRsvpPage"] }
     path("/rsvp/submit") { action: [POST: "submitRsvpEndpoint"] }
+
+    // --- QUICK LOCK CODE MAPPINGS (NEW) ---
+    path("/lock/create") { action: [POST: "createQuickCodeEndpoint"] }
+    path("/lock/delete") { action: [POST: "deleteQuickCodeEndpoint"] }
+    
+    path("/calendar/add") { action: [POST: "addCalendarEventEndpoint"] }
+    path("/chat") { action: [POST: "butlerChatEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -352,7 +359,6 @@ def mainPage() {
             input "globalVolume", "number", title: "Global Speaker Volume (0-100)", required: false
             input "globalTVSwitch", "capability.actuator", title: "Global Entertainment / TV Device", required: false
             input "mediaPauseList", "capability.actuator", title: "Other Media Players to Pause/Mute", multiple: true, required: false
-            input "butlerName", "text", title: "Your Butler's Name", required: false, defaultValue: "Alfred"
             input "btnTestGlobal", "button", title: "▶️ Test Global Indoor Speaker"
             
             paragraph "<hr>"
@@ -365,12 +371,23 @@ def mainPage() {
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
         
+             section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
+             // Moves the Butler Name from Section 1 to here
+             input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
+    
+             // Adds the customizable Estate Name for the Portal and RSVP system
+             input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
+    
+             paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
+         }
+        
         // --- FIX 3A: GLOBAL LIVING ROOM REPORT INPUTS ---
         section("Global Foyer / Living Room Morning Report", hideable: true, hidden: true) {
             paragraph "<i>Used to deliver Global Incident Reports if you walk into the main living space in the morning before triggering a local room routine.</i>"
             input "butlerLrMotion", "capability.motionSensor", title: "Living Room Motion Sensor", required: false
             input "butlerLrSpeaker", "capability.speechSynthesis", title: "Living Room Speaker", required: false
             input "butlerLrVolume", "number", title: "Announcement Volume (0-100)", required: false
+            input "butlerLrModes", "mode", title: "Allowed Modes for Morning Report", multiple: true, required: false, defaultValue: ["Morning", "Home"]
         }
         // ------------------------------------------------
 
@@ -488,6 +505,9 @@ def mainPage() {
                     } else {
                         paragraph "<div style='padding:8px; background-color:#d4edda; border:1px solid #c3e6cb; color:#155724; border-radius:4px;'><i><b>Webhook Mode Active:</b> The app is listening for instant pushes from your Google Script. Background polling is disabled.</i></div>"
                     }
+                    
+                    // --- NEW: GOOGLE APPS SCRIPT WEBHOOK URL FOR ADDING EVENTS ---
+                    input "googleAppScriptUrl", "text", title: "Google Apps Script Webhook URL (For Adding Events)", description: "Required for pushing events to Google Calendar from the Portal", required: false
                 }
                 
                 // --- MOVED: Travel & Mapping Intelligence is now outside the local-only condition ---
@@ -521,7 +541,7 @@ def mainPage() {
                 paragraph "<div style='${prevStyle}'><b>Live Calendar Preview:</b><br><i>${calPrev}</i></div>"
             }
         }
-
+        
         section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
             paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
             input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
@@ -678,7 +698,6 @@ def mainPage() {
             paragraph "<i>Designate all critical access points across the property you wish the Butler to guard. This includes primary house doors, secondary gates, and livestock coops. The Butler will automatically verify these are secured during the Good Night routine.</i>"
             input "estateDoors", "capability.contactSensor", title: "All Estate Doors, Gates & Coops", multiple: true, required: false
             input "estateLocks", "capability.lock", title: "All Estate Smart Locks", multiple: true, required: false
-            
             paragraph "<hr>"
             paragraph "<b>Advanced Weather Logic</b>"
             input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
@@ -1247,6 +1266,7 @@ def ensureStateMaps() {
     if (state.butlerNotes == null) state.butlerNotes = []
     if (state.lastOverdueTasks == null) state.lastOverdueTasks = []
     if (state.hostedEvents == null) state.hostedEvents = [:]
+    if (state.quickLockCodes == null) state.quickLockCodes = [:]
 }
 
 def initialize() {
@@ -2999,14 +3019,19 @@ def arrivalHandler(evt) {
     if (!state.hasArrivedToday[trackingKey]) {
         def nowTime = new Date().time
         def lastDepUser = state.lastDepartureTime[trackingKey] ?: 0
+        
         if (lastDepUser > 0 && (nowTime - lastDepUser < ((settings.quickReturnGrace != null ? settings.quickReturnGrace.toInteger() : 5) * 60000))) {
             state.hasArrivedToday[trackingKey] = true 
+            state.hasDepartedToday.remove(trackingKey) // <-- FIX
+            state.resetReasons[trackingKey] = "Quick Return" // <-- FIX
             return
         }
         
         def splitNames = trackingKey.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
         splitNames.each { n -> 
             state.hasArrivedToday[n] = true 
+            state.hasDepartedToday.remove(n) // <-- FIX
+            state.resetReasons[n] = "Unlocked Door" // <-- FIX
             state.lastDepartureTime.remove(n)
             state.anomalyAlertedToday[n] = false
         }
@@ -4101,7 +4126,6 @@ def midnightReset() {
     def newResetReasons = [:]
     
     // 1. INTELLIGENT CARRY-OVER
-    // We look at everyone currently home and move them to the new day's roster immediately.
     state.hasArrivedToday.each { uName, arrived ->
         if (arrived == true || arrived == "true") {
             newHasArrived[uName] = true
@@ -4111,10 +4135,8 @@ def midnightReset() {
     
     // 2. APPLY THE NEW ROSTER
     state.hasArrivedToday = newHasArrived
-    state.hasDepartedToday = [:] // Clear departures so they can be tracked fresh today
+    state.hasDepartedToday = [:] 
     state.resetReasons = newResetReasons
-    
-    // Set the global status for anyone NOT already home
     state.globalResetReason = "Awaiting First Entry"
     
     // 3. DAILY TRACKER RESETS
@@ -4127,13 +4149,25 @@ def midnightReset() {
     state.currentPriority = 99
     state.originalVolumes = [:] 
 
-    // --- EVENT CLEANUP (Deletes events 24 hours after they occur) ---
+    // --- EVENT CLEANUP FIX (Deletes events AND lock codes 24 hours after they occur) ---
     def nowMs = new Date().time
     def eventsToRemove = []
     state.hostedEvents?.each { id, ev ->
         if (nowMs > (ev.dateEpoch + 86400000)) eventsToRemove << id
     }
-    eventsToRemove.each { state.hostedEvents.remove(it) }
+    eventsToRemove.each { 
+        state.hostedEvents.remove(it) 
+        // Tell Lock Manager to revoke the expired code
+        sendLocationEvent(name: "lockManagerTempSync", value: "delete", data: groovy.json.JsonOutput.toJson([id: it]), isStateChange: true)
+    }
+    
+    // --- QUICK CODE CLEANUP (NEW) ---
+    def codesToRemove = []
+    state.quickLockCodes?.each { id, cd ->
+        // 4102444800000L is the "Permanent" marker (Year 2100). Skip if it's permanent.
+        if (cd.expires != 4102444800000L && nowMs > cd.expires) codesToRemove << id
+    }
+    codesToRemove.each { state.quickLockCodes.remove(it) }
     // ----------------------------------------------------------------
     
     def residentList = newHasArrived.keySet().join(', ')
@@ -4597,20 +4631,66 @@ def getMiddayMaintenanceReport(mDevice) {
     return ""
 }
 
-// --- NEW: NOTES PORTAL WEB HANDLERS ---
 def serveNotesPage() {
     try {
         ensureStateMaps()
         def trackedNames = getTrackedUsers()
         def userOptions = ""
-        
-        // FIX: Display Alias in the drop down, but submit the Real Name to the system
         trackedNames.each { u -> userOptions += "<option value='${u}'>${applyAlias(u)}</option>" }
 
+        // --- NEW: DYNAMICALLY BUILD LOCK OPTIONS ---
+        def lockOptionsHtml = "<option value='All Locks'>All Locks</option>"
+        def availableLocks = []
+        if (settings.frontDoorLock) availableLocks << settings.frontDoorLock.displayName
+        if (settings.estateLocks) availableLocks.addAll(settings.estateLocks.collect { it.displayName })
+        
+        availableLocks.unique().sort().each { lName ->
+            lockOptionsHtml += "<option value=\"${lName}\">${lName}</option>"
+        }
+        // ------------------------------------------
+
         def apiUrl = getFullApiServerUrl()
+        def estateDisplayName = settings.estateName ?: "The Schwarzmans"
 
         if (state.butlerNotes && state.butlerNotes.size() > 0 && state.butlerNotes[0] instanceof String) {
             state.butlerNotes = []
+        }
+
+        // --- 0.1 DYNAMICALLY BUILD CALENDAR WIDGET (With Clickable Maps) ---
+        // FIX: Rebuilt this to use a slim, compact flexbox layout to fix the sizing
+        def calendarHtml = ""
+        if (state.nextEventName && state.nextEventTimeStr && state.nextEventName != "No Upcoming Events") {
+            def navButton = ""
+            if (state.nextEventLocation) {
+                def encodedLoc = java.net.URLEncoder.encode(state.nextEventLocation, "UTF-8")
+                def mapUrl = "http://maps.google.com/maps?q=${encodedLoc}"
+                navButton = "<a href='${mapUrl}' target='_blank' style='display:inline-block; background-color:#27ae60; color:#fff; padding:4px 8px; border-radius:4px; text-decoration:none; font-size:11px; font-weight:bold;'>🗺️ Navigate to Event</a>"
+            }
+
+            calendarHtml = """
+                <div style='background-color: #1e1e1e; padding: 12px 15px; border-radius: 8px; border-left: 4px solid #9b59b6; margin-bottom: 15px; font-size: 14px;'>
+                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'>
+                        <b style='color:#fff;'>📅 Next Scheduled Event</b>
+                        <span style='color:#9b59b6; font-weight: bold; font-size: 12px;'>${state.nextEventTimeStr}</span>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                        <span style='color:#e0e0e0; font-size: 13px;'><b>${state.nextEventName}</b></span>
+                        ${navButton}
+                    </div>
+                </div>
+            """
+        }
+
+        // --- 0.2 DYNAMICALLY BUILD MAIL STATUS ---
+        def mailHtml = ""
+        if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
+            def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
+            mailHtml = """
+                <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; margin-bottom: 15px;'>
+                    <b style='color:#fff;'>📬 Mail Status</b><br>
+                    <span style='color:#aaa; font-size:13px;'>The mail was delivered at ${mailTimeStr} and is waiting in the mailbox.</span>
+                </div>
+            """
         }
 
         // --- 0. DYNAMICALLY BUILD STAFF SCHEDULE ---
@@ -4642,10 +4722,20 @@ def serveNotesPage() {
                 <form action="${apiUrl}/event/create?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
                     <input type="text" name="eventTitle" placeholder="Event Title (e.g., Summer Dinner Party)" required style="margin-bottom: 10px;">
                     <input type="text" name="eventLocation" placeholder="Location (Leave blank for the Estate)" style="margin-bottom: 10px;">
+                    
                     <div style="display: flex; gap: 10px;">
                         <input type="date" name="eventDate" required style="flex: 1; margin-bottom: 10px;">
                         <input type="time" name="eventTime" required style="flex: 1; margin-bottom: 10px;">
+                        <input type="number" name="eventDuration" placeholder="Duration (Hrs)" required style="flex: 0.5; margin-bottom: 10px;" value="4">
                     </div>
+                    
+                    <b style="color:#aaa; font-size:12px; margin-bottom:5px; display:block;">Smart Lock Access (Optional)</b>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" name="eventSlot" placeholder="Slot" style="flex: 0.5; margin-bottom: 10px;">
+                        <input type="text" name="eventPin" placeholder="PIN Code" style="flex: 1; margin-bottom: 10px;">
+                        <select name="eventLock" style="flex: 1.5; margin-bottom: 10px;">${lockOptionsHtml}</select>
+                    </div>
+                    
                     <button type="submit" style="background-color: #f39c12; padding: 10px;">Generate Digital Invitation</button>
                 </form>
             </div>
@@ -4663,14 +4753,21 @@ def serveNotesPage() {
                 rsvpHtml += "<form action='${apiUrl}/event/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='eventId' value='${eId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>"
                 rsvpHtml += "</div>"
                 
-                def locDisplay = ev.location ?: "The Schwarzman Estate"
+                def locDisplay = ev.location ?: estateDisplayName
                 rsvpHtml += "<div style='margin-top: 5px; font-size: 13px; color: #888;'>📍 ${locDisplay}</div>"
+                
+                if (ev.slot && ev.pin) {
+                    def lockTxt = ev.lockName ?: "All Locks"
+                    rsvpHtml += "<div style='margin: 10px 0; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #27ae60; border-radius: 4px; font-size: 13px;'>"
+                    rsvpHtml += "<b style='color:#27ae60;'>🔑 Smart Lock Access (${lockTxt})</b><br>"
+                    rsvpHtml += "<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${ev.slot}</b> | PIN: <b style='color:#fff;'>${ev.pin}</b></span>"
+                    rsvpHtml += "</div>"
+                }
                 
                 rsvpHtml += "<div style='margin: 15px 0; padding: 10px; background: #2a2a2a; border-radius: 6px; font-size: 12px; word-break: break-all;'>"
                 rsvpHtml += "<b style='color:#3498db;'>Shareable Link:</b><br><a href='${eventUrl}' target='_blank' style='color:#3498db;'>${eventUrl}</a>"
                 rsvpHtml += "</div>"
                 
-                // --- HOST QUICK SHARE (Native App Links) ---
                 rsvpHtml += "<div style='border-top: 1px solid #333; padding-top: 10px; margin-bottom: 15px;'>"
                 rsvpHtml += "<b style='color:#aaa; font-size: 13px;'>Host Quick Share:</b>"
                 rsvpHtml += "<div style='display: flex; gap: 10px; margin-top: 5px;'>"
@@ -4737,22 +4834,32 @@ def serveNotesPage() {
             roomOptionsHtml += "<option value='${i}'>${rName}</option>"
         }
 
-        // --- 3. DYNAMICALLY BUILD DIRECTORY ---
+        // --- 3. DYNAMICALLY BUILD DIRECTORY (UPDATED WITH SMS/EMAIL) ---
         def numC = settings.numContacts ? settings.numContacts as Integer : 0
         def directoryHtml = ""
         if (settings.enableDirectory && numC > 0) {
-            directoryHtml += "<details style='margin-bottom: 15px;'><summary>📞 Request Service Announcement</summary><div style='padding-top: 15px;'>"
+            directoryHtml += "<details style='margin-bottom: 15px;'><summary>📞 Estate Directory</summary><div style='padding-top: 15px;'>"
             for (int i = 1; i <= numC; i++) {
                 def cName = settings["contactName_${i}"]
                 def cInfo = settings["contactInfo_${i}"]
                 if (cName && cInfo) {
+                    def smsMsg = java.net.URLEncoder.encode("Contact Info for ${cName}:\n${cInfo}", "UTF-8")
+                    def emailSub = java.net.URLEncoder.encode("${cName} Contact Info", "UTF-8")
+                    def emailMsg = java.net.URLEncoder.encode("Here is the contact information for ${cName}:\n${cInfo}", "UTF-8")
+                    
                     directoryHtml += """
-                        <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #8e44ad; background: #222;'>
-                            <div style='flex-grow: 1; padding-right: 10px;'><b>${cName}</b><br><span style='color:#aaa;'>${cInfo}</span></div>
-                            <form action="${apiUrl}/directory/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
-                                <input type="hidden" name="contactId" value="${i}">
-                                <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #8e44ad; color: #fff; border-radius: 6px;">Announce</button>
-                            </form>
+                        <div class='note-item' style='display: flex; flex-direction: column; border-left-color: #8e44ad; background: #222;'>
+                            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                <div style='flex-grow: 1; padding-right: 10px;'><b>${cName}</b><br><span style='color:#aaa;'>${cInfo}</span></div>
+                                <form action="${apiUrl}/directory/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                                    <input type="hidden" name="contactId" value="${i}">
+                                    <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #8e44ad; color: #fff; border-radius: 6px;">Announce</button>
+                                </form>
+                            </div>
+                            <div style='display: flex; gap: 10px; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;'>
+                                <a href='sms:?&body=${smsMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Info</div></a>
+                                <a href='mailto:?subject=${emailSub}&body=${emailMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>✉️ Email Info</div></a>
+                            </div>
                         </div>
                     """
                 }
@@ -4760,18 +4867,81 @@ def serveNotesPage() {
             directoryHtml += "</div></details>"
         }
 
+        // --- 3.5 DYNAMICALLY BUILD QUICK LOCK CODES ---
+        def lockHtml = "<details style='margin-bottom: 15px;'><summary>🔐 Quick Lock Code Manager</summary><div style='padding-top: 15px;'>"
+        lockHtml += """
+            <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #e74c3c;'>
+                <b style='color:#e74c3c;'>Generate Quick Access Code</b>
+                <form action="${apiUrl}/lock/create?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
+                    <input type="text" name="codeName" placeholder="Name (e.g., Dog Walker)" required style="margin-bottom: 10px;">
+                    <select name="codeLock" style="margin-bottom: 10px;">${lockOptionsHtml}</select>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" name="codeSlot" placeholder="Slot (e.g., 20)" required style="flex: 1; margin-bottom: 10px;">
+                        <input type="text" name="codePin" placeholder="PIN Code" required style="flex: 1; margin-bottom: 10px;">
+                    </div>
+                    <label style="font-size: 12px; color: #aaa;">Access Duration:</label>
+                    <select name="codeDuration" style="margin-bottom: 10px;">
+                        <option value="Permanent">Permanent</option>
+                        <option value="1">1 Hour</option>
+                        <option value="4">4 Hours</option>
+                        <option value="12">12 Hours</option>
+                        <option value="24">24 Hours (1 Day)</option>
+                        <option value="168">168 Hours (7 Days)</option>
+                    </select>
+                    <button type="submit" style="background-color: #e74c3c; padding: 10px;">Send to Smart Locks</button>
+                </form>
+            </div>
+        """
+        if (state.quickLockCodes && state.quickLockCodes.size() > 0) {
+            state.quickLockCodes.each { cId, cd ->
+                def expStr = cd.duration == "Permanent" ? "Permanent Access" : "Expires: " + new Date(cd.expires).format("EEE, MMM d 'at' h:mm a", location.timeZone)
+                def lockTxt = cd.lockName ?: "All Locks"
+                def preWrittenCodeMsg = java.net.URLEncoder.encode("Your access code for the estate is ${cd.pin}. Please enter it on the keypad to unlock the door.", "UTF-8")
+                
+                lockHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>"
+                lockHtml += "<div style='display: flex; justify-content: space-between; align-items: flex-start;'>"
+                lockHtml += "<div><b style='font-size: 16px; color:#fff;'>${cd.name}</b><br><span style='color:#aaa; font-size: 13px;'>${expStr}</span></div>"
+                lockHtml += "<form action='${apiUrl}/lock/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='codeId' value='${cId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>"
+                lockHtml += "</div>"
+                
+                lockHtml += "<div style='margin-top: 10px; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #e74c3c; border-radius: 4px; font-size: 13px;'>"
+                lockHtml += "<b style='color:#e74c3c;'>${lockTxt}</b><br>"
+                lockHtml += "<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${cd.slot}</b> | PIN: <b style='color:#fff;'>${cd.pin}</b></span>"
+                lockHtml += "</div>"
+                
+                lockHtml += "<div style='border-top: 1px solid #333; padding-top: 10px; margin-top: 10px;'>"
+                lockHtml += "<div style='display: flex; gap: 10px; margin-top: 5px;'>"
+                lockHtml += "<a href='sms:?&body=${preWrittenCodeMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Code to Guest</div></a>"
+                lockHtml += "</div></div>"
+                lockHtml += "</div>"
+            }
+        }
+        lockHtml += "</div></details>"
+
         // --- 4. DYNAMICALLY BUILD WI-FI CARD ---
         def wifiHtml = ""
         if (settings.enableWifiPortal && settings.wifiSSID) {
+            def wifiPwd = settings.wifiPassword ?: "No password required"
+            def rawMsg = "Here are the guest Wi-Fi details:\nNetwork: ${settings.wifiSSID}\nPassword: ${wifiPwd}"
+            def smsMsg = java.net.URLEncoder.encode(rawMsg, "UTF-8")
+            def emailSub = java.net.URLEncoder.encode("Guest Wi-Fi Details", "UTF-8")
+            def emailMsg = java.net.URLEncoder.encode(rawMsg, "UTF-8")
+
             wifiHtml = """
                 <details style='margin-bottom: 15px;'><summary>📶 Guest Wi-Fi Sharing</summary>
                 <div style='padding-top: 15px;'>
-                    <div class='note-item' style='display: flex; justify-content: space-between; align-items: center; border-left-color: #3498db; background: #222;'>
-                        <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
-                        <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
-                            <input type="hidden" name="dummyData" value="trigger">
-                            <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
-                        </form>
+                    <div class='note-item' style='display: flex; flex-direction: column; border-left-color: #3498db; background: #222;'>
+                        <div style='display: flex; justify-content: space-between; align-items: center;'>
+                            <div style='flex-grow: 1; padding-right: 10px;'><b>${settings.wifiSSID}</b><br><span style='color:#aaa;'>Tap to announce & push password</span></div>
+                            <form action="${apiUrl}/wifi/announce?access_token=${state.accessToken}" method="POST" style="margin:0; flex-shrink: 0;">
+                                <input type="hidden" name="dummyData" value="trigger">
+                                <button type="submit" style="padding: 8px 12px; margin-bottom: 0; width: auto; font-size: 14px; background-color: #3498db; color: #fff; border-radius: 6px;">Announce</button>
+                            </form>
+                        </div>
+                        <div style='display: flex; gap: 10px; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;'>
+                            <a href='sms:?&body=${smsMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Info</div></a>
+                            <a href='mailto:?subject=${emailSub}&body=${emailMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>✉️ Email Info</div></a>
+                        </div>
                     </div>
                 </div></details>
             """
@@ -4819,14 +4989,14 @@ def serveNotesPage() {
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>Butler Portal</title>
+            <title>${estateDisplayName} Voice Butler</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background-color: #0d0d0d; color: #e0e0e0; }
                 .container { max-width: 600px; margin: 0 auto; background: #151515; padding: 25px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); }
                 textarea { width: 100%; height: 80px; padding: 15px; margin-bottom: 15px; border: 1px solid #333; border-radius: 12px; box-sizing: border-box; font-family: inherit; font-size: 16px; background-color: #222; color: #ffffff; resize: none; }
                 textarea:focus { outline: none; border-color: #1f618d; }
-                select, input[type="time"], input[type="text"], input[type="number"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
+                select, input[type="time"], input[type="text"], input[type="number"], input[type="date"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 15px; background-color: #222; color: #ffffff; }
                 button { background-color: #1f618d; color: white; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; font-weight: 600; transition: background 0.2s; }
                 button:hover { background-color: #1a5276; }
                 button.clear { background-color: transparent; color: #c0392b; border: 1px solid #c0392b; margin-top: 10px; }
@@ -4848,10 +5018,14 @@ def serveNotesPage() {
         <body>
             <div class="container">
                 <div style="text-align:center; font-size: 60px; margin-bottom: 10px; line-height:1;">🤵🏻</div>
-                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Estate Command Deck</h2>
+                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">${estateDisplayName} Voice Butler</h2>
                 <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
 
                 ${dashboardBtnHtml}
+                
+                ${calendarHtml}
+                
+                ${mailHtml}
                 
                 ${staffHtml}
                 
@@ -4871,6 +5045,8 @@ def serveNotesPage() {
                         </form>
                     </div>
                 </details>
+
+                ${lockHtml}
 
                 ${quickReplyHtml}
 
@@ -5346,30 +5522,40 @@ def getTomorrowPreview() {
     return ""
 }
 
-// --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) ---
 def butlerLrMotionHandler(evt) {
     ensureStateMaps()
     if (evt.value != "active") return
     
+    // --- MODE FILTER ---
+    if (butlerLrModes && !butlerLrModes.contains(location.mode)) return 
+    
     def now = new Date()
     def hour = now.format("H", location.timeZone).toInteger()
+    def todayDate = now.format("yyyy-MM-dd", location.timeZone)
+    
+    // THE FIX: Check if we already ran the morning report today
+    if (state.lastMorningReportDate == todayDate) return
     
     // Only trigger in the morning between 4 AM and 11 AM
     if (hour >= 4 && hour < 11) {
+        def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
+        def vol = settings.butlerLrVolume ?: globalVolume
+        
+        // 1. Deliver the Night Incident Report
         if (state.pendingMorningReport && (state.nightMotionCount ?: 0) > 0) {
-            def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
-            def vol = settings.butlerLrVolume ?: globalVolume
             if (targetSpeaker) {
                 def msg = "Good morning. Please note, there were ${state.nightMotionCount} motion events at the front door last night. Please check the cameras."
                 enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 4)
                 
                 state.pendingMorningReport = false
                 state.nightMotionCount = 0
+                state.lastMorningReportDate = todayDate // Lock it for the rest of the day
                 addToHistory("INCIDENT REPORT: Delivered Global Night Motion warning in Living Room.")
             }
         }
     }
 }
+
 // --- QUICK EXIT (FAREWELL & GAS SCOUT) ---
 def quickExitDoorHandler(evt) {
     if (evt.value != "open") return
@@ -5410,7 +5596,6 @@ def quickExitDoorHandler(evt) {
     addToHistory("QUICK EXIT: Farewell and gas scout triggered.")
 }
 
-// --- ESTATE DIRECTORY HANDLER ---
 // --- REFACTORED SWITCH HANDLER ---
 def directorySwitchHandler(evt) {
     ensureStateMaps()
@@ -5929,7 +6114,7 @@ def executeCinemaScout(isTest = false) {
         requestContentType: "application/json",
         contentType: "application/json",
         body: groovy.json.JsonOutput.toJson(requestBody),
-        timeout: 20
+        timeout: 60 // INCREASED TO 60 SECONDS
     ]
 
     if (isTest) log.info "CINEMA SCOUT: Pinging Google Gemini API for the latest movies..."
@@ -6051,7 +6236,7 @@ def executeGroceryScout(isTest = false) {
         requestContentType: "application/json",
         contentType: "application/json",
         body: groovy.json.JsonOutput.toJson(requestBody),
-        timeout: 25 // Allowed a little extra time for the AI to read 4 different grocery sites
+        timeout: 60 // INCREASED TO 60 SECONDS
     ]
 
     if (isTest) log.info "GROCERY SCOUT: Pinging Gemini for live weekly ads..."
@@ -6315,7 +6500,7 @@ def executeVehicleScout(isTest = false) {
         requestContentType: "application/json",
         contentType: "application/json",
         body: groovy.json.JsonOutput.toJson(requestBody),
-        timeout: 25 
+        timeout: 60 // INCREASED TO 60 SECONDS 
     ]
 
     if (isTest) log.info "VEHICLE SCOUT: Pinging Gemini for weekly forecast..."
@@ -6331,7 +6516,8 @@ def executeVehicleScout(isTest = false) {
                 if (resp.status == 200 && resp.data) {
                     success = true
                     def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
-                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/```/, "").trim()
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
+```/, "").trim()
                     
                     def weatherData = new groovy.json.JsonSlurper().parseText(geminiText)
                     
@@ -6451,18 +6637,29 @@ def createEventEndpoint() {
             def cal = Calendar.getInstance(location.timeZone)
             cal.set(dateParts[0].toInteger(), dateParts[1].toInteger() - 1, dateParts[2].toInteger(), timeParts[0].toInteger(), timeParts[1].toInteger(), 0)
             
-            // Default to the estate if they leave the location blank
-            def eLoc = params.eventLocation ?: "The Schwarzman Estate"
+            def startEpoch = cal.getTime().time
+            def eDur = params.eventDuration ? params.eventDuration.toInteger() : 4
+            def endEpoch = startEpoch + (eDur * 3600000)
+            def eLoc = params.eventLocation ?: settings.estateName ?: "The Estate"
             
             state.hostedEvents[eventId] = [
                 title: params.eventTitle,
                 dateStr: params.eventDate,
                 timeStr: params.eventTime,
                 location: eLoc,
-                dateEpoch: cal.getTime().time,
-                rsvps: []
+                dateEpoch: startEpoch,
+                rsvps: [],
+                slot: params.eventSlot ?: null,
+                pin: params.eventPin ?: null,
+                lockName: params.eventLock ?: "All Locks"
             ]
-            addToHistory("RSVP SYSTEM: Created new event '${params.eventTitle}' at ${eLoc}.")
+            addToHistory("RSVP SYSTEM: Created new event '${params.eventTitle}'.")
+            
+            if (params.eventSlot && params.eventPin) {
+                def payload = [id: eventId, name: params.eventTitle, slot: params.eventSlot.toInteger(), pin: params.eventPin, start: startEpoch, end: endEpoch, lockName: params.eventLock]
+                sendLocationEvent(name: "lockManagerTempSync", value: "add", data: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
+                addToHistory("RSVP SYSTEM: Synced temporary PIN to Lock Manager for this event.")
+            }
         }
     } catch (e) { log.warn "Event Creation Error: ${e}" }
     return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
@@ -6478,6 +6675,9 @@ def deleteEventEndpoint() {
         if (params.eventId && state.hostedEvents[params.eventId]) {
             state.hostedEvents.remove(params.eventId)
             addToHistory("RSVP SYSTEM: Event deleted manually via portal.")
+            
+            // --- MISSING LINE ADDED: Tell Lock Manager to instantly revoke the code ---
+            sendLocationEvent(name: "lockManagerTempSync", value: "delete", data: groovy.json.JsonOutput.toJson([id: params.eventId]), isStateChange: true)
         }
     } catch(e) {}
     return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
@@ -6494,8 +6694,11 @@ def serveGuestRsvpPage() {
     def apiUrl = getFullApiServerUrl()
     def displayDate = new Date(event.dateEpoch).format("EEEE, MMMM d 'at' h:mm a", location.timeZone)
     
-    // Generate a clickable map link
-    def locString = event.location ?: "The Schwarzman Estate"
+    // Extract dynamic estate name or fallback to default
+    def eName = settings.estateName ?: "The Schwarzmans"
+    
+    // Generate a clickable map link using the dynamic estate name
+    def locString = event.location ?: eName
     def mapLink = "https://maps.google.com/?q=${java.net.URLEncoder.encode(locString, 'UTF-8')}"
     
     def html = """
@@ -6525,7 +6728,7 @@ def serveGuestRsvpPage() {
     </head>
     <body>
         <div class="invite-card">
-            <h1>The Schwarzmans</h1>
+            <h1>${eName}</h1>
             <p style="font-size: 14px; color: #777; margin-top:0;">cordially invite you to</p>
             <h2>${event.title}</h2>
             <div class="date-time">${displayDate}</div>
@@ -6622,4 +6825,70 @@ def submitRsvpEndpoint() {
     } catch(e) { log.error "RSVP Submit Error: ${e}" }
     
     return render(contentType: "text/html", data: "<h2>An error occurred processing your RSVP.</h2>", status: 500)
+}
+
+// ==========================================
+// QUICK LOCK CODE MANAGER
+// ==========================================
+def createQuickCodeEndpoint() {
+    try {
+        ensureStateMaps()
+        // Safely extract parameters without shadowing Hubitat's implicit params object
+        def formParams = params ?: [:]
+        def bodyText = request?.body ? request.body.toString() : ""
+        if (bodyText) {
+            bodyText.split('&').each {
+                def parts = it.split('=')
+                formParams[parts[0]] = parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""
+            }
+        }
+        
+        if (formParams.codeName && formParams.codeSlot && formParams.codePin) {
+            if (state.quickLockCodes == null) state.quickLockCodes = [:]
+            def codeId = java.util.UUID.randomUUID().toString().substring(0, 8)
+            
+            def startEpoch = new Date().time
+            def endEpoch = 4102444800000L // Permanent Default
+            def durStr = "Permanent"
+            
+            if (formParams.codeDuration != "Permanent") {
+                def hrs = formParams.codeDuration.toInteger()
+                endEpoch = startEpoch + (hrs * 3600000)
+                durStr = "${hrs} Hours"
+            }
+            
+            state.quickLockCodes[codeId] = [
+                name: formParams.codeName,
+                slot: formParams.codeSlot,
+                pin: formParams.codePin,
+                duration: durStr,
+                expires: endEpoch,
+                lockName: formParams.codeLock ?: "All Locks"
+            ]
+            
+            def payload = [id: codeId, name: formParams.codeName, slot: formParams.codeSlot.toInteger(), pin: formParams.codePin, start: startEpoch, end: endEpoch, lockName: formParams.codeLock]
+            sendLocationEvent(name: "lockManagerTempSync", value: "add", data: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
+            addToHistory("LOCK MANAGER: Synced Portal Quick Code for '${formParams.codeName}' (${durStr}).")
+        }
+    } catch(e) { log.warn "Quick Code Error: ${e}" }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def deleteQuickCodeEndpoint() {
+    try {
+        def formParams = params ?: [:]
+        def bodyText = request?.body ? request.body.toString() : ""
+        if (bodyText) {
+            bodyText.split('&').each {
+                def parts = it.split('=')
+                formParams[parts[0]] = parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""
+            }
+        }
+        if (formParams.codeId && state.quickLockCodes[formParams.codeId]) {
+            state.quickLockCodes.remove(formParams.codeId)
+            sendLocationEvent(name: "lockManagerTempSync", value: "delete", data: groovy.json.JsonOutput.toJson([id: formParams.codeId]), isStateChange: true)
+            addToHistory("LOCK MANAGER: Quick Code deleted manually via portal.")
+        }
+    } catch(e) {}
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
