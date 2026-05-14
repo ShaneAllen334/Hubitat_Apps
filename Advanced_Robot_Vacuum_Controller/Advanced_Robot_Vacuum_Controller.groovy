@@ -1,6 +1,5 @@
 /**
  * Advanced Robot Vacuum Controller
- * Orchestration app for the Roborock Robot Vacuum driver with Live Dashboard, Master Override, and Dynamic 12-Room Setup.
  */
 
 definition(
@@ -53,7 +52,7 @@ def mainPage() {
                 """
                 paragraph cmdCenterHTML
                 input "quickCleanRooms", "enum", title: "Target Rooms", options: availableRooms, multiple: true, submitOnChange: true
-                input "quickCleanSuction", "enum", title: "Suction Level", options: ["Quiet", "Balanced", "Turbo", "Max"], defaultValue: "Balanced"
+                input "quickCleanSuction", "enum", title: "Suction Level", options: ["Quiet", "Balanced", "Turbo", "Max", "Off"], defaultValue: "Balanced"
                 input "quickCleanWater", "enum", title: "Mop Water Level", options: ["Off", "Low", "Medium", "High"], defaultValue: "Medium"
                 if (quickCleanRooms) {
                     input name: "btnExecuteQuickClean", type: "button", title: "🚀 Execute Clean Now"
@@ -111,11 +110,13 @@ def mainPage() {
                     input "roomZone_${i}", "text", title: "  ↳ Optional: Zone Coordinates (Overrides Room ID)", required: false
                     
                     input "roomWater_${i}", "enum", title: "  ↳ Mop Water Level", options: ["Off", "Low", "Medium", "High"], defaultValue: "Medium"
-                    input "roomSuction_${i}", "enum", title: "  ↳ Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max"], defaultValue: "Balanced"
+                    input "roomSuction_${i}", "enum", title: "  ↳ Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max", "Off"], defaultValue: "Balanced"
                     input "roomSeq_${i}", "number", title: "  ↳ Cleaning Sequence Order (1 = First)", defaultValue: i
                     
                     input "roomOccupancyThreshold_${i}", "number", title: "  ↳ Min. Active Minutes to Require Cleaning", defaultValue: 15
                     input "roomHeavyTraffic_${i}", "number", title: "  ↳ Active Mins for Adaptive Turbo Suction", defaultValue: 120
+                    input "disableML_${i}", "bool", title: "  ↳ Disable ML Tracking (Use Basic Sensors Only)", defaultValue: false, description: "Bypasses the accumulator algorithms. Ideal for Guest Rooms."
+
                     input "roomFan_${i}", "capability.switch", title: "  ↳ Post-Clean Fan/Purifier", required: false
                     input "roomFanTimer_${i}", "number", title: "  ↳ Fan Run Time After Vacuum Leaves (Mins)", defaultValue: 15
                     
@@ -124,7 +125,13 @@ def mainPage() {
                     input "roomMedia_${i}", "capability.musicPlayer", title: "  ↳ Acoustic Adjust (Media Player)", required: false
                     input "roomContact_${i}", "capability.contactSensor", title: "  ↳ Perimeter Halt (Skip if Door Open)", required: false
                     
+                    paragraph "<b>Duration-Based Virtual Trigger:</b>"
+                    input "roomVirtualOcc_${i}", "capability.switch", title: "  ↳ Virtual Occupancy Switch", required: false
+                    input "roomVirtualOccTime_${i}", "number", title: "    ↳ Min. Minutes ON to trigger clean when turned OFF", defaultValue: 30
+
                     paragraph "<b>Occupancy Arrays (Deduplicated Tracking):</b>"
+                    input "roomBedPresence_${i}", "capability.presenceSensor", title: "  ↳ Bed Occupancy Pad (Settle Lockout Mode)", required: false, multiple: true
+                    input "roomBedSwitch_${i}", "capability.switch", title: "  ↳ Bed Occupancy Switch (Settle Lockout Mode)", required: false, multiple: true
                     input "roomMotion_${i}", "capability.motionSensor", title: "  ↳ Motion Sensors (Accumulates Usage Time)", required: false, multiple: true
                     input "roomBypass_${i}", "capability.motionSensor", title: "  ↳ Real-Time Bypass Sensors (Skips Clean if Active)", required: false, multiple: true
                     input "roomLight_${i}", "capability.switch", title: "  ↳ Pre-Check Lighting (ON = Occupied)", required: false, multiple: true
@@ -136,20 +143,45 @@ def mainPage() {
         }
 
         section("<b>3. Automated Triggers & Modes</b>", hideable: true, hidden: true) {
-            paragraph "<b>Good Night Logic & Tracking Suspension:</b>"
+            paragraph "<b>Presence-Based Interruption & Resume:</b>"
+            input "arrivalModes", "mode", title: "Arrival Modes (Pause & Return to Dock)", multiple: true, required: false, description: "Interrupts active vacuums to prevent disturbance when users arrive."
+            input "awayModes", "mode", title: "Departure Modes (Resume Unfinished Cleans)", multiple: true, required: false, description: "Resumes vacuums previously interrupted by an arrival mode."
+
+            paragraph "<b>Post-Sickness Deep Clean:</b>"
+            input "sickSwitches", "capability.switch", title: "Sick Mode Virtual Switches", required: false, multiple: true, description: "Triggers a Max Full Clean when all switches are turned off (after at least one was on)."
+
+            paragraph "<b>Guest Mode Departure Cleanup:</b>"
+            input "guestModeSwitch", "capability.switch", title: "Guest Mode Virtual Switch", required: false, description: "Forces a Full House Max Clean when turned OFF."
+
+            paragraph "<b>Appliance Telemetry (Kitchen Sweep):</b>"
+            input "dishwasherPlug", "capability.powerMeter", title: "Dishwasher Smart Plug (Power Telemetry)", required: false
+            input "dishwasherThreshold", "decimal", title: "Active Power Threshold (Watts)", defaultValue: 15.0
+            input "dishwasherRooms", "enum", title: "Rooms to clean after cycle completes", options: availableRooms, multiple: true, required: false
+
+            paragraph "<b>High-Traffic Exterior Transitions (Mudroom):</b>"
+            input "exteriorDoor", "capability.contactSensor", title: "High-Traffic Exterior Door", required: false, multiple: true
+            input "doorCountThreshold", "number", title: "Openings required to trigger sweep", defaultValue: 3
+            input "doorTimeWindow", "number", title: "Time window for openings (Minutes)", defaultValue: 15
+            input "mudroomRooms", "enum", title: "Rooms to clean after high traffic", options: availableRooms, multiple: true, required: false
+
+            paragraph "<b>Good Night Logic & Quiet Sweep:</b>"
             input "goodNightSwitch", "capability.switch", title: "Good Night Toggle Switch (Suspends Motion Tracking)", required: false
-            input "goodNightMode", "mode", title: "Trigger Sweep & Suspend Tracking on 'Good Night' Mode", required: false, multiple: true
+            input "goodNightMode", "mode", title: "Trigger Sweep on 'Good Night' Mode", required: false, multiple: true
             input "goodNightRooms", "enum", title: "Rooms to clean during Good Night routine", options: availableRooms, required: false, multiple: true
+            input "goodNightSuction", "enum", title: "Override Suction Power (Night Mode)", options: ["Quiet", "Balanced", "Turbo", "Max", "Off"], defaultValue: "Quiet", required: false
+            input "goodNightWater", "enum", title: "Override Mop Water (Night Mode)", options: ["Off", "Low", "Medium", "High"], defaultValue: "Off", required: false
             input "goodNightConflicts", "capability.switch", title: "Device Conflict Block", required: false, multiple: true, description: "Do not start Good Night sweep if these devices are actively ON."
             
             paragraph "<b>Configurable Full House Clean Mode:</b>"
             input "fullCleanMode", "mode", title: "Trigger Configured Full Clean on Mode", required: false, multiple: true
+            input "fullCleanDelay", "number", title: "Settle Delay (Minutes) before dispatching", defaultValue: 10, required: true, description: "Allows motion sensors to clear and doors to close before checking occupancy."
+            input "fullCleanBypass", "bool", title: "Bypass Global Time/Mode Constraints for Mode Clean", defaultValue: true, description: "Forces clean to run regardless of your Allowed Modes or Quiet Hours."
+            input "fullCleanNotifyFail", "bool", title: "Send Push Notification if Mode Clean Fails/Blocked", defaultValue: true
             input "fullCleanIgnoreSkip", "bool", title: "Ignore Occupancy Skip Logic (Force Clean All)", defaultValue: false
             input "fullCleanSuction", "enum", title: "Override Base Suction Power", options: ["Quiet", "Balanced", "Turbo", "Max"], required: false
             input "fullCleanWater", "enum", title: "Override Base Mop Water", options: ["Off", "Low", "Medium", "High"], required: false
             
             paragraph "<b>Post-Meal Cleanup (Ecosystem Link):</b>"
-            paragraph "<div style='font-size:13px; color:#555;'>Links to the Advanced Meal Time app. When the meal switch turns OFF, the vacuum deploys. The app will automatically run exactly 1 time per morning and 1 time per evening to prevent spamming.</div>"
             input "mealTimeSwitch", "capability.switch", title: "Meal Time Virtual Switch", required: false
             input "mealTimeRooms", "enum", title: "Rooms to clean after Meal Time ends", options: availableRooms, required: false, multiple: true
             
@@ -166,10 +198,16 @@ def mainPage() {
             input "maxIdleDays", "number", title: "Max days without a FULL clean before forcing a Deep Clean", defaultValue: 3, required: false
         }
 
-        section("<b>5. Scheduled Mop-Only Routines</b>", hideable: true, hidden: true) {
+        section("<b>5. Scheduled Specialized Routines (Mopping & Dry Dusting)</b>", hideable: true, hidden: true) {
+            paragraph "<b>Wet Mop Only (No Suction):</b>"
             input "mopDays", "enum", title: "Days to Run Mop-Only", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], required: false, multiple: true
             input "mopTime", "time", title: "Time to Run Mop-Only", required: false
-            input "mopRooms", "enum", title: "Rooms to Mop", options: availableRooms, required: false, multiple: true
+            input "mopRooms", "enum", title: "Rooms to Wet Mop", options: availableRooms, required: false, multiple: true
+
+            paragraph "<b>Dry Dusting Only (No Suction, No Water):</b>"
+            input "dryMopDays", "enum", title: "Days to Run Dry Dusting", options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], required: false, multiple: true
+            input "dryMopTime", "time", title: "Time to Run Dry Dusting", required: false
+            input "dryMopRooms", "enum", title: "Rooms to Dry Dust", options: availableRooms, required: false, multiple: true
         }
 
         section("<b>6. Hardware Protection, Efficiency & ROI</b>", hideable: true, hidden: true) {
@@ -178,7 +216,6 @@ def mainPage() {
             
             paragraph "<b>Smart ROI Savings (Phantom Power Control):</b>"
             input "smartROISavings", "bool", title: "<b>Enable Smart ROI Power Management</b>", defaultValue: true, submitOnChange: true
-            paragraph "<i>If enabled, the app automatically wakes the docks 90 seconds before dispatching, issues realignment commands, cuts power once charged to 100%, and wakes the dock for a top-off if the battery drops to 80% or if the vacuum goes offline.</i>"
             
             input "dockPlug1", "capability.switch", title: "Vacuum 1 Dock Smart Plug", required: false
             input "dockPlug2", "capability.switch", title: "Vacuum 2 Dock Smart Plug", required: false
@@ -186,56 +223,12 @@ def mainPage() {
         }
 
         section("<b>7. Notifications & Maintenance Alerts</b>", hideable: true, hidden: true) {
+            input "enableSelfHealing", "bool", title: "<b>Enable Auto-Recovery (Self-Healing)</b>", defaultValue: true, description: "Automatically attempts to recover from minor navigation errors (stuck, trapped) up to 3 times before pausing."
             input "notifyDevice", "capability.notification", title: "Send Push Notifications To", required: false, multiple: true
-            input "notifyTypes", "enum", title: "Select Alert Types to Receive", options: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"], multiple: true, required: false, defaultValue: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag"]
+            input "notifyTypes", "enum", title: "Select Alert Types to Receive", options: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag", "Swap Mop Pads", "Replace Brushes"], multiple: true, required: false, defaultValue: ["Errors", "Bin Full", "Water Low", "Filter Dirty", "Clean Sensors", "Replace Bag", "Swap Mop Pads", "Replace Brushes"]
             input "alertThreshold", "number", title: "Alert when consumables drop below (%)", defaultValue: 5, required: true
             input "autoPauseOnError", "bool", title: "Auto-Pause Vacuum on Error", defaultValue: true
             input "ignoredPauseErrors", "text", title: "Ignore these Error Codes (Comma separated, e.g. 38, 105)", required: false
-            
-            String chartHTML = """
-            <details style='margin-top: 15px;'>
-                <summary style='cursor: pointer; color: #0066cc;'><b>📚 View Roborock Error Code Reference Chart</b></summary>
-                <div style='margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #fcfcfc; font-size: 12px; font-family: sans-serif;'>
-                    <b style='color: green;'>💧 Dock & Mopping Systems (Great Candidates for Ignore List)</b>
-                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px;'>
-                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>38</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Clean water tank empty/missing</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>39</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dirty water tank full/missing</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>40</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dock water filter blocked</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>42</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Cleaning tray blocked/jammed</td></tr>
-                    </table>
-
-                    <b style='color: red;'>🛑 Navigation & Movement (Do Not Ignore)</b>
-                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px;'>
-                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>1</b></td><td style='padding: 4px; border: 1px solid #ccc;'>LiDAR laser blocked or stuck</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>2</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Bumper stuck</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>3</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Wheels suspended</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>4</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Cliff sensor error</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>7</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Main wheels jammed</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>8</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Robot trapped</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>11</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Magnetic boundary detected</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>16</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Uneven surface</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>21</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Vertical bumper pressed</td></tr>
-                    </table>
-
-                    <b style='color: orange;'>⚙️ Hardware & Consumables (Proceed with Caution)</b>
-                    <table style='width: 100%; border-collapse: collapse; margin-top: 5px;'>
-                        <tr style='background-color: #eee; text-align: left;'><th style='padding: 4px; border: 1px solid #ccc;'>Code</th><th style='padding: 4px; border: 1px solid #ccc;'>Error Meaning</th></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc; width: 15%;'><b>5</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Main brush jammed</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>6</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Side brush jammed</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>9</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Dustbin missing</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>10</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Filter blocked or wet</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>12</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Battery critically low</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>13/14</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Battery/Charging fault</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>15</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Wall sensor dirty</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>17</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Side brush module fault</td></tr>
-                        <tr><td style='padding: 4px; border: 1px solid #ccc;'><b>18</b></td><td style='padding: 4px; border: 1px solid #ccc;'>Vacuum fan error</td></tr>
-                    </table>
-                </div>
-            </details>
-            """
-            paragraph chartHTML
         }
         
         section("<b>8. Logging & Maintenance</b>", hideable: true, hidden: true) {
@@ -243,6 +236,10 @@ def mainPage() {
             input "clearHistory", "bool", title: "Clear Dashboard History", defaultValue: false
             input "clearOccupancy", "bool", title: "Reset All Room Occupancy Counters", defaultValue: false
             input "clearROI", "bool", title: "Reset Financial Savings Counter", defaultValue: false
+        }
+            
+        section("<b>9. Voice Butler Integration</b>", hideable: true, hidden: true) {
+            input "enableButlerLink", "bool", title: "Enable Voice Butler Integration?", defaultValue: false, description: "Sends silent background events to the Advanced Voice Butler app so it can dynamically announce or stash vacuum activities."
         }
     }
 }
@@ -252,6 +249,7 @@ def installed() {
     state.history = []
     state.lastCleanTime = now() 
     state.lastFullCleanTime = now()
+    state.sicknessActive = false
     initialize()
 }
 
@@ -261,20 +259,14 @@ def updated() {
     if (!state.lastCleanTime) state.lastCleanTime = now()
     if (!state.lastFullCleanTime) state.lastFullCleanTime = now()
     if (!state.lastDispatchLog) state.lastDispatchLog = [:]
+    if (state.sicknessActive == null) state.sicknessActive = false
     
     if (settings.clearHistory) {
         state.history = []
         app.updateSetting("clearHistory", [value: "false", type: "bool"])
     }
     if (settings.clearOccupancy) {
-        for (int i = 1; i <= 12; i++) {
-            if (settings["enableRoom_${i}"]) {
-                String rName = settings["roomName_${i}"]
-                state["occSecs_${rName}"] = 0
-                state["motionEvents_${rName}"] = 0
-                state["isMotionActive_${rName}"] = false
-            }
-        }
+        flushOccupancyArrays()
         state.lastDispatchLog = [:]
         app.updateSetting("clearOccupancy", [value: "false", type: "bool"])
     }
@@ -286,6 +278,10 @@ def updated() {
 
     initialize()
     evaluateROIPowerState()
+    
+    // --- BUTLER INJECTION ---
+    // Force a sync to the Butler's clipboard when settings are saved
+    broadcastStaffSchedule()
 }
 
 boolean isAppPaused() {
@@ -315,14 +311,21 @@ def initialize() {
     
     if (wakeUpTime) schedule(wakeUpTime, "wakeDocks")
     if (mopTime) schedule(mopTime, "mopRoutineHandler")
+    if (dryMopTime) schedule(dryMopTime, "dryMopRoutineHandler")
     if (maxIdleDays) runEvery1Hour("overdueCheckHandler")
     
     if (masterSwitch) subscribe(masterSwitch, "switch", masterSwitchHandler)
     if (fullCleanSwitch) subscribe(fullCleanSwitch, "switch.on", fullCleanHandler)
     if (schoolRunSwitch) subscribe(schoolRunSwitch, "switch.on", schoolRunHandler)
     if (mealTimeSwitch) subscribe(mealTimeSwitch, "switch.off", postMealHandler)
+    if (guestModeSwitch) subscribe(guestModeSwitch, "switch.off", guestModeHandler)
+    if (goodNightSwitch) subscribe(goodNightSwitch, "switch", goodNightSwitchHandler)
+    if (sickSwitches) subscribe(sickSwitches, "switch", sickSwitchHandler)
     
     subscribe(location, "mode", modeHandler)
+    
+    if (dishwasherPlug) subscribe(dishwasherPlug, "power", dishwasherPowerHandler)
+    if (exteriorDoor) subscribe(exteriorDoor, "contact", exteriorDoorHandler)
     
     if (dockPlug1) {
         subscribe(dockPlug1, "switch", dockPlugHandler)
@@ -341,10 +344,13 @@ def initialize() {
             if (state["isMotionActive_${rName}"] == null) state["isMotionActive_${rName}"] = false
             
             if (settings["roomSwitch_${i}"]) subscribe(settings["roomSwitch_${i}"], "switch.on", roomSwitchHandler)
+            if (settings["roomVirtualOcc_${i}"]) subscribe(settings["roomVirtualOcc_${i}"], "switch", virtualOccHandler)
             if (settings["roomMotion_${i}"]) subscribe(settings["roomMotion_${i}"], "motion", occupancyHandler)
             if (settings["roomBypass_${i}"]) subscribe(settings["roomBypass_${i}"], "motion", occupancyHandler)
             if (settings["roomLight_${i}"]) subscribe(settings["roomLight_${i}"], "switch", occupancyHandler)
             if (settings["roomTV_${i}"]) subscribe(settings["roomTV_${i}"], "switch", occupancyHandler)
+            if (settings["roomBedPresence_${i}"]) subscribe(settings["roomBedPresence_${i}"], "presence", bedSensorHandler)
+            if (settings["roomBedSwitch_${i}"]) subscribe(settings["roomBedSwitch_${i}"], "switch", bedSensorHandler)
         }
     }
     
@@ -358,6 +364,7 @@ def initialize() {
         subscribe(vacuum1, "remainingMainBrush", consumableHandler)
         subscribe(vacuum1, "remainingSideBrush", consumableHandler)
         subscribe(vacuum1, "remainingSensors", consumableHandler)
+        subscribe(vacuum1, "remainingMop", consumableHandler)
     }
     if (vacuum2) {
         subscribe(vacuum2, "state", vacuumStateHandler)
@@ -369,6 +376,24 @@ def initialize() {
         subscribe(vacuum2, "remainingMainBrush", consumableHandler)
         subscribe(vacuum2, "remainingSideBrush", consumableHandler)
         subscribe(vacuum2, "remainingSensors", consumableHandler)
+        subscribe(vacuum2, "remainingMop", consumableHandler)
+    }
+}
+
+// ==========================================
+// STATE FLUSHING
+// ==========================================
+
+void flushOccupancyArrays() {
+    for (int i = 1; i <= 12; i++) {
+        if (settings["enableRoom_${i}"]) {
+            String rName = settings["roomName_${i}"]
+            state["occSecs_${rName}"] = 0
+            state["motionEvents_${rName}"] = 0
+            state["isMotionActive_${rName}"] = false
+            state["bedOccupied_${rName}"] = false
+            state["virtOccStart_${rName}"] = null
+        }
     }
 }
 
@@ -397,7 +422,7 @@ void commandVacuum(vacDevice, String brand, String cmd) {
             case "Roborock (Community)":
                 if (cmd == "pause") vacDevice.appPause()
                 if (cmd == "resume") vacDevice.appRoomResume()
-                if (cmd == "dock") vacDevice.appDock() // Bloodtick explicitly uses appDock()
+                if (cmd == "dock") vacDevice.appDock()
                 break
             case "iRobot Roomba (Native)":
             case "Ecovacs/Deebot":
@@ -419,19 +444,16 @@ void dispatchVacuum(vacDevice, String brand, String type, String target, String 
     try {
         switch(brand) {
             case "Roborock (Community)":
-                // Send custom JSON parameter to set suction via MQTT execute
                 if (suction) {
-                    Map suctionMap = ["quiet": 101, "balanced": 102, "turbo": 103, "max": 104]
+                    Map suctionMap = ["quiet": 101, "balanced": 102, "turbo": 103, "max": 104, "off": 105]
                     Integer sCode = suctionMap[suction.toLowerCase()]
                     if (sCode) {
                         try { vacDevice.execute("set_custom_mode", "[${sCode}]") } catch(e) { logInfo("Suction execute error: ${e}") }
                     }
                 }
                 
-                // Trigger dispatch
                 if (type == "room") {
                     try {
-                        // Driver explicitly requires: appRoomClean(String rooms, String mopWater)
                         if (water) {
                             vacDevice.appRoomClean(target, water.capitalize())
                         } else {
@@ -466,27 +488,57 @@ void dispatchVacuum(vacDevice, String brand, String type, String target, String 
 // GATEKEEPER LOGIC (TIME & MODE)
 // ==========================================
 
-boolean canRunAutomated() {
+boolean canRunAutomated(String context = "", boolean bypassConstraints = false) {
     if (isAppPaused()) return false
-    if (masterSwitch && masterSwitch.currentValue("switch") == "off") return false
+    
+    if (masterSwitch && masterSwitch.currentValue("switch") == "off") {
+        if (context) addToHistory("<span style='color:orange;'>${context} Blocked: Physical Master Switch is OFF</span>")
+        return false
+    }
 
-    if (allowedModes && !allowedModes.contains(location.mode)) return false
+    if (!bypassConstraints && allowedModes && !allowedModes.contains(location.mode)) {
+        if (context) addToHistory("<span style='color:orange;'>${context} Blocked: Current Mode ('${location.mode}') is not in Allowed Operating Modes</span>")
+        return false
+    }
 
-    if (allowedStartTime && allowedEndTime) {
+    if (!bypassConstraints && allowedStartTime && allowedEndTime) {
         Date start = timeToday(allowedStartTime, location.timeZone)
         Date end = timeToday(allowedEndTime, location.timeZone)
         Date now = new Date()
         
+        boolean outsideAllowed = false
         if (start.before(end)) {
-            if (!(now.after(start) && now.before(end))) return false
+            if (!(now.after(start) && now.before(end))) outsideAllowed = true
         } else {
-            if (!(now.after(start) || now.before(end))) return false
+            if (!(now.after(start) || now.before(end))) outsideAllowed = true
+        }
+        
+        if (outsideAllowed) {
+            if (context) addToHistory("<span style='color:orange;'>${context} Blocked: Active Quiet Hours Restrictions</span>")
+            return false
         }
     }
     return true
 }
 
 boolean isRoomCurrentlyOccupied(int roomIndex) {
+    String rName = settings["roomName_${roomIndex}"]
+    
+    if (state["bedOccupied_${rName}"]) {
+        long lockTime = state["bedLockTime_${rName}"] ?: 0
+        def bPresence = [settings["roomBedPresence_${roomIndex}"]].flatten().findAll{it}
+        def bSwitch = [settings["roomBedSwitch_${roomIndex}"]].flatten().findAll{it}
+        
+        boolean physicallyActive = bPresence.any{it.currentValue("presence") == "present"} || bSwitch.any{it.currentValue("switch") == "on"}
+        if (physicallyActive) return true
+        
+        if (now() - lockTime < 1800000) {
+             return true 
+        } else {
+             state["bedOccupied_${rName}"] = false 
+        }
+    }
+    
     def motions = [settings["roomMotion_${roomIndex}"]].flatten().findAll { it }
     def bypasses = [settings["roomBypass_${roomIndex}"]].flatten().findAll { it }
     def lights = [settings["roomLight_${roomIndex}"]].flatten().findAll { it }
@@ -505,9 +557,9 @@ boolean isRoomCurrentlyOccupied(int roomIndex) {
 // ==========================================
 
 void sendAlert(String alertType, String msg) {
-    if (settings.notifyTypes?.contains(alertType)) {
+    if (settings.notifyTypes?.contains(alertType) || alertType == "Errors") {
         if (notifyDevice) notifyDevice.deviceNotification(msg)
-        addToHistory("<span style='color:blue;'><b>Push Sent (${alertType}):</b> ${msg}</span>")
+        addToHistory("<span style='color:blue;'><b>Push Sent:</b> ${msg}</span>")
     }
 }
 
@@ -520,7 +572,7 @@ void requestDispatch(List selectedRoomNames, Map options = [:]) {
     
     boolean needsWake = false
     
-    if (settings.smartROISavings) {
+    if (settings.smartROISavings != false) {
         if (dockPlug1 && dockPlug1.currentValue("switch") == "off") needsWake = true
         if (dockPlug2 && dockPlug2.currentValue("switch") == "off") needsWake = true
     }
@@ -549,7 +601,7 @@ def executePendingDispatch() {
 }
 
 void evaluateROIPowerState() {
-    if (isAppPaused() || !settings.smartROISavings) return
+    if (isAppPaused() || settings.smartROISavings == false) return
     if (state.pendingDispatchRooms?.size() > 0) return 
     
     checkVacuumHealth(vacuum1, dockPlug1, 1)
@@ -587,6 +639,16 @@ void checkVacuumHealth(vacDevice, dockPlug, int vacNum) {
             runIn(15, "remountVacuum${vacNum}")
         }
     }
+}
+
+def forceDockVacuum1() {
+    if (isAppPaused()) return
+    if (vacuum1) commandVacuum(vacuum1, settings.vac1Brand, "dock")
+}
+
+def forceDockVacuum2() {
+    if (isAppPaused()) return
+    if (vacuum2) commandVacuum(vacuum2, settings.vac2Brand, "dock")
 }
 
 def remountVacuum1() {
@@ -701,7 +763,7 @@ def appButtonHandler(btn) {
 }
 
 def mopRoutineHandler() {
-    if (!canRunAutomated()) return
+    if (!canRunAutomated("Scheduled Mop Routine")) return
     if (mopDays) {
         def df = new java.text.SimpleDateFormat("EEEE")
         df.setTimeZone(location.timeZone)
@@ -714,14 +776,153 @@ def mopRoutineHandler() {
     }
 }
 
+def dryMopRoutineHandler() {
+    if (!canRunAutomated("Scheduled Dry Dusting")) return
+    if (dryMopDays) {
+        def df = new java.text.SimpleDateFormat("EEEE")
+        df.setTimeZone(location.timeZone)
+        String day = df.format(new Date())
+        if (!dryMopDays.contains(day)) return
+    }
+    if (dryMopRooms) {
+        addToHistory("<span style='color:teal;'><b>Triggered: Scheduled Dry Dusting Routine</b></span>")
+        requestDispatch(dryMopRooms, [ignoreSkip: false, suction: "Off", water: "Off"])
+    }
+}
+
 def overdueCheckHandler() {
     if (isAppPaused()) return
     if (!maxIdleDays || !state.lastFullCleanTime) return
     long daysIdle = (now() - state.lastFullCleanTime) / 86400000
     if (daysIdle >= maxIdleDays) {
-        if (canRunAutomated()) {
+        if (canRunAutomated("Overdue Deep Clean")) {
             addToHistory("<span style='color:purple;'><b>Overdue Catcher: ${daysIdle} days since last FULL clean. Forcing Deep Clean!</b></span>")
+            
+            // --- BUTLER INJECTION ---
+            sendToButler("As the residence has not received a deep clean in ${daysIdle} days, I have taken the liberty of deploying the cleaning staff for a full sweep.", "I deployed the automated vacuums to handle an overdue full house deep clean")
+            
             requestDispatch(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
+        }
+    }
+}
+
+def guestModeHandler(evt) {
+    if (isAppPaused()) return
+    if (!canRunAutomated("Guest Departure Cleanup")) return
+    
+    addToHistory("Triggered: Guest Departure Mode (Max Clean Sweep)")
+    
+    // --- BUTLER INJECTION ---
+    sendToButler("Now that our guests have departed, I have ordered a deep clean of the main floors to restore the house.", "I deployed the vacuums to clean up after the guests departed")
+    
+    requestDispatch(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
+}
+
+def goodNightSwitchHandler(evt) {
+    if (isAppPaused()) return
+    if (evt.value == "off") {
+        addToHistory("Good Night Deactivated: Flushing all stale occupancy states to reset the house.")
+        flushOccupancyArrays()
+    }
+}
+
+def dishwasherPowerHandler(evt) {
+    if (isAppPaused()) return
+    if (!dishwasherPlug || !dishwasherRooms) return
+    
+    BigDecimal pwr = (evt.value as BigDecimal) ?: 0.0
+    BigDecimal threshold = settings.dishwasherThreshold ?: 15.0
+    boolean isRunning = state.dishwasherRunning ?: false
+    
+    if (pwr >= threshold && !isRunning) {
+        state.dishwasherRunning = true
+        addToHistory("Appliance Telemetry: Dishwasher Cycle Started (> ${threshold}W).")
+    } else if (pwr < threshold && isRunning) {
+        state.dishwasherRunning = false
+        addToHistory("Appliance Telemetry: Dishwasher Cycle Complete. Queueing Kitchen Sweep.")
+        
+        // --- BUTLER INJECTION ---
+        sendToButler("The dishwasher has completed its cycle, so I have dispatched the vacuum to sweep the kitchen.", "I had the kitchen swept after the dishwasher finished")
+        
+        requestDispatch(settings.dishwasherRooms, [ignoreSkip: false])
+    }
+}
+
+def exteriorDoorHandler(evt) {
+    if (isAppPaused()) return
+    if (evt.value != "open") return
+    if (!mudroomRooms) return
+    
+    long nowTime = now()
+    long windowMs = ((settings.doorTimeWindow ?: 15) as Long) * 60000
+    
+    List openings = state.doorOpenings ?: []
+    openings << nowTime
+    openings.removeAll { nowTime - it > windowMs }
+    state.doorOpenings = openings
+    
+    int thresh = settings.doorCountThreshold ?: 3
+    if (openings.size() >= thresh) {
+        addToHistory("Exterior Accumulator: Threshold Met (${thresh} openings). Queueing Mudroom Sweep.")
+        requestDispatch(settings.mudroomRooms, [ignoreSkip: false])
+        state.doorOpenings = [] 
+    }
+}
+
+def bedSensorHandler(evt) {
+    if (isAppPaused()) return
+    String devId = evt.deviceId.toString()
+    for (int i = 1; i <= 12; i++) {
+        if (!settings["enableRoom_${i}"]) continue
+        
+        def bPresence = [settings["roomBedPresence_${i}"]].flatten().findAll{it}
+        def bSwitch = [settings["roomBedSwitch_${i}"]].flatten().findAll{it}
+        
+        if (bPresence.any{it.id.toString() == devId} || bSwitch.any{it.id.toString() == devId}) {
+            String rName = settings["roomName_${i}"]
+            boolean isActive = (evt.value == "present" || evt.value == "on")
+            
+            if (isActive) {
+                state["bedLockTime_${rName}"] = now()
+                state["bedOccupied_${rName}"] = true
+                addToHistory("${rName} Bed Active: Locking in for minimum 30 minutes to settle.")
+            } else {
+                long lockTime = state["bedLockTime_${rName}"] ?: 0
+                if (now() - lockTime < 1800000) {
+                    addToHistory("${rName} Bed Vacated: Ignored (Within 30m settle lockout).")
+                } else {
+                    state["bedOccupied_${rName}"] = false
+                    addToHistory("${rName} Bed Vacated: Settle period expired, occupancy released.")
+                }
+            }
+            break
+        }
+    }
+}
+
+def virtualOccHandler(evt) {
+    if (isAppPaused()) return
+    String evtDevId = evt.device.id?.toString() ?: evt.deviceId?.toString()
+    
+    for (int i = 1; i <= 12; i++) {
+        if (settings["enableRoom_${i}"] && settings["roomVirtualOcc_${i}"]?.id?.toString() == evtDevId) {
+            String rName = settings["roomName_${i}"]
+            
+            if (evt.value == "on") {
+                state["virtOccStart_${rName}"] = now()
+            } else if (evt.value == "off") {
+                long start = state["virtOccStart_${rName}"] ?: now()
+                long durationMins = (now() - start) / 60000
+                int threshold = settings["roomVirtualOccTime_${i}"] ?: 30
+                
+                if (durationMins >= threshold) {
+                    if (canRunAutomated("Virtual Occupancy (${rName})")) {
+                        addToHistory("Virtual Occupancy Trigger: ${rName} active for ${durationMins}m. Queueing sweep.")
+                        requestDispatch([rName], [ignoreSkip: true])
+                    }
+                }
+            }
+            break
         }
     }
 }
@@ -737,6 +938,8 @@ def consumableHandler(evt) {
         if (part.contains("filter")) sendAlert("Filter Dirty", msg)
         else if (part.contains("sensor")) sendAlert("Clean Sensors", msg)
         else if (part.contains("bag") || part.contains("dust")) sendAlert("Replace Bag", msg)
+        else if (part.contains("mop")) sendAlert("Swap Mop Pads", msg)
+        else if (part.contains("main") || part.contains("side") || part.contains("brush")) sendAlert("Replace Brushes", msg)
     }
 }
 
@@ -770,7 +973,6 @@ def batteryHandler(evt) {
 def dockPlugHandler(evt) {
     if (isAppPaused()) return
     
-    // Safely grab the device ID regardless of driver quirks
     String eId = evt.device?.id?.toString() ?: evt.deviceId?.toString()
     
     if (evt.value == "off") {
@@ -827,7 +1029,7 @@ def triggerFanCountdown(String roomName) {
     if (isAppPaused()) return
     for (int i = 1; i <= 12; i++) {
         if (settings["enableRoom_${i}"] && settings["roomName_${i}"] == roomName && settings["roomFan_${i}"]) {
-            int delayMins = settings["roomFanTimer_${i}"] ?: 15
+            int delayMins = (settings["roomFanTimer_${i}"] ?: 15) as Integer
             runIn(delayMins * 60, "turnOffFan", [data: [roomId: i], overwrite: true])
             addToHistory("${roomName} Dust Settler: Fan off in ${delayMins}m.")
         }
@@ -860,7 +1062,7 @@ def masterSwitchHandler(evt) {
 def occupancyHandler(evt) {
     if (isAppPaused()) return
     if (masterSwitch && masterSwitch.currentValue("switch") == "off") return
-    if (state.ignoreIntrusions) return // Ignore real-time pauses entirely during forced Full Cleans
+    if (state.ignoreIntrusions) return 
     
     String triggeredRoom = ""
     int triggeredIndex = 0
@@ -895,9 +1097,8 @@ def occupancyHandler(evt) {
     boolean v1InRoom = state.v1_maskedRooms?.contains(triggeredRoom)
     boolean v2InRoom = state.v2_maskedRooms?.contains(triggeredRoom)
 
-    // Log the motion for calculations, regardless of whether the vacuum is running
     if (evt.name == "motion" && isAccumulator && !v1InRoom && !v2InRoom) {
-        if (!isGoodNight) {
+        if (!isGoodNight && !settings["disableML_${triggeredIndex}"]) {
             def motions = [settings["roomMotion_${triggeredIndex}"]].flatten().findAll { it }
             int activeSensors = 0
             
@@ -923,7 +1124,7 @@ def occupancyHandler(evt) {
                     long start = state["motionStart_${triggeredRoom}"] ?: now()
                     long deltaSecs = (now() - start) / 1000
                     state["occSecs_${triggeredRoom}"] = (state["occSecs_${triggeredRoom}"] ?: 0) + deltaSecs
-                    addToHistory("<span style='color:#0066cc;'><b>Activity Log:</b> ${triggeredRoom} recorded ${deltaSecs}s of motion.</span>")
+                    addToHistory("<span style='#0066cc;'><b>Activity Log:</b> ${triggeredRoom} recorded ${deltaSecs}s of motion.</span>")
                 }
             }
         }
@@ -931,9 +1132,8 @@ def occupancyHandler(evt) {
 
     if (evt.value == "active" || evt.value == "on") {
         boolean doPause = settings.pauseOnIntrusion ?: false
-        if (!doPause) return // Bail out completely. Do not interrupt an active clean.
+        if (!doPause) return 
         
-        // Prevent the vacuum from pausing itself via ANY motion sensors while it is present
         if (evt.name == "motion" && (v1InRoom || v2InRoom)) {
             return 
         }
@@ -950,10 +1150,10 @@ def occupancyHandler(evt) {
         }
     } else if (evt.value == "inactive" || evt.value == "off") {
         boolean doPause = settings.pauseOnIntrusion ?: false
-        if (!doPause) return // Bail out completely. It was never paused to begin with.
+        if (!doPause) return 
 
         if (!isRoomCurrentlyOccupied(triggeredIndex)) {
-            int delaySeconds = (settings.pauseGracePeriod ?: 2) * 60
+            int delaySeconds = ((settings.pauseGracePeriod ?: 2) as Integer) * 60
             if (v1InRoom && vacuum1 && vacuum1.currentValue("state")?.toLowerCase() == "paused") {
                 addToHistory("V1 Timer: ${triggeredRoom} clear. Resuming in ${settings.pauseGracePeriod}m.")
                 runIn(delaySeconds, "resumeVacuum1", [overwrite: true])
@@ -984,13 +1184,54 @@ def resumeVacuum2() {
     }
 }
 
+def commandActionResume(data) {
+    if (isAppPaused()) return
+    def devId = data?.vacId
+    def brand = data?.brand
+    def vac = (devId == vacuum1?.id) ? vacuum1 : ((devId == vacuum2?.id) ? vacuum2 : null)
+    if (vac && vac.currentValue("state")?.toLowerCase() == "paused") {
+        commandVacuum(vac, brand, "resume")
+    }
+}
+
 def modeHandler(evt) {
     if (isAppPaused()) return
-    if (goodNightMode && evt.value in goodNightMode) {
-        if (!canRunAutomated()) {
-            addToHistory("Good Night Blocked: Global Constraints Active")
-            return
+
+    if (arrivalModes && evt.value in arrivalModes) {
+        if (vacuum1 && vacuum1.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
+            addToHistory("Mode changed to ${evt.value}: Pausing V1 to prevent disturbance.")
+            state.v1_wasInterrupted = true
+            commandVacuum(vacuum1, settings.vac1Brand, "pause")
+            runIn(5, "forceDockVacuum1", [overwrite: true])
         }
+        if (vacuum2 && vacuum2.currentValue("state")?.toLowerCase() in ["cleaning", "room clean", "zone clean"]) {
+            addToHistory("Mode changed to ${evt.value}: Pausing V2 to prevent disturbance.")
+            state.v2_wasInterrupted = true
+            commandVacuum(vacuum2, settings.vac2Brand, "pause")
+            runIn(5, "forceDockVacuum2", [overwrite: true])
+        }
+    }
+
+    if (awayModes && evt.value in awayModes) {
+        if (state.v1_wasInterrupted) {
+            addToHistory("Departure status active (${evt.value}): Resuming interrupted V1 clean.")
+            commandVacuum(vacuum1, settings.vac1Brand, "resume")
+            state.v1_wasInterrupted = false
+        }
+        if (state.v2_wasInterrupted) {
+            addToHistory("Departure status active (${evt.value}): Resuming interrupted V2 clean.")
+            commandVacuum(vacuum2, settings.vac2Brand, "resume")
+            state.v2_wasInterrupted = false
+        }
+    }
+    
+    if (fullCleanMode && !(evt.value in fullCleanMode)) {
+        unschedule("delayedFullCleanHandler")
+        addToHistory("Mode changed to ${evt.value}. Cancelled any pending Settle Delays.")
+    }
+    
+    if (goodNightMode && evt.value in goodNightMode) {
+        if (!canRunAutomated("Good Night Sweep")) return
         if (goodNightConflicts) {
             def activeConflicts = goodNightConflicts.findAll { it.currentValue("switch") == "on" }
             if (activeConflicts.size() > 0) {
@@ -999,19 +1240,58 @@ def modeHandler(evt) {
                 return
             }
         }
-        addToHistory("Triggered: Good Night Sweep")
-        requestDispatch(goodNightRooms, [ignoreSkip: false])
+        addToHistory("Triggered: Good Night Sweep (Quiet Mode)")
+        requestDispatch(goodNightRooms, [
+            ignoreSkip: false,
+            suction: settings.goodNightSuction ?: "Quiet",
+            water: settings.goodNightWater ?: "Off"
+        ])
     }
     
     if (fullCleanMode && evt.value in fullCleanMode) {
-        if (!canRunAutomated()) return
-        addToHistory("Triggered: Configurable Full Clean Mode")
-        requestDispatch(["All"], [
-            ignoreSkip: settings.fullCleanIgnoreSkip, 
-            suction: settings.fullCleanSuction, 
-            water: settings.fullCleanWater
-        ])
+        int delayMins = (settings.fullCleanDelay ?: 10) as Integer
+        int delaySecs = delayMins * 60
+        
+        if (delaySecs > 0) {
+            addToHistory("Mode Changed to '${evt.value}'. Initiating ${delayMins}m settle delay before dispatch.")
+            runIn(delaySecs, "delayedFullCleanHandler", [overwrite: true])
+        } else {
+            delayedFullCleanHandler()
+        }
     }
+}
+
+def delayedFullCleanHandler() {
+    if (isAppPaused()) {
+        if (settings.fullCleanNotifyFail != false) sendAlert("Errors", "Mode Clean Aborted: System Paused.")
+        return
+    }
+    
+    boolean bypass = settings.fullCleanBypass != null ? settings.fullCleanBypass : true
+    if (!canRunAutomated("Configurable Full Clean Mode", bypass)) {
+        if (settings.fullCleanNotifyFail != false) sendAlert("Errors", "Mode Clean Aborted: Blocked by Global Constraints.")
+        return
+    }
+    
+    String v1State = vacuum1 ? vacuum1.currentValue("state")?.toString()?.toLowerCase() : ""
+    String v1Err = vacuum1 ? vacuum1.currentValue("error")?.toString()?.toLowerCase() : ""
+    
+    if (v1State == "offline" || v1State == "not present") {
+         if (settings.fullCleanNotifyFail != false) sendAlert("Errors", "Mode Clean Warning: Vacuum 1 is Offline.")
+    } else if (v1Err && v1Err != "no error" && v1Err != "0" && v1Err != "ok") {
+         if (settings.fullCleanNotifyFail != false) sendAlert("Errors", "Mode Clean Warning: Vacuum 1 has an active error (${v1Err}).")
+    }
+
+    addToHistory("Triggered: Configurable Full Clean Mode (After Settle Delay)")
+    
+    // --- BUTLER INJECTION ---
+    sendToButler("Since the house is currently clear, I am initiating a full house deep clean.", "I took the opportunity to deep clean the floors while the house was empty")
+    
+    requestDispatch(["All"], [
+        ignoreSkip: settings.fullCleanIgnoreSkip, 
+        suction: settings.fullCleanSuction, 
+        water: settings.fullCleanWater
+    ])
 }
 
 def fullCleanHandler(evt) {
@@ -1035,20 +1315,14 @@ def roomSwitchHandler(evt) {
 
 def schoolRunHandler(evt) {
     if (isAppPaused()) return
-    if (!canRunAutomated()) {
-        addToHistory("School Run Blocked: Global Constraints Active")
-        return
-    }
+    if (!canRunAutomated("School Run Routine")) return
     addToHistory("Triggered: School Run Routine")
     requestDispatch(schoolRunRooms, [ignoreSkip: false])
 }
 
 def postMealHandler(evt) {
     if (isAppPaused()) return
-    if (!canRunAutomated()) {
-        addToHistory("Post-Meal Cleanup Blocked: Global Constraints Active.")
-        return
-    }
+    if (!canRunAutomated("Post-Meal Cleanup")) return
     if (!settings.mealTimeRooms) return
 
     def tz = location.timeZone ?: TimeZone.getDefault()
@@ -1057,7 +1331,6 @@ def postMealHandler(evt) {
     int currentHour = cal.get(Calendar.HOUR_OF_DAY)
     String todayDate = cal.getTime().format("yyyy-MM-dd", tz)
 
-    // Mathematically define the split (Before 2:00 PM = Breakfast, After 2:00 PM = Dinner)
     if (currentHour < 14) {
         if (state.lastBreakfastCleanDate == todayDate) {
             addToHistory("Post-Meal Cleanup Skipped: Morning sweep already ran today.")
@@ -1065,6 +1338,8 @@ def postMealHandler(evt) {
         }
         state.lastBreakfastCleanDate = todayDate
         addToHistory("Triggered: Ecosystem Post-Breakfast Cleanup")
+        // --- BUTLER INJECTION ---
+        sendToButler("Now that breakfast has concluded, I have dispatched the cleaning staff to sweep the dining areas.", "I had the dining areas swept after breakfast")
     } else {
         if (state.lastDinnerCleanDate == todayDate) {
             addToHistory("Post-Meal Cleanup Skipped: Evening sweep already ran today.")
@@ -1072,10 +1347,33 @@ def postMealHandler(evt) {
         }
         state.lastDinnerCleanDate = todayDate
         addToHistory("Triggered: Ecosystem Post-Dinner Cleanup")
+        // --- BUTLER INJECTION ---
+        sendToButler("Now that the meal has concluded, I have dispatched the cleaning staff to sweep the dining areas.", "I had the dining areas swept after your meal")
     }
 
-    // Deploy to the targeted rooms. ignoreSkip is true because lingering motion in adjacent rooms shouldn't stop the dining room sweep.
     requestDispatch(settings.mealTimeRooms, [ignoreSkip: true])
+}
+
+def sickSwitchHandler(evt) {
+    if (isAppPaused()) return
+    
+    boolean anyOn = sickSwitches.any { it.currentValue("switch") == "on" }
+    
+    if (anyOn) {
+        if (!state.sicknessActive) {
+            state.sicknessActive = true
+            addToHistory("<span style='color:orange;'><b>Sick Mode Active:</b> Tracking sickness duration. Deep clean pending recovery.</span>")
+        }
+    } else {
+        if (state.sicknessActive) {
+            state.sicknessActive = false 
+            
+            if (!canRunAutomated("Post-Sickness Clean")) return
+            
+            addToHistory("<span style='color:green;'><b>Triggered: Post-Sickness Deep Clean (All Sick Switches OFF)</b></span>")
+            requestDispatch(["All"], [ignoreSkip: true, suction: "Max", water: "High"])
+        }
+    }
 }
 
 def errorHandler(evt) {
@@ -1090,7 +1388,6 @@ def errorHandler(evt) {
     if (ignoredCodes.contains(errorCode)) {
         addToHistory("<span style='color:gray;'><i>Ignored Error ${errorCode} (Bypassed Auto-Pause & Alerts)</i></span>")
         
-        // --- AUTO-DRY SWEEP LOGIC (Roborock Execute Compatible) ---
         if (errorCode in ["38", "39", "40"]) {
             def vac = evt.device
             def brand = (vac.id == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
@@ -1100,12 +1397,29 @@ def errorHandler(evt) {
         return
     }
     
+    List navErrors = ["1", "2", "3", "4", "7", "8", "16", "21"]
+    if (settings.enableSelfHealing != false && navErrors.contains(errorCode)) {
+        String devId = evt.device.id.toString()
+        int retries = state."retry_${devId}" ?: 0
+        
+        if (retries < 3) {
+            state."retry_${devId}" = retries + 1
+            addToHistory("<span style='color:orange;'><b>Self-Healing:</b> Attempting recovery from Error ${errorCode} (Attempt ${retries + 1}/3).</span>")
+            
+            def brand = (devId == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
+            runIn(5, "commandActionResume", [data: [vacId: devId, brand: brand], overwrite: true])
+            return 
+        } else {
+            addToHistory("<span style='color:red;'><b>Self-Healing Failed:</b> Max retries (3) reached for Error ${errorCode}. Halting.</span>")
+            state."retry_${devId}" = 0 
+        }
+    }
+
     String msg = "${evt.device.displayName} Error: ${errorCode}"
     addToHistory("<span style='color:red;'><b>${msg}</b></span>")
-    
     sendAlert("Errors", msg)
     
-    if (autoPauseOnError) {
+    if (settings.autoPauseOnError != false) {
         def brand = (evt.device.id == vacuum1?.id) ? settings.vac1Brand : settings.vac2Brand
         commandVacuum(evt.device, brand, "pause")
     }
@@ -1117,13 +1431,16 @@ def errorHandler(evt) {
 
 void executeRoomClean(List selectedRoomNames, Map options = [:]) {
     if (isAppPaused()) return
+
+    state.v1_wasInterrupted = false
+    state.v2_wasInterrupted = false
+
     boolean ignoreSkip = options.ignoreSkip ?: false
     String overrideSuction = options.suction
     String overrideWater = options.water
 
     if (!selectedRoomNames) return
 
-    // Track if this is a Full Clean request before we expand the "All" flag
     boolean isFullCleanRequest = false
     
     if (selectedRoomNames.contains("All")) {
@@ -1161,13 +1478,16 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                 int occMins = (occSecs / 60) as Integer
                 int minThreshold = settings["roomOccupancyThreshold_${i}"] ?: 15
                 int heavyThreshold = settings["roomHeavyTraffic_${i}"] ?: 120
+                boolean disableML = settings["disableML_${i}"] ?: false
                
-                if (!ignoreSkip && occMins < minThreshold) {
-                    dispatchLog[targetName] = "<span style='color:gray;'>Skipped (Clean: ${occMins}/${minThreshold}m)</span>"
-                    continue 
+                if (!disableML) {
+                    if (!ignoreSkip && occMins < minThreshold) {
+                        dispatchLog[targetName] = "<span style='color:gray;'>Skipped (Clean: ${occMins}/${minThreshold}m)</span>"
+                        continue 
+                    }
                 }
 
-                if (isRoomCurrentlyOccupied(i)) {
+                if (!ignoreSkip && isRoomCurrentlyOccupied(i)) {
                     dispatchLog[targetName] = "<span style='color:orange;'>Skipped (Currently Occupied)</span>"
                     continue
                 }
@@ -1180,7 +1500,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
                         finalSuction = "Quiet"
                          addToHistory("Acoustic Override: ${targetName} set to Quiet (Media Playing)")
                     }
-                } else if (!overrideSuction && occMins >= heavyThreshold) {
+                } else if (!overrideSuction && occMins >= heavyThreshold && !disableML) {
                     finalSuction = "Turbo"
                     addToHistory("Adaptive Suction: ${targetName} set to Turbo (${occMins}m traffic)")
                 }
@@ -1205,12 +1525,13 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
     state.ignoreIntrusions = ignoreSkip 
     state.lastDispatchLog = dispatchLog
 
-    // Set the timers based on the request type
     if (v1Queue.size() > 0 || v2Queue.size() > 0) {
         state.lastCleanTime = now()
         if (isFullCleanRequest) {
             state.lastFullCleanTime = now()
         }
+        // --- BUTLER INJECTION ---
+        broadcastStaffSchedule() 
     }
 
     if (v1Queue.size() > 0 && vacuum1) {
@@ -1279,7 +1600,7 @@ void executeRoomClean(List selectedRoomNames, Map options = [:]) {
 }
 
 void logInfo(String msg) {
-    if (settings?.logEnable) log.info "${app.name}: ${msg}"
+    if (settings?.logEnable != false) log.info "${app.name}: ${msg}"
 }
 
 // ==========================================
@@ -1444,7 +1765,7 @@ String buildDashboardHTML() {
     double v2MoneySaved = v2KwhSaved * kwRate
     double totalMoneySaved = totalKwhSaved * kwRate
     
-    if (settings.smartROISavings) {
+    if (settings.smartROISavings != false) {
         html += "<div style='margin-top: 10px; padding: 8px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px; font-size: 13px; color: #2e7d32;'>"
         html += "<b>Financial & Energy ROI:</b> System has prevented a total of <b>${String.format("%.2f", totalKwhSaved)} kWh</b> of phantom draw, saving <b>\$${String.format("%.2f", totalMoneySaved)}</b>.<br>"
         
@@ -1457,4 +1778,22 @@ String buildDashboardHTML() {
     }
 
     return html
+}
+
+void sendToButler(String contextMsg, String stashSummary) {
+    if (settings.enableButlerLink) {
+        // Send an invisible location event. The Butler will intercept this.
+        sendLocationEvent(name: "voiceButlerMsg", value: "vacuum", descriptionText: contextMsg, data: stashSummary)
+        logInfo("Sent to Voice Butler: ${contextMsg}")
+    }
+}
+
+void broadcastStaffSchedule() {
+    if (settings.enableButlerLink) {
+        def payload = [
+            lastFullClean: state.lastFullCleanTime ?: now(),
+            maxIdle: settings.maxIdleDays != null ? settings.maxIdleDays.toInteger() : 3
+        ]
+        sendLocationEvent(name: "voiceButlerStaffSync", value: "sync", data: groovy.json.JsonOutput.toJson(payload))
+    }
 }
