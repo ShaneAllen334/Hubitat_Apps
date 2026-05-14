@@ -1,182 +1,73 @@
-Advanced Voice Butler: Google Ecosystem Integration Guide (Omni-Update)
+================================================================================
+ADVANCED VOICE BUTLER: GOOGLE ECOSYSTEM INTEGRATION GUIDE
+================================================================================
+Developed by Shane A Schwarzman
+Software Developer & Smart Home Specialist
 
-This guide details the technical configuration required to bridge the Advanced Voice Butler with Google Workspace and Google Cloud. By combining a Serverless Apps Script with the Google Maps Platform, the Butler achieves real-time synchronization for calendar events, priority email routing, and proactive travel intelligence—including traffic-aware departure alerts and gas price scouting.
+This document outlines the technical steps to bridge the Advanced Voice Butler 
+with Google Workspace and Google Cloud for real-time calendar sync, email 
+routing, and travel intelligence.
 
----
+--------------------------------------------------------------------------------
+PHASE 1: HUBITAT CLOUD AUTHORIZATION
+--------------------------------------------------------------------------------
+1. Navigate to 'Apps Code' in your Hubitat web interface.
+2. Select the 'Advanced Voice Butler' application.
+3. Click the 'OAuth' button at the top.
+4. Click 'Enable OAuth' and then 'Update'.
+5. Open your app instance and go to the 'Live System Dashboard'.
+6. Copy the 'Cloud Webhook URL' base (everything BEFORE /email or /calendar).
 
-Phase 1: Hubitat Cloud Endpoint Preparation
-Before configuring external scripts, Hubitat must be authorized to receive secure inbound webhooks.
+--------------------------------------------------------------------------------
+PHASE 2: GENERATIVE AI (GEMINI)
+--------------------------------------------------------------------------------
+1. Visit Google AI Studio (aistudio.google.com) and sign in.
+2. Click 'Get API key' in the left sidebar.
+3. Click 'Create API key in a new project'.
+4. Copy the generated key.
+5. In your Butler App on Hubitat, find 'Generative AI Integration'.
+6. Paste your Gemini API Key and click 'Done'.
 
-1. Navigate to Apps Code in Hubitat and select the Advanced Voice Butler application.
-2. Select Enable OAuth in App. (No redirect URIs are required).
-3. Click Update.
-4. Open the Advanced Voice Butler app instance. Navigate to the Live System Dashboard to retrieve your Cloud Webhook URL. Copy the base URL (e.g., everything before /email or /calendar) for use in Phase 3.
+--------------------------------------------------------------------------------
+PHASE 3: MAPS PLATFORM (TRAVEL INTELLIGENCE)
+--------------------------------------------------------------------------------
+1. Access the Google Cloud Console (console.cloud.google.com).
+2. Create a project named "Butler Intelligence."
+3. Go to 'Billing' and link a payment method (to unlock the $200/mo free credit).
+4. Go to the 'API Library' and enable the following:
+   - Distance Matrix API
+   - Places API
+5. Go to 'APIs & Services' > 'Credentials' and click '+ Create Credentials'.
+6. Select 'API Key', copy it, and paste it into the 'Travel & Mapping' section 
+   of the Butler app on Hubitat.
 
----
+--------------------------------------------------------------------------------
+PHASE 4: THE INBOUND SYNC BRIDGE (GMAIL & CALENDAR)
+--------------------------------------------------------------------------------
+1. Go to script.google.com and click 'New Project'.
+2. Replace the default code with the "Master Bridge" script.
+3. IMPORTANT: Update the 'HUBITAT_BASE_URL' constant with your URL from Phase 1.
+4. Click the 'Triggers' (Clock Icon) in the sidebar.
+5. Click '+ Add Trigger'.
+6. Set function to 'checkImportantEmails' and timer to 'Every 5 minutes'.
+7. Click 'Save' and authorize the script when prompted.
 
-Phase 2: Google Maps Platform & Travel Intelligence (New)
-The Butler uses Google’s professional mapping tools to calculate drive times and find fuel. Note: Google requires a billing account (credit card) to activate these APIs, but provides a $200 monthly credit which covers all Butler activity for free.
+--------------------------------------------------------------------------------
+PHASE 5: THE OUTBOUND CALENDAR BRIDGE (WRITE ACCESS)
+--------------------------------------------------------------------------------
+1. Go to script.google.com and click 'New Project'.
+2. Paste the 'function doPost(e)' script from the Calendar Event Creation guide.
+3. Click 'Deploy' > 'New deployment'.
+4. Choose 'Web app'. Set 'Execute as' to 'Me' and 'Who has access' to 'Anyone'.
+5. Click 'Deploy' and copy the 'Web App URL'.
+6. Paste this URL into the 'Google Apps Script Webhook URL' field in the 
+   Butler's Calendar settings in Hubitat.
 
-1. Create a Project: Go to the Google Cloud Console (https://console.cloud.google.com/) and create a project named "Butler Intelligence."
-2. Enable Billing: Go to Billing and link a payment method. This activates the $200/mo free credit.
-3. Enable APIs: Navigate to APIs & Services > Library and search for and Enable the following:
-    * Distance Matrix API (Calculates traffic-aware drive times).
-    * Places API (Finds the cheapest gas stations).
-4. Generate Credentials: Go to APIs & Services > Credentials. Click + Create Credentials > API Key. Copy this key.
-5. Configure Hubitat:
-    * In the Voice Butler app, expand Calendar & Appointment Reminders.
-    * Paste your API Key.
-    * Enter your Home Address (Format: 2530 Williams Rd, Wetumpka, AL 36092).
-    * Set a Monthly API Call Limit (e.g., 500) as a hard failsafe to ensure you never exceed the free tier.
-
----
-
-Phase 3: Google Apps Script Deployment
-This script securely pushes verified events from your Gmail and Calendar directly to the Hubitat TTS queue.
-
-1. Access script.google.com and initialize a New Project.
-2. Inject the following payload, replacing YOUR_SECURE_HUBITAT_CLOUD_URL_HERE with your URL from Phase 1.
-
-// --- ADVANCED VOICE BUTLER MASTER BRIDGE ---
-const HUBITAT_BASE_URL = "YOUR_SECURE_HUBITAT_CLOUD_URL_HERE"; 
-
-function checkImportantEmails() {
-  const threads = GmailApp.search('is:unread is:important', 0, 1);
-  if (threads.length > 0) {
-    const message = threads[0].getMessages()[0];
-    const payload = {
-      sender: message.getFrom(),
-      subject: message.getSubject(),
-      snippet: message.getPlainBody().substring(0, 150) + "..."
-    };
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
-    });
-    message.markRead(); 
-  }
-  checkOomaVoicemails();
-  checkDeliveryEmails();
-  pushCalendarUpdates();
-}
-
-function checkOomaVoicemails() {
-  const threads = GmailApp.search('is:unread from:notify@ooma.com subject:"New Voicemail"', 0, 1);
-  if (threads.length > 0) {
-    const message = threads[0].getMessages()[0];
-    const subject = message.getSubject();
-    const body = message.getPlainBody();
-    const caller = subject.replace("New Voicemail from", "").trim();
-    let transcription = "No transcription available.";
-    if (body.includes("Message:")) {
-      transcription = body.split("Message:")[1].split("To listen to")[0].trim();
-    }
-    const payload = { isVoicemail: true, sender: caller, msgContent: transcription };
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
-    });
-    message.markRead(); 
-  }
-}
-
-function checkDeliveryEmails() {
-  const threads = GmailApp.search('is:unread (subject:"out for delivery" OR subject:"package arriving" OR subject:"scheduled for delivery")', 0, 1);
-  if (threads.length > 0) {
-    const message = threads[0].getMessages()[0];
-    const payload = { isDelivery: true, sender: message.getFrom(), subject: message.getSubject() };
-    UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/email?"), {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload)
-    });
-    message.markRead(); 
-  }
-}
-
-function pushCalendarUpdates() {
-  const now = new Date();
-  const events = CalendarApp.getDefaultCalendar().getEvents(now, new Date(now.getTime() + (5 * 24 * 60 * 60 * 1000)));
-  let upcoming = [];
-  for (let i = 0; i < events.length; i++) {
-    let evt = events[i];
-    if (evt.isAllDayEvent()) continue;
-    let startTime = evt.getStartTime().getTime();
-    if (startTime <= now.getTime()) continue;
-    upcoming.push({ title: evt.getTitle(), epoch: startTime, location: evt.getLocation() });
-    if (upcoming.length >= 5) break;
-  }
-  UrlFetchApp.fetch(HUBITAT_BASE_URL.replace("?", "/calendar?"), {
-    method: 'post', contentType: 'application/json', payload: JSON.stringify({ events: upcoming })
-  });
-}
-
----
-
-Phase 4: Setting the Automation Trigger
-To keep the Butler updated without manual refreshing:
-
-1. In the Apps Script editor, click the Triggers (Clock Icon) in the left sidebar.
-2. Click + Add Trigger.
-3. Set "Choose which function to run" to checkImportantEmails.
-4. Set "Select event source" to Time-driven.
-5. Set "Select type of time based trigger" to Minutes timer.
-6. Set "Select minute interval" to Every 5 minutes.
-7. Click Save and authorize the script when prompted.
-
----
-
-Phase 5: Verification and Testing
-The Butler includes built-in diagnostic tools to ensure your integration is successful.
-
-* Google API Test: Click the ▶️ Test Google API Connection button in the Hubitat UI. The Butler should speak your current drive time to a local destination and send a push notification to your phone with a clickable Google Maps navigation link for the cheapest gas.
-* Calendar Sync: Add an event to your Google Calendar with a specific address in the Location field. Click 🔄 Force Sync Calendar in Hubitat. The Butler should now show that event as his "Next Destination."
-* Quick Exit Test: Put your house into Away Mode. Open an exit door. The Butler should bid you farewell and immediately push the drive-time/gas intel for your next calendar event to your mobile device.
-
----
-
-Feature Summary for Community Testing
-* Context-Aware Departures: Only triggers gas/travel intel if the house is in "Away" status and a door is opened.
-* Proactive Traffic Alerts: Interrupts 1 hour before events if current traffic dictates you must leave immediately.
-* Hardware-First Presence: Intelligent "Auto-Arrival" for users without hardware sensors via bedroom "Good Night" switches, while respecting existing Zigbee/Z-Wave presence data for tracked users.
-
-
-Calendar Event Creation via Voice Butler
-Create the Google Apps Script Webhook
-Because Hubitat handles Google OAuth authentication poorly on its own, the safest and most reliable way to write an event to your calendar is to use a simple Google Apps Script as a bridge.
-
-Go to script.google.com.
-
-Click New Project.
-
-Delete the default code and paste this in:
-
-JavaScript
-function doPost(e) {
-  try {
-    var data = JSON.parse(e.postData.contents);
-    var title = data.title;
-    var dateStr = data.date; // YYYY-MM-DD
-    var timeStr = data.time; // HH:mm
-    var durationMins = parseInt(data.duration) || 60;
-    
-    // Construct Date objects
-    var startTime = new Date(dateStr + "T" + timeStr + ":00");
-    var endTime = new Date(startTime.getTime() + (durationMins * 60000));
-    
-    // Write to your primary calendar
-    var calendar = CalendarApp.getDefaultCalendar();
-    calendar.createEvent(title, startTime, endTime);
-    
-    return ContentService.createTextOutput(JSON.stringify({"status": "success"})).setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": error.toString()})).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-Click Deploy -> New deployment in the top right.
-
-Choose Web app as the type.
-
-Set "Execute as" to Me.
-
-Set "Who has access" to Anyone. (Hubitat needs to be able to reach it).
-
-Click Deploy, authorize your account, and copy the Web app URL.
-
-Paste that URL into the new Google Apps Script Webhook URL field inside your Voice Butler Calendar settings in Hubitat.
+--------------------------------------------------------------------------------
+VERIFICATION CHECKLIST
+--------------------------------------------------------------------------------
+[ ] API Test: Click 'Test Google API Connection' in Hubitat.
+[ ] Sync Test: Add an event to Google Calendar; verify it appears on 
+    the Butler Dashboard within 5 minutes.
+[ ] Chat Test: Test the 'Ask the Butler' widget in the Portal Chat.
+================================================================================
