@@ -5087,8 +5087,6 @@ def serveNotesPage() {
                 
                 ${mailHtml}
                 
-                ${staffHtml}
-                
                 ${rsvpHtml}
 
                 <details style="margin-bottom: 15px;">
