@@ -33,19 +33,17 @@ mappings {
     path("/presence/depart") { action: [POST: "manualDepartEndpoint"] }
     path("/reply/quick") { action: [POST: "quickReplyEndpoint"] }
     path("/guest/timer") { action: [POST: "guestTimerEndpoint"] }
-    
     // --- RSVP SYSTEM MAPPINGS ---
     path("/event/create") { action: [POST: "createEventEndpoint"] }
     path("/event/delete") { action: [POST: "deleteEventEndpoint"] }
     path("/rsvp") { action: [GET: "serveGuestRsvpPage"] }
     path("/rsvp/submit") { action: [POST: "submitRsvpEndpoint"] }
-
     // --- QUICK LOCK CODE MAPPINGS (NEW) ---
     path("/lock/create") { action: [POST: "createQuickCodeEndpoint"] }
     path("/lock/delete") { action: [POST: "deleteQuickCodeEndpoint"] }
-    
     path("/calendar/add") { action: [POST: "addCalendarEventEndpoint"] }
     path("/chat") { action: [POST: "butlerChatEndpoint"] }
+    path("/meals/update") { action: [POST: "updateMealsEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -1281,6 +1279,7 @@ def ensureStateMaps() {
     if (state.hostedEvents == null) state.hostedEvents = [:]
     if (state.quickLockCodes == null) state.quickLockCodes = [:]
     if (state.applianceHealthData == null) state.applianceHealthData = []
+    if (state.mealPlan == null) state.mealPlan = ["Monday":"", "Tuesday":"", "Wednesday":"", "Thursday":"", "Friday":"", "Saturday":"", "Sunday":""]
 }
 
 def initialize() {
@@ -5204,6 +5203,10 @@ def serveNotesPage() {
                 button.danger:hover { background-color: #922b21; }
                 details { background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #333; }
                 summary { font-weight: bold; font-size: 16px; color: #e0e0e0; cursor: pointer; outline: none; display: flex; align-items: center; }
+                .master-section { margin-bottom: 20px; background: #111; border: 1px solid #2a2a2a; border-radius: 10px; overflow: hidden; padding: 0; }
+                .master-section > summary { font-size: 18px; color: #fff; padding: 18px; background: #1c1c1c; font-weight: bold; border-bottom: 1px solid #2a2a2a; transition: background 0.3s; margin: 0; border-radius: 0; }
+                .master-section > summary:hover { background: #252525; }
+                .master-content { padding: 20px; }
                 .note-list { margin-top: 25px; text-align: left; }
                 .note-item { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #1f618d; font-size: 15px; line-height: 1.5; }
                 option { background-color: #222; color: #ffffff; }
@@ -5231,20 +5234,31 @@ def serveNotesPage() {
                 </svg>
             </div>
             <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">${estateDisplayName} Voice Butler</h2>
-            <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
+            <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 30px;">Manage messaging, context, and live broadcasts.</p>
         """)
 
-        // Append UI Blocks sequentially
-        html.append(dashboardBtnHtml.toString())
-        html.append(chatHtml.toString())
+        // --- 1. CONCIERGE & INTELLIGENCE ---
+        html.append("<details class='master-section' open><summary>🛎️ Concierge & Intelligence</summary><div class='master-content'>")
         html.append(calendarHtml.toString())
-        html.append(mealPlanHtml.toString()) // <-- ADDED HERE
+        html.append(mailHtml.toString())
+        html.append(chatHtml.toString())
+        html.append(mealPlanHtml.toString())
+        html.append(calendarAddHtml.toString())
+        html.append("</div></details>")
+
+        // --- 2. ESTATE MANAGEMENT ---
+        html.append("<details class='master-section'><summary>🏰 Estate Management</summary><div class='master-content'>")
+        html.append(dashboardBtnHtml.toString())
         html.append(staffHtml.toString())
         html.append(applianceHtml.toString())
-        html.append(calendarAddHtml.toString())
-        html.append(mailHtml.toString())
-        html.append(rsvpHtml.toString())
+        html.append(directoryHtml.toString())
+        html.append("</div></details>")
 
+        // --- 3. GUEST SERVICES ---
+        html.append("<details class='master-section'><summary>🤝 Guest Services</summary><div class='master-content'>")
+        html.append(rsvpHtml.toString())
+        html.append(lockHtml.toString())
+        html.append(wifiHtml.toString())
         html.append("""
             <details style="margin-bottom: 15px;">
                 <summary>⏱️ Guest Departure Timer</summary>
@@ -5261,10 +5275,11 @@ def serveNotesPage() {
                 </div>
             </details>
         """)
+        html.append("</div></details>")
 
-        html.append(lockHtml.toString())
+        // --- 4. COMMUNICATIONS ---
+        html.append("<details class='master-section'><summary>📢 Communications</summary><div class='master-content'>")
         html.append(quickReplyHtml.toString())
-
         html.append("""
             <details style="margin-bottom: 15px;">
                 <summary>🎙️ Live Intercom (PA)</summary>
@@ -5309,32 +5324,32 @@ def serveNotesPage() {
             }
             html.append("""<form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST"><button type="submit" class="clear">Clear Delivery Queue</button></form></div>""")
         }
-        html.append("</div></details>")
+        html.append("</div></details></div></details>")
 
-        html.append(wifiHtml.toString())
-        html.append(directoryHtml.toString())
-
-        // HIDDEN DASHBOARD ACCORDION
+        // --- 5. SYSTEM MEMORY ---
         html.append("""
-            <details>
-                <summary>⚙️ Butler Memory & Settings</summary>
-                <div style="margin-top: 15px;">
-                    <h4 style='margin-bottom: 5px; color:#fff; font-size: 14px;'>Current Presence</h4>
+            <details class='master-section'>
+                <summary>⚙️ System Memory & Roster</summary>
+                <div class='master-content'>
+                    <h4 style='margin-bottom: 5px; margin-top: 0; color:#fff; font-size: 14px;'>Current Presence</h4>
                     ${presenceHtml.toString()}
+                    
+                    <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
+                    
+                    <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
+                    <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
+                        <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml.toString()}</select>
+                        <select name="daySelect" required style="padding: 8px;">
+                            <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
+                        </select>
+                        <textarea name="agendaText" placeholder="New agenda items..." required style="height: 50px; margin-bottom: 10px;"></textarea>
+                        <button type="submit" style="background-color: #333; padding: 10px;">Update Memory</button>
+                    </form>
                 </div>
-                <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
-                <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
-                <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
-                    <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml.toString()}</select>
-                    <select name="daySelect" required style="padding: 8px;">
-                        <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
-                    </select>
-                    <textarea name="agendaText" placeholder="New agenda items..." required style="height: 50px; margin-bottom: 10px;"></textarea>
-                    <button type="submit" style="background-color: #333; padding: 10px;">Update Memory</button>
-                </form>
             </details>
-        </div></body></html>
         """)
+
+        html.append("</div></body></html>")
         
         return render(contentType: "text/html", data: html.toString(), status: 200)
     } catch (Exception e) {
@@ -5342,6 +5357,7 @@ def serveNotesPage() {
         return render(contentType: "text/html", data: "<h3 style='color:white;'>Portal Error:</h3><p style='color:white;'>${e}</p><p style='color:white;'>Please check your Hubitat logs.</p>", status: 500)
     }
 }
+
 def getRedirectHtml() {
     // FIX: Using ../notes tells the browser to go up one directory level from /wifi/announce back to the main /notes page
     return """<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=../notes?access_token=${state.accessToken}"></head><body style="background-color:#0d0d0d;color:#fff;text-align:center;padding-top:50px;font-family:sans-serif;"><h3>Executing command...</h3></body></html>"""
@@ -7163,6 +7179,29 @@ def addCalendarEventEndpoint() {
         }
     } catch(e) {
         log.warn "Add Calendar Error: ${e}"
+    }
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+// --- WEEKLY MEAL PLAN ENDPOINT ---
+def updateMealsEndpoint() {
+    try {
+        ensureStateMaps()
+        def bodyText = request?.body ? request.body.toString() : ""
+        def params = bodyText.split('&').collectEntries {
+            def parts = it.split('=')
+            [parts[0], parts.size() > 1 ? java.net.URLDecoder.decode(parts[1], "UTF-8") : ""]
+        }
+        
+        def days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        days.each { day ->
+            if (params.containsKey("meal_${day}")) {
+                state.mealPlan[day] = params["meal_${day}"]
+            }
+        }
+        addToHistory("PORTAL: Weekly meal plan updated.")
+    } catch (Exception e) {
+        log.warn "Failed to update meal plan from web portal: ${e}"
     }
     return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
