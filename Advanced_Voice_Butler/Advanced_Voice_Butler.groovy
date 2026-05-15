@@ -55,6 +55,10 @@ mappings {
     path("/calendar/add") { action: [POST: "addCalendarEventEndpoint"] }
     path("/chat") { action: [POST: "butlerChatEndpoint"] }
     path("/meals/update") { action: [POST: "updateMealsEndpoint"] }
+    
+    path("/scout/grocery") { action: [POST: "scoutGroceryEndpoint"] }
+    path("/scout/detailing") { action: [POST: "scoutDetailingEndpoint"] }
+    path("/scout/cinema") { action: [POST: "scoutCinemaEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -231,6 +235,16 @@ def mainPage() {
             }
             statusText += "</table>"
 
+            // Waste Management Integration
+            if (state.trashData) {
+                statusText += "<h4 style='margin-bottom: 5px; margin-top: 15px; color: #333; font-family: sans-serif;'>🗑️ Waste Management</h4>"
+                statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px; width: 30%;'><b>Bin Status</b></td><td style='padding: 8px;'>${state.trashData.status}</td></tr>"
+                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Capacity & Hygiene</b></td><td style='padding: 8px;'>${state.trashData.fill}% Full | ${state.trashData.hygiene}</td></tr>"
+                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Next Collection</b></td><td style='padding: 8px;'><b>${state.trashData.nextPickup}</b></td></tr>"
+                statusText += "</table>"
+            }
+            
             paragraph statusText
         }
 
@@ -1146,6 +1160,7 @@ def roomPage(params) {
             input "roomAnnounceInbox_${rNum}", "bool", title: "Announce Inbox Messages (Stashed Appliance Alerts)?", defaultValue: true, submitOnChange: true
             input "roomAnnounceMeal_${rNum}", "bool", title: "Announce Today's Meal Plan?", defaultValue: false, submitOnChange: true
             input "roomAgendaEnable_${rNum}", "bool", title: "Enable Daily Agenda Reminders?", defaultValue: false, submitOnChange: true
+            input "roomAnnounceTrash_${rNum}", "bool", title: "Announce Waste Management Status?", defaultValue: false, submitOnChange: true
             if (settings["roomAgendaEnable_${rNum}"]) {
                 input "roomAgendaMonday_${rNum}", "text", title: "Monday", required: false
                 input "roomAgendaTuesday_${rNum}", "text", title: "Tuesday", required: false
@@ -1397,6 +1412,7 @@ def initialize() {
     subscribe(location, "voiceButlerMsg", crossAppMessageHandler)
     subscribe(location, "voiceButlerStaffSync", staffSyncHandler) 
     subscribe(location, "voiceButlerApplianceSync", applianceSyncHandler)
+    subscribe(location, "voiceButlerTrashSync", trashSyncHandler)
     
     // --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) SUBSCRIPTION ---
     if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler) }
@@ -3555,6 +3571,12 @@ def buildRoomGreeting(rNum, type, context = [:]) {
                 parts << mText
             }
         }
+        
+        // --- NEW: WASTE MANAGEMENT INJECTION ---
+        if (settings["roomAnnounceTrash_${rNum}"] && state.trashData) {
+            parts << getBridge("general") + "waste management indicates the bins are ${state.trashData.fill} percent full, and the next collection is scheduled for ${state.trashData.nextPickup}."
+        }
+        // ---------------------------------------
 
         if (settings["roomKidsMode_${rNum}"]) {
             parts << getKidsFunFact(rNum)
@@ -4818,6 +4840,28 @@ def serveNotesPage() {
             </details>
         """)
 
+        // --- 0.1d DYNAMICALLY BUILD ON-DEMAND AI SCOUTS WIDGET ---
+        StringBuilder scoutButtonsHtml = new StringBuilder()
+        scoutButtonsHtml.append("""
+            <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3498db; text-align: left;'>
+                <b style='color:#3498db; display:block; margin-bottom:12px; font-size: 14px;'>🧠 On-Demand AI Scouts</b>
+                <div style='display: flex; flex-direction: column; gap: 10px;'>
+                    <form action="${apiUrl}/scout/grocery?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                        <input type="hidden" name="dummy" value="trigger">
+                        <button type="submit" style="background-color: #27ae60; padding: 10px; font-size:14px;">🛒 Grab Grocery Deals</button>
+                    </form>
+                    <form action="${apiUrl}/scout/detailing?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                        <input type="hidden" name="dummy" value="trigger">
+                        <button type="submit" style="background-color: #e67e22; padding: 10px; font-size:14px;">🚗 Grab Detailing Info</button>
+                    </form>
+                    <form action="${apiUrl}/scout/cinema?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                        <input type="hidden" name="dummy" value="trigger">
+                        <button type="submit" style="background-color: #9b59b6; padding: 10px; font-size:14px;">🎬 Grab Movie Information</button>
+                    </form>
+                </div>
+            </div>
+        """)
+        
         // --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
         StringBuilder chatHtml = new StringBuilder("""
             <details style='margin-bottom: 15px;'><summary>💬 Ask the Butler (AI Chat)</summary>
@@ -4920,6 +4964,21 @@ def serveNotesPage() {
                 applianceHtml.append("<tr style='border-bottom: 1px solid #444;'><td style='padding: 8px;'><b>${app.name}</b></td><td style='padding: 8px; color: ${sColor};'><b>${app.state}</b></td><td style='padding: 8px; color: ${hColor}; font-weight: bold;'>${app.health}</td></tr>")
             }
             applianceHtml.append("</table></div></details>")
+        }
+
+        // --- 0.1e DYNAMICALLY BUILD TRASH WIDGET ---
+        StringBuilder trashHtml = new StringBuilder()
+        if (state.trashData) {
+            trashHtml.append("""
+                <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #27ae60; margin-bottom: 15px;'>
+                    <b style='color:#fff;'>🗑️ Waste Management</b><br>
+                    <table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; margin-top: 10px; color: #aaa;'>
+                        <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0; width: 40%;'><b>Bin Status</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.status}</td></tr>
+                        <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0;'><b>Capacity & Hygiene</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.fill}% Full | ${state.trashData.hygiene}</td></tr>
+                        <tr><td style='padding: 6px 0;'><b>Next Collection</b></td><td style='padding: 6px 0; color:#27ae60;'><b>${state.trashData.nextPickup}</b></td></tr>
+                    </table>
+                </div>
+            """)
         }
 
         // --- 0.5 DYNAMICALLY BUILD RSVP EVENT CARDS ---
@@ -5261,11 +5320,13 @@ def serveNotesPage() {
         html.append(chatHtml.toString())
         html.append(mealPlanHtml.toString())
         html.append(calendarAddHtml.toString())
+        html.append(scoutButtonsHtml.toString())
         html.append("</div></details>")
 
         // --- 2. ESTATE MANAGEMENT ---
         html.append("<details class='master-section'><summary>🏰 Estate Management</summary><div class='master-content'>")
         html.append(dashboardBtnHtml.toString())
+        html.append(trashHtml.toString())
         html.append(staffHtml.toString())
         html.append(applianceHtml.toString())
         html.append(directoryHtml.toString())
@@ -6322,12 +6383,10 @@ def realTimeTaskHandler(evt) {
     }
 }
 
-// --- AI CINEMA & STREAMING SCOUT (GEMINI INTEGRATION) ---
 def executeCinemaScout(isTest = false) {
     ensureStateMaps()
     if (!settings.enableCinemaScout && !isTest) return
     
-    // 1. Only run automatically on Fridays
     def tz = location.timeZone ?: TimeZone.getDefault()
     def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
     if (!isTest && dow != Calendar.FRIDAY) {
@@ -6335,7 +6394,6 @@ def executeCinemaScout(isTest = false) {
         return
     }
 
-    // 2. Suppress if the house is empty
     if (!isTest) {
         def presentFolks = getPresentUsers()
         if (presentFolks.size() == 0) {
@@ -6349,93 +6407,88 @@ def executeCinemaScout(isTest = false) {
         return
     }
 
-    // 3. The Prompt Payload for Gemini (Now with Live Clock Injection)
     def todayStr = new Date().format("MMMM d, yyyy", location.timeZone)
     def systemPrompt = "Today is ${todayStr}. You are a live data-retrieval assistant for a high-end smart home. I need the weekend entertainment update for THIS EXACT WEEK. Identify the top 2 movies currently premiering or trending in US movie theaters right now, the top 2 new movies or highly anticipated shows just added to Netflix US this week, 1 new or trending Family Movie, and 1 new or trending Kid Friendly Movie. Return ONLY a raw JSON object with absolutely no markdown formatting, no backticks, and no extra text. Format exactly like this: {\"theaters\": \"Movie 1 and Movie 2\", \"netflix\": \"Show A and Movie B\", \"family\": \"Movie C\", \"kids\": \"Movie D\"}"
 
     def requestBody = [
-        contents: [
-            [
-                role: "user",
-                parts: [
-                    [text: systemPrompt]
-                ]
-            ]
-        ],
-        // Forces Gemini to browse the live internet instead of relying on training data
-        tools: [
-            [ googleSearch: [:] ]
-        ],
-        generationConfig: [
-            temperature: 0.2 // Keep it factual and strict
-        ]
+        contents: [ [ role: "user", parts: [ [text: systemPrompt] ] ] ],
+        tools: [ [ googleSearch: [:] ] ],
+        generationConfig: [ temperature: 0.2 ]
     ]
 
-    // Using the highly available gemini-2.5-flash model
     def params = [
         uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
         requestContentType: "application/json",
         contentType: "application/json",
         body: groovy.json.JsonOutput.toJson(requestBody),
-        timeout: 60 // INCREASED TO 60 SECONDS
+        timeout: 60
     ]
 
     if (isTest) log.info "CINEMA SCOUT: Pinging Google Gemini API for the latest movies..."
 
-    // 4. Ping Gemini and Process the Response
-    try {
-        httpPost(params) { resp ->
-            if (resp.status == 200 && resp.data) {
-                // Extract Gemini's text response
-                def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
-                
-                // Strip out any accidental markdown formatting the LLM might have added
-                geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
+    def maxRetries = 2
+    def attempt = 0
+    def success = false
+
+    while (attempt < maxRetries && !success) {
+        attempt++
+        try {
+            httpPost(params) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    success = true
+                    def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
 ```/, "").trim()
-                
-                // Parse the clean JSON object Gemini sent back
-                def movieData = new groovy.json.JsonSlurper().parseText(geminiText)
-                
-                def theaterTitle = movieData.theaters ?: "several new releases"
-                def netflixTitle = movieData.netflix ?: "new streaming content"
-                def familyTitle = movieData.family ?: "a great family film"
-                def kidsTitle = movieData.kids ?: "a fun animated movie"
+                    
+                    def movieData = new groovy.json.JsonSlurper().parseText(geminiText)
+                    
+                    def theaterTitle = movieData.theaters ?: "several new releases"
+                    def netflixTitle = movieData.netflix ?: "new streaming content"
+                    def familyTitle = movieData.family ?: "a great family film"
+                    def kidsTitle = movieData.kids ?: "a fun animated movie"
 
-                // 5. Assemble and Announce
-                def greeting = getDynamicGreeting()
-                def msg = "%interruption%, ${greeting}, the weekend has finally arrived. For your entertainment, the top movies in theaters right now are ${theaterTitle}. For staying in, the top streaming updates are: ${netflixTitle}. If you are planning a family movie night, consider ${familyTitle}. And for the little ones, ${kidsTitle} is highly recommended."
-                
-                // CRITICAL FIX: Only speak if the house is in an allowed mode
-                if (settings.cinemaModes == null || settings.cinemaModes.contains(location.mode)) {
-                    def targetVol = settings.cinemaVolume != null ? settings.cinemaVolume : settings.globalVolume
-                    executeRoutedTTS(applyDynamicVars(msg), settings.cinemaRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
-                } else {
-                    if (isTest || settings.enableDebug) log.info "CINEMA SCOUT: Spoken announcement skipped because house is in mode: ${location.mode}"
-                }
-                
-                def prefix = isTest ? "TEST CINEMA SCOUT: " : "CINEMA SCOUT: "
-                addToHistory("${prefix}Processed AI-curated movie and Netflix releases.")
-                
-                // --- PUSH NOTIFICATION BLOCK (ALWAYS SENDS) ---
-                if (settings.notificationDevice) {
-                    def pushMsg = "🎥 WEEKEND PREMIERES\n"
-                    pushMsg += "Theaters: ${theaterTitle}\n"
-                    pushMsg += "Streaming: ${netflixTitle}\n"
-                    pushMsg += "Family Night: ${familyTitle}\n"
-                    pushMsg += "Kid Friendly: ${kidsTitle}"
-                    settings.notificationDevice.each { dev ->
-                        try { dev.deviceNotification(pushMsg) } catch(err) {}
+                    def greeting = getDynamicGreeting()
+                    def msg = "%interruption%, ${greeting}, the weekend has finally arrived. For your entertainment, the top movies in theaters right now are ${theaterTitle}. For staying in, the top streaming updates are: ${netflixTitle}. If you are planning a family movie night, consider ${familyTitle}. And for the little ones, ${kidsTitle} is highly recommended."
+                    
+                    if (settings.cinemaModes == null || settings.cinemaModes.contains(location.mode)) {
+                        def targetVol = settings.cinemaVolume != null ? settings.cinemaVolume : settings.globalVolume
+                        executeRoutedTTS(applyDynamicVars(msg), settings.cinemaRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+                    } else {
+                        if (isTest || settings.enableDebug) log.info "CINEMA SCOUT: Spoken announcement skipped because house is in mode: ${location.mode}"
                     }
+                    
+                    def prefix = isTest ? "TEST CINEMA SCOUT: " : "CINEMA SCOUT: "
+                    addToHistory("${prefix}Processed AI-curated movie and Netflix releases.")
+                    
+                    if (settings.notificationDevice) {
+                        def pushMsg = "🎥 WEEKEND PREMIERES\nTheaters: ${theaterTitle}\nStreaming: ${netflixTitle}\nFamily Night: ${familyTitle}\nKid Friendly: ${kidsTitle}"
+                        settings.notificationDevice.each { dev ->
+                            try { dev.deviceNotification(pushMsg) } catch(err) {}
+                        }
+                    }
+                    if (isTest) log.info "TESTING CINEMA SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
+                } else {
+                    log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
                 }
-
-                if (isTest) log.info "TESTING CINEMA SCOUT SUCCESS: '${applyDynamicVars(msg)}'"
-            } else {
-                log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
             }
+        } catch (groovyx.net.http.HttpResponseException e) { 
+            log.warn "Voice Butler: Cinema Scout API HTTP Error (Attempt ${attempt}/${maxRetries}) - ${e.statusCode} ${e.message}"
+            if (attempt < maxRetries) {
+                if (isTest) log.info "CINEMA SCOUT: Google server busy (${e.statusCode}). Retrying in 12 seconds..."
+                pauseExecution(12000)
+            } else {
+                if (isTest) log.info "CINEMA SCOUT TEST FAILED: Google API is temporarily unavailable."
+            }
+        } catch (java.net.SocketTimeoutException e) {
+            log.warn "Voice Butler: Cinema Scout Timeout (Attempt ${attempt}/${maxRetries}) - Upstream search grounding took too long."
+            if (attempt < maxRetries) {
+                if (isTest) log.info "CINEMA SCOUT: Reading timed out. Retrying in 5 seconds..."
+                pauseExecution(5000)
+            }
+        } catch (Exception e) {
+            log.warn "Voice Butler: Cinema Scout Hard General Error - ${e}"
+            break
         }
-    } catch (e) { 
-        log.warn "Voice Butler: Gemini API Call Failed - ${e}" 
-        if (isTest) log.info "CINEMA SCOUT TEST FAILED: Ensure your API key is correct and check Hubitat logs."
     }
 }
 
@@ -6581,17 +6634,23 @@ def executeGroceryScout(isTest = false) {
                     log.warn "Voice Butler: Gemini API returned unexpected status: ${resp.status}"
                 }
             }
-        } catch (groovyx.net.http.HttpResponseException e) { 
+            } catch (groovyx.net.http.HttpResponseException e) { 
             log.warn "Voice Butler: Grocery Scout API HTTP Error (Attempt ${attempt}/${maxRetries}) - ${e.statusCode} ${e.message}"
             if (attempt < maxRetries) {
-                if (isTest) log.info "GROCERY SCOUT: Google server busy (503). Retrying in 3 seconds..."
-                pauseExecution(3000)
+                if (isTest) log.info "GROCERY SCOUT: Google server busy (${e.statusCode}). Retrying in 12 seconds..."
+                pauseExecution(12000) // Increased cooldown from 3000 to 12000
             } else {
                 if (isTest) log.info "GROCERY SCOUT TEST FAILED: Google API is temporarily unavailable."
             }
+        } catch (java.net.SocketTimeoutException e) {
+            log.warn "Voice Butler: Grocery Scout Timeout (Attempt ${attempt}/${maxRetries}) - Upstream search grounding took too long."
+            if (attempt < maxRetries) {
+                if (isTest) log.info "GROCERY SCOUT: Reading timed out. Retrying in 5 seconds..."
+                pauseExecution(5000) // Quick breather and try attempt #2
+            }
         } catch (Exception e) {
-            log.warn "Voice Butler: Grocery Scout General Error - ${e}"
-            break // Break on hard code errors so we don't loop endlessly
+            log.warn "Voice Butler: Grocery Scout Hard General Error - ${e}"
+            break // Keep the break here ONLY for fatal syntax/code crashes
         }
     }
 }
@@ -6735,7 +6794,6 @@ def executeVehicleScout(isTest = false) {
     ensureStateMaps()
     if (!settings.enableVehicleCare && !isTest) return
     
-    // 1. Only run automatically on Mondays
     def tz = location.timeZone ?: TimeZone.getDefault()
     def dow = Calendar.getInstance(tz).get(Calendar.DAY_OF_WEEK)
     if (!isTest && dow != Calendar.MONDAY) return
@@ -6763,7 +6821,7 @@ def executeVehicleScout(isTest = false) {
         requestContentType: "application/json",
         contentType: "application/json",
         body: groovy.json.JsonOutput.toJson(requestBody),
-        timeout: 60 // INCREASED TO 60 SECONDS 
+        timeout: 60 
     ]
 
     if (isTest) log.info "VEHICLE SCOUT: Pinging Gemini for weekly forecast..."
@@ -6779,8 +6837,7 @@ def executeVehicleScout(isTest = false) {
                 if (resp.status == 200 && resp.data) {
                     success = true
                     def geminiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
-                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/
-```/, "").trim()
+                    geminiText = geminiText.replaceAll(/```json\n?/, "").replaceAll(/```/, "").trim()
                     
                     def weatherData = new groovy.json.JsonSlurper().parseText(geminiText)
                     
@@ -6789,11 +6846,8 @@ def executeVehicleScout(isTest = false) {
                         state.carWashReason = weatherData.reason ?: "favorable conditions"
                         
                         def prefix = isTest ? "TEST VEHICLE SCOUT: " : "VEHICLE SCOUT: "
-                        
-                        // THE FIX: The Butler takes full credit in the logs
                         addToHistory("${prefix}Analyzed the forecast and selected ${weatherData.dayName} as the ideal car wash day.")
                         
-                        // THE FIX: The Butler takes full credit in the spoken audio
                         if (isTest) {
                             log.info "${prefix}Success! Selected ${weatherData.dayName} because ${state.carWashReason}."
                             def testMsg = "Vehicle Scout test complete. I have analyzed the weekly weather forecast and selected ${weatherData.dayName} as the ideal day to wash the vehicles, because ${state.carWashReason}."
@@ -6804,9 +6858,21 @@ def executeVehicleScout(isTest = false) {
                 }
             }
         } catch (groovyx.net.http.HttpResponseException e) { 
-            if (attempt < maxRetries) pauseExecution(3000)
+            log.warn "Voice Butler: Vehicle Scout API HTTP Error (Attempt ${attempt}/${maxRetries}) - ${e.statusCode} ${e.message}"
+            if (attempt < maxRetries) {
+                if (isTest) log.info "VEHICLE SCOUT: Google server busy (${e.statusCode}). Retrying in 12 seconds..."
+                pauseExecution(12000)
+            } else {
+                if (isTest) log.info "VEHICLE SCOUT TEST FAILED: Google API is temporarily unavailable."
+            }
+        } catch (java.net.SocketTimeoutException e) {
+            log.warn "Voice Butler: Vehicle Scout Timeout (Attempt ${attempt}/${maxRetries}) - Upstream search grounding took too long."
+            if (attempt < maxRetries) {
+                if (isTest) log.info "VEHICLE SCOUT: Reading timed out. Retrying in 5 seconds..."
+                pauseExecution(5000)
+            }
         } catch (Exception e) {
-            log.warn "Voice Butler: Vehicle Scout General Error - ${e}"
+            log.warn "Voice Butler: Vehicle Scout Hard General Error - ${e}"
             break
         }
     }
@@ -6836,8 +6902,8 @@ def executeVehicleReminder() {
 def crossAppMessageHandler(evt) {
     ensureStateMaps()
     
-    // Accept telemetry from Vacuum OR Energy Managers
-    if (evt.value == "vacuum" || evt.value == "energy") {
+    // Accept telemetry from Vacuum, Energy, OR Trash Managers
+    if (evt.value == "vacuum" || evt.value == "energy" || evt.value == "trash") {
         def liveMsg = evt.descriptionText
         def stashMsg = evt.data 
         
@@ -6872,6 +6938,7 @@ def crossAppMessageHandler(evt) {
         addToHistory("CROSS-APP (${sourceName}): Live dispatch announcement executed: '${liveMsg}'")
     }
 }
+
 // --- STAFF SCHEDULE RECEIVER ---
 def staffSyncHandler(evt) {
     ensureStateMaps()
@@ -7400,3 +7467,33 @@ def executeEventPrep(data) {
     executeRoutedTTS(applyDynamicVars(msg), "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
     addToHistory("EVENT PREP: Delivered 1-hour proactive warning for '${ev.title}'.")
 }
+
+def trashSyncHandler(evt) {
+    try {
+        state.trashData = new groovy.json.JsonSlurper().parseText(evt.value)
+    } catch(e) { 
+        log.warn "Failed to parse trash sync data: ${e}" 
+    }
+}
+
+def scoutGroceryEndpoint() {
+    ensureStateMaps()
+    runIn(1, "triggerGroceryScout", [overwrite: true])
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def scoutDetailingEndpoint() {
+    ensureStateMaps()
+    runIn(1, "triggerVehicleScout", [overwrite: true])
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def scoutCinemaEndpoint() {
+    ensureStateMaps()
+    runIn(1, "triggerCinemaScout", [overwrite: true])
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def triggerGroceryScout() { executeGroceryScout(true) }
+def triggerVehicleScout() { executeVehicleScout(true) }
+def triggerCinemaScout() { executeCinemaScout(true) }
