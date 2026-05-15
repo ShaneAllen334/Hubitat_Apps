@@ -824,6 +824,17 @@ def mainPage() {
                 paragraph "<div style='${prevStyle}'><b>Live Meal Time Preview:</b><br><i>${mealPrev}</i></div>"
             }
         }
+        
+        section("Weekly Meal Plan Manager", hideable: true, hidden: true) {
+            paragraph "<i>Manage the household menu here or via the Web Portal. These meals are announced during morning briefings.</i>"
+            input "meal_Monday", "text", title: "Monday", required: false
+            input "meal_Tuesday", "text", title: "Tuesday", required: false
+            input "meal_Wednesday", "text", title: "Wednesday", required: false
+            input "meal_Thursday", "text", title: "Thursday", required: false
+            input "meal_Friday", "text", title: "Friday", required: false
+            input "meal_Saturday", "text", title: "Saturday", required: false
+            input "meal_Sunday", "text", title: "Sunday", required: false
+        }
 
         // --- NEW: HEADED HOME FEATURE ---
         section("Headed Home (On The Way) Announcements", hideable: true, hidden: true) {
@@ -3468,7 +3479,8 @@ def buildRoomGreeting(rNum, type, context = [:]) {
 
         // --- NEW: MEAL PLAN INJECTION ---
         if (settings["roomAnnounceMeal_${rNum}"]) {
-            def todayMeal = state.mealPlan ? state.mealPlan[dowString] : ""
+            // Priority: App Setup Input -> State Memory -> Empty
+            def todayMeal = settings["meal_${dowString}"] ?: (state.mealPlan ? state.mealPlan[dowString] : "")
             if (todayMeal && todayMeal.trim() != "") {
                 parts << getBridge("general") + "on the menu for dinner tonight is ${todayMeal}."
             }
@@ -4765,7 +4777,7 @@ def serveNotesPage() {
         """)
         def daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         daysOfWeek.each { day ->
-            def currentMeal = state.mealPlan ? state.mealPlan[day] : ""
+            def currentMeal = settings["meal_${day}"] ?: (state.mealPlan ? state.mealPlan[day] : "")
             mealPlanHtml.append("""
                     <div style="display: flex; align-items: center; margin-bottom: 10px;">
                         <label style="width: 100px; color: #aaa; font-size: 13px; margin: 0;"><b>${day}</b></label>
@@ -7196,7 +7208,10 @@ def updateMealsEndpoint() {
         def days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         days.each { day ->
             if (params.containsKey("meal_${day}")) {
-                state.mealPlan[day] = params["meal_${day}"]
+                def val = params["meal_${day}"]
+                state.mealPlan[day] = val
+                // This line "pushes" the portal data into the App Setup inputs
+                app.updateSetting("meal_${day}", [type: "text", value: val])
             }
         }
         addToHistory("PORTAL: Weekly meal plan updated.")
