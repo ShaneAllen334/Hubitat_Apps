@@ -206,6 +206,9 @@ def mainPage() {
                 
             input "learningDaysReq", "enum", title: "Required Learning Days", options: ["10", "20", "30"], defaultValue: "30", submitOnChange: true,
                 description: "How many days of valid data must be collected before the algorithm shifts from your manual fallback to dynamic tracking?"
+
+            input "learningThresholdPct", "number", title: "Smart Learning Minimum Threshold (%)", defaultValue: 80, range: "1..100", submitOnChange: true,
+                description: "Only logs the daily max if it reaches at least this percentage of the historical average. Lower this (e.g., 50%) to be more forgiving, raise it (e.g., 80%) to strictly filter out cloudy days."
                 
             input "peakClearLux", "number", title: "Expected Peak Clear-Sky Brightness (Lux)", defaultValue: 10000,
                 description: "Manual fallback value. Set this to whatever your sensor typically reads at Solar Noon on a perfectly clear day. This scales the theoretical sun curve on your graph."
@@ -281,16 +284,44 @@ def mainPage() {
             input "overcastNotifyMsg", "text", title: "Push Notification Message", required: false, defaultValue: "Overcast conditions detected. Adjusting lighting."
             input "overcastTTSMsg", "text", title: "TTS Message", required: false, defaultValue: "Overcast conditions detected."
             input "overcastSoundUrl", "text", title: "Sound File URL or Track Number", required: false
-            input "testOvercastBtn", "button", title: "🔊 Test Overcast Outputs"
+            input "testOvercastBtn", "button", title: "🔊 Test Overcast Outputs (Bypasses Motion Check)"
 
             paragraph "<b>▶ Clear Sky / Bright (Switch OFF)</b>"
             input "clearAnnounceModes", "mode", title: "Restrict Clear Sky Announcements to these Modes", multiple: true, required: false
             input "clearNotifyMsg", "text", title: "Push Notification Message", required: false, defaultValue: "Clear skies detected. Restoring lighting."
             input "clearTTSMsg", "text", title: "TTS Message", required: false, defaultValue: "Clear skies detected."
             input "clearSoundUrl", "text", title: "Sound File URL or Track Number", required: false
-            input "testClearBtn", "button", title: "🔊 Test Clear Outputs"
+            input "testClearBtn", "button", title: "🔊 Test Clear Outputs (Bypasses Motion Check)"
         }
         
+        section("Global Audio Room Mapping", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'><b>1-to-1 Motion Filtering:</b> Map your speakers to motion sensors here. When the system attempts to play audio on a speaker or chime, it will automatically intercept the command and check if that specific device's room has recent motion. (Devices not mapped here will play unconditionally).</div>"
+            
+            input "audioMotionTimeout", "number", title: "Audio Motion Timeout (Minutes)", defaultValue: 5, description: "Time to wait after motion stops before muting announcements (prevents muting if someone is sitting still)."
+            input "alwaysOnRoom", "enum", title: "Select ONE room to ALWAYS announce (Ignores motion)", options: ["1": "Room 1", "2": "Room 2", "3": "Room 3", "4": "Room 4", "5": "Room 5", "6": "Room 6", "7": "Room 7"], required: false
+            
+            input "room1Speaker", "capability.actuator", title: "Room 1 Speaker/Chime(s)", required: false, multiple: true
+            input "room1Motion", "capability.motionSensor", title: "Room 1 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room2Speaker", "capability.actuator", title: "Room 2 Speaker/Chime(s)", required: false, multiple: true
+            input "room2Motion", "capability.motionSensor", title: "Room 2 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room3Speaker", "capability.actuator", title: "Room 3 Speaker/Chime(s)", required: false, multiple: true
+            input "room3Motion", "capability.motionSensor", title: "Room 3 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room4Speaker", "capability.actuator", title: "Room 4 Speaker/Chime(s)", required: false, multiple: true
+            input "room4Motion", "capability.motionSensor", title: "Room 4 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room5Speaker", "capability.actuator", title: "Room 5 Speaker/Chime(s)", required: false, multiple: true
+            input "room5Motion", "capability.motionSensor", title: "Room 5 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room6Speaker", "capability.actuator", title: "Room 6 Speaker/Chime(s)", required: false, multiple: true
+            input "room6Motion", "capability.motionSensor", title: "Room 6 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room7Speaker", "capability.actuator", title: "Room 7 Speaker/Chime(s)", required: false, multiple: true
+            input "room7Motion", "capability.motionSensor", title: "Room 7 Motion Sensor(s)", required: false, multiple: true
+        }
+
         section("Proportional Dimming Setup", hideable: true, hidden: true) {
             paragraph "Maps the virtual dimmer level using a logarithmic curve for natural eye perception."
             input "heavyStormLux", "number", title: "Heavy Storm Limit (Lux)", defaultValue: 500,
@@ -378,6 +409,15 @@ def initialize() {
     if (auxLuxSensor2) subscribe(auxLuxSensor2, "illuminance", luxHandler)
     if (auxLuxSensor3) subscribe(auxLuxSensor3, "illuminance", luxHandler)
 
+    // Subscribe to specific room motion sensors for Audio Logic
+    if (settings.room1Motion) subscribe(settings.room1Motion, "motion.active", "room1MotionHandler")
+    if (settings.room2Motion) subscribe(settings.room2Motion, "motion.active", "room2MotionHandler")
+    if (settings.room3Motion) subscribe(settings.room3Motion, "motion.active", "room3MotionHandler")
+    if (settings.room4Motion) subscribe(settings.room4Motion, "motion.active", "room4MotionHandler")
+    if (settings.room5Motion) subscribe(settings.room5Motion, "motion.active", "room5MotionHandler")
+    if (settings.room6Motion) subscribe(settings.room6Motion, "motion.active", "room6MotionHandler")
+    if (settings.room7Motion) subscribe(settings.room7Motion, "motion.active", "room7MotionHandler")
+
     subscribe(location, "mode", modeHandler)
    
     if (useAstro) {
@@ -403,6 +443,61 @@ def appButtonHandler(btn) {
     if (btn == "testClearBtn") {
         announceEvent("test_clear")
     }
+}
+
+// --- AUDIO & 1-TO-1 MOTION HELPER ENGINE ---
+
+def room1MotionHandler(evt) { state.lastMotionRoom1 = now() }
+def room2MotionHandler(evt) { state.lastMotionRoom2 = now() }
+def room3MotionHandler(evt) { state.lastMotionRoom3 = now() }
+def room4MotionHandler(evt) { state.lastMotionRoom4 = now() }
+def room5MotionHandler(evt) { state.lastMotionRoom5 = now() }
+def room6MotionHandler(evt) { state.lastMotionRoom6 = now() }
+def room7MotionHandler(evt) { state.lastMotionRoom7 = now() }
+
+def isSpeakerMotionActive(speaker) {
+    boolean isMapped = false
+    boolean hasMotion = false
+    
+    for (int i = 1; i <= 7; i++) {
+        def mappedSpeaker = settings["room${i}Speaker"]
+        if (mappedSpeaker) {
+            def mappedList = mappedSpeaker instanceof List ? mappedSpeaker : [mappedSpeaker]
+            if (mappedList.any { it.id == speaker.id }) {
+                isMapped = true
+                
+                // 1. Check Always On Room
+                if (settings.alwaysOnRoom && settings.alwaysOnRoom.toString() == i.toString()) {
+                    hasMotion = true
+                }
+                
+                // 2. Evaluate Standard Motion
+                if (!hasMotion) {
+                    def motion = settings["room${i}Motion"]
+                    if (!motion) {
+                        hasMotion = true // Mapped, but no sensor to restrict it
+                    } else {
+                        def mList = motion instanceof List ? motion : [motion]
+                        if (mList.any { it?.currentValue("motion") == "active" }) {
+                            state."lastMotionRoom${i}" = now()
+                            hasMotion = true
+                        } else {
+                            def lastTime = state."lastMotionRoom${i}"
+                            if (lastTime) {
+                                long timeoutMillis = (settings.audioMotionTimeout ?: 5) * 60 * 1000
+                                if ((now() - lastTime) <= timeoutMillis) {
+                                    hasMotion = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!isMapped) return true // Unmapped speakers play unconditionally
+    return hasMotion
 }
 
 // --- UTILITY: SMART LEARNING HELPER ---
@@ -596,9 +691,13 @@ def announceEvent(eventType) {
         def vol = settings.audioVolume ?: 65
         try {
             settings.ttsDevices.each { speaker ->
-                if (speaker.hasCommand("setVolume")) speaker.setVolume(vol)
-                if (speaker.hasCommand("speak")) speaker.speak(finalMsg)
-                else if (speaker.hasCommand("playText")) speaker.playText(finalMsg)
+                if (isTest || isSpeakerMotionActive(speaker)) {
+                    if (speaker.hasCommand("setVolume")) speaker.setVolume(vol)
+                    if (speaker.hasCommand("speak")) speaker.speak(finalMsg)
+                    else if (speaker.hasCommand("playText")) speaker.playText(finalMsg)
+                } else {
+                    log.info "Skipping TTS on ${speaker.displayName}: No recent motion."
+                }
             }
             addToHistory("TTS Broadcasted: ${finalMsg}")
         } catch (e) { log.error "TTS routing failed: ${e}" }
@@ -612,16 +711,20 @@ def announceEvent(eventType) {
 
         try {
             settings.soundDevices.each { player ->
-                if (player.hasCommand("setVolume")) player.setVolume(vol)
-                
-                if (player.hasCommand("playSound") && trackNum != null) {
-                    player.playSound(trackNum)
-                } else if (player.hasCommand("playTrack")) {
-                    player.playTrack(soundUrl.toString())
-                } else if (player.hasCommand("chime") && trackNum != null) {
-                    player.chime(trackNum)
+                if (isTest || isSpeakerMotionActive(player)) {
+                    if (player.hasCommand("setVolume")) player.setVolume(vol)
+                    
+                    if (player.hasCommand("playSound") && trackNum != null) {
+                        player.playSound(trackNum)
+                    } else if (player.hasCommand("playTrack")) {
+                        player.playTrack(soundUrl.toString())
+                    } else if (player.hasCommand("chime") && trackNum != null) {
+                        player.chime(trackNum)
+                    } else {
+                        log.error "${player.displayName} does not support standard audio commands."
+                    }
                 } else {
-                    log.error "${player.displayName} does not support standard audio commands."
+                    log.info "Skipping Sound File on ${player.displayName}: No recent motion."
                 }
             }
             addToHistory("Sound File Played: ${soundUrl}")
@@ -1070,11 +1173,13 @@ def executeSunset() {
     if (state.activeCloudEvent) closeActiveCloudEvent()
     
     def reqDays = (settings.learningDaysReq ?: "30").toInteger()
+    def thresholdPct = (settings.learningThresholdPct ?: 80) / 100.0
+    def rejectRuleText = "${settings.learningThresholdPct ?: 80}% minimum threshold rule"
     
     // --- SMART LEARNING: EVALUATE OUTDOOR DAILY MAX ---
     if (useSmartLearning && state.dailyMaxLux && state.dailyMaxLux > 100) {
         def baseline = state.peakLuxHistory.size() > 0 ? (state.peakLuxHistory.sum() / state.peakLuxHistory.size()) : (peakClearLux ?: 10000)
-        def lowerBound = baseline * 0.8 
+        def lowerBound = baseline * thresholdPct 
         
         if (state.peakLuxHistory.size() < 3 || state.dailyMaxLux >= lowerBound) {
             state.peakLuxHistory.add(state.dailyMaxLux)
@@ -1085,7 +1190,7 @@ def executeSunset() {
             
             log.info "SMART LEARNING (OUTDOOR): Daily max of ${state.dailyMaxLux} lx added."
         } else {
-            log.info "SMART LEARNING (OUTDOOR): Daily max of ${state.dailyMaxLux} lx rejected (20% bad weather rule)."
+            log.info "SMART LEARNING (OUTDOOR): Daily max of ${state.dailyMaxLux} lx rejected (${rejectRuleText})."
         }
     }
     state.dailyMaxLux = 0
@@ -1100,7 +1205,7 @@ def executeSunset() {
             def baseTarget = settings["roomBaseLux_${i}"] ?: 100
             
             def rBaseline = rData.peakHistory.size() > 0 ? (rData.peakHistory.sum() / rData.peakHistory.size()) : basePeak
-            def rLowerBound = rBaseline * 0.8
+            def rLowerBound = rBaseline * thresholdPct
             
             // Apply bad weather filter
             if (rData.peakHistory.size() < 3 || rData.dailyMax >= rLowerBound) {
@@ -1112,7 +1217,7 @@ def executeSunset() {
                 
                 log.info "SMART LEARNING (ROOM ${i}): Daily max of ${rData.dailyMax} lx added."
             } else {
-                log.info "SMART LEARNING (ROOM ${i}): Daily max of ${rData.dailyMax} lx rejected (20% rule)."
+                log.info "SMART LEARNING (ROOM ${i}): Daily max of ${rData.dailyMax} lx rejected (${rejectRuleText})."
             }
             
             // Calculate proportional setpoint
