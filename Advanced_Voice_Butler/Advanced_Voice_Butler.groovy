@@ -371,14 +371,18 @@ def mainPage() {
             input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
         }
         
-             section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
-             input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
-             input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
-             paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
-             
-             input "estateContext", "textarea", title: "Household Context for AI (Optional)", description: "Teach the Butler about your family, pets, or house rules so it can answer chat questions better."
-         }
-        
+            section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
+            input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
+            input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
+            input "butlerVoice", "enum", title: "Butler Voice Profile (SSML / Echo Speaks)", options: ["Default", "Matthew", "Brian", "Amy", "Emma", "Joey", "Justin", "Ivy", "Kendra", "Kimberly", "Salli"], defaultValue: "Default", required: false
+            
+            // Sonos Compatibility Note
+            paragraph "<div style='font-size: 12px; line-height: 1.2; background-color: #f8f9fa; padding: 8px; border-radius: 4px; border: 1px solid #dee2e6; color: #495057;'><b>🔈 Sonos Compatibility:</b> Please keep this set to 'Default'. Sonos does not support dynamic voice switching. To change your Sonos voice, use the global Hubitat settings under <i>Hub Details</i>.</div>"
+            
+            paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
+            
+            input "estateContext", "textarea", title: "Household Context for AI (Optional)", description: "Teach the Butler about your family, pets, or house rules so it can answer chat questions better."
+        }
         // --- FIX 3A: GLOBAL LIVING ROOM REPORT INPUTS ---
         section("Global Foyer / Living Room Morning Report", hideable: true, hidden: true) {
             paragraph "<i>Used to deliver Global Incident Reports if you walk into the main living space in the morning before triggering a local room routine.</i>"
@@ -527,6 +531,7 @@ def mainPage() {
 
                 paragraph "<hr>"
                 
+                input "calWeatherDevice", "capability.temperatureMeasurement", title: "Weather Device (For Rain Warnings)", required: false
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "calAlertIntervals", "enum", title: "Warning Intervals", options: ["3 Hours", "2 Hours", "1 Hour", "30 Minutes", "15 Minutes"], multiple: true, required: false
                 input "calRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
@@ -845,6 +850,7 @@ def mainPage() {
                 input "partyRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
                 input "partyVolume", "number", title: "Announcement Volume (0-100)", required: false
                 input "partyDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 2, required: false
+                input "partyVacuum", "capability.switch", title: "Vacuum Cleaner to deploy when Event Ends", required: false
                 
                 for (int d = 1; d <= 3; d++) { input "partyMessage_${d}", "text", title: "Party Greeting ${d}", required: false, defaultValue: getDefaultMessages("PartyMode")[d-1] }
                 input "btnTestPartyMode", "button", title: "▶️ Test Party Mode Audio"
@@ -1269,6 +1275,15 @@ def ensureStateMaps() {
 
 def initialize() {
     ensureStateMaps()
+    
+    // --- NEW: Restore Event Timers on Hub Reboot ---
+    state.hostedEvents?.each { eId, ev ->
+        def nowMs = new Date().time
+        if (ev.dateEpoch > nowMs) runOnce(new Date(ev.dateEpoch), "startHostedEvent", [data: [eventId: eId], overwrite: false])
+        if (ev.endEpoch && ev.endEpoch > nowMs) runOnce(new Date(ev.endEpoch), "endHostedEvent", [data: [eventId: eId], overwrite: false])
+    }
+    // -----------------------------------------------
+
     schedule("0 0 0 * * ?", "midnightReset") 
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
@@ -1868,9 +1883,18 @@ def executeCalendarAlert(data) {
             rawMsg = rawMsg.replace("%event%", title).replace(" in %time%", " right now").replace("%time%", "right now")
         } else {
             rawMsg = rawMsg.replace("%event%", title).replace("%time%", timeStr)
-        }
+}
         finalMsg = applyDynamicVars(rawMsg)
     }
+
+    // --- NEW: CALENDAR RAIN WARNING ---
+    if (settings.calWeatherDevice) {
+        def cond = settings.calWeatherDevice.currentValue("weather")?.toString()?.toLowerCase() ?: ""
+        if (cond.contains("rain") || cond.contains("storm") || cond.contains("shower") || cond.contains("drizzle")) {
+            finalMsg += " Please be advised, rain is in the forecast, so you may want to bring a jacket or umbrella."
+        }
+    }
+    // ----------------------------------
 
     executeRoutedTTS(finalMsg, settings.calRoutingMode, settings.calVolume ?: settings.globalVolume, settings.outdoorVolume, 2)
     def prefix = isTest ? "TEST TRAVEL CONCIERGE: " : "TRAVEL CONCIERGE: "
@@ -2312,6 +2336,12 @@ def executeTTS(item) {
     }
     
     def finalMsg = msg.replace("&", "and")
+    
+    // Apply custom Butler Voice if configured and not Default
+    if (settings.butlerVoice && settings.butlerVoice != "Default") {
+        finalMsg = "<voice name='${settings.butlerVoice}'>${finalMsg}</voice>"
+    }
+    
     def padSecs = settings.wakeupPadDelay != null ? settings.wakeupPadDelay.toInteger() : 0
     
     // --- STAGE 1: VOLUME ADJUSTMENT (Simultaneous) ---
@@ -4507,10 +4537,12 @@ def getMaintenanceReport(mDevice, boolean isTest = false) {
     if (!mDevice) return ""
     try {
         def maxOverdue = mDevice.currentValue("maxOverdueDays") as Integer ?: 0
-        def tasks = mDevice.currentValue("overdueTasks") ?: ""
+        def tasks = mDevice.currentValue("overdueTasks")?.toString() ?: ""
+        def cleanTasks = tasks.replace("[", "").replace("]", "").trim()
 
-        if (maxOverdue > 0 && tasks != "") {
-            def taskList = tasks.split(",").collect { it.trim() }
+        if (maxOverdue > 0 && cleanTasks != "" && cleanTasks.toLowerCase() != "none" && cleanTasks.toLowerCase() != "null") {
+            def taskList = cleanTasks.split(",").collect { it.trim() }.findAll { it != "" && it.toLowerCase() != "none" }
+            if (taskList.size() == 0) return "" // Failsafe
             def taskString = ""
             def plural = taskList.size() > 1
             def isAre = plural ? "are" : "is"
@@ -4601,10 +4633,12 @@ def getMiddayMaintenanceReport(mDevice) {
     if (!mDevice) return ""
     try {
         def maxOverdue = mDevice.currentValue("maxOverdueDays") as Integer ?: 0
-        def tasks = mDevice.currentValue("overdueTasks") ?: ""
+        def tasks = mDevice.currentValue("overdueTasks")?.toString() ?: ""
+        def cleanTasks = tasks.replace("[", "").replace("]", "").trim()
 
-        if (maxOverdue > 0 && tasks != "") {
-            def taskList = tasks.split(",").collect { it.trim() }
+        if (maxOverdue > 0 && cleanTasks != "" && cleanTasks.toLowerCase() != "none" && cleanTasks.toLowerCase() != "null") {
+            def taskList = cleanTasks.split(",").collect { it.trim() }.findAll { it != "" && it.toLowerCase() != "none" }
+            if (taskList.size() == 0) return "" // Failsafe
             def taskString = ""
             def plural = taskList.size() > 1
             def isAre = plural ? "are" : "is"
@@ -4633,30 +4667,30 @@ def serveNotesPage() {
     try {
         ensureStateMaps()
         def trackedNames = getTrackedUsers()
-        def userOptions = ""
-        trackedNames.each { u -> userOptions += "<option value='${u}'>${applyAlias(u)}</option>" }
+        
+        StringBuilder userOptions = new StringBuilder()
+        trackedNames.each { u -> userOptions.append("<option value='${u}'>${applyAlias(u)}</option>") }
 
         // --- NEW: DYNAMICALLY BUILD LOCK OPTIONS ---
-        def lockOptionsHtml = "<option value='All Locks'>All Locks</option>"
+        StringBuilder lockOptionsHtml = new StringBuilder("<option value='All Locks'>All Locks</option>")
         def availableLocks = []
         if (settings.frontDoorLock) availableLocks << settings.frontDoorLock.displayName
         if (settings.estateLocks) availableLocks.addAll(settings.estateLocks.collect { it.displayName })
         
         availableLocks.unique().sort().each { lName ->
-            lockOptionsHtml += "<option value=\"${lName}\">${lName}</option>"
+            lockOptionsHtml.append("<option value=\"${lName}\">${lName}</option>")
         }
         // ------------------------------------------
 
         def apiUrl = getFullApiServerUrl()
-        def estateDisplayName = settings.estateName ?: "The Schwarzmans"
+        def estateDisplayName = settings.estateName ?: "The Family"
 
         if (state.butlerNotes && state.butlerNotes.size() > 0 && state.butlerNotes[0] instanceof String) {
             state.butlerNotes = []
         }
 
-        // --- 0.1 DYNAMICALLY BUILD CALENDAR WIDGET (With Clickable Maps) ---
-        // FIX: Rebuilt this to use a slim, compact flexbox layout to fix the sizing
-        def calendarHtml = ""
+        // --- 0.1 DYNAMICALLY BUILD CALENDAR WIDGET ---
+        StringBuilder calendarHtml = new StringBuilder()
         if (state.nextEventName && state.nextEventTimeStr && state.nextEventName != "No Upcoming Events") {
             def navButton = ""
             if (state.nextEventLocation) {
@@ -4665,7 +4699,7 @@ def serveNotesPage() {
                 navButton = "<a href='${mapUrl}' target='_blank' style='display:inline-block; background-color:#27ae60; color:#fff; padding:4px 8px; border-radius:4px; text-decoration:none; font-size:11px; font-weight:bold;'>🗺️ Navigate to Event</a>"
             }
 
-            calendarHtml = """
+            calendarHtml.append("""
                 <div style='background-color: #1e1e1e; padding: 12px 15px; border-radius: 8px; border-left: 4px solid #9b59b6; margin-bottom: 15px; font-size: 14px;'>
                     <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;'>
                         <b style='color:#fff;'>📅 Next Scheduled Event</b>
@@ -4676,11 +4710,11 @@ def serveNotesPage() {
                         ${navButton}
                     </div>
                 </div>
-            """
+            """)
         }
         
         // --- 0.1a DYNAMICALLY BUILD ADD CALENDAR WIDGET ---
-        def calendarAddHtml = """
+        StringBuilder calendarAddHtml = new StringBuilder("""
             <details style='margin-bottom: 15px;'><summary>➕ Add Calendar Event</summary>
                 <div style='padding-top: 15px;'>
                     <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #2ecc71;'>
@@ -4698,14 +4732,12 @@ def serveNotesPage() {
                     </div>
                 </div>
             </details>
-        """
+        """)
 
-// --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
-        def chatHtml = """
+        // --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
+        StringBuilder chatHtml = new StringBuilder("""
             <details style='margin-bottom: 15px;'><summary>💬 Ask the Butler (AI Chat)</summary>
                 <div style='padding-top: 15px;'>
-                    
-                    <!-- CAPABILITIES AND LIMITATIONS MENU -->
                     <details style='margin-bottom: 15px; background: #2a2a2a; border: 1px solid #444;'>
                         <summary style='font-size: 14px; color: #3498db;'>ℹ️ What can I ask the Butler?</summary>
                         <div style='padding-top: 10px; font-size: 13px; color: #ccc; line-height: 1.5;'>
@@ -4716,7 +4748,6 @@ def serveNotesPage() {
                                 <li><b>Meal & Recipe Prep:</b> "I have chicken and rice. Give me a recipe for dinner."</li>
                                 <li><b>Troubleshooting:</b> "How do I reset a tripped circuit breaker?"</li>
                             </ul>
-                            
                             <b style='color: #e74c3c;'>Things I CANNOT do:</b>
                             <ul style='margin-top: 5px; padding-left: 20px; margin-bottom: 5px;'>
                                 <li>I <b>cannot</b> physically control smart devices (e.g., turn off lights, adjust thermostats).</li>
@@ -4726,7 +4757,6 @@ def serveNotesPage() {
                             </ul>
                         </div>
                     </details>
-                    
                     <div id="chatResponse" style="background-color: #222; padding: 15px; border-radius: 8px; border-left: 4px solid #9b59b6; margin-bottom: 15px; font-size: 14px; min-height: 20px; color: #fff; line-height: 1.5;">
                         <i>I am at your service. What do you require?</i>
                     </div>
@@ -4747,8 +4777,9 @@ def serveNotesPage() {
                     })
                     .then(response => response.text())
                     .then(data => {
-                        // Safely parse out basic markdown if Gemini tries to use it for lists
-                        var formattedData = data.replace(/\\*\\*(.*?)\\*\\*/g, '<b>\$1</b>').replace(/\\*(.*?)/g, '<br>• \$1');
+                        // Bulletproof regex replacement that uses zero dollar signs
+                        var formattedData = data.replace(/\\*\\*(.*?)\\*\\*/g, function(match, p1) { return '<b>' + p1 + '</b>'; })
+                                                .replace(/\\*(.*?)/g, function(match, p1) { return '<br>• ' + p1; });
                         document.getElementById('chatResponse').innerHTML = formattedData;
                         document.getElementById('chatInput').value = '';
                     })
@@ -4757,22 +4788,22 @@ def serveNotesPage() {
                     });
                 }
             </script>
-        """
+        """)
 
         // --- 0.2 DYNAMICALLY BUILD MAIL STATUS ---
-        def mailHtml = ""
+        StringBuilder mailHtml = new StringBuilder()
         if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
             def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
-            mailHtml = """
+            mailHtml.append("""
                 <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; margin-bottom: 15px;'>
                     <b style='color:#fff;'>📬 Mail Status</b><br>
                     <span style='color:#aaa; font-size:13px;'>The mail was delivered at ${mailTimeStr} and is waiting in the mailbox.</span>
                 </div>
-            """
+            """)
         }
 
         // --- 0. DYNAMICALLY BUILD STAFF SCHEDULE ---
-        def staffHtml = ""
+        StringBuilder staffHtml = new StringBuilder()
         if (state.cleaningStaffData) {
             def lastClean = state.cleaningStaffData.lastFullClean ?: new Date().time
             def maxIdle = state.cleaningStaffData.maxIdle ?: 3
@@ -4785,16 +4816,16 @@ def serveNotesPage() {
             def statusText = daysRemaining == 0 ? "Deploying Imminently" : "Standby (${daysRemaining} Days)"
             def dayPlural = daysRemaining == 1 ? "day" : "days"
             
-            staffHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColor}; margin-bottom: 15px; font-size: 14px;'>"
-            staffHtml += "<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>🧹 Cleaning Staff Schedule</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>"
-            staffHtml += "<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>"
-            staffHtml += "</div>"
+            staffHtml.append("<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColor}; margin-bottom: 15px; font-size: 14px;'>")
+            staffHtml.append("<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>🧹 Cleaning Staff Schedule</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>")
+            staffHtml.append("<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>")
+            staffHtml.append("</div>")
         }
 
         // --- 0.5 DYNAMICALLY BUILD RSVP EVENT CARDS ---
-        def rsvpHtml = "<details style='margin-bottom: 15px;'><summary>🥂 Party & Event Invitations</summary><div style='padding-top: 15px;'>"
+        StringBuilder rsvpHtml = new StringBuilder("<details style='margin-bottom: 15px;'><summary>🥂 Party & Event Invitations</summary><div style='padding-top: 15px;'>")
         
-        rsvpHtml += """
+        rsvpHtml.append("""
             <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #f39c12;'>
                 <b style='color:#f39c12;'>Create New Event</b>
                 <form action="${apiUrl}/event/create?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
@@ -4811,13 +4842,13 @@ def serveNotesPage() {
                     <div style="display: flex; gap: 10px;">
                         <input type="number" name="eventSlot" placeholder="Slot" style="flex: 0.5; margin-bottom: 10px;">
                         <input type="text" name="eventPin" placeholder="PIN Code" style="flex: 1; margin-bottom: 10px;">
-                        <select name="eventLock" style="flex: 1.5; margin-bottom: 10px;">${lockOptionsHtml}</select>
+                        <select name="eventLock" style="flex: 1.5; margin-bottom: 10px;">${lockOptionsHtml.toString()}</select>
                     </div>
                     
                     <button type="submit" style="background-color: #f39c12; padding: 10px;">Generate Digital Invitation</button>
                 </form>
             </div>
-        """
+        """)
         
         if (state.hostedEvents && state.hostedEvents.size() > 0) {
             state.hostedEvents.each { eId, ev ->
@@ -4825,58 +4856,57 @@ def serveNotesPage() {
                 def displayDate = new Date(ev.dateEpoch).format("EEE, MMM d 'at' h:mm a", location.timeZone)
                 def preWrittenMsg = java.net.URLEncoder.encode("You're invited to ${ev.title}! Please view the details and RSVP here: ${eventUrl}", "UTF-8")
                 
-                rsvpHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>"
-                rsvpHtml += "<div style='display: flex; justify-content: space-between; align-items: flex-start;'>"
-                rsvpHtml += "<div><b style='font-size: 16px; color:#fff;'>${ev.title}</b><br><span style='color:#aaa; font-size: 13px;'>${displayDate}</span></div>"
-                rsvpHtml += "<form action='${apiUrl}/event/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='eventId' value='${eId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>"
-                rsvpHtml += "</div>"
+                rsvpHtml.append("<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>")
+                rsvpHtml.append("<div style='display: flex; justify-content: space-between; align-items: flex-start;'>")
+                rsvpHtml.append("<div><b style='font-size: 16px; color:#fff;'>${ev.title}</b><br><span style='color:#aaa; font-size: 13px;'>${displayDate}</span></div>")
+                rsvpHtml.append("<form action='${apiUrl}/event/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='eventId' value='${eId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>")
+                rsvpHtml.append("</div>")
                 
                 def locDisplay = ev.location ?: estateDisplayName
-                rsvpHtml += "<div style='margin-top: 5px; font-size: 13px; color: #888;'>📍 ${locDisplay}</div>"
+                rsvpHtml.append("<div style='margin-top: 5px; font-size: 13px; color: #888;'>📍 ${locDisplay}</div>")
                 
                 if (ev.slot && ev.pin) {
                     def lockTxt = ev.lockName ?: "All Locks"
-                    rsvpHtml += "<div style='margin: 10px 0; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #27ae60; border-radius: 4px; font-size: 13px;'>"
-                    rsvpHtml += "<b style='color:#27ae60;'>🔑 Smart Lock Access (${lockTxt})</b><br>"
-                    rsvpHtml += "<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${ev.slot}</b> | PIN: <b style='color:#fff;'>${ev.pin}</b></span>"
-                    rsvpHtml += "</div>"
+                    rsvpHtml.append("<div style='margin: 10px 0; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #27ae60; border-radius: 4px; font-size: 13px;'>")
+                    rsvpHtml.append("<b style='color:#27ae60;'>🔑 Smart Lock Access (${lockTxt})</b><br>")
+                    rsvpHtml.append("<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${ev.slot}</b> | PIN: <b style='color:#fff;'>${ev.pin}</b></span>")
+                    rsvpHtml.append("</div>")
                 }
                 
-                rsvpHtml += "<div style='margin: 15px 0; padding: 10px; background: #2a2a2a; border-radius: 6px; font-size: 12px; word-break: break-all;'>"
-                rsvpHtml += "<b style='color:#3498db;'>Shareable Link:</b><br><a href='${eventUrl}' target='_blank' style='color:#3498db;'>${eventUrl}</a>"
-                rsvpHtml += "</div>"
+                rsvpHtml.append("<div style='margin: 15px 0; padding: 10px; background: #2a2a2a; border-radius: 6px; font-size: 12px; word-break: break-all;'>")
+                rsvpHtml.append("<b style='color:#3498db;'>Shareable Link:</b><br><a href='${eventUrl}' target='_blank' style='color:#3498db;'>${eventUrl}</a>")
+                rsvpHtml.append("</div>")
                 
-                rsvpHtml += "<div style='border-top: 1px solid #333; padding-top: 10px; margin-bottom: 15px;'>"
-                rsvpHtml += "<b style='color:#aaa; font-size: 13px;'>Host Quick Share:</b>"
-                rsvpHtml += "<div style='display: flex; gap: 10px; margin-top: 5px;'>"
-                rsvpHtml += "<a href='sms:?&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>💬 Text Guest</div></a>"
-                rsvpHtml += "<a href='mailto:?subject=Invitation: ${ev.title}&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>✉️ Email Guest</div></a>"
-                rsvpHtml += "</div>"
-                rsvpHtml += "</div>"
+                rsvpHtml.append("<div style='border-top: 1px solid #333; padding-top: 10px; margin-bottom: 15px;'>")
+                rsvpHtml.append("<b style='color:#aaa; font-size: 13px;'>Host Quick Share:</b>")
+                rsvpHtml.append("<div style='display: flex; gap: 10px; margin-top: 5px;'>")
+                rsvpHtml.append("<a href='sms:?&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>💬 Text Guest</div></a>")
+                rsvpHtml.append("<a href='mailto:?subject=Invitation: ${ev.title}&body=${preWrittenMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 14px;'>✉️ Email Guest</div></a>")
+                rsvpHtml.append("</div></div>")
                 
                 if (ev.rsvps && ev.rsvps.size() > 0) {
-                    rsvpHtml += "<b style='color:#fff; font-size: 13px;'>Guest Responses:</b><div style='margin-top: 10px;'>"
+                    rsvpHtml.append("<b style='color:#fff; font-size: 13px;'>Guest Responses:</b><div style='margin-top: 10px;'>")
                     ev.rsvps.each { rsvp ->
                         def rColor = rsvp.status == "Accepted" ? "#27ae60" : "#c0392b"
                         def partyText = rsvp.guestCount ? "Party of ${rsvp.guestCount}" : "Party of 1"
                         
-                        rsvpHtml += "<div style='background: #2a2a2a; padding: 8px; border-left: 3px solid ${rColor}; margin-bottom: 5px; font-size: 13px;'>"
-                        rsvpHtml += "<b>${rsvp.name}</b> <span style='color:${rColor};'>(${rsvp.status} — ${partyText})</span>"
-                        if (rsvp.restrictions) rsvpHtml += "<br><span style='color:#e67e22;'>⚠ Restrictions: ${rsvp.restrictions}</span>"
-                        if (rsvp.message) rsvpHtml += "<br><i style='color:#aaa;'>\"${rsvp.message}\"</i>"
-                        rsvpHtml += "</div>"
+                        rsvpHtml.append("<div style='background: #2a2a2a; padding: 8px; border-left: 3px solid ${rColor}; margin-bottom: 5px; font-size: 13px;'>")
+                        rsvpHtml.append("<b>${rsvp.name}</b> <span style='color:${rColor};'>(${rsvp.status} &mdash; ${partyText})</span>")
+                        if (rsvp.restrictions) rsvpHtml.append("<br><span style='color:#e67e22;'>⚠ Restrictions: ${rsvp.restrictions}</span>")
+                        if (rsvp.message) rsvpHtml.append("<br><i style='color:#aaa;'>\"${rsvp.message}\"</i>")
+                        rsvpHtml.append("</div>")
                     }
-                    rsvpHtml += "</div>"
+                    rsvpHtml.append("</div>")
                 } else {
-                    rsvpHtml += "<i style='color:#777; font-size: 13px;'>No RSVPs received yet.</i>"
+                    rsvpHtml.append("<i style='color:#777; font-size: 13px;'>No RSVPs received yet.</i>")
                 }
-                rsvpHtml += "</div>"
+                rsvpHtml.append("</div>")
             }
         }
-        rsvpHtml += "</div></details>"
+        rsvpHtml.append("</div></details>")
 
         // --- 1. DYNAMICALLY BUILD PRESENCE CARDS ---
-        def presenceHtml = "<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>"
+        StringBuilder presenceHtml = new StringBuilder("<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>")
         if (trackedNames.size() > 0) {
             trackedNames.each { u ->
                 def dispName = applyAlias(u) 
@@ -4887,36 +4917,36 @@ def serveNotesPage() {
                 def statusColor = isHome ? "#27ae60" : "#c0392b"
                 def statusIcon = isHome ? "🏠 Home" : "🚗 Away"
                 
-                presenceHtml += "<div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; justify-content: space-between; align-items: center;'>"
-                presenceHtml += "<div><b>${dispName}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>"
+                presenceHtml.append("<div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${statusColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; justify-content: space-between; align-items: center;'>")
+                presenceHtml.append("<div><b>${dispName}</b><br><span style='color:${statusColor}; font-weight: bold;'>${statusIcon}</span></div>")
                 if (isHome) {
-                    presenceHtml += """
+                    presenceHtml.append("""
                         <form action="${apiUrl}/presence/depart?access_token=${state.accessToken}" method="POST" style="margin:0;">
                             <input type="hidden" name="targetUser" value="${u}">
                             <button type="submit" style="padding: 6px 10px; margin: 0; width: auto; font-size: 12px; background-color: #c0392b; color: #fff; border-radius: 4px;">Mark Away</button>
                         </form>
-                    """
+                    """)
                 }
-                presenceHtml += "</div>"
+                presenceHtml.append("</div>")
             }
         } else {
-            presenceHtml += "<p style='color:#aaa; font-style:italic;'>No presence users configured.</p>"
+            presenceHtml.append("<p style='color:#aaa; font-style:italic;'>No presence users configured.</p>")
         }
-        presenceHtml += "</div>"
+        presenceHtml.append("</div>")
         
         // --- 2. DYNAMICALLY BUILD ROOM OPTIONS ---
-        def roomOptionsHtml = ""
+        StringBuilder roomOptionsHtml = new StringBuilder()
         def numR = settings.numRooms ? settings.numRooms as Integer : 0
         for (int i = 1; i <= numR; i++) {
             def rName = settings["roomName_${i}"] ?: "Room ${i}"
-            roomOptionsHtml += "<option value='${i}'>${rName}</option>"
+            roomOptionsHtml.append("<option value='${i}'>${rName}</option>")
         }
 
-        // --- 3. DYNAMICALLY BUILD DIRECTORY (UPDATED WITH SMS/EMAIL) ---
+        // --- 3. DYNAMICALLY BUILD DIRECTORY ---
         def numC = settings.numContacts ? settings.numContacts as Integer : 0
-        def directoryHtml = ""
+        StringBuilder directoryHtml = new StringBuilder()
         if (settings.enableDirectory && numC > 0) {
-            directoryHtml += "<details style='margin-bottom: 15px;'><summary>📞 Estate Directory</summary><div style='padding-top: 15px;'>"
+            directoryHtml.append("<details style='margin-bottom: 15px;'><summary>📞 Estate Directory</summary><div style='padding-top: 15px;'>")
             for (int i = 1; i <= numC; i++) {
                 def cName = settings["contactName_${i}"]
                 def cInfo = settings["contactInfo_${i}"]
@@ -4925,7 +4955,7 @@ def serveNotesPage() {
                     def emailSub = java.net.URLEncoder.encode("${cName} Contact Info", "UTF-8")
                     def emailMsg = java.net.URLEncoder.encode("Here is the contact information for ${cName}:\n${cInfo}", "UTF-8")
                     
-                    directoryHtml += """
+                    directoryHtml.append("""
                         <div class='note-item' style='display: flex; flex-direction: column; border-left-color: #8e44ad; background: #222;'>
                             <div style='display: flex; justify-content: space-between; align-items: center;'>
                                 <div style='flex-grow: 1; padding-right: 10px;'><b>${cName}</b><br><span style='color:#aaa;'>${cInfo}</span></div>
@@ -4939,20 +4969,20 @@ def serveNotesPage() {
                                 <a href='mailto:?subject=${emailSub}&body=${emailMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>✉️ Email Info</div></a>
                             </div>
                         </div>
-                    """
+                    """)
                 }
             }
-            directoryHtml += "</div></details>"
+            directoryHtml.append("</div></details>")
         }
 
         // --- 3.5 DYNAMICALLY BUILD QUICK LOCK CODES ---
-        def lockHtml = "<details style='margin-bottom: 15px;'><summary>🔐 Quick Lock Code Manager</summary><div style='padding-top: 15px;'>"
-        lockHtml += """
+        StringBuilder lockHtml = new StringBuilder("<details style='margin-bottom: 15px;'><summary>🔐 Quick Lock Code Manager</summary><div style='padding-top: 15px;'>")
+        lockHtml.append("""
             <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #e74c3c;'>
                 <b style='color:#e74c3c;'>Generate Quick Access Code</b>
                 <form action="${apiUrl}/lock/create?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
                     <input type="text" name="codeName" placeholder="Name (e.g., Dog Walker)" required style="margin-bottom: 10px;">
-                    <select name="codeLock" style="margin-bottom: 10px;">${lockOptionsHtml}</select>
+                    <select name="codeLock" style="margin-bottom: 10px;">${lockOptionsHtml.toString()}</select>
                     <div style="display: flex; gap: 10px;">
                         <input type="number" name="codeSlot" placeholder="Slot (e.g., 20)" required style="flex: 1; margin-bottom: 10px;">
                         <input type="text" name="codePin" placeholder="PIN Code" required style="flex: 1; margin-bottom: 10px;">
@@ -4969,35 +4999,35 @@ def serveNotesPage() {
                     <button type="submit" style="background-color: #e74c3c; padding: 10px;">Send to Smart Locks</button>
                 </form>
             </div>
-        """
+        """)
         if (state.quickLockCodes && state.quickLockCodes.size() > 0) {
             state.quickLockCodes.each { cId, cd ->
                 def expStr = cd.duration == "Permanent" ? "Permanent Access" : "Expires: " + new Date(cd.expires).format("EEE, MMM d 'at' h:mm a", location.timeZone)
                 def lockTxt = cd.lockName ?: "All Locks"
                 def preWrittenCodeMsg = java.net.URLEncoder.encode("Your access code for the estate is ${cd.pin}. Please enter it on the keypad to unlock the door.", "UTF-8")
                 
-                lockHtml += "<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>"
-                lockHtml += "<div style='display: flex; justify-content: space-between; align-items: flex-start;'>"
-                lockHtml += "<div><b style='font-size: 16px; color:#fff;'>${cd.name}</b><br><span style='color:#aaa; font-size: 13px;'>${expStr}</span></div>"
-                lockHtml += "<form action='${apiUrl}/lock/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='codeId' value='${cId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>"
-                lockHtml += "</div>"
+                lockHtml.append("<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #444;'>")
+                lockHtml.append("<div style='display: flex; justify-content: space-between; align-items: flex-start;'>")
+                lockHtml.append("<div><b style='font-size: 16px; color:#fff;'>${cd.name}</b><br><span style='color:#aaa; font-size: 13px;'>${expStr}</span></div>")
+                lockHtml.append("<form action='${apiUrl}/lock/delete?access_token=${state.accessToken}' method='POST' style='margin:0;'><input type='hidden' name='codeId' value='${cId}'><button type='submit' style='background:transparent; border:none; color:#c0392b; font-size:18px; padding:0; width:auto; margin:0;'>🗑️</button></form>")
+                lockHtml.append("</div>")
                 
-                lockHtml += "<div style='margin-top: 10px; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #e74c3c; border-radius: 4px; font-size: 13px;'>"
-                lockHtml += "<b style='color:#e74c3c;'>${lockTxt}</b><br>"
-                lockHtml += "<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${cd.slot}</b> | PIN: <b style='color:#fff;'>${cd.pin}</b></span>"
-                lockHtml += "</div>"
+                lockHtml.append("<div style='margin-top: 10px; padding: 10px; background-color: #2a2a2a; border-left: 3px solid #e74c3c; border-radius: 4px; font-size: 13px;'>")
+                lockHtml.append("<b style='color:#e74c3c;'>${lockTxt}</b><br>")
+                lockHtml.append("<span style='color:#ccc;'>Slot: <b style='color:#fff;'>${cd.slot}</b> | PIN: <b style='color:#fff;'>${cd.pin}</b></span>")
+                lockHtml.append("</div>")
                 
-                lockHtml += "<div style='border-top: 1px solid #333; padding-top: 10px; margin-top: 10px;'>"
-                lockHtml += "<div style='display: flex; gap: 10px; margin-top: 5px;'>"
-                lockHtml += "<a href='sms:?&body=${preWrittenCodeMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Code to Guest</div></a>"
-                lockHtml += "</div></div>"
-                lockHtml += "</div>"
+                lockHtml.append("<div style='border-top: 1px solid #333; padding-top: 10px; margin-top: 10px;'>")
+                lockHtml.append("<div style='display: flex; gap: 10px; margin-top: 5px;'>")
+                lockHtml.append("<a href='sms:?&body=${preWrittenCodeMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Code to Guest</div></a>")
+                lockHtml.append("</div></div>")
+                lockHtml.append("</div>")
             }
         }
-        lockHtml += "</div></details>"
+        lockHtml.append("</div></details>")
 
         // --- 4. DYNAMICALLY BUILD WI-FI CARD ---
-        def wifiHtml = ""
+        StringBuilder wifiHtml = new StringBuilder()
         if (settings.enableWifiPortal && settings.wifiSSID) {
             def wifiPwd = settings.wifiPassword ?: "No password required"
             def rawMsg = "Here are the guest Wi-Fi details:\nNetwork: ${settings.wifiSSID}\nPassword: ${wifiPwd}"
@@ -5005,7 +5035,7 @@ def serveNotesPage() {
             def emailSub = java.net.URLEncoder.encode("Guest Wi-Fi Details", "UTF-8")
             def emailMsg = java.net.URLEncoder.encode(rawMsg, "UTF-8")
 
-            wifiHtml = """
+            wifiHtml.append("""
                 <details style='margin-bottom: 15px;'><summary>📶 Guest Wi-Fi Sharing</summary>
                 <div style='padding-top: 15px;'>
                     <div class='note-item' style='display: flex; flex-direction: column; border-left-color: #3498db; background: #222;'>
@@ -5022,52 +5052,60 @@ def serveNotesPage() {
                         </div>
                     </div>
                 </div></details>
-            """
+            """)
         }
 
         // --- 5. DYNAMICALLY BUILD QUICK REPLIES ---
-        def quickReplyHtml = ""
+        StringBuilder quickReplyHtml = new StringBuilder()
         def numQR = settings.numQuickReplies ? settings.numQuickReplies as Integer : 0
         if (numQR > 0) {
-            quickReplyHtml += "<details style='margin-bottom: 15px;'><summary>⚡ Quick Replies (Outdoor)</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;'>"
+            quickReplyHtml.append("<details style='margin-bottom: 15px;'><summary>⚡ Quick Replies (Outdoor)</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;'>")
             for (int i = 1; i <= numQR; i++) {
                 def qrName = settings["quickReplyName_${i}"] ?: "Reply ${i}"
-                quickReplyHtml += """
+                quickReplyHtml.append("""
                     <form action="${apiUrl}/reply/quick?access_token=${state.accessToken}" method="POST" style="margin:0; flex: 1 1 calc(50% - 10px);">
                         <input type="hidden" name="dummyData" value="trigger">
                         <input type="hidden" name="replyId" value="${i}">
                         <button type="submit" style="background-color: #f39c12; color: #fff; padding: 10px; border-radius: 6px; font-size: 14px; width: 100%; height: 100%;">${qrName}</button>
                     </form>
-                """
+                """)
             }
-            quickReplyHtml += "</div></div></details>"
+            quickReplyHtml.append("</div></div></details>")
         }
 
-        // --- 6. DASHBOARD SHORTCUT ---
-        def dashboardBtnHtml = ""
+// --- 6. DASHBOARD SHORTCUT ---
+        StringBuilder dashboardBtnHtml = new StringBuilder()
         if (settings.taskDashboardUrl) {
-            dashboardBtnHtml = """
+            def dueCount = 0
+            if (settings.middayMaintenanceDevice) {
+                def rawVal = settings.middayMaintenanceDevice.currentValue("overdueTasks")
+                def tasks = rawVal ? rawVal.toString() : ""
+                def cleanTasks = tasks.replace("[", "").replace("]", "").trim()
+                
+                // Add the check to completely ignore "none"
+                if (cleanTasks != "" && cleanTasks.toLowerCase() != "null" && cleanTasks.toLowerCase() != "none") {
+                    dueCount = cleanTasks.split(",").findAll { it.trim() != "" && it.toLowerCase() != "none" }.size()
+                }
+            }
+            def badgeHtml = dueCount > 0 ? " <span style='background-color:#e74c3c; color:white; border-radius:12px; padding: 2px 8px; font-size:12px; margin-left:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>${dueCount} Due</span>" : ""
+            
+            dashboardBtnHtml.append("""
                 <div style='margin-bottom: 15px;'>
-                    <a href="${settings.taskDashboardUrl}" target="_blank" style="text-decoration: none;">
-                        <button type="button" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                            ✅ Open Maintenance Dashboard
+                    <a href="${settings.taskDashboardUrl}" style="text-decoration: none;">
+                        <button type="button" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: center; align-items: center;">
+                            ✅ Open Maintenance Dashboard${badgeHtml}
                         </button>
                     </a>
                 </div>
-            """
+            """)
         }
 
-        def paRoutingHtml = ""
-        getRoutingOptions().each { r -> paRoutingHtml += "<option value=\"${r}\">${r}</option>" }
+        StringBuilder paRoutingHtml = new StringBuilder()
+        getRoutingOptions().each { r -> paRoutingHtml.append("<option value=\"${r}\">${r}</option>") }
 
         // --- MAIN HTML BUILDER ---
-        def html = new StringBuilder()
-        html.append("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>${estateDisplayName} Voice Butler</title>
+        StringBuilder html = new StringBuilder()
+        html.append("""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${estateDisplayName} Voice Butler</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background-color: #0d0d0d; color: #e0e0e0; }
@@ -5092,81 +5130,91 @@ def serveNotesPage() {
                     document.getElementById('timeDiv').style.display = (sel === 'Time') ? 'block' : 'none';
                 }
             </script>
-        </head>
-        <body>
-            <div class="container">
-            <div style="text-align:center; font-size: 60px; margin-bottom: 10px; line-height:1;">🤵🏻</div>
-                <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">${estateDisplayName} Voice Butler</h2>
-                <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
-
-                ${dashboardBtnHtml}
-                
-                ${chatHtml}
-
-                ${calendarHtml}
-                
-                ${staffHtml}
-
-                ${calendarAddHtml}
-                
-                ${mailHtml}
-                
-                ${rsvpHtml}
-
-                <details style="margin-bottom: 15px;">
-                    <summary>⏱️ Guest Departure Timer</summary>
-                    <div style="padding-top: 15px;">
-                        <form action="${apiUrl}/guest/timer?access_token=${state.accessToken}" method="POST" style="margin:0;">
-                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Guest's Name:</label>
-                            <input type="text" name="guestName" placeholder="E.g., John" required>
-                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Minutes until departure:</label>
-                            <input type="number" name="guestDuration" placeholder="E.g., 60" required>
-                            <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Speaker Selection:</label>
-                            <select name="guestRoutingMode">${paRoutingHtml}</select>
-                            <button type="submit" style="background-color: #27ae60; margin-top: 5px;">▶️ Start Timer</button>
-                        </form>
-                    </div>
-                </details>
-
-                ${lockHtml}
-
-                ${quickReplyHtml}
-
-                <details style="margin-bottom: 15px;">
-                    <summary>🎙️ Live Intercom (PA)</summary>
-                    <div style="padding-top: 15px;">
-                        <form action="${apiUrl}/pa/announce?access_token=${state.accessToken}" method="POST" style="margin:0;">
-                            <textarea name="paText" placeholder="Type a message to be announced immediately..." required></textarea>
-                            <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
-                            <select name="paRoute">${paRoutingHtml}</select>
-                            <button type="submit" class="danger">Broadcast Now</button>
-                        </form>
-                    </div>
-                </details>
-
-                <details style="margin-bottom: 15px;">
-                    <summary>📝 Schedule a Note</summary>
-                    <div style="padding-top: 15px;">
-                        <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
-                            <textarea name="noteText" placeholder="What would you like the Butler to say later?..." required></textarea>
-                            <div style="display: flex; gap: 10px;">
-                                <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">From:</label><select name="senderName"><option value="Someone">Select...</option>${userOptions}</select></div>
-                                <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">To:</label><select name="targetUser"><option value='Anyone'>Anyone</option>${userOptions}</select></div>
-                            </div>
-                            <label style="font-size: 12px; color: #aaa;">Delivery Trigger:</label>
-                            <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
-                                <option value="Arrival">When they arrive home</option>
-                                <option value="Morning">During their morning briefing</option>
-                                <option value="Time">At a specific time</option>
-                            </select>
-                            <div id="timeDiv" style="display:none;">
-                                <label style="font-size: 12px; color: #aaa;">Time:</label>
-                                <input type="time" name="deliveryTime">
-                            </div>
-                            <button type="submit">Queue Message</button>
-                        </form>
-        """)
+        </head><body><div class="container">""")
         
+        // Append Header / Custom SVG Icon
+        html.append("""
+            <div style="text-align:center; margin-bottom: 15px; display: flex; justify-content: center;">
+                <svg width="70" height="70" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="50" cy="50" r="48" fill="#151515" stroke="#333333" stroke-width="1"/>
+                    <path d="M 25 90 C 25 70, 35 60, 50 60 C 65 60, 75 70, 75 90" stroke="#e0e0e0" stroke-width="3" stroke-linecap="round"/>
+                    <path d="M 50 60 L 40 90" stroke="#e0e0e0" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M 50 60 L 60 90" stroke="#e0e0e0" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M 43 51 L 34 46 V 56 L 43 51 Z" fill="#ffffff"/>
+                    <path d="M 57 51 L 66 46 V 56 L 57 51 Z" fill="#ffffff"/>
+                    <circle cx="50" cy="51" r="3" fill="#ffffff"/>
+                    <path d="M 50 42 C 43 42, 38 36, 38 29 C 38 22, 43 16, 50 16 C 57 16, 62 22, 62 29 C 62 36, 57 42, 50 42 Z" stroke="#e0e0e0" stroke-width="3"/>
+                </svg>
+            </div>
+            <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">${estateDisplayName} Voice Butler</h2>
+            <p style="text-align: center; font-size: 14px; color: #888; margin-bottom: 25px;">Manage messaging, context, and live broadcasts.</p>
+        """)
+
+        // Append UI Blocks sequentially
+        html.append(dashboardBtnHtml.toString())
+        html.append(chatHtml.toString())
+        html.append(calendarHtml.toString())
+        html.append(staffHtml.toString())
+        html.append(calendarAddHtml.toString())
+        html.append(mailHtml.toString())
+        html.append(rsvpHtml.toString())
+
+        html.append("""
+            <details style="margin-bottom: 15px;">
+                <summary>⏱️ Guest Departure Timer</summary>
+                <div style="padding-top: 15px;">
+                    <form action="${apiUrl}/guest/timer?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                        <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Guest's Name:</label>
+                        <input type="text" name="guestName" placeholder="E.g., John" required>
+                        <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Minutes until departure:</label>
+                        <input type="number" name="guestDuration" placeholder="E.g., 60" required>
+                        <label style="font-size: 13px; color: #aaa; margin-bottom: 5px; display: block;">Speaker Selection:</label>
+                        <select name="guestRoutingMode">${paRoutingHtml.toString()}</select>
+                        <button type="submit" style="background-color: #27ae60; margin-top: 5px;">▶️ Start Timer</button>
+                    </form>
+                </div>
+            </details>
+        """)
+
+        html.append(lockHtml.toString())
+        html.append(quickReplyHtml.toString())
+
+        html.append("""
+            <details style="margin-bottom: 15px;">
+                <summary>🎙️ Live Intercom (PA)</summary>
+                <div style="padding-top: 15px;">
+                    <form action="${apiUrl}/pa/announce?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                        <textarea name="paText" placeholder="Type a message to be announced immediately..." required></textarea>
+                        <label style="font-size: 12px; color: #aaa;">Target Speakers:</label>
+                        <select name="paRoute">${paRoutingHtml.toString()}</select>
+                        <button type="submit" class="danger">Broadcast Now</button>
+                    </form>
+                </div>
+            </details>
+            
+            <details style="margin-bottom: 15px;">
+                <summary>📝 Schedule a Note</summary>
+                <div style="padding-top: 15px;">
+                    <form action="${apiUrl}/notes/add?access_token=${state.accessToken}" method="POST">
+                        <textarea name="noteText" placeholder="What would you like the Butler to say later?..." required></textarea>
+                        <div style="display: flex; gap: 10px;">
+                            <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">From:</label><select name="senderName"><option value="Someone">Select...</option>${userOptions.toString()}</select></div>
+                            <div style="flex: 1;"><label style="font-size: 12px; color: #aaa;">To:</label><select name="targetUser"><option value='Anyone'>Anyone</option>${userOptions.toString()}</select></div>
+                        </div>
+                        <label style="font-size: 12px; color: #aaa;">Delivery Trigger:</label>
+                        <select name="deliveryWhen" id="whenSelect" onchange="toggleTime()">
+                            <option value="Arrival">When they arrive home</option>
+                            <option value="Morning">During their morning briefing</option>
+                            <option value="Time">At a specific time</option>
+                        </select>
+                        <div id="timeDiv" style="display:none;">
+                            <label style="font-size: 12px; color: #aaa;">Time:</label>
+                            <input type="time" name="deliveryTime">
+                        </div>
+                        <button type="submit">Queue Message</button>
+                    </form>
+        """)
+
         if (state.butlerNotes && state.butlerNotes.size() > 0) {
             html.append("<div class='note-list'><h4 style='margin-bottom: 10px; color:#aaa; font-size: 13px; text-transform: uppercase;'>Pending Deliveries</h4>")
             state.butlerNotes.each { note -> 
@@ -5176,32 +5224,30 @@ def serveNotesPage() {
             html.append("""<form action="${apiUrl}/notes/clear?access_token=${state.accessToken}" method="POST"><button type="submit" class="clear">Clear Delivery Queue</button></form></div>""")
         }
         html.append("</div></details>")
-        
-        html.append(wifiHtml)
-        html.append(directoryHtml)
+
+        html.append(wifiHtml.toString())
+        html.append(directoryHtml.toString())
 
         // HIDDEN DASHBOARD ACCORDION
         html.append("""
-                <details>
-                    <summary>⚙️ Butler Memory & Settings</summary>
-                    <div style="margin-top: 15px;">
-                        <h4 style='margin-bottom: 5px; color:#fff; font-size: 14px;'>Current Presence</h4>
-                        ${presenceHtml}
-                    </div>
-                    <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
-                    <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
-                    <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
-                        <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml}</select>
-                        <select name="daySelect" required style="padding: 8px;">
-                            <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
-                        </select>
-                        <textarea name="agendaText" placeholder="New agenda items..." required style="height: 50px; margin-bottom: 10px;"></textarea>
-                        <button type="submit" style="background-color: #333; padding: 10px;">Update Memory</button>
-                    </form>
-                </details>
-            </div>
-        </body>
-        </html>
+            <details>
+                <summary>⚙️ Butler Memory & Settings</summary>
+                <div style="margin-top: 15px;">
+                    <h4 style='margin-bottom: 5px; color:#fff; font-size: 14px;'>Current Presence</h4>
+                    ${presenceHtml.toString()}
+                </div>
+                <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
+                <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
+                <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
+                    <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml.toString()}</select>
+                    <select name="daySelect" required style="padding: 8px;">
+                        <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option><option value="Saturday">Saturday</option><option value="Sunday">Sunday</option>
+                    </select>
+                    <textarea name="agendaText" placeholder="New agenda items..." required style="height: 50px; margin-bottom: 10px;"></textarea>
+                    <button type="submit" style="background-color: #333; padding: 10px;">Update Memory</button>
+                </form>
+            </details>
+        </div></body></html>
         """)
         
         return render(contentType: "text/html", data: html.toString(), status: 200)
@@ -6098,9 +6144,6 @@ def getHealthReminders(String userName) {
 }
 
 def realTimeTaskHandler(evt) {
-    ensureStateMaps()
-    def currentTasksStr = evt.value ?: ""
-    def currentTasks = currentTasksStr.split(",").collect { it.trim() }.findAll { it != "" }
     
     def previousTasks = state.lastOverdueTasks ?: []
     // Find tasks that are in the new list but weren't in the old list
@@ -6730,11 +6773,17 @@ def createEventEndpoint() {
                 timeStr: params.eventTime,
                 location: eLoc,
                 dateEpoch: startEpoch,
+                endEpoch: endEpoch, // Added for the wrap-up scheduler
                 rsvps: [],
                 slot: params.eventSlot ?: null,
                 pin: params.eventPin ?: null,
                 lockName: params.eventLock ?: "All Locks"
             ]
+            
+            // Schedule the auto-start and auto-end functions
+            runOnce(new Date(startEpoch), "startHostedEvent", [data: [eventId: eventId], overwrite: false])
+            runOnce(new Date(endEpoch), "endHostedEvent", [data: [eventId: eventId], overwrite: false])
+            
             addToHistory("RSVP SYSTEM: Created new event '${params.eventTitle}'.")
             
             if (params.eventSlot && params.eventPin) {
@@ -7102,4 +7151,40 @@ def butlerChatEndpoint() {
     }
     
     return render(contentType: "text/plain", data: responseText, status: 200)
+}
+
+def startHostedEvent(data) {
+    def ev = state.hostedEvents[data.eventId]
+    if (ev) {
+        if (settings.partyModeSwitch) {
+            try { settings.partyModeSwitch.on() } catch(e){}
+        }
+        addToHistory("RSVP SYSTEM: Event '${ev.title}' started. Party Mode automatically engaged.")
+    }
+}
+
+def endHostedEvent(data) {
+    def ev = state.hostedEvents[data.eventId]
+    if (ev) {
+        if (settings.partyModeSwitch) {
+            try { settings.partyModeSwitch.off() } catch(e){}
+        }
+        
+        def wrapUpPhrases = [
+            "Pardon the interruption. The scheduled time for ${ev.title} has now concluded. The homeowners thank you for attending, and wish you a safe journey home.",
+            "Excuse me everyone. The event has officially reached its end. Please gather your belongings. Thank you for celebrating with us tonight.",
+            "Attention guests. The gathering is now wrapping up. The hosts appreciate your presence and wish you a wonderful rest of your evening.",
+            "Pardon me. The allotted time for tonight's event has expired. We hope you had a fantastic time. Please travel home safely.",
+            "Friends and guests, the party is now concluding. Thank you for making it a memorable event. Have a safe trip back."
+        ]
+        
+        def msg = wrapUpPhrases[new Random().nextInt(wrapUpPhrases.size())]
+        executeRoutedTTS(msg, "Global Indoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 1)
+        
+        if (settings.partyVacuum) {
+            try { settings.partyVacuum.on() } catch(e){}
+        }
+        
+        addToHistory("RSVP SYSTEM: Event '${ev.title}' ended. Party Mode disabled, wrap-up announced, and vacuum deployed.")
+    }
 }
