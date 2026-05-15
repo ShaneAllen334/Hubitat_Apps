@@ -2504,6 +2504,16 @@ def resetDepartureMessages(int i) {
 def departureHandler(evt) {
     if (evt.value != "open") return
     ensureStateMaps()
+    
+    // --- NEW: PACKAGE RESCUE CLEARING ---
+    // If the front door opens, assume the package was retrieved
+    if (state.packageOnPorch) {
+        state.packageOnPorch = false
+        unschedule("packageSafetyCheck")
+        if (settings.enableDebug) log.debug "Voice Butler: Front door opened, clearing package on porch alert."
+    }
+    // ------------------------------------
+    
     def nowTime = new Date().time
     def numDep = settings.numDepartureUsers ? settings.numDepartureUsers as Integer : 0
     if (numDep == 0) return
@@ -2518,18 +2528,21 @@ def departureHandler(evt) {
         def tEnd = settings["depTimeEnd_${i}"]
         def dModes = [settings["depModes_${i}"]].flatten().findAll { it != null }
         
-            if (uName && ctxSwitch && tStart && tEnd) {
-            if (state.hasDepartedToday[uName]) continue
+        if (uName && ctxSwitch && tStart && tEnd) {
+            def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
+            
+            // FIX: Ensure it correctly checks if ALL users in a combined profile have already departed
+            if (splitNames.every { state.hasDepartedToday[it] }) continue
+            
             if (sickSwitch && sickSwitch.currentValue("switch") == "on") continue
             if (dModes.size() > 0 && !dModes.contains(location.mode)) continue
             if (ctxSwitch.currentValue("switch") != "on") continue
             try { if (!timeOfDayIsBetween(toDateTime(tStart), toDateTime(tEnd), now, location.timeZone)) continue } catch (Exception e) { continue }
 
-            def splitNames = uName.split(/(?i)\s+and\s+|\s*&\s*|\s*,\s*/).collect { it.trim() }
             splitNames.each { n ->
                 state.hasDepartedToday[n] = true
                 state.lastDepartureTime[n] = nowTime
-                updateHabit(n, nowTime)
+                updateHabit(n, nowTime, "departure")
             }
             departedIndexes << i
         }
@@ -2552,7 +2565,7 @@ def departureHandler(evt) {
             
             def finalMsg = applyDynamicVars(rawMsg)
             
-            // --- NEW: COAT CHECK ---
+            // --- COAT CHECK ---
             if (settings.enableCoatCheck && settings.depWeatherDevice) {
                 def wDevice = settings.depWeatherDevice
                 def temp = wDevice.currentValue("temperature")?.toString()?.replaceAll("[^0-9.-]", "")?.toFloat()?.toInteger() ?: 50
@@ -2573,7 +2586,7 @@ def departureHandler(evt) {
             }
             // -----------------------
             
-            // --- NEW: COMMUTE / TRAFFIC TIME ---
+            // --- COMMUTE / TRAFFIC TIME ---
             if (settings["depEnableTraffic_${idx}"] && settings["depDestination_${idx}"]) {
                 def dest = settings["depDestination_${idx}"]
                 def mins = getTravelInfo(dest)
@@ -2707,7 +2720,20 @@ def unifiPackageHandler(evt) {
     def detectStr = evt.value?.toLowerCase() ?: ""
     if (!detectStr.contains("package")) return
     
+    // Flag the porch as having a package and start the 2-hour safety timer
+    state.packageOnPorch = true
+    state.packageArrivalTime = new Date().time
+    runIn(7200, "packageSafetyCheck", [overwrite: true])
+    
     executePackageAlert()
+}
+
+def packageSafetyCheck() {
+    if (state.packageOnPorch) {
+        def msg = "%interruption%, my logs indicate a package has been resting on the porch for over two hours. Shall I have someone bring it inside for safekeeping?"
+        executeRoutedTTS(applyDynamicVars(msg), "Global Indoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2)
+        state.packageOnPorch = false // Prevent nagging
+    }
 }
 
 def executePackageAlert(isTest=false) {
@@ -5682,10 +5708,27 @@ def roomMotionHandler(evt) {
     ensureStateMaps()
     def deviceId = evt.device.id
     
+    def now = new Date()
+    def hourStr = now.format("H", location.timeZone)
+    def hInt = hourStr.toInteger()
+    
     for (int i = 1; i <= (settings.numRooms as Integer ?: 1); i++) {
         def mSensors = [settings["roomMotion_${i}"]].flatten().findAll { it != null }
         
         if (mSensors.any { it.id == deviceId }) {
+            
+            // --- ADVANCED HABIT HEATMAP TRACKING ---
+            if (!state.habitHeatMap["${i}"]) state.habitHeatMap["${i}"] = [:]
+            def currentCount = state.habitHeatMap["${i}"]["${hourStr}"] ?: 0
+            state.habitHeatMap["${i}"]["${hourStr}"] = currentCount + 1
+            
+            // If a room gets heavy traffic in the morning (5 AM - 9 AM), flag it as the Primary Morning Room
+            if (hInt > 4 && hInt < 10 && currentCount > 20) {
+                state.primaryMorningRoom = i
+            }
+            // ---------------------------------------
+
+            // --- EXISTING WAKEUP LOGIC ---
             def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
             
             // Mode 2: Waiting for motion AFTER the switch was turned off
@@ -5705,6 +5748,9 @@ def roomMotionHandler(evt) {
                     }
                 }
             }
+            
+            // Break the loop since we found the matching room
+            break
         }
     }
 }
@@ -6881,12 +6927,10 @@ def createEventEndpoint() {
             runOnce(new Date(startEpoch), "startHostedEvent", [data: [eventId: eventId], overwrite: false])
             runOnce(new Date(endEpoch), "endHostedEvent", [data: [eventId: eventId], overwrite: false])
             
-            addToHistory("RSVP SYSTEM: Created new event '${params.eventTitle}'.")
-            
-            if (params.eventSlot && params.eventPin) {
-                def payload = [id: eventId, name: params.eventTitle, slot: params.eventSlot.toInteger(), pin: params.eventPin, start: startEpoch, end: endEpoch, lockName: params.eventLock]
-                sendLocationEvent(name: "lockManagerTempSync", value: "add", data: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
-                addToHistory("RSVP SYSTEM: Synced temporary PIN to Lock Manager for this event.")
+            // --- NEW: SMART EVENT PREP (1 Hour Warning) ---
+            def prepEpoch = startEpoch - 3600000 
+            if (prepEpoch > new Date().time) {
+                runOnce(new Date(prepEpoch), "executeEventPrep", [data: [eventId: eventId], overwrite: false])
             }
         }
     } catch (e) { log.warn "Event Creation Error: ${e}" }
@@ -7318,4 +7362,41 @@ def applianceSyncHandler(evt) {
     } catch(e) { 
         log.warn "Failed to parse appliance sync data: ${e}" 
     }
+}
+
+def executeEventPrep(data) {
+    ensureStateMaps()
+    def ev = state.hostedEvents[data.eventId]
+    
+    // Only proceed if the event exists AND is located at the estate
+    def eName = settings.estateName ?: "The Family"
+    if (!ev || (ev.location && ev.location != eName && ev.location != "The Estate")) return
+
+    def presentFolks = getPresentUsers()
+    if (presentFolks.size() == 0) return 
+
+    def bName = settings.butlerName ?: "Alfred"
+    def msg = "%interruption%, as a reminder, ${ev.title} will commence in exactly one hour. "
+
+    if (settings.geminiApiKey) {
+        def systemPrompt = "You are ${bName}, a professional estate butler. The homeowners are hosting an event named '${ev.title}' at the house in exactly one hour. Provide 2 brief, sophisticated preparation reminders for them. For example, for a dinner party, remind them to check the wine temperatures and light the candles. Keep your total response under 40 words. Do not use markdown."
+        
+        def requestBody = [ contents: [ [ role: "user", parts: [ [text: systemPrompt] ] ] ], generationConfig: [ temperature: 0.5 ] ]
+        try {
+            httpPost([
+                uri: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.geminiApiKey?.trim()}",
+                requestContentType: "application/json", contentType: "application/json", body: groovy.json.JsonOutput.toJson(requestBody), timeout: 30
+            ]) { resp ->
+                if (resp.status == 200 && resp.data) {
+                    def aiText = resp.data?.candidates[0]?.content?.parts[0]?.text ?: ""
+                    msg += aiText.replaceAll(/```.*/, "").trim()
+                }
+            }
+        } catch(e) { log.warn "Event Prep AI Error: ${e}" }
+    } else {
+        msg += "Please ensure all necessary preparations are finalized before your guests arrive."
+    }
+
+    executeRoutedTTS(applyDynamicVars(msg), "Follow-Me + Fallback (Global ONLY if no motion)", settings.globalVolume, settings.outdoorVolume, 2)
+    addToHistory("EVENT PREP: Delivered 1-hour proactive warning for '${ev.title}'.")
 }
