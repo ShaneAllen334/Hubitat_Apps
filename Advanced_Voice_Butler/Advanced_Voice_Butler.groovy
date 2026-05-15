@@ -63,6 +63,8 @@ mappings {
     // --- PORTAL MAPPINGS ---
     path("/room/toggle") { action: [POST: "roomToggleEndpoint"] }
     path("/staff/clean") { action: [POST: "staffCleanEndpoint"] }
+    
+    path("/tv/cmd") { action: [POST: "tvCmdEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -1309,6 +1311,8 @@ def initialize() {
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
     subscribe(location, "voiceButlerStaffSync", "staffSyncHandler")
+    subscribe(location, "tvManagerSync", "tvSyncHandler")
+    subscribe(location, "voiceButlerTvAlert", "tvAlertHandler")
     
 // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
@@ -4919,7 +4923,6 @@ def serveNotesPage() {
                     })
                     .then(response => response.text())
                     .then(data => {
-                        // Bulletproof regex replacement that uses zero dollar signs
                         var formattedData = data.replace(/\\*\\*(.*?)\\*\\*/g, function(match, p1) { return '<b>' + p1 + '</b>'; })
                                                 .replace(/\\*(.*?)/g, function(match, p1) { return '<br>• ' + p1; });
                         document.getElementById('chatResponse').innerHTML = formattedData;
@@ -4963,7 +4966,6 @@ def serveNotesPage() {
             staffHtml.append("<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>Status</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>")
             staffHtml.append("<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>")
             
-            // Clean Now Button (ADDED DUMMY INPUT HERE)
             staffHtml.append("""
                 <form action="${apiUrl}/staff/clean?access_token=${state.accessToken}" method="POST" style="margin-top: 10px; margin-bottom: 0;">
                     <input type="hidden" name="dummy" value="trigger">
@@ -5092,7 +5094,7 @@ def serveNotesPage() {
         rsvpHtml.append("</div></details>")
 
         // --- 1. DYNAMICALLY BUILD PRESENCE CARDS ---
-        StringBuilder presenceHtml = new StringBuilder("<div style='display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;'>")
+        StringBuilder presenceHtml = new StringBuilder("<details style='margin-bottom: 15px;'><summary>👥 Live House Roster</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px;'>")
         if (trackedNames.size() > 0) {
             trackedNames.each { u ->
                 def dispName = applyAlias(u) 
@@ -5118,7 +5120,7 @@ def serveNotesPage() {
         } else {
             presenceHtml.append("<p style='color:#aaa; font-style:italic;'>No presence users configured.</p>")
         }
-        presenceHtml.append("</div>")
+        presenceHtml.append("</div></div></details>")
         
         // --- 2. DYNAMICALLY BUILD ROOM OPTIONS ---
         StringBuilder roomOptionsHtml = new StringBuilder()
@@ -5299,6 +5301,81 @@ def serveNotesPage() {
             roomsHtml.append("</div></div></details>")
         }
 
+        // --- 0.6 DYNAMICALLY BUILD TV / SCREEN TIME WIDGET ---
+        StringBuilder tvHtml = new StringBuilder()
+        if (state.tvManagerData && state.tvManagerData.size() > 0) {
+            tvHtml.append("<details style='margin-bottom: 15px;'><summary>📺 Television & Screen Time</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px;'>")
+            
+            state.tvManagerData.each { idx, tv ->
+                def sColor = tv.isOn ? "#3498db" : "#7f8c8d"
+                def sText = tv.isOn ? "ON - ${tv.app}" : "OFF"
+                
+                def timeText = ""
+                if (tv.maxTv > 0) {
+                    def remain = (tv.maxTv + tv.ext) - tv.watchMins
+                    if (remain < 0) remain = 0
+                    def hrs = (remain / 60).toInteger()
+                    def mins = remain % 60
+                    timeText += "TV Time Left: <b>${hrs}h ${mins}m</b><br>"
+                }
+                if (tv.isAppLimited && tv.appLimit > 0) {
+                    def remainApp = (tv.appLimit + tv.ext) - tv.currentAppMins
+                    if (remainApp < 0) remainApp = 0
+                    def aHrs = (remainApp / 60).toInteger()
+                    def aMins = remainApp % 60
+                    timeText += "App Time Left: <b>${aHrs}h ${aMins}m</b><br>"
+                }
+                if (!timeText) timeText = "Watched Today: ${(tv.watchMins / 60).toInteger()}h ${tv.watchMins % 60}m"
+                
+                def actionBtns = ""
+                if (tv.isOn) {
+                    actionBtns += """
+                        <form action="${apiUrl}/tv/cmd?access_token=${state.accessToken}" method="POST" style="margin:0; flex:1;">
+                            <input type="hidden" name="tvIdx" value="${idx}">
+                            <input type="hidden" name="command" value="off">
+                            <button type="submit" style="padding: 6px 10px; margin: 0; font-size: 12px; background-color: #c0392b; color: #fff; border-radius: 4px; width: 100%; border: none; cursor: pointer;">Power Off</button>
+                        </form>
+                    """
+                }
+                if (tv.maxTv > 0 || tv.appLimit > 0) {
+                    actionBtns += """
+                        <form action="${apiUrl}/tv/cmd?access_token=${state.accessToken}" method="POST" style="margin:0; flex:1;">
+                            <input type="hidden" name="tvIdx" value="${idx}">
+                            <input type="hidden" name="command" value="extend">
+                            <button type="submit" style="padding: 6px 10px; margin: 0; font-size: 12px; background-color: #27ae60; color: #fff; border-radius: 4px; width: 100%; border: none; cursor: pointer;">+30 Mins</button>
+                        </form>
+                    """
+                }
+                
+                if (actionBtns == "") {
+                    actionBtns = "<div style='color: #7f8c8d; font-size: 11px; text-align: center; width: 100%; font-style: italic; padding: 4px 0;'>Currently Powered Down</div>"
+                }
+
+                tvHtml.append("""
+                    <div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${sColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; flex-direction: column; justify-content: space-between;'>
+                        <div style='margin-bottom: 10px;'>
+                            <b>${tv.name}</b><br>
+                            <span style='color:${sColor}; font-weight: bold; font-size: 12px;'>${sText}</span><br>
+                            <div style='margin-top: 5px; font-size: 11px; color: #aaa; line-height: 1.4;'>${timeText}</div>
+                        </div>
+                        <div style="display: flex; gap: 5px; background: #151515; padding: 5px; border-radius: 4px; align-items: center; min-height: 28px;">
+                            ${actionBtns}
+                        </div>
+                    </div>
+                """)
+            }
+            tvHtml.append("</div></div></details>")
+        } else {
+            tvHtml.append("""
+                <details style='margin-bottom: 15px;'><summary>📺 Television & Screen Time</summary>
+                <div style='padding-top: 15px;'>
+                    <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #7f8c8d; color: #aaa; font-size: 13px;'>
+                        <i>Waiting for TV Manager to sync data... (Turn a TV on, or click 'Done' in the Advanced Television Application to force an instant sync).</i>
+                    </div>
+                </div></details>
+            """)
+        }
+
         // --- 6. DASHBOARD SHORTCUT ---
         StringBuilder dashboardBtnHtml = new StringBuilder()
         if (settings.taskDashboardUrl) {
@@ -5393,7 +5470,9 @@ def serveNotesPage() {
         // --- 2. ESTATE MANAGEMENT ---
         html.append("<details class='master-section'><summary>🏰 Estate Management</summary><div class='master-content'>")
         html.append(dashboardBtnHtml.toString())
+        html.append(presenceHtml.toString()) // INJECTED ROSTER HERE
         html.append(roomsHtml.toString())
+        html.append(tvHtml.toString())
         html.append(trashHtml.toString())
         html.append(staffHtml.toString())
         html.append(applianceHtml.toString())
@@ -5475,14 +5554,9 @@ def serveNotesPage() {
         // --- 5. SYSTEM MEMORY ---
         html.append("""
             <details class='master-section'>
-                <summary>⚙️ System Memory & Roster</summary>
+                <summary>⚙️ System Memory</summary>
                 <div class='master-content'>
-                    <h4 style='margin-bottom: 5px; margin-top: 0; color:#fff; font-size: 14px;'>Current Presence</h4>
-                    ${presenceHtml.toString()}
-                    
-                    <hr style='border:none; border-top:1px solid #333; margin: 20px 0;'>
-                    
-                    <h4 style='margin-bottom: 10px; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
+                    <h4 style='margin-bottom: 10px; margin-top: 0; color:#fff; font-size: 14px;'>Update Context Agenda</h4>
                     <form action="${apiUrl}/agenda/update?access_token=${state.accessToken}" method="POST">
                         <select name="roomSelect" required style="padding: 8px;">${roomOptionsHtml.toString()}</select>
                         <select name="daySelect" required style="padding: 8px;">
@@ -7619,4 +7693,53 @@ def staffCleanEndpoint() {
     }
     
     return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def tvSyncHandler(evt) {
+    try {
+        state.tvManagerData = new groovy.json.JsonSlurper().parseText(evt.value)
+    } catch(e) {}
+}
+
+def tvAlertHandler(evt) {
+    if (evt.value == "limit_reached") {
+        def tvName = evt.data ?: "the television"
+        def msgs = []
+        for (int d = 1; d <= 5; d++) { if (settings["screenTimeMsg_${d}"]) msgs << settings["screenTimeMsg_${d}"] }
+        if (!msgs) msgs = getDefaultMessages("ScreenTime")
+
+        def randomMsg = applyDynamicVars(msgs[new Random().nextInt(msgs.size())])
+        def rMode = settings.screenTimeRoutingMode ?: "Global Indoor Speaker Only"
+        def targetVol = settings.screenTimeVolume != null ? settings.screenTimeVolume : settings.globalVolume
+
+        executeRoutedTTS(randomMsg, rMode, targetVol, settings.outdoorVolume, 2, false, settings.screenTimeSpeaker)
+        addToHistory("SCREEN TIME: TV limit reached for ${tvName}. Announcement queued.")
+    }
+}
+
+def tvCmdEndpoint() {
+    try {
+        ensureStateMaps()
+        def formParams = [:]
+        def bodyText = request?.body ? request.body.toString() : ""
+        if (bodyText) {
+            bodyText.split('&').each {
+                def parts = it.split('=')
+                if (parts.size() > 1) {
+                    formParams[parts[0]] = java.net.URLDecoder.decode(parts[1], "UTF-8")
+                }
+            }
+        }
+        
+        def idx = formParams.tvIdx
+        def cmd = formParams.command
+        
+        if (idx && cmd) {
+            sendLocationEvent(name: "voiceButlerTvCmd", value: cmd, data: idx, isStateChange: true)
+            addToHistory("PORTAL: Sent remote ${cmd.toUpperCase()} command to TV ${idx}.")
+        }
+    } catch(Exception e) { 
+        log.warn "Voice Butler Portal - TV Cmd Error: ${e}" 
+    }
+    return [status: 200, contentType: "text/html", data: getRedirectHtml()]
 }
