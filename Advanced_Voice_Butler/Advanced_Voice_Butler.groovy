@@ -15,8 +15,16 @@ definition(
     iconX2Url: ""
 )
 
+import groovy.transform.Field
+@Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
+
 preferences {
     page(name: "mainPage")
+    page(name: "pageConcierge")
+    page(name: "pageEstate")
+    page(name: "pageGuests")
+    page(name: "pageSecurity")
+    page(name: "pageHardware")
     page(name: "roomPage")
 }
 
@@ -33,14 +41,17 @@ mappings {
     path("/presence/depart") { action: [POST: "manualDepartEndpoint"] }
     path("/reply/quick") { action: [POST: "quickReplyEndpoint"] }
     path("/guest/timer") { action: [POST: "guestTimerEndpoint"] }
+    
     // --- RSVP SYSTEM MAPPINGS ---
     path("/event/create") { action: [POST: "createEventEndpoint"] }
     path("/event/delete") { action: [POST: "deleteEventEndpoint"] }
     path("/rsvp") { action: [GET: "serveGuestRsvpPage"] }
     path("/rsvp/submit") { action: [POST: "submitRsvpEndpoint"] }
+
     // --- QUICK LOCK CODE MAPPINGS (NEW) ---
     path("/lock/create") { action: [POST: "createQuickCodeEndpoint"] }
     path("/lock/delete") { action: [POST: "deleteQuickCodeEndpoint"] }
+    
     path("/calendar/add") { action: [POST: "addCalendarEventEndpoint"] }
     path("/chat") { action: [POST: "butlerChatEndpoint"] }
     path("/meals/update") { action: [POST: "updateMealsEndpoint"] }
@@ -61,52 +72,44 @@ def getRoutingOptions() {
     ]
 }
 
-def mainPage() {
-    
-    if (!state.accessToken) {
+def getLockUsers() {
+    def lockUsers = []
+    if (settings.frontDoorLock) {
         try {
-            createAccessToken()
-        } catch (Exception e) {
-            log.error "OAuth is not enabled! Please click 'OAuth' at the top of the app code and enable it."
-        }
+            def lockCodesStr = settings.frontDoorLock.currentValue("lockCodes")
+            if (lockCodesStr) {
+                def parsed = new groovy.json.JsonSlurper().parseText(lockCodesStr)
+                if (parsed instanceof Map) {
+                    lockUsers = parsed.collect { it.value.name ?: it.value }.findAll { it != null }.sort()
+                }
+            }
+        } catch (Exception e) {}
+    }
+    return lockUsers
+}
+
+def mainPage() {
+    if (!state.accessToken) {
+        try { createAccessToken() } catch (Exception e) { log.error "OAuth is not enabled! Please click 'OAuth' at the top of the app code and enable it." }
     }
     
-    dynamicPage(name: "mainPage", title: "Voice Butler Configuration", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "Voice Butler Command Center", install: true, uninstall: true) {
         
         // --- HABIT DATABASE SCRUB ---
-        // Removes old "Group" entries (e.g. Shane and Christy) to keep the roster clean
         if (state.learnedHabits) {
             def keysToRemove = []
             state.learnedHabits.each { k, v -> if (k.contains(" and ") || k.contains("&") || k.contains(",")) keysToRemove << k }
             keysToRemove.each { state.learnedHabits.remove(it) }
         }
-        // ----------------------------
-
-        def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
-        
-        def lockUsers = []
-        if (frontDoorLock) {
-            try {
-                def lockCodesStr = frontDoorLock.currentValue("lockCodes")
-                if (lockCodesStr) {
-                    def parsed = new groovy.json.JsonSlurper().parseText(lockCodesStr)
-                    if (parsed instanceof Map) {
-                        lockUsers = parsed.collect { it.value.name ?: it.value }.findAll { it != null }.sort()
-                    }
-                }
-            } catch (Exception e) {}
-        }
 
         section("Live System Dashboard", hideable: false, hidden: false) {
             paragraph "<i>Welcome to the Voice Butler command center. Below is a real-time read-only view of your perimeter status, active voice zones, and today's arrival/departure log.</i>"
             
-            // --- UPDATED WEBHOOK ENDPOINT DISPLAY ---
             if (state.accessToken) {
                 def cloudUrl = getFullApiServerUrl()
                 def localUrl = getFullLocalApiServerUrl()
                 paragraph "<div style='padding:10px; background-color:#ffeeba; border:1px solid #ffeeba; color:#856404; border-radius:4px;'><b>Your Webhook Base URL (Cloud):</b><br>${cloudUrl}/google?access_token=${state.accessToken}<br><br><b>Your Webhook Base URL (Local):</b><br>${localUrl}/google?access_token=${state.accessToken}</div>"
             }
-            // ----------------------------------------
             
             input "btnRefresh", "button", title: "🔄 Refresh Data Dashboard"
             input "btnQuickSave", "button", title: "💾 Quick Save / Refresh Page"
@@ -114,40 +117,28 @@ def mainPage() {
             
             def dndModesList = [settings.dndModes].flatten().findAll { it != null }
             def isDndMode = dndModesList.contains(location.mode)
-            def isDndSwitch = dndSwitch?.currentValue("switch") == "on"
+            def isDndSwitch = settings.dndSwitch?.currentValue("switch") == "on"
             def isPartySwitch = settings.partyModeSwitch?.currentValue("switch") == "on"
-            
-            def isMasterOff = masterSwitch?.currentValue("switch") == "off"
-            def isGuestMode = guestModeSwitch?.currentValue("switch") == "on"
+            def isMasterOff = settings.masterSwitch?.currentValue("switch") == "off"
+            def isGuestMode = settings.guestModeSwitch?.currentValue("switch") == "on"
             
             def systemState = ""
-            if (isMasterOff) {
-                systemState = "<span style='color: #c0392b; font-weight: bold;'>MUTED (Master Switch OFF)</span>"
-            } else if (isGuestMode) {
-                systemState = "<span style='color: #f39c12; font-weight: bold;'>SILENT (Guest Mode ON)</span>"
-            } else {
-                systemState = "<span style='color: #27ae60; font-weight: bold;'>RUNNING AND ACTIVE</span>"
-            }
+            if (isMasterOff) systemState = "<span style='color: #c0392b; font-weight: bold;'>MUTED (Master Switch OFF)</span>"
+            else if (isGuestMode) systemState = "<span style='color: #f39c12; font-weight: bold;'>SILENT (Guest Mode ON)</span>"
+            else systemState = "<span style='color: #27ae60; font-weight: bold;'>RUNNING AND ACTIVE</span>"
 
             def dndState = ""
-            if (isPartySwitch && settings.enablePartyMode) {
-                dndState = "<span style='color: #8e44ad; font-weight: bold;'>HOSTING (Party Mode Active)</span>"
-            } else if (isDndSwitch || isDndMode) {
-                dndState = "<span style='color: #c0392b; font-weight: bold;'>ACTIVE (Do Not Disturb)</span>"
-            } else {
-                dndState = "<span style='color: #27ae60; font-weight: bold;'>STANDBY (Accepting Visitors)</span>"
-            }
+            if (isPartySwitch && settings.enablePartyMode) dndState = "<span style='color: #8e44ad; font-weight: bold;'>HOSTING (Party Mode Active)</span>"
+            else if (isDndSwitch || isDndMode) dndState = "<span style='color: #c0392b; font-weight: bold;'>ACTIVE (Do Not Disturb)</span>"
+            else dndState = "<span style='color: #27ae60; font-weight: bold;'>STANDBY (Accepting Visitors)</span>"
             
             def inetStatus = (!settings.enableInternetCheck || state.internetActive != false) ? "<span style='color: #27ae60; font-weight: bold;'>ONLINE</span>" : "<span style='color: #c0392b; font-weight: bold;'>OFFLINE (TTS Suppressed)</span>"
             def queueStatus = state.ttsQueue?.size() > 0 ? "<span style='color: #d35400; font-weight: bold;'>${state.ttsQueue.size()} Messages Queued</span>" : "<span style='color: #27ae60;'>Idle</span>"
             
             def statusText = "<div style='margin-bottom: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
-            statusText += "<b>System State:</b> ${systemState}<br>"
-            statusText += "<b>Perimeter Status:</b> ${dndState}<br>"
-            statusText += "<b>Internet Connection:</b> ${inetStatus}<br>"
-            statusText += "<b>TTS Queue Engine:</b> ${queueStatus}</div>"
+            statusText += "<b>System State:</b> ${systemState}<br><b>Perimeter Status:</b> ${dndState}<br><b>Internet Connection:</b> ${inetStatus}<br><b>TTS Queue Engine:</b> ${queueStatus}</div>"
             
-            // --- External Sync Data ---
+            // External Sync Data
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>External Integrations Sync</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Service</th><th style='padding: 8px;'>Status / Next Item</th><th style='padding: 8px;'>Last Checked / Time</th></tr>"
@@ -158,7 +149,6 @@ def mainPage() {
             if (!settings.enableCalendar) nextCalText = "<span style='color: #7f8c8d;'>Disabled</span>"
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Calendar Engine</b></td><td style='padding: 8px;'>${nextCalText}</td><td style='padding: 8px;'>${state.nextEventTimeStr ?: '--'}</td></tr>"
 
-            // --- NEW: SCHEDULED BUTLER NOTES ROW ---
             def nextNoteText = "<span style='color: #7f8c8d;'>No Scheduled Notes</span>"
             def nextNoteTimeStr = "--"
             if (state.butlerNotes) {
@@ -171,7 +161,6 @@ def mainPage() {
                 }
             }
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Scheduled Notes</b></td><td style='padding: 8px;'>${nextNoteText}</td><td style='padding: 8px; color: #0b3b60; font-weight: bold;'>${nextNoteTimeStr}</td></tr>"
-            // ---------------------------------------
 
             def mealNewsText = state.mealNewsHeadline ?: "<span style='color: #7f8c8d;'>Waiting for Sync...</span>"
             def mealNewsTime = state.mealNewsSyncTime ?: "--"
@@ -196,24 +185,19 @@ def mainPage() {
             }
             statusText += "</table>"
             
-            // --- AI Habit Tracker Dashboard ---
+            // AI Habit Tracker
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>🧠 AI Habit & Anomaly Engine</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>User</th><th style='padding: 8px;'>Learned Departure Time</th><th style='padding: 8px;'>Current Status</th></tr>"
-            
             if (state.learnedHabits && state.learnedHabits.size() > 0) {
                 state.learnedHabits.each { uName, habitData ->
                     def timeStr = habitData.avgDepartureMins ? formatMinsToTime(habitData.avgDepartureMins) : "Learning..."
-                    
-                    // FIX: Use bulletproof logic for the AI Tracker
                     def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[uName] == true || state.hasArrivedToday[uName] == "true")
                     def departed = state.hasDepartedToday != null && (state.hasDepartedToday[uName] == true || state.hasDepartedToday[uName] == "true")
-                    
                     def statStr = ""
                     if (departed || !arrived) statStr = "<span style='color: #27ae60;'>Departed</span>"
                     else if (state.anomalyAlertedToday[uName]) statStr = "<span style='color: #c0392b; font-weight: bold;'>Anomaly (Running Late)</span>"
                     else statStr = "<span style='color: #7f8c8d;'>Home / Waiting</span>"
-                    
                     statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${applyAlias(uName)}</b></td><td style='padding: 8px;'>${timeStr}</td><td style='padding: 8px;'>${statStr}</td></tr>"
                 }
             } else {
@@ -221,53 +205,28 @@ def mainPage() {
             }
             statusText += "</table>"
             
-            // --- Incident Log ---
+            // Incident Log
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Butler Incident Log</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Events Tracked</th><th style='padding: 8px;'>Status</th></tr>"
-            
             def nmStatus = state.pendingMorningReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${nmStatus}</td></tr>"
-            
             def adStatus = state.pendingArrivalReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${adStatus}</td></tr>"
             statusText += "</table>"
             
-            // --- Presence ---
+            // Presence Roster
             statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Live House Roster</h4>"
             statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>User</th><th style='padding: 8px;'>Status</th><th style='padding: 8px;'>Context</th></tr>"
             
-            def allNames = []
-            if (arrivalMode == "Automatic (Reads lock memory)") {
-                settings.trackedLockCodes?.each { codeName ->
-                    if (codeName.toLowerCase() == "admin code" && settings.adminUserAlias) { allNames << settings.adminUserAlias } else { allNames << codeName }
-                }
-            } else if (numLockUsers && numLockUsers > 0) {
-                for (int i = 1; i <= (numLockUsers as Integer); i++) {
-                    if (settings["lockUserName_${i}"]) allNames << settings["lockUserName_${i}"]
-                }
-            }
-            allNames += (state.hasArrivedToday ?: [:]).keySet().findAll { it != "global" }
-            allNames = allNames.unique().sort()
-            
+            def allNames = getTrackedUsers()
             allNames.each { uName ->
-                // FIX: Use bulletproof logic for the Live House Roster
                 def arrived = state.hasArrivedToday != null && (state.hasArrivedToday[uName] == true || state.hasArrivedToday[uName] == "true")
                 def departed = state.hasDepartedToday != null && (state.hasDepartedToday[uName] == true || state.hasDepartedToday[uName] == "true")
                 def isHome = arrived && !departed
-                
                 def arrStatus = isHome ? "<span style='color: #27ae60; font-weight: bold;'>Arrived</span>" : "<span style='color: #7f8c8d;'>Waiting...</span>"
-                
-                def contextText = ""
-                if (isHome) {
-                    contextText = "Present"
-                } else if (departed) {
-                    contextText = "Departed Today"
-                } else {
-                    contextText = state.resetReasons?."${uName}" ?: state.globalResetReason ?: "Awaiting First Entry"
-                }
-                
+                def contextText = isHome ? "Present" : (departed ? "Departed Today" : (state.resetReasons?."${uName}" ?: state.globalResetReason ?: "Awaiting First Entry"))
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${applyAlias(uName)}</b></td><td style='padding: 8px;'>${arrStatus}</td><td style='padding: 8px; color: #555;'><i>${contextText}</i></td></tr>"
             }
             statusText += "</table>"
@@ -275,7 +234,7 @@ def mainPage() {
             paragraph statusText
         }
 
-        section("System Event History", hideable: false, hidden: false) {
+        section("System Event History", hideable: true, hidden: true) {
             paragraph "<i>A running log of the last 30 voice announcements and status changes.</i>"
             if (state.historyLog && state.historyLog.size() > 0) {
                 def histHtml = "<div style='max-height: 250px; overflow-y: auto; background-color: #f4f4f4; border: 1px solid #ccc; padding: 10px; font-family: monospace; font-size: 12px; line-height: 1.4;'>"
@@ -285,183 +244,34 @@ def mainPage() {
             }
         }
         
-        // --- NEW: BUTLER NOTES PORTAL ---
-        section("📝 Butler Notes Portal", hideable: true, hidden: true) {
-            paragraph "<i>Access this secure webpage from your phone or computer to leave targeted notes for specific members of the household.</i>"
-            if (state.accessToken) {
-                def cloudUrl = getFullApiServerUrl()
-                def localUrl = getFullLocalApiServerUrl()
-                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px;'><b>Cloud Notes Portal URL (Use anywhere):</b><br><a href='${cloudUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${cloudUrl}/notes?access_token=${state.accessToken}</a><br><br><b>Local Notes Portal URL (Use at home):</b><br><a href='${localUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${localUrl}/notes?access_token=${state.accessToken}</a></div>"
-            }
-            
-            input "announceNotesArrival", "bool", title: "Announce pending notes on Arrival?", defaultValue: true
-            input "announceNotesMorning", "bool", title: "Announce pending notes during Morning Briefing?", defaultValue: true
-            
-            if (state.butlerNotes && state.butlerNotes.size() > 0) {
-                paragraph "<b>Currently Pending Notes:</b><br>"
-                state.butlerNotes.each { note ->
-                    def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
-                    paragraph "• <b>For ${note.target}</b>${timeTxt}: ${note.text}"
-                }
-                input "btnClearNotes", "button", title: "🗑️ Clear All Notes"
-            } else {
-                paragraph "<i>No notes currently pending.</i>"
-            }
+        section("Butler Management Menus", hideable: false, hidden: false) {
+            href(name: "hrefConcierge", page: "pageConcierge", title: "🛎️ Concierge & Intelligence", description: "Calendar, News, Meal Plans, Health, and AI Features")
+            href(name: "hrefEstate", page: "pageEstate", title: "🏰 Estate Management", description: "Appliance Health, Maintenance, and Household Logistics")
+            href(name: "hrefGuests", page: "pageGuests", title: "🤝 Guest Services & Comms", description: "Notes Portal, Quick Replies, Guests, and Wi-Fi")
+            href(name: "hrefSecurity", page: "pageSecurity", title: "🛡️ Perimeter Security", description: "Doorbells, Intruder Deterrent, Package Rescue, Arrivals")
+            href(name: "hrefHardware", page: "pageHardware", title: "⚙️ Core Setup & Hardware", description: "Speakers, Global Overrides, Branding, Aliases")
         }
-        // --------------------------------
-        
-        // --- NEW: QUICK REPLIES ---
-        section("Portal Quick Replies (Outdoor Intercom)", hideable: true, hidden: true) {
-            paragraph "<i>Create up to 6 pre-set messages that you can trigger instantly from the web portal. These will announce on the Outdoor Speaker and automatically cancel any pending unanswered doorbell follow-ups.</i>"
-            input "numQuickReplies", "number", title: "Number of Quick Replies (0-6)", defaultValue: 0, range: "0..6", submitOnChange: true
-            
-            if (numQuickReplies > 0) {
-                for (int i = 1; i <= (numQuickReplies as Integer); i++) {
-                    paragraph "<b>Quick Reply Button ${i}</b>"
-                    input "quickReplyName_${i}", "text", title: "Button Label (e.g., Leave Package)", required: false
-                    input "quickReplyText_${i}", "text", title: "Spoken Message", required: false, defaultValue: "Please leave the package at the front door. Thank you."
+
+        section("Local Voice Zones (Rooms)", hideable: false, hidden: false) {
+            input "numRooms", "number", title: "Number of Local Voice Zones (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
+            if (numRooms > 0) {
+                for (int i = 1; i <= (numRooms as Integer); i++) {
+                    href(name: "roomHref${i}", page: "roomPage", params: [roomNum: i], title: "Configure ${settings["roomName_${i}"] ?: "Room Zone ${i}"}") 
                 }
             }
         }
-        // --------------------------
-        
-        section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
-            input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
-            
-            paragraph "<b>Primary Triggers</b>"
-            input "frontDoorbell", "capability.pushableButton", title: "Front Doorbell Button", required: false
-            // FIX: Added 'multiple: true' so you can select an unlimited number of porch/door sensors
-            input "frontDoorMotion", "capability.motionSensor", title: "Front Porch/Door Motion Sensor(s)", multiple: true, required: false
-            
-            paragraph "<hr>"
-            input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
-            input "enableInbox", "bool", title: "Enable 'Silver Platter' Message Inbox (Hold missed alerts)?", defaultValue: false, submitOnChange: true
-            input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
-            if (enableChime) {
-                input "chimeUrl", "text", title: "Chime Audio File URL (MP3/WAV)", description: "e.g., http://127.0.0.1:8080/local/chime.mp3", required: true
-            }
-            input "guestModeSwitch", "capability.switch", title: "Guest Mode Mute Switch", required: false
-            input "notificationDevice", "capability.notification", title: "Silent Mode Notification Devices", multiple: true, required: false
-            input "ttsTTL", "number", title: "Message Expiration / Time-To-Live (Minutes)", defaultValue: 5, required: false
-            
-            // --- THE PHANTOM QUIET HOURS ---
-            paragraph "<hr>"
-            paragraph "<b>Quiet Hours Muting</b>"
-            input "quietHoursStart", "time", title: "Quiet Hours Start Time", required: false
-            input "quietHoursEnd", "time", title: "Quiet Hours End Time", required: false
-            input "quietVolume", "number", title: "Quiet Hours Max Volume (0-100)", required: false
-            // --------------------------------------
-            
-            paragraph "<hr>"
-            input "globalIndoorSpeaker", "capability.speechSynthesis", title: "Global Indoor Speaker(s)", multiple: true, required: false
-            input "globalVolume", "number", title: "Global Speaker Volume (0-100)", required: false
-            input "globalTVSwitch", "capability.actuator", title: "Global Entertainment / TV Device", required: false
-            input "mediaPauseList", "capability.actuator", title: "Other Media Players to Pause/Mute", multiple: true, required: false
-            input "btnTestGlobal", "button", title: "▶️ Test Global Indoor Speaker"
-            
-            paragraph "<hr>"
-            input "outdoorSpeaker", "capability.speechSynthesis", title: "Outdoor/Porch Speaker", required: false
-            input "outdoorVolume", "number", title: "Default Outdoor Volume (0-100)", required: false
-            input "btnTestOutdoor", "button", title: "▶️ Test Outdoor Speaker"
-            
-            paragraph "<hr>"
-            input "wakeupPadDelay", "number", title: "Speaker Amp Warm-up Delay (Seconds)", defaultValue: 0
-            input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
-        }
-        
-            section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
-            input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
-            input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
-            input "butlerVoice", "enum", title: "Butler Voice Profile (SSML / Echo Speaks)", options: ["Default", "Matthew", "Brian", "Amy", "Emma", "Joey", "Justin", "Ivy", "Kendra", "Kimberly", "Salli"], defaultValue: "Default", required: false
-            
-            // Sonos Compatibility Note
-            paragraph "<div style='font-size: 12px; line-height: 1.2; background-color: #f8f9fa; padding: 8px; border-radius: 4px; border: 1px solid #dee2e6; color: #495057;'><b>🔈 Sonos Compatibility:</b> Please keep this set to 'Default'. Sonos does not support dynamic voice switching. To change your Sonos voice, use the global Hubitat settings under <i>Hub Details</i>.</div>"
-            
-            paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
-            
-            input "estateContext", "textarea", title: "Household Context for AI (Optional)", description: "Teach the Butler about your family, pets, or house rules so it can answer chat questions better."
-        }
-        // --- FIX 3A: GLOBAL LIVING ROOM REPORT INPUTS ---
-        section("Global Foyer / Living Room Morning Report", hideable: true, hidden: true) {
-            paragraph "<i>Used to deliver Global Incident Reports if you walk into the main living space in the morning before triggering a local room routine.</i>"
-            input "butlerLrMotion", "capability.motionSensor", title: "Living Room Motion Sensor", required: false
-            input "butlerLrSpeaker", "capability.speechSynthesis", title: "Living Room Speaker", required: false
-            input "butlerLrVolume", "number", title: "Announcement Volume (0-100)", required: false
-            input "butlerLrModes", "mode", title: "Allowed Modes for Morning Report", multiple: true, required: false, defaultValue: ["Morning", "Home"]
-        }
-        // ------------------------------------------------
+    }
+}
 
-        section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
-            input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
-            input "arrivalVolume", "number", title: "Welcome Home Announcement Volume (0-100)", required: false
-            input "arrivalFoyerSpeaker", "capability.speechSynthesis", title: "Foyer / Entryway Speaker (Plays Full Greeting)", required: false
-
-            input "arrivalIndoorSpeaker", "bool", title: "Play Third-Party Arrival Notice to Rest of House?", defaultValue: false, submitOnChange: true
-            if (arrivalIndoorSpeaker) {
-                input "indoorArrivalMessage", "text", title: "Indoor Notice Message", defaultValue: "%name% has arrived home.", required: false
-                input "indoorArrivalVolume", "number", title: "Indoor Notice Volume (0-100)", required: false
-                input "arrivalNoticeRoutingMode", "enum", title: "Notice Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-            }
-            
-            // --- NEW: GUEST / VIP USERS ---
-            input "guestUsers", "enum", title: "Guest Users (Omit from Missing/Curfew Warnings)", options: lockUsers, multiple: true, required: false
-            input "guestCustomUsers", "text", title: "Custom Guest Names (Comma separated)", required: false
-            // ------------------------------
-            
-            paragraph "<hr>"
-            input "enableExtendedAbsence", "bool", title: "Enable Extended Absence (Vacation) Greetings?", defaultValue: false, submitOnChange: true
-            if (enableExtendedAbsence) {
-                input "extendedAbsenceHours", "number", title: "Absence Threshold (Hours)", defaultValue: 48, required: false
-                for (int m = 1; m <= 5; m++) { input "extAbsenceMessage_${m}", "text", title: "Extended Message ${m}", required: false, defaultValue: getDefaultMessages("ExtendedAbsence")[m-1] }
-            }
-            
-            input "enableDurationAware", "bool", title: "Enable Duration-Aware Arrival Context (Quick trip vs Long day)?", defaultValue: false
-            
-            paragraph "<hr>"
-
-            input "btnTestArrival", "button", title: "▶️ Test Welcome Home Audio"
-            input "disableGlobalAnnouncements", "bool", title: "Ignore Keys & Manual Unlocks?", defaultValue: false
-            input "ignoredCodes", "enum", title: "Silent / Ghost Codes", options: lockUsers, multiple: true, required: false
-            input "ignoredCustomCodes", "text", title: "Custom Silent Codes", required: false
-            input "arrivalMode", "enum", title: "Arrival Detection Mode", options: ["Automatic (Reads lock memory)", "Manual (Assign names to slots)"], defaultValue: "Automatic (Reads lock memory)", submitOnChange: true
-            
-            if (arrivalMode == "Automatic (Reads lock memory)") {
-                input "trackedLockCodes", "enum", title: "Select Codes to Track", options: lockUsers, multiple: true, required: false, submitOnChange: true
-                input "adminUserAlias", "text", title: "Admin Code Alias", required: false
-                for (int m = 1; m <= 10; m++) { input "autoGreeting_${m}", "text", title: "Dynamic Welcome Message ${m}", required: false, defaultValue: getDefaultMessages("Arrival")[m-1] }
-            } else {
-                for (int d = 1; d <= 10; d++) { input "defaultArrivalMessage_${d}", "text", title: "Default Arrival Message ${d}", required: false, defaultValue: getDefaultMessages("Arrival")[d-1] }
-                input "numLockUsers", "number", title: "Number of Manual User Slots (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
-                if (numLockUsers > 0) {
-                    for (int i = 1; i <= (numLockUsers as Integer); i++) {
-                        input "lockUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Lock Code Name", options: lockUsers, required: false
-                        for (int m = 1; m <= 10; m++) { input "lockGreeting_${i}_${m}", "text", title: "User ${i} Welcome Message ${m}", required: false, defaultValue: getDefaultMessages("Arrival")[m-1] }
-                    }
-                }
-            }
-            
-            // --- NEW: DEDICATED PRESENCE SENSOR LINKING ENGINE ---
-            paragraph "<hr>"
-            paragraph "<b>Presence Sensor & Lock Linking</b><br><i>Link your presence sensors to your lock code names. If a sensor arrives but the door isn't unlocked within 10 minutes, the Butler will automatically mark them home. Works with both Automatic and Manual modes!</i>"
-            input "numPresenceMappings", "number", title: "Number of Presence Sensor Links (0-10)", defaultValue: 0, submitOnChange: true
-            if (numPresenceMappings > 0) {
-                for (int i = 1; i <= numPresenceMappings; i++) {
-                    input "presenceUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Name (Matches Lock Code)", options: lockUsers, required: false
-                    input "fallbackPresence_${i}", "capability.presenceSensor", title: "User ${i} Presence Sensor", required: false
-                }
-            }
-
-            def arrPrevBase = arrivalMode == "Automatic (Reads lock memory)" ? (settings["autoGreeting_1"] ?: "Welcome home %name%.") : (settings["defaultArrivalMessage_1"] ?: "Welcome home.")
-            def arrPrev = applyDynamicVars(arrPrevBase.replace("%name%", "Guest"))
-            if (settings.enableHouseRoster) arrPrev += " You are the first to arrive. The house is empty."
-            if (settings.enableMailCheck) arrPrev += " Pardon the reminder, but the mail was delivered earlier today and still needs to be retrieved."
-            def inPrevStr = settings.arrivalIndoorSpeaker ? "<br><br><b>Rest of House Notice (Routing: ${settings.arrivalNoticeRoutingMode ?: 'Global Indoor Speaker Only'}):</b><br><i>" + applyDynamicVars((settings.indoorArrivalMessage ?: "%name% has arrived home.").replace("%name%", "Guest")) + "</i>" : ""
-            paragraph "<div style='${prevStyle}'><b>Live Arrival Preview:</b><br><i>${arrPrev}</i>${inPrevStr}</div>"
-        }
-
+// ==============================================================
+// 1. CONCIERGE & INTELLIGENCE SUB-MENU
+// ==============================================================
+def pageConcierge() {
+    def lockUsers = getLockUsers()
+    
+    dynamicPage(name: "pageConcierge", title: "🛎️ Concierge & Intelligence", install: false, uninstall: false) {
         section("Health & Wellness Concierge", hideable: true, hidden: true) {
             paragraph "<i>Track medical and dental appointments for household members. The Butler can remind them during the morning briefing or dynamically during a user-defined daytime window.</i>"
-            
             input "enableHealthMorning", "bool", title: "Announce in Morning Briefing (Per Room)?", defaultValue: true
             input "enableHealthWindow", "bool", title: "Announce during Daytime Window (Global)?", defaultValue: false, submitOnChange: true
 
@@ -505,30 +315,23 @@ def mainPage() {
                     } else {
                         paragraph "<div style='padding:8px; background-color:#d4edda; border:1px solid #c3e6cb; color:#155724; border-radius:4px;'><i><b>Webhook Mode Active:</b> The app is listening for instant pushes from your Google Script. Background polling is disabled.</i></div>"
                     }
-                    
-                    // --- NEW: GOOGLE APPS SCRIPT WEBHOOK URL FOR ADDING EVENTS ---
                     input "googleAppScriptUrl", "text", title: "Google Apps Script Webhook URL (For Adding Events)", description: "Required for pushing events to Google Calendar from the Portal", required: false
                 }
                 
-                // --- MOVED: Travel & Mapping Intelligence is now outside the local-only condition ---
                 paragraph "<hr>"
                 paragraph "<b>🌍 Travel & Mapping Intelligence</b>"
                 input "googleMapsApiKey", "text", title: "Google Maps API Key", description: "Enter your key from Google Cloud Console", required: false
                 input "homeAddress", "text", title: "Home Address", description: "e.g., 123 Main St, Your City, State", required: false
                 input "leaveNowBuffer", "number", title: "Leave Now Buffer (Minutes)", defaultValue: 5, description: "Warning threshold before you MUST leave."
-                
-                // --- THIS IS THE MISSING BUTTON AND FAILSAFE ---
                 input "apiCallLimit", "number", title: "Monthly API Call Limit", defaultValue: 500, description: "Failsafe limit to prevent billing charges."
                 input "btnTestGoogleApi", "button", title: "▶️ Test Google API Connection"
-                input "enableTravelPush", "bool", title: "Send Event & Gas Addresses to Phones via Push?", description: "Requires 'Silent Mode Notification Devices' to be configured in Section 1.", defaultValue: false, submitOnChange: true
+                input "enableTravelPush", "bool", title: "Send Event & Gas Addresses to Phones via Push?", description: "Requires 'Silent Mode Notification Devices' to be configured.", defaultValue: false, submitOnChange: true
                 
                 def apiCount = state.apiCallCount ?: 0
                 def apiLimit = settings.apiCallLimit ?: 500
-                paragraph "<div style='${prevStyle}'><b>API Usage This Month:</b> ${apiCount} / ${apiLimit} Calls</div>"
-                // -----------------------------------------------
+                paragraph "<div style='${PREV_STYLE}'><b>API Usage This Month:</b> ${apiCount} / ${apiLimit} Calls</div>"
 
                 paragraph "<hr>"
-                
                 input "calWeatherDevice", "capability.temperatureMeasurement", title: "Weather Device (For Rain Warnings)", required: false
                 input "calAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
                 input "calAlertIntervals", "enum", title: "Warning Intervals", options: ["3 Hours", "2 Hours", "1 Hour", "30 Minutes", "15 Minutes"], multiple: true, required: false
@@ -539,54 +342,8 @@ def mainPage() {
                 input "btnTestCalendar", "button", title: "▶️ Test Calendar Alert Audio"
                 
                 def calPrev = applyDynamicVars((settings["calMessage_1"] ?: "%interruption%, but you have %event% starting in %time%.").replace("%event%", "a meeting").replace("%time%", "1 Hour"))
-                paragraph "<div style='${prevStyle}'><b>Live Calendar Preview:</b><br><i>${calPrev}</i></div>"
+                paragraph "<div style='${PREV_STYLE}'><b>Live Calendar Preview:</b><br><i>${calPrev}</i></div>"
             }
-        }
-        
-        section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
-            paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
-            input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
-            
-            if (enableEmailAlerts) {
-                input "enableDeliveryTracking", "bool", title: "Announce Package Deliveries?", defaultValue: true
-                input "enableOomaVoicemail", "bool", title: "Announce Ooma Voicemails?", defaultValue: true
-                
-                input "emailAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
-                input "emailRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-                input "emailVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "emailPrefix", "text", title: "Announcement Prefix", defaultValue: "%interruption%, you have just received an important email from", required: false
-                
-                def emailPrev = applyDynamicVars((settings.emailPrefix ?: "%interruption%, you have just received an important email from") + " John Doe. The subject is: Project Update.")
-                def pkgPrev = applyDynamicVars("%interruption%, I am seeing a delivery notification from Amazon. The subject is: Your package is out for delivery. You have a package arriving today.")
-                def oomaPrev = applyDynamicVars("%interruption%, you have a new Ooma voicemail from John Doe, received at 2:00 PM. The message says: Please call me back when you get this.")
-                
-                def previewHtml = "<div style='${prevStyle}'><b>Live Email Preview:</b><br><i>${emailPrev}</i>"
-                if (settings.enableDeliveryTracking) previewHtml += "<br><br><b>Live Package Preview:</b><br><i>${pkgPrev}</i>"
-                if (settings.enableOomaVoicemail) previewHtml += "<br><br><b>Live Ooma Preview:</b><br><i>${oomaPrev}</i>"
-                previewHtml += "</div>"
-                
-                paragraph previewHtml
-            }
-        }
-        
-        section("Smart Package Detection (UniFi Protect)", hideable: true, hidden: true) {
-            input "enableSmartPackage", "bool", title: "Enable Smart Package Detection?", defaultValue: false, submitOnChange: true
-            if (enableSmartPackage) {
-                paragraph "<i>Using a UniFi Protect or similar smart camera, the Butler will announce when a package is detected.</i>"
-                input "packageCameraDevice", "capability.sensor", title: "Smart Camera Device", required: true
-                input "packageAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType", required: true
-                input "packageRoutingMode", "enum", title: "Indoor Audio Routing", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
-                input "packageVolume", "number", title: "Indoor Announcement Volume (0-100)", required: false
-                input "packageOutdoorMessage", "bool", title: "Play a 'Thank You' message on the Outdoor Speaker?", defaultValue: true
-                input "btnTestPackage", "button", title: "▶️ Test Package Announcement"
-            }
-        }
-        
-        section("Cross-App Integrations (Energy & Vacuum)", hideable: true, hidden: true) {
-            paragraph "<i>Settings for handling external alerts sent to the Butler, such as the Advanced Energy Management Controller.</i>"
-            input "crossAppRestrictedModes", "mode", title: "Restricted Modes (Stash in inbox, do not speak out loud)", multiple: true, required: false
-            input "crossAppRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-            input "crossAppVolume", "number", title: "Announcement Volume (0-100)", required: false
         }
         
         section("Organic Breaking News Intercept", hideable: true, hidden: true) {
@@ -602,7 +359,7 @@ def mainPage() {
                 input "btnTestBreakingNews", "button", title: "▶️ Test Breaking News Audio"
                 
                 def bnPrev = applyDynamicVars(settings["breakingNewsPrefix_1"] ?: "%interruption%, but a major news event has just occurred.") + " [Live Breaking Headline]."
-                paragraph "<div style='${prevStyle}'><b>Live Breaking News Preview:</b><br><i>${bnPrev}</i></div>"
+                paragraph "<div style='${PREV_STYLE}'><b>Live Breaking News Preview:</b><br><i>${bnPrev}</i></div>"
             }
         }
         
@@ -621,185 +378,18 @@ def mainPage() {
                 }
             }
         }
-
-        section("Household Maintenance & Task Alerts", hideable: true, hidden: true) {
-            input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: false, submitOnChange: true
-            
-            if (middayMaintenanceDevice) {
-                input "taskDashboardUrl", "text", title: "Dashboard Shortcut URL (Adds a link to the Web Portal)", description: "e.g., https://cloud.hubitat.com/api/...", required: false
-                
-                paragraph "<hr>"
-                input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
-                if (enableMiddayMaintenance) {
-                    paragraph "<i>The Butler will secretly pick a random time between 11:00 AM and 3:00 PM every day to politely remind you of any overdue tasks. It will remain silent if the house is empty or if guests are present.</i>"
-                    input "middayMaintenanceModes", "mode", title: "Allowed Modes for Reminder", multiple: true, required: false
-                    input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-                    input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
-                    input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
-                }
-
-                paragraph "<hr>"
-                input "enableRealTimeTasks", "bool", title: "Enable Real-Time 'Newly Due' Task Alerts?", defaultValue: false, submitOnChange: true
-                if (enableRealTimeTasks) {
-                    paragraph "<i>The Butler will instantly announce the moment a task switches to 'due'.</i>"
-                    input "realTimeTaskRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
-                    input "realTimeTaskVolume", "number", title: "Announcement Volume (0-100)", required: false
-                }
-            }
-        }
-        
-       section("Quick Exit (Away Mode Farewell)", hideable: true, hidden: true) {
-            paragraph "<i>If the house enters Away Mode, the next door opened within 5 minutes will trigger a farewell message and a gas price scout.</i>"
-            input "enableQuickExit", "bool", title: "Enable Quick Exit Farewell?", defaultValue: false, submitOnChange: true
-            if (enableQuickExit) {
-                input "quickExitDoors", "capability.contactSensor", title: "Exit Doors", multiple: true, required: true
-                input "quickExitModes", "mode", title: "Away Modes to Watch For", multiple: true, required: true
-                input "quickExitRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                input "quickExitVolume", "number", title: "Farewell Volume (0-100)", required: false
-                input "btnTestQuickExit", "button", title: "▶️ Test Quick Exit Audio"
-            }
-        }
-        
-        section("Contextual Departures & Habit Tracking", hideable: true, hidden: true) {
-            input "frontDoorContact", "capability.contactSensor", title: "Front Door Contact Sensor", required: false
-            input "numDepartureUsers", "number", title: "Number of Departure Profiles (0-5)", required: true, defaultValue: 0, range: "0..5", submitOnChange: true
-            
-            input "enableCoatCheck", "bool", title: "Enable Departure 'Coat Check' (Weather Warnings)?", defaultValue: false, submitOnChange: true
-            if (enableCoatCheck) {
-                input "depWeatherDevice", "capability.temperatureMeasurement", title: "Weather Device for Coat Check", required: true
-            }
-            
-            if (numDepartureUsers > 0) {
-                for (int i = 1; i <= (numDepartureUsers as Integer); i++) {
-                    paragraph "<b>Departure Profile ${i}</b>"
-                    input "depUserName_${i}", "text", title: "User Name (replaces %name%)", required: false
-                    input "depType_${i}", "enum", title: "Profile Type", options: ["Work", "School", "General"], defaultValue: "Work", submitOnChange: true
-                    input "depSwitch_${i}", "capability.switch", title: "Context Switch (e.g. Work Day)", required: false
-                    input "depSickSwitch_${i}", "capability.switch", title: "Sick Day Override Switch", required: false
-                    // --- NEW: COMMUTE TIME SETTINGS ---
-                    input "depEnableTraffic_${i}", "bool", title: "Enable Commute/Traffic Time?", defaultValue: false, submitOnChange: true
-                    if (settings["depEnableTraffic_${i}"]) {
-                        input "depDestination_${i}", "text", title: "Destination Address (Work/School)", required: true, description: "e.g., 123 Office Park, City, State"
-                        paragraph "<i>Note: Requires Google Maps API Key to be configured in the Calendar section.</i>"
-                    }
-                    // ----------------------------------
-                    input "depModes_${i}", "mode", title: "Allowed House Modes", multiple: true, required: false
-                    input "depTimeStart_${i}", "time", title: "Departure Window Start", required: false
-                    input "depTimeEnd_${i}", "time", title: "Departure Window End", required: false
-                    input "depDelay_${i}", "number", title: "Greeting Delay (Seconds)", defaultValue: 5, required: false
-                    input "depRoutingMode_${i}", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                    input "depVolume_${i}", "number", title: "Departure Volume (0-100)", required: false
-                    input "btnTestDeparture_${i}", "button", title: "▶️ Test Departure Profile ${i} Audio"
-                    
-                    def selMsgs = getDefaultMessages(settings["depType_${i}"] ?: "Work")
-                    for (int m = 1; m <= 10; m++) { input "depMessage_${i}_${m}", "text", title: "Message ${m}", required: false, defaultValue: selMsgs[m-1] }
-                }
-                
-                def depType = settings["depType_1"] ?: "Work"
-                def depPrevBase = settings["depMessage_1_1"] ?: getDefaultMessages(depType)[0]
-                def depPrev = applyDynamicVars(depPrevBase.replace("%name%", settings["depUserName_1"] ?: "Guest"))
-                paragraph "<div style='${prevStyle}'><b>Live Departure Preview (Routing: ${settings["depRoutingMode_1"] ?: 'Outdoor Speaker Only'}):</b><br><i>${depPrev}</i></div>"
-            }
-        }
-
-        section("Master Perimeter & Estate Security", hideable: true, hidden: true) {
-            paragraph "<i>Designate all critical access points across the property you wish the Butler to guard. This includes primary house doors, secondary gates, and livestock coops. The Butler will automatically verify these are secured during the Good Night routine.</i>"
-            input "estateDoors", "capability.contactSensor", title: "All Estate Doors, Gates & Coops", multiple: true, required: false
-            input "estateLocks", "capability.lock", title: "All Estate Smart Locks", multiple: true, required: false
-            paragraph "<hr>"
-            paragraph "<b>Advanced Weather Logic</b>"
-            input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
-        }
-        
-        section("Guest Wi-Fi Details", hideable: true, hidden: true) {
-            input "enableWifiPortal", "bool", title: "Enable Wi-Fi Info in Portal?", defaultValue: false, submitOnChange: true
-            if (enableWifiPortal) {
-                paragraph "<i>Add your Guest Wi-Fi details here to display a quick-announce button on the web portal.</i>"
-                input "wifiSSID", "text", title: "Wi-Fi Network Name (SSID)", required: false
-                input "wifiPassword", "text", title: "Wi-Fi Password", required: false
-                input "wifiRoutingMode", "enum", title: "Announcement Routing", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
-                input "wifiVolume", "number", title: "Announcement Volume (0-100)", required: false
-            }
-        }
-        
-        section("Estate Directory & Emergency Contacts", hideable: true, hidden: true) {
-            input "enableDirectory", "bool", title: "Enable Estate Directory?", defaultValue: false, submitOnChange: true
-            if (enableDirectory) {
-                paragraph "<i>Create a digital Rolodex. Pair a virtual switch to a contact. When turned ON via a dashboard or voice assistant, the Butler will announce the details and push them to your phones.</i>"
-                input "directoryRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
-                input "directoryVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "numContacts", "number", title: "Number of Contacts (1-10)", defaultValue: 1, range: "1..10", submitOnChange: true
-
-                if (numContacts > 0) {
-                    for (int i = 1; i <= (numContacts as Integer); i++) {
-                        paragraph "<b>Contact Profile ${i}</b>"
-                        input "contactName_${i}", "text", title: "Service Name (e.g., Plumber, Pediatrician)", required: false
-                        input "contactInfo_${i}", "text", title: "Contact Info / Phone Number", required: false
-                        input "contactSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
-                    }
-                }
-            }
-        }
-        
-        section("Local Voice Zones (Rooms)", hideable: true, hidden: true) {
-            input "numRooms", "number", title: "Number of Local Voice Zones (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
-        }
-
-        if (numRooms > 0) {
-            for (int i = 1; i <= (numRooms as Integer); i++) {
-                section("${settings["roomName_${i}"] ?: "Room Zone ${i}"}", hideable: true, hidden: true) { 
-                    href(name: "roomHref${i}", page: "roomPage", params: [roomNum: i], title: "Configure ${settings["roomName_${i}"] ?: "Room ${i}"}") 
-                }
-            }
-        }
-
-       section("Indoor Doorbell / Intercom Routing", hideable: true, hidden: true) {
-            input "enableIndoorRouting", "bool", title: "Enable Targeted Indoor Routing?", defaultValue: false, submitOnChange: true
-            if (enableIndoorRouting) {
-                // FIX: Added the missing Follow-Me Occupancy Timeout config
-                input "followMeTimeout", "number", title: "Follow-Me Occupancy Window (Minutes)", defaultValue: 5, description: "Keep room active for X minutes after last motion."
-                
-                input "indoorDoorbellMsg", "text", title: "Announcement Message", defaultValue: "This is %butler%. %interruption%, but there is a visitor at the front door."
-                input "indoorDoorbellRoutingMode", "enum", title: "Indoor Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
-                input "indoorRouteMuteDND", "bool", title: "Mute During Do Not Disturb?", defaultValue: true
-                input "indoorRouteRestrictedModes", "mode", title: "Restricted Modes (Do Not Announce)", multiple: true, required: false
-                input "btnTestIndoorRouting", "button", title: "▶️ Test Indoor Routing"
-                input "numRoutingRooms", "number", title: "Number of Routing Zones (1-7)", defaultValue: 0, range: "0..7", submitOnChange: true
-
-                if (numRoutingRooms > 0) {
-                    for (int i = 1; i <= (numRoutingRooms as Integer); i++) {
-                        // FIX: Added the missing Last Active indicator
-                        def lastAct = state.lastZoneMotion ? state.lastZoneMotion["${i}"] : 0
-                        def sinceStr = lastAct ? "${Math.round((new Date().time - lastAct)/60000)}m ago" : "Never"
-                        paragraph "<b>Routing Zone ${i}</b> (Last Active: ${sinceStr})"
-                        
-                        input "routeRoomName_${i}", "text", title: "Zone Name", required: false, defaultValue: "Zone ${i}"
-                        input "routeMotion_${i}", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
-                        input "routeSpeaker_${i}", "capability.speechSynthesis", title: "Target Speaker", required: false
-                        input "routeVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
-                        // FIX: Updated to 'capability.switch' for Roku TV compatibility
-                        input "routeTVSwitch_${i}", "capability.switch", title: "Entertainment / TV Device (Roku, TV, etc.)", multiple: true, required: false
-                        input "routeGNSwitch_${i}", "capability.switch", title: "Mute Zone when this Switch is ON (Good Night)", required: false // <-- NEW MUTE SWITCH
-                    }
-                }
-                def inPrev = applyDynamicVars(settings.indoorDoorbellMsg ?: "This is %butler%. %interruption%, but there is a visitor at the front door.")
-                paragraph "<div style='${prevStyle}'><b>Live Indoor Routing Preview:</b><br><i>${inPrev}</i></div>"
-            }
-        }
         
         section("Meal Time Routine (Dinner Voice Butler)", hideable: true, hidden: true) {
             input "enableMealTime", "bool", title: "Enable Meal Time Routine?", defaultValue: false, submitOnChange: true
             if (enableMealTime) {
                 input "mealTimeSwitch", "capability.switch", title: "Meal Time Trigger Switch", required: false
                 
-                // --- NEW: MEAL TIME BUTTON TRIGGER ---
                 input "mealTimeButton", "capability.pushableButton", title: "Meal Time Trigger Button", required: false, submitOnChange: true
                 if (mealTimeButton) {
                     input "mealTimeButtonNumber", "number", title: "Button Number", defaultValue: 1, required: true
                     input "mealTimeButtonAction", "enum", title: "Button Action", options: ["pushed", "held", "doubleTapped", "released"], defaultValue: "pushed", required: true
                     paragraph "<i>Note: Button presses bypass Global routing and exclusively announce to 'Follow-Me (Active Rooms Only)'.</i>"
                 }
-                // -------------------------------------
 
                 input "mealTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Meal Time Speaker", required: false
                 input "mealTimeVolume", "number", title: "Announcement Volume (0-100)", required: false
@@ -821,7 +411,7 @@ def mainPage() {
                 
                 def mealPrev = settings.mealTimeDinnerBell ?: "%interruption%, but dinner is now served."
                 mealPrev = applyDynamicVars(mealPrev)
-                paragraph "<div style='${prevStyle}'><b>Live Meal Time Preview:</b><br><i>${mealPrev}</i></div>"
+                paragraph "<div style='${PREV_STYLE}'><b>Live Meal Time Preview:</b><br><i>${mealPrev}</i></div>"
             }
         }
         
@@ -835,124 +425,7 @@ def mainPage() {
             input "meal_Saturday", "text", title: "Saturday", required: false
             input "meal_Sunday", "text", title: "Sunday", required: false
         }
-
-        // --- NEW: HEADED HOME FEATURE ---
-        section("Headed Home (On The Way) Announcements", hideable: true, hidden: true) {
-            input "enableHeadedHome", "bool", title: "Enable Headed Home Announcements?", defaultValue: false, submitOnChange: true
-            if (enableHeadedHome) {
-                paragraph "<i>Assign a virtual switch for each user. When turned ON (e.g. via a Google Home or Alexa driving routine), the Butler will announce they are on their way.</i>"
-                input "numHeadedHome", "number", title: "Number of Headed Home Profiles (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
-                
-                if (numHeadedHome > 0) {
-                    for (int i = 1; i <= (numHeadedHome as Integer); i++) {
-                        paragraph "<b>Headed Home Profile ${i}</b>"
-                        input "hhUser_${i}", "text", title: "User Name (replaces %name%)", required: false
-                        input "hhSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
-                        input "hhRouting_${i}", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
-                        input "hhVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
-                        input "hhMessage_${i}", "text", title: "Announcement Message", defaultValue: "%interruption%, but %name% is on their way home.", required: false
-                        input "btnTestHeadedHome_${i}", "button", title: "▶️ Test Headed Home Audio ${i}"
-                    }
-                }
-            }
-        }
-        // --------------------------------
-
-        section("Guest / Party Mode (Doorbell Intercept)", hideable: true, hidden: true) {
-            input "enablePartyMode", "bool", title: "Enable Guest/Party Mode Doorbell?", defaultValue: false, submitOnChange: true
-            if (enablePartyMode) {
-                paragraph "<i>Assign a virtual switch. When ON, the butler will override Do Not Disturb and After Hours to welcome expected guests.</i>"
-                input "partyModeSwitch", "capability.switch", title: "Party Mode Virtual Switch", required: true
-                input "partyRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                input "partyVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "partyDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 2, required: false
-                input "partyVacuum", "capability.switch", title: "Vacuum Cleaner to deploy when Event Ends", required: false
-                
-                for (int d = 1; d <= 3; d++) { input "partyMessage_${d}", "text", title: "Party Greeting ${d}", required: false, defaultValue: getDefaultMessages("PartyMode")[d-1] }
-                input "btnTestPartyMode", "button", title: "▶️ Test Party Mode Audio"
-                
-                def pPrev = applyDynamicVars(settings["partyMessage_1"] ?: getDefaultMessages("PartyMode")[0])
-                paragraph "<div style='${prevStyle}'><b>Live Party Mode Preview:</b><br><i>${pPrev}</i></div>"
-            }
-        }
-
-        section("Perimeter Guarding (Do Not Disturb)", hideable: true, hidden: true) {
-            input "dndSwitch", "capability.switch", title: "Do Not Disturb Toggle Switch", required: false
-            input "dndModes", "mode", title: "Do Not Disturb Modes", multiple: true, required: false
-            input "dndRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-            input "dndMotionDebounce", "number", title: "Motion Sensor Cooldown (Minutes)", defaultValue: 10, required: false
-            input "btnTestDND", "button", title: "▶️ Test DND Intercept Audio"
-            for (int d = 1; d <= 10; d++) { input "dndMessage_${d}", "text", title: "DND Audio Message ${d}", required: false, defaultValue: getDefaultMessages("DND")[d-1] }
-
-            def dndPrev = applyDynamicVars(settings["dndMessage_1"] ?: getDefaultMessages("DND")[0])
-            paragraph "<div style='${prevStyle}'><b>Live DND Intercept Preview (Routing: ${settings.dndRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${dndPrev}</i></div>"
-        }
         
-        section("Daytime Doorbell Acknowledgment", hideable: true, hidden: true) {
-            input "enableDaytimeDoorbell", "bool", title: "Enable Daytime Doorbell Acknowledgment?", defaultValue: false, submitOnChange: true
-            if (enableDaytimeDoorbell) {
-                input "daytimeRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                input "daytimeDoorbellVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "daytimeDoorbellDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 2, required: false
-                for (int d = 1; d <= 20; d++) { input "daytimeMessage_${d}", "text", title: "Daytime Message ${d}", required: false, defaultValue: getDefaultMessages("Daytime")[d-1] }
-                input "btnTestDaytime", "button", title: "▶️ Test Daytime Audio"
-            }
-            paragraph "---"
-            input "enableDaytimeFollowUp", "bool", title: "Enable Unanswered Door Follow-Up?", defaultValue: false, submitOnChange: true
-            if (enableDaytimeFollowUp) {
-                input "daytimeDoorContact", "capability.contactSensor", title: "Front Door Contact Sensor", required: true
-                input "daytimeFollowUpDelay", "number", title: "Wait Time (Minutes)", defaultValue: 3, required: false
-                for (int d = 1; d <= 5; d++) { input "daytimeNoAnswer_${d}", "text", title: "No Answer Message ${d}", required: false, defaultValue: getDefaultMessages("NoAnswer")[d-1] }
-            }
-
-            if (enableDaytimeDoorbell) {
-                def dayPrev = applyDynamicVars(settings["daytimeMessage_1"] ?: getDefaultMessages("Daytime")[0])
-                if (settings.enableDaytimeFollowUp) dayPrev += "</i><br><br><b>Unanswered Follow-Up Preview:</b><br><i>" + applyDynamicVars(settings["daytimeNoAnswer_1"] ?: getDefaultMessages("NoAnswer")[0])
-                paragraph "<div style='${prevStyle}'><b>Live Daytime Preview (Routing: ${settings.daytimeRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${dayPrev}</i></div>"
-            }
-        }
-
-        section("After Hours Doorbell Intercept", hideable: true, hidden: true) {
-            input "enableAfterHours", "bool", title: "Enable After Hours Intercept?", defaultValue: false, submitOnChange: true
-            if (enableAfterHours) {
-                input "afterHoursTimeStart", "time", title: "After Hours Start Time", required: false
-                input "afterHoursTimeEnd", "time", title: "After Hours End Time", required: false
-                input "afterHoursRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                input "afterHoursVolume", "number", title: "Announcement Volume (0-100)", required: false
-                input "afterHoursDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 5, required: false
-                for (int d = 1; d <= 15; d++) { input "afterHoursMessage_${d}", "text", title: "After Hours Message ${d}", required: false, defaultValue: getDefaultMessages("AfterHours")[d-1] }
-                input "btnTestAfterHours", "button", title: "▶️ Test After Hours Audio"
-                
-                def ahPrev = applyDynamicVars(settings["afterHoursMessage_1"] ?: getDefaultMessages("AfterHours")[0])
-                paragraph "<div style='${prevStyle}'><b>Live After Hours Preview (Routing: ${settings.afterHoursRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${ahPrev}</i></div>"
-            }
-        }
-        
-        section("Nighttime Intruder Deterrent", hideable: true, hidden: true) {
-            input "enableIntruder", "bool", title: "Enable Intruder Deterrent?", defaultValue: false, submitOnChange: true
-            if (enableIntruder) {
-                input "intruderModes", "mode", title: "Active Modes (e.g., Night)", multiple: true, required: false
-                input "intruderMotion", "capability.motionSensor", title: "Trigger Motion Sensors", multiple: true, required: false
-                input "intruderBypassDoors", "capability.contactSensor", title: "Bypass Doors (Dog Let-Out/User Exit)", multiple: true, required: false
-                input "intruderBypassMinutes", "number", title: "Door Bypass Timeout (Minutes)", defaultValue: 5, required: false
-                input "intruderRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
-                input "intruderDebounce", "number", title: "Deterrent Cooldown (Minutes)", defaultValue: 5, required: false
-                input "intruderVolume", "number", title: "Deterrent Announcement Volume (0-100)", required: false
-                input "smartCameraDevice", "capability.sensor", title: "Smart Camera", required: false
-                input "smartAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType"
-
-                for (int d = 1; d <= 3; d++) { input "intruderAnimal_${d}", "text", title: "Animal Message ${d}", required: false, defaultValue: ["Shoo! Get out of here!", "Go away!", "Move along animal!"][d-1] }
-                for (int d = 1; d <= 3; d++) { input "intruderPerson_${d}", "text", title: "Person Message ${d}", required: false, defaultValue: ["Warning. You are trespassing. Security has been notified.", "Perimeter breach detected. Cameras are recording your face.", "Please step away from the house. You are being recorded."][d-1] }
-                for (int d = 1; d <= 10; d++) { input "intruderMessage_${d}", "text", title: "Intruder Message ${d}", required: false, defaultValue: getDefaultMessages("Intruder")[d-1] }
-                
-                input "btnTestIntruder", "button", title: "▶️ Test Intruder Audio"
-
-                def intPrev = applyDynamicVars(settings["intruderMessage_1"] ?: getDefaultMessages("Intruder")[0])
-                def smartPrev = settings.smartCameraDevice ? "<br><br><b>Smart Person Detection Preview:</b><br><i>" + applyDynamicVars(settings["intruderPerson_1"] ?: "Warning. You are trespassing.") + "</i>" : ""
-                paragraph "<div style='${prevStyle}'><b>Live Intruder Preview (Routing: ${settings.intruderRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${intPrev}</i>${smartPrev}</div>"
-            }
-        }
-
         section("Birthdays, Anniversaries & Holidays", hideable: true, hidden: true) {
             input "enableHolidays", "bool", title: "Enable Morning Holiday Announcements?", defaultValue: false, submitOnChange: true
             if (enableHolidays) { input "holidayMessage", "text", title: "Holiday Message Format", defaultValue: "By the way, don't forget today is %holiday%!" }
@@ -998,7 +471,7 @@ def mainPage() {
 
             def holText = getTodayHoliday() ? (settings.holidayMessage ?: "By the way, don't forget today is %holiday%!").replace("%holiday%", getTodayHoliday()) : "None detected today."
             def bdayText = settings.bdayCountdownMsg ?: "By the way, you only have %days% days until your birthday!"
-            paragraph "<div style='${prevStyle}'><b>Live Special Events Preview:</b><br><b>Today's Holiday:</b> <i>${holText}</i><br><b>Birthday Countdown Format:</b> <i>${bdayText.replace('%days%', '12').replace('%name%', 'Test User')}</i></div>"
+            paragraph "<div style='${PREV_STYLE}'><b>Live Special Events Preview:</b><br><b>Today's Holiday:</b> <i>${holText}</i><br><b>Birthday Countdown Format:</b> <i>${bdayText.replace('%days%', '12').replace('%name%', 'Test User')}</i></div>"
         }
         
         section("Local Farmers Market & Butcher Scout", hideable: true, hidden: true) {
@@ -1070,8 +543,121 @@ def mainPage() {
                 input "btnTestVehicleScout", "button", title: "▶️ Test Gemini Car Wash Fetch"
             }
         }
+        
+        section("Screen Time Manager", hideable: true, hidden: true) {
+            input "enableScreenTime", "bool", title: "Enable Screen Time Alerts?", defaultValue: false, submitOnChange: true
+            if (enableScreenTime) {
+                input "screenTimeSwitch", "capability.switch", title: "Screen Time Virtual Switch", required: true
+                input "screenTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Screen Time Speaker", required: false
+                input "screenTimeVolume", "number", title: "Alert Volume (0-100)", required: false
+                input "screenTimeRoutingMode", "enum", title: "Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                for (int d = 1; d <= 5; d++) { input "screenTimeMsg_${d}", "text", title: "Alert Message ${d}", required: false, defaultValue: getDefaultMessages("ScreenTime")[d-1] }
+                input "btnTestScreenTime", "button", title: "▶️ Test Screen Time Audio"
+            }
+        }
+    }
+}
 
-        // --- ADD FALLBACK PRESENCE UI HERE ---
+// ==============================================================
+// 2. ESTATE MANAGEMENT SUB-MENU
+// ==============================================================
+def pageEstate() {
+    dynamicPage(name: "pageEstate", title: "🏰 Estate Management", install: false, uninstall: false) {
+        section("Cross-App Integrations (Energy & Vacuum)", hideable: true, hidden: true) {
+            paragraph "<i>Settings for handling external alerts sent to the Butler, such as the Advanced Energy Management Controller.</i>"
+            input "crossAppRestrictedModes", "mode", title: "Restricted Modes (Stash in inbox, do not speak out loud)", multiple: true, required: false
+            input "crossAppRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+            input "crossAppVolume", "number", title: "Announcement Volume (0-100)", required: false
+        }
+        
+        section("Household Maintenance & Task Alerts", hideable: true, hidden: true) {
+            input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: false, submitOnChange: true
+            
+            if (middayMaintenanceDevice) {
+                input "taskDashboardUrl", "text", title: "Dashboard Shortcut URL (Adds a link to the Web Portal)", description: "e.g., https://cloud.hubitat.com/api/...", required: false
+                
+                paragraph "<hr>"
+                input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
+                if (enableMiddayMaintenance) {
+                    paragraph "<i>The Butler will secretly pick a random time between 11:00 AM and 3:00 PM every day to politely remind you of any overdue tasks. It will remain silent if the house is empty or if guests are present.</i>"
+                    input "middayMaintenanceModes", "mode", title: "Allowed Modes for Reminder", multiple: true, required: false
+                    input "middayRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                    input "middayVolume", "number", title: "Announcement Volume (0-100)", required: false
+                    input "btnTestMidday", "button", title: "▶️ Test Midday Maintenance Reminder"
+                }
+
+                paragraph "<hr>"
+                input "enableRealTimeTasks", "bool", title: "Enable Real-Time 'Newly Due' Task Alerts?", defaultValue: false, submitOnChange: true
+                if (enableRealTimeTasks) {
+                    paragraph "<i>The Butler will instantly announce the moment a task switches to 'due'.</i>"
+                    input "realTimeTaskRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                    input "realTimeTaskVolume", "number", title: "Announcement Volume (0-100)", required: false
+                }
+            }
+        }
+        
+        section("Contextual Departures & Habit Tracking", hideable: true, hidden: true) {
+            input "frontDoorContact", "capability.contactSensor", title: "Front Door Contact Sensor", required: false
+            input "numDepartureUsers", "number", title: "Number of Departure Profiles (0-5)", required: true, defaultValue: 0, range: "0..5", submitOnChange: true
+            
+            input "enableCoatCheck", "bool", title: "Enable Departure 'Coat Check' (Weather Warnings)?", defaultValue: false, submitOnChange: true
+            if (enableCoatCheck) {
+                input "depWeatherDevice", "capability.temperatureMeasurement", title: "Weather Device for Coat Check", required: true
+            }
+            
+            if (numDepartureUsers > 0) {
+                for (int i = 1; i <= (numDepartureUsers as Integer); i++) {
+                    paragraph "<b>Departure Profile ${i}</b>"
+                    input "depUserName_${i}", "text", title: "User Name (replaces %name%)", required: false
+                    input "depType_${i}", "enum", title: "Profile Type", options: ["Work", "School", "General"], defaultValue: "Work", submitOnChange: true
+                    input "depSwitch_${i}", "capability.switch", title: "Context Switch (e.g. Work Day)", required: false
+                    input "depSickSwitch_${i}", "capability.switch", title: "Sick Day Override Switch", required: false
+                    
+                    input "depEnableTraffic_${i}", "bool", title: "Enable Commute/Traffic Time?", defaultValue: false, submitOnChange: true
+                    if (settings["depEnableTraffic_${i}"]) {
+                        input "depDestination_${i}", "text", title: "Destination Address (Work/School)", required: true, description: "e.g., 123 Office Park, City, State"
+                        paragraph "<i>Note: Requires Google Maps API Key to be configured in the Calendar section.</i>"
+                    }
+                    
+                    input "depModes_${i}", "mode", title: "Allowed House Modes", multiple: true, required: false
+                    input "depTimeStart_${i}", "time", title: "Departure Window Start", required: false
+                    input "depTimeEnd_${i}", "time", title: "Departure Window End", required: false
+                    input "depDelay_${i}", "number", title: "Greeting Delay (Seconds)", defaultValue: 5, required: false
+                    input "depRoutingMode_${i}", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                    input "depVolume_${i}", "number", title: "Departure Volume (0-100)", required: false
+                    input "btnTestDeparture_${i}", "button", title: "▶️ Test Departure Profile ${i} Audio"
+                    
+                    def selMsgs = getDefaultMessages(settings["depType_${i}"] ?: "Work")
+                    for (int m = 1; m <= 10; m++) { input "depMessage_${i}_${m}", "text", title: "Message ${m}", required: false, defaultValue: selMsgs[m-1] }
+                }
+                
+                def depType = settings["depType_1"] ?: "Work"
+                def depPrevBase = settings["depMessage_1_1"] ?: getDefaultMessages(depType)[0]
+                def depPrev = applyDynamicVars(depPrevBase.replace("%name%", settings["depUserName_1"] ?: "Guest"))
+                paragraph "<div style='${PREV_STYLE}'><b>Live Departure Preview (Routing: ${settings["depRoutingMode_1"] ?: 'Outdoor Speaker Only'}):</b><br><i>${depPrev}</i></div>"
+            }
+        }
+        
+        section("Headed Home (On The Way) Announcements", hideable: true, hidden: true) {
+            input "enableHeadedHome", "bool", title: "Enable Headed Home Announcements?", defaultValue: false, submitOnChange: true
+            if (enableHeadedHome) {
+                paragraph "<i>Assign a virtual switch for each user. When turned ON (e.g. via a Google Home or Alexa driving routine), the Butler will announce they are on their way.</i>"
+                input "numHeadedHome", "number", title: "Number of Headed Home Profiles (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
+                
+                if (numHeadedHome > 0) {
+                    for (int i = 1; i <= (numHeadedHome as Integer); i++) {
+                        paragraph "<b>Headed Home Profile ${i}</b>"
+                        input "hhUser_${i}", "text", title: "User Name (replaces %name%)", required: false
+                        input "hhSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
+                        input "hhRouting_${i}", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                        input "hhVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
+                        input "hhMessage_${i}", "text", title: "Announcement Message", defaultValue: "%interruption%, but %name% is on their way home.", required: false
+                        input "btnTestHeadedHome_${i}", "button", title: "▶️ Test Headed Home Audio ${i}"
+                    }
+                }
+            }
+        }
+        
         section("Fallback Presence Engine (Kids/Room Based)", hideable: true, hidden: true) {
             paragraph "Use sustained room motion during a specific time window to mark a user as 'Arrived' if they missed the door greeting."
             input "enableFallbackPresence", "bool", title: "Enable Fallback Presence?", defaultValue: false, submitOnChange: true
@@ -1091,6 +677,406 @@ def mainPage() {
                 input "fallbackDays", "enum", title: "Active Days", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], multiple: true, defaultValue: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
             }
         }
+    }
+}
+
+// ==============================================================
+// 3. GUEST SERVICES & COMMUNICATIONS SUB-MENU
+// ==============================================================
+def pageGuests() {
+    dynamicPage(name: "pageGuests", title: "🤝 Guest Services & Comms", install: false, uninstall: false) {
+        section("📝 Butler Notes Portal", hideable: true, hidden: true) {
+            paragraph "<i>Access this secure webpage from your phone or computer to leave targeted notes for specific members of the household.</i>"
+            if (state.accessToken) {
+                def cloudUrl = getFullApiServerUrl()
+                def localUrl = getFullLocalApiServerUrl()
+                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px;'><b>Cloud Notes Portal URL (Use anywhere):</b><br><a href='${cloudUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${cloudUrl}/notes?access_token=${state.accessToken}</a><br><br><b>Local Notes Portal URL (Use at home):</b><br><a href='${localUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${localUrl}/notes?access_token=${state.accessToken}</a></div>"
+            }
+            
+            input "announceNotesArrival", "bool", title: "Announce pending notes on Arrival?", defaultValue: true
+            input "announceNotesMorning", "bool", title: "Announce pending notes during Morning Briefing?", defaultValue: true
+            
+            if (state.butlerNotes && state.butlerNotes.size() > 0) {
+                paragraph "<b>Currently Pending Notes:</b><br>"
+                state.butlerNotes.each { note ->
+                    def timeTxt = note.when == "Time" ? " (At specific time)" : " (On ${note.when})"
+                    paragraph "• <b>For ${note.target}</b>${timeTxt}: ${note.text}"
+                }
+                input "btnClearNotes", "button", title: "🗑️ Clear All Notes"
+            } else {
+                paragraph "<i>No notes currently pending.</i>"
+            }
+        }
+        
+        section("Portal Quick Replies (Outdoor Intercom)", hideable: true, hidden: true) {
+            paragraph "<i>Create up to 6 pre-set messages that you can trigger instantly from the web portal. These will announce on the Outdoor Speaker and automatically cancel any pending unanswered doorbell follow-ups.</i>"
+            input "numQuickReplies", "number", title: "Number of Quick Replies (0-6)", defaultValue: 0, range: "0..6", submitOnChange: true
+            
+            if (numQuickReplies > 0) {
+                for (int i = 1; i <= (numQuickReplies as Integer); i++) {
+                    paragraph "<b>Quick Reply Button ${i}</b>"
+                    input "quickReplyName_${i}", "text", title: "Button Label (e.g., Leave Package)", required: false
+                    input "quickReplyText_${i}", "text", title: "Spoken Message", required: false, defaultValue: "Please leave the package at the front door. Thank you."
+                }
+            }
+        }
+        
+        section("Guest / Party Mode (Doorbell Intercept)", hideable: true, hidden: true) {
+            input "enablePartyMode", "bool", title: "Enable Guest/Party Mode Doorbell?", defaultValue: false, submitOnChange: true
+            if (enablePartyMode) {
+                paragraph "<i>Assign a virtual switch. When ON, the butler will override Do Not Disturb and After Hours to welcome expected guests.</i>"
+                input "partyModeSwitch", "capability.switch", title: "Party Mode Virtual Switch", required: true
+                input "partyRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "partyVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "partyDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 2, required: false
+                input "partyVacuum", "capability.switch", title: "Vacuum Cleaner to deploy when Event Ends", required: false
+                
+                for (int d = 1; d <= 3; d++) { input "partyMessage_${d}", "text", title: "Party Greeting ${d}", required: false, defaultValue: getDefaultMessages("PartyMode")[d-1] }
+                input "btnTestPartyMode", "button", title: "▶️ Test Party Mode Audio"
+                
+                def pPrev = applyDynamicVars(settings["partyMessage_1"] ?: getDefaultMessages("PartyMode")[0])
+                paragraph "<div style='${PREV_STYLE}'><b>Live Party Mode Preview:</b><br><i>${pPrev}</i></div>"
+            }
+        }
+        
+        section("Guest Wi-Fi Details", hideable: true, hidden: true) {
+            input "enableWifiPortal", "bool", title: "Enable Wi-Fi Info in Portal?", defaultValue: false, submitOnChange: true
+            if (enableWifiPortal) {
+                paragraph "<i>Add your Guest Wi-Fi details here to display a quick-announce button on the web portal.</i>"
+                input "wifiSSID", "text", title: "Wi-Fi Network Name (SSID)", required: false
+                input "wifiPassword", "text", title: "Wi-Fi Password", required: false
+                input "wifiRoutingMode", "enum", title: "Announcement Routing", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
+                input "wifiVolume", "number", title: "Announcement Volume (0-100)", required: false
+            }
+        }
+        
+        section("Estate Directory & Emergency Contacts", hideable: true, hidden: true) {
+            input "enableDirectory", "bool", title: "Enable Estate Directory?", defaultValue: false, submitOnChange: true
+            if (enableDirectory) {
+                paragraph "<i>Create a digital Rolodex. Pair a virtual switch to a contact. When turned ON via a dashboard or voice assistant, the Butler will announce the details and push them to your phones.</i>"
+                input "directoryRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)"
+                input "directoryVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "numContacts", "number", title: "Number of Contacts (1-10)", defaultValue: 1, range: "1..10", submitOnChange: true
+
+                if (numContacts > 0) {
+                    for (int i = 1; i <= (numContacts as Integer); i++) {
+                        paragraph "<b>Contact Profile ${i}</b>"
+                        input "contactName_${i}", "text", title: "Service Name (e.g., Plumber, Pediatrician)", required: false
+                        input "contactInfo_${i}", "text", title: "Contact Info / Phone Number", required: false
+                        input "contactSwitch_${i}", "capability.switch", title: "Trigger Switch", required: false
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==============================================================
+// 4. PERIMETER SECURITY SUB-MENU
+// ==============================================================
+def pageSecurity() {
+    def lockUsers = getLockUsers()
+    
+    dynamicPage(name: "pageSecurity", title: "🛡️ Perimeter Security", install: false, uninstall: false) {
+        section("Smart Package Detection (UniFi Protect)", hideable: true, hidden: true) {
+            input "enableSmartPackage", "bool", title: "Enable Smart Package Detection?", defaultValue: false, submitOnChange: true
+            if (enableSmartPackage) {
+                paragraph "<i>Using a UniFi Protect or similar smart camera, the Butler will announce when a package is detected.</i>"
+                input "packageCameraDevice", "capability.sensor", title: "Smart Camera Device", required: true
+                input "packageAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType", required: true
+                input "packageRoutingMode", "enum", title: "Indoor Audio Routing", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "packageVolume", "number", title: "Indoor Announcement Volume (0-100)", required: false
+                input "packageOutdoorMessage", "bool", title: "Play a 'Thank You' message on the Outdoor Speaker?", defaultValue: true
+                input "btnTestPackage", "button", title: "▶️ Test Package Announcement"
+            }
+        }
+        
+        section("Arrival Greetings & Smart Locks", hideable: true, hidden: true) {
+            input "frontDoorLock", "capability.lock", title: "Front Door Smart Lock", required: false, submitOnChange: true
+            input "arrivalVolume", "number", title: "Welcome Home Announcement Volume (0-100)", required: false
+            input "arrivalFoyerSpeaker", "capability.speechSynthesis", title: "Foyer / Entryway Speaker (Plays Full Greeting)", required: false
+
+            input "arrivalIndoorSpeaker", "bool", title: "Play Third-Party Arrival Notice to Rest of House?", defaultValue: false, submitOnChange: true
+            if (arrivalIndoorSpeaker) {
+                input "indoorArrivalMessage", "text", title: "Indoor Notice Message", defaultValue: "%name% has arrived home.", required: false
+                input "indoorArrivalVolume", "number", title: "Indoor Notice Volume (0-100)", required: false
+                input "arrivalNoticeRoutingMode", "enum", title: "Notice Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+            }
+            
+            input "guestUsers", "enum", title: "Guest Users (Omit from Missing/Curfew Warnings)", options: lockUsers, multiple: true, required: false
+            input "guestCustomUsers", "text", title: "Custom Guest Names (Comma separated)", required: false
+            
+            paragraph "<hr>"
+            input "enableExtendedAbsence", "bool", title: "Enable Extended Absence (Vacation) Greetings?", defaultValue: false, submitOnChange: true
+            if (enableExtendedAbsence) {
+                input "extendedAbsenceHours", "number", title: "Absence Threshold (Hours)", defaultValue: 48, required: false
+                for (int m = 1; m <= 5; m++) { input "extAbsenceMessage_${m}", "text", title: "Extended Message ${m}", required: false, defaultValue: getDefaultMessages("ExtendedAbsence")[m-1] }
+            }
+            
+            input "enableDurationAware", "bool", title: "Enable Duration-Aware Arrival Context (Quick trip vs Long day)?", defaultValue: false
+            
+            paragraph "<hr>"
+            input "btnTestArrival", "button", title: "▶️ Test Welcome Home Audio"
+            input "disableGlobalAnnouncements", "bool", title: "Ignore Keys & Manual Unlocks?", defaultValue: false
+            input "ignoredCodes", "enum", title: "Silent / Ghost Codes", options: lockUsers, multiple: true, required: false
+            input "ignoredCustomCodes", "text", title: "Custom Silent Codes", required: false
+            input "arrivalMode", "enum", title: "Arrival Detection Mode", options: ["Automatic (Reads lock memory)", "Manual (Assign names to slots)"], defaultValue: "Automatic (Reads lock memory)", submitOnChange: true
+            
+            if (arrivalMode == "Automatic (Reads lock memory)") {
+                input "trackedLockCodes", "enum", title: "Select Codes to Track", options: lockUsers, multiple: true, required: false, submitOnChange: true
+                input "adminUserAlias", "text", title: "Admin Code Alias", required: false
+                for (int m = 1; m <= 10; m++) { input "autoGreeting_${m}", "text", title: "Dynamic Welcome Message ${m}", required: false, defaultValue: getDefaultMessages("Arrival")[m-1] }
+            } else {
+                for (int d = 1; d <= 10; d++) { input "defaultArrivalMessage_${d}", "text", title: "Default Arrival Message ${d}", required: false, defaultValue: getDefaultMessages("Arrival")[d-1] }
+                input "numLockUsers", "number", title: "Number of Manual User Slots (1-5)", required: true, defaultValue: 1, range: "1..5", submitOnChange: true
+                if (numLockUsers > 0) {
+                    for (int i = 1; i <= (numLockUsers as Integer); i++) {
+                        input "lockUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Lock Code Name", options: lockUsers, required: false
+                        for (int m = 1; m <= 10; m++) { input "lockGreeting_${i}_${m}", "text", title: "User ${i} Welcome Message ${m}", required: false, defaultValue: getDefaultMessages("Arrival")[m-1] }
+                    }
+                }
+            }
+            
+            paragraph "<hr>"
+            paragraph "<b>Presence Sensor & Lock Linking</b><br><i>Link your presence sensors to your lock code names. If a sensor arrives but the door isn't unlocked within 10 minutes, the Butler will automatically mark them home. Works with both Automatic and Manual modes!</i>"
+            input "numPresenceMappings", "number", title: "Number of Presence Sensor Links (0-10)", defaultValue: 0, submitOnChange: true
+            if (numPresenceMappings > 0) {
+                for (int i = 1; i <= numPresenceMappings; i++) {
+                    input "presenceUserName_${i}", lockUsers.size() > 0 ? "enum" : "text", title: "User ${i} Name (Matches Lock Code)", options: lockUsers, required: false
+                    input "fallbackPresence_${i}", "capability.presenceSensor", title: "User ${i} Presence Sensor", required: false
+                }
+            }
+
+            def arrPrevBase = arrivalMode == "Automatic (Reads lock memory)" ? (settings["autoGreeting_1"] ?: "Welcome home %name%.") : (settings["defaultArrivalMessage_1"] ?: "Welcome home.")
+            def arrPrev = applyDynamicVars(arrPrevBase.replace("%name%", "Guest"))
+            if (settings.enableHouseRoster) arrPrev += " You are the first to arrive. The house is empty."
+            if (settings.enableMailCheck) arrPrev += " Pardon the reminder, but the mail was delivered earlier today and still needs to be retrieved."
+            def inPrevStr = settings.arrivalIndoorSpeaker ? "<br><br><b>Rest of House Notice (Routing: ${settings.arrivalNoticeRoutingMode ?: 'Global Indoor Speaker Only'}):</b><br><i>" + applyDynamicVars((settings.indoorArrivalMessage ?: "%name% has arrived home.").replace("%name%", "Guest")) + "</i>" : ""
+            paragraph "<div style='${PREV_STYLE}'><b>Live Arrival Preview:</b><br><i>${arrPrev}</i>${inPrevStr}</div>"
+        }
+        
+        section("Indoor Doorbell / Intercom Routing", hideable: true, hidden: true) {
+            input "enableIndoorRouting", "bool", title: "Enable Targeted Indoor Routing?", defaultValue: false, submitOnChange: true
+            if (enableIndoorRouting) {
+                input "followMeTimeout", "number", title: "Follow-Me Occupancy Window (Minutes)", defaultValue: 5, description: "Keep room active for X minutes after last motion."
+                input "indoorDoorbellMsg", "text", title: "Announcement Message", defaultValue: "This is %butler%. %interruption%, but there is a visitor at the front door."
+                input "indoorDoorbellRoutingMode", "enum", title: "Indoor Routing Mode", options: getRoutingOptions(), defaultValue: "Follow-Me + Fallback (Global ONLY if no motion)", submitOnChange: true
+                input "indoorRouteMuteDND", "bool", title: "Mute During Do Not Disturb?", defaultValue: true
+                input "indoorRouteRestrictedModes", "mode", title: "Restricted Modes (Do Not Announce)", multiple: true, required: false
+                input "btnTestIndoorRouting", "button", title: "▶️ Test Indoor Routing"
+                input "numRoutingRooms", "number", title: "Number of Routing Zones (1-7)", defaultValue: 0, range: "0..7", submitOnChange: true
+
+                if (numRoutingRooms > 0) {
+                    for (int i = 1; i <= (numRoutingRooms as Integer); i++) {
+                        def lastAct = state.lastZoneMotion ? state.lastZoneMotion["${i}"] : 0
+                        def sinceStr = lastAct ? "${Math.round((new Date().time - lastAct)/60000)}m ago" : "Never"
+                        paragraph "<b>Routing Zone ${i}</b> (Last Active: ${sinceStr})"
+                        
+                        input "routeRoomName_${i}", "text", title: "Zone Name", required: false, defaultValue: "Zone ${i}"
+                        input "routeMotion_${i}", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
+                        input "routeSpeaker_${i}", "capability.speechSynthesis", title: "Target Speaker", required: false
+                        input "routeVolume_${i}", "number", title: "Announcement Volume (0-100)", required: false
+                        input "routeTVSwitch_${i}", "capability.switch", title: "Entertainment / TV Device (Roku, TV, etc.)", multiple: true, required: false
+                        input "routeGNSwitch_${i}", "capability.switch", title: "Mute Zone when this Switch is ON (Good Night)", required: false
+                    }
+                }
+                def inPrev = applyDynamicVars(settings.indoorDoorbellMsg ?: "This is %butler%. %interruption%, but there is a visitor at the front door.")
+                paragraph "<div style='${PREV_STYLE}'><b>Live Indoor Routing Preview:</b><br><i>${inPrev}</i></div>"
+            }
+        }
+
+        section("Perimeter Guarding (Do Not Disturb)", hideable: true, hidden: true) {
+            input "dndSwitch", "capability.switch", title: "Do Not Disturb Toggle Switch", required: false
+            input "dndModes", "mode", title: "Do Not Disturb Modes", multiple: true, required: false
+            input "dndRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+            input "dndMotionDebounce", "number", title: "Motion Sensor Cooldown (Minutes)", defaultValue: 10, required: false
+            input "btnTestDND", "button", title: "▶️ Test DND Intercept Audio"
+            for (int d = 1; d <= 10; d++) { input "dndMessage_${d}", "text", title: "DND Audio Message ${d}", required: false, defaultValue: getDefaultMessages("DND")[d-1] }
+
+            def dndPrev = applyDynamicVars(settings["dndMessage_1"] ?: getDefaultMessages("DND")[0])
+            paragraph "<div style='${PREV_STYLE}'><b>Live DND Intercept Preview (Routing: ${settings.dndRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${dndPrev}</i></div>"
+        }
+        
+        section("Daytime Doorbell Acknowledgment", hideable: true, hidden: true) {
+            input "enableDaytimeDoorbell", "bool", title: "Enable Daytime Doorbell Acknowledgment?", defaultValue: false, submitOnChange: true
+            if (enableDaytimeDoorbell) {
+                input "daytimeRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "daytimeDoorbellVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "daytimeDoorbellDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 2, required: false
+                for (int d = 1; d <= 20; d++) { input "daytimeMessage_${d}", "text", title: "Daytime Message ${d}", required: false, defaultValue: getDefaultMessages("Daytime")[d-1] }
+                input "btnTestDaytime", "button", title: "▶️ Test Daytime Audio"
+            }
+            paragraph "---"
+            input "enableDaytimeFollowUp", "bool", title: "Enable Unanswered Door Follow-Up?", defaultValue: false, submitOnChange: true
+            if (enableDaytimeFollowUp) {
+                input "daytimeDoorContact", "capability.contactSensor", title: "Front Door Contact Sensor", required: true
+                input "daytimeFollowUpDelay", "number", title: "Wait Time (Minutes)", defaultValue: 3, required: false
+                for (int d = 1; d <= 5; d++) { input "daytimeNoAnswer_${d}", "text", title: "No Answer Message ${d}", required: false, defaultValue: getDefaultMessages("NoAnswer")[d-1] }
+            }
+
+            if (enableDaytimeDoorbell) {
+                def dayPrev = applyDynamicVars(settings["daytimeMessage_1"] ?: getDefaultMessages("Daytime")[0])
+                if (settings.enableDaytimeFollowUp) dayPrev += "</i><br><br><b>Unanswered Follow-Up Preview:</b><br><i>" + applyDynamicVars(settings["daytimeNoAnswer_1"] ?: getDefaultMessages("NoAnswer")[0])
+                paragraph "<div style='${PREV_STYLE}'><b>Live Daytime Preview (Routing: ${settings.daytimeRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${dayPrev}</i></div>"
+            }
+        }
+
+        section("After Hours Doorbell Intercept", hideable: true, hidden: true) {
+            input "enableAfterHours", "bool", title: "Enable After Hours Intercept?", defaultValue: false, submitOnChange: true
+            if (enableAfterHours) {
+                input "afterHoursTimeStart", "time", title: "After Hours Start Time", required: false
+                input "afterHoursTimeEnd", "time", title: "After Hours End Time", required: false
+                input "afterHoursRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "afterHoursVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "afterHoursDebounce", "number", title: "Cooldown (Minutes)", defaultValue: 5, required: false
+                for (int d = 1; d <= 15; d++) { input "afterHoursMessage_${d}", "text", title: "After Hours Message ${d}", required: false, defaultValue: getDefaultMessages("AfterHours")[d-1] }
+                input "btnTestAfterHours", "button", title: "▶️ Test After Hours Audio"
+                
+                def ahPrev = applyDynamicVars(settings["afterHoursMessage_1"] ?: getDefaultMessages("AfterHours")[0])
+                paragraph "<div style='${PREV_STYLE}'><b>Live After Hours Preview (Routing: ${settings.afterHoursRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${ahPrev}</i></div>"
+            }
+        }
+        
+        section("Nighttime Intruder Deterrent", hideable: true, hidden: true) {
+            input "enableIntruder", "bool", title: "Enable Intruder Deterrent?", defaultValue: false, submitOnChange: true
+            if (enableIntruder) {
+                input "intruderModes", "mode", title: "Active Modes (e.g., Night)", multiple: true, required: false
+                input "intruderMotion", "capability.motionSensor", title: "Trigger Motion Sensors", multiple: true, required: false
+                input "intruderBypassDoors", "capability.contactSensor", title: "Bypass Doors (Dog Let-Out/User Exit)", multiple: true, required: false
+                input "intruderBypassMinutes", "number", title: "Door Bypass Timeout (Minutes)", defaultValue: 5, required: false
+                input "intruderRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "intruderDebounce", "number", title: "Deterrent Cooldown (Minutes)", defaultValue: 5, required: false
+                input "intruderVolume", "number", title: "Deterrent Announcement Volume (0-100)", required: false
+                input "smartCameraDevice", "capability.sensor", title: "Smart Camera", required: false
+                input "smartAttribute", "text", title: "Smart Detection Attribute", defaultValue: "smartDetectType"
+
+                for (int d = 1; d <= 3; d++) { input "intruderAnimal_${d}", "text", title: "Animal Message ${d}", required: false, defaultValue: ["Shoo! Get out of here!", "Go away!", "Move along animal!"][d-1] }
+                for (int d = 1; d <= 3; d++) { input "intruderPerson_${d}", "text", title: "Person Message ${d}", required: false, defaultValue: ["Warning. You are trespassing. Security has been notified.", "Perimeter breach detected. Cameras are recording your face.", "Please step away from the house. You are being recorded."][d-1] }
+                for (int d = 1; d <= 10; d++) { input "intruderMessage_${d}", "text", title: "Intruder Message ${d}", required: false, defaultValue: getDefaultMessages("Intruder")[d-1] }
+                
+                input "btnTestIntruder", "button", title: "▶️ Test Intruder Audio"
+
+                def intPrev = applyDynamicVars(settings["intruderMessage_1"] ?: getDefaultMessages("Intruder")[0])
+                def smartPrev = settings.smartCameraDevice ? "<br><br><b>Smart Person Detection Preview:</b><br><i>" + applyDynamicVars(settings["intruderPerson_1"] ?: "Warning. You are trespassing.") + "</i>" : ""
+                paragraph "<div style='${PREV_STYLE}'><b>Live Intruder Preview (Routing: ${settings.intruderRoutingMode ?: 'Outdoor Speaker Only'}):</b><br><i>${intPrev}</i>${smartPrev}</div>"
+            }
+        }
+
+        section("Master Perimeter & Estate Security", hideable: true, hidden: true) {
+            paragraph "<i>Designate all critical access points across the property you wish the Butler to guard. This includes primary house doors, secondary gates, and livestock coops. The Butler will automatically verify these are secured during the Good Night routine.</i>"
+            input "estateDoors", "capability.contactSensor", title: "All Estate Doors, Gates & Coops", multiple: true, required: false
+            input "estateLocks", "capability.lock", title: "All Estate Smart Locks", multiple: true, required: false
+            paragraph "<hr>"
+            paragraph "<b>Advanced Weather Logic</b>"
+            input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
+        }
+
+        section("Quick Exit (Away Mode Farewell)", hideable: true, hidden: true) {
+            paragraph "<i>If the house enters Away Mode, the next door opened within 5 minutes will trigger a farewell message and a gas price scout.</i>"
+            input "enableQuickExit", "bool", title: "Enable Quick Exit Farewell?", defaultValue: false, submitOnChange: true
+            if (enableQuickExit) {
+                input "quickExitDoors", "capability.contactSensor", title: "Exit Doors", multiple: true, required: true
+                input "quickExitModes", "mode", title: "Away Modes to Watch For", multiple: true, required: true
+                input "quickExitRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Outdoor Speaker Only", submitOnChange: true
+                input "quickExitVolume", "number", title: "Farewell Volume (0-100)", required: false
+                input "btnTestQuickExit", "button", title: "▶️ Test Quick Exit Audio"
+            }
+        }
+    }
+}
+
+// ==============================================================
+// 5. CORE SETUP & HARDWARE SUB-MENU
+// ==============================================================
+def pageHardware() {
+    def lockUsers = getLockUsers()
+    
+    dynamicPage(name: "pageHardware", title: "⚙️ Core Setup & Hardware", install: false, uninstall: false) {
+        section("1. Global System Control & Audio Hardware", hideable: true, hidden: true) {
+            input "dashboardStatusDevice", "capability.actuator", title: "App Status Tile Device", required: false
+            
+            paragraph "<b>Primary Triggers</b>"
+            input "frontDoorbell", "capability.pushableButton", title: "Front Doorbell Button", required: false
+            input "frontDoorMotion", "capability.motionSensor", title: "Front Porch/Door Motion Sensor(s)", multiple: true, required: false
+            
+            paragraph "<hr>"
+            input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
+            input "enableInbox", "bool", title: "Enable 'Silver Platter' Message Inbox (Hold missed alerts)?", defaultValue: false, submitOnChange: true
+            input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
+            if (enableChime) {
+                input "chimeUrl", "text", title: "Chime Audio File URL (MP3/WAV)", description: "e.g., http://127.0.0.1:8080/local/chime.mp3", required: true
+            }
+            input "guestModeSwitch", "capability.switch", title: "Guest Mode Mute Switch", required: false
+            input "notificationDevice", "capability.notification", title: "Silent Mode Notification Devices", multiple: true, required: false
+            input "ttsTTL", "number", title: "Message Expiration / Time-To-Live (Minutes)", defaultValue: 5, required: false
+            
+            paragraph "<hr>"
+            paragraph "<b>Quiet Hours Muting</b>"
+            input "quietHoursStart", "time", title: "Quiet Hours Start Time", required: false
+            input "quietHoursEnd", "time", title: "Quiet Hours End Time", required: false
+            input "quietVolume", "number", title: "Quiet Hours Max Volume (0-100)", required: false
+            
+            paragraph "<hr>"
+            input "globalIndoorSpeaker", "capability.speechSynthesis", title: "Global Indoor Speaker(s)", multiple: true, required: false
+            input "globalVolume", "number", title: "Global Speaker Volume (0-100)", required: false
+            input "globalTVSwitch", "capability.actuator", title: "Global Entertainment / TV Device", required: false
+            input "mediaPauseList", "capability.actuator", title: "Other Media Players to Pause/Mute", multiple: true, required: false
+            input "btnTestGlobal", "button", title: "▶️ Test Global Indoor Speaker"
+            
+            paragraph "<hr>"
+            input "outdoorSpeaker", "capability.speechSynthesis", title: "Outdoor/Porch Speaker", required: false
+            input "outdoorVolume", "number", title: "Default Outdoor Volume (0-100)", required: false
+            input "btnTestOutdoor", "button", title: "▶️ Test Outdoor Speaker"
+            
+            paragraph "<hr>"
+            input "wakeupPadDelay", "number", title: "Speaker Amp Warm-up Delay (Seconds)", defaultValue: 0
+            input "enableInternetCheck", "bool", title: "Enable Internet Connection Safety?", defaultValue: true
+        }
+        
+        section("🏛️ Estate & Butler Branding", hideable: true, hidden: true) {
+            input "butlerName", "text", title: "Your Butler's Name", required: true, defaultValue: "Alfred"
+            input "estateName", "text", title: "Estate / Family Display Name", defaultValue: "The Family", required: true
+            input "butlerVoice", "enum", title: "Butler Voice Profile (SSML / Echo Speaks)", options: ["Default", "Matthew", "Brian", "Amy", "Emma", "Joey", "Justin", "Ivy", "Kendra", "Kimberly", "Salli"], defaultValue: "Default", required: false
+            
+            paragraph "<div style='font-size: 12px; line-height: 1.2; background-color: #f8f9fa; padding: 8px; border-radius: 4px; border: 1px solid #dee2e6; color: #495057;'><b>🔈 Sonos Compatibility:</b> Please keep this set to 'Default'. Sonos does not support dynamic voice switching. To change your Sonos voice, use the global Hubitat settings under <i>Hub Details</i>.</div>"
+            
+            paragraph "<i>This name will appear on your web portal and all guest invitation pages.</i>"
+            input "estateContext", "textarea", title: "Household Context for AI (Optional)", description: "Teach the Butler about your family, pets, or house rules so it can answer chat questions better."
+        }
+        
+        section("Global Foyer / Living Room Morning Report", hideable: true, hidden: true) {
+            paragraph "<i>Used to deliver Global Incident Reports if you walk into the main living space in the morning before triggering a local room routine.</i>"
+            input "butlerLrMotion", "capability.motionSensor", title: "Living Room Motion Sensor", required: false
+            input "butlerLrSpeaker", "capability.speechSynthesis", title: "Living Room Speaker", required: false
+            input "butlerLrVolume", "number", title: "Announcement Volume (0-100)", required: false
+            input "butlerLrModes", "mode", title: "Allowed Modes for Morning Report", multiple: true, required: false, defaultValue: ["Morning", "Home"]
+        }
+
+        section("Important Email Alerts (Google Webhook)", hideable: true, hidden: true) {
+            paragraph "<i><b>Note:</b> Requires the Google Apps Script bridge to be configured and running.</i>"
+            input "enableEmailAlerts", "bool", title: "Enable Incoming Email Alerts?", defaultValue: false, submitOnChange: true
+            
+            if (enableEmailAlerts) {
+                input "enableDeliveryTracking", "bool", title: "Announce Package Deliveries?", defaultValue: true
+                input "enableOomaVoicemail", "bool", title: "Announce Ooma Voicemails?", defaultValue: true
+                
+                input "emailAlertModes", "mode", title: "Allowed Modes for Alerts", multiple: true, required: false
+                input "emailRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+                input "emailVolume", "number", title: "Announcement Volume (0-100)", required: false
+                input "emailPrefix", "text", title: "Announcement Prefix", defaultValue: "%interruption%, you have just received an important email from", required: false
+                
+                def emailPrev = applyDynamicVars((settings.emailPrefix ?: "%interruption%, you have just received an important email from") + " John Doe. The subject is: Project Update.")
+                def pkgPrev = applyDynamicVars("%interruption%, I am seeing a delivery notification from Amazon. The subject is: Your package is out for delivery. You have a package arriving today.")
+                def oomaPrev = applyDynamicVars("%interruption%, you have a new Ooma voicemail from John Doe, received at 2:00 PM. The message says: Please call me back when you get this.")
+                
+                def previewHtml = "<div style='${PREV_STYLE}'><b>Live Email Preview:</b><br><i>${emailPrev}</i>"
+                if (settings.enableDeliveryTracking) previewHtml += "<br><br><b>Live Package Preview:</b><br><i>${pkgPrev}</i>"
+                if (settings.enableOomaVoicemail) previewHtml += "<br><br><b>Live Ooma Preview:</b><br><i>${oomaPrev}</i>"
+                previewHtml += "</div>"
+                
+                paragraph previewHtml
+            }
+        }
         
         section("User Aliases (Secret Identities)", hideable: true, hidden: true) {
             input "numAliases", "number", title: "Number of Aliases (0-5)", defaultValue: 0, range: "0..5", submitOnChange: true
@@ -1108,28 +1094,15 @@ def mainPage() {
             input "btnForceReset", "button", title: "🔄 Force Reset All Daily Statuses"
             input "awayIgnoreModes", "mode", title: "Ignore 'Away' Triggers during these Modes", description: "Prevent being marked away during Night or Sleep modes.", multiple: true, required: false
         }
-
-        section("Screen Time Manager", hideable: true, hidden: true) {
-            input "enableScreenTime", "bool", title: "Enable Screen Time Alerts?", defaultValue: false, submitOnChange: true
-            if (enableScreenTime) {
-                input "screenTimeSwitch", "capability.switch", title: "Screen Time Virtual Switch", required: true
-                input "screenTimeSpeaker", "capability.speechSynthesis", title: "Dedicated Screen Time Speaker", required: false
-                input "screenTimeVolume", "number", title: "Alert Volume (0-100)", required: false
-                input "screenTimeRoutingMode", "enum", title: "Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
-                for (int d = 1; d <= 5; d++) { input "screenTimeMsg_${d}", "text", title: "Alert Message ${d}", required: false, defaultValue: getDefaultMessages("ScreenTime")[d-1] }
-                input "btnTestScreenTime", "button", title: "▶️ Test Screen Time Audio"
-            }
-        }
     }
 }
 
 def roomPage(params) {
     def rNum = params?.roomNum ?: state.currentRoom ?: 1
     state.currentRoom = rNum
-    def prevStyle = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
     
     dynamicPage(name: "roomPage", title: "Room Voice Setup", install: false, uninstall: false, previousPage: "mainPage") {
-            section("Zone Identification & Occupant", hideable: true, hidden: true) {
+        section("Zone Identification & Occupant", hideable: true, hidden: true) {
             input "roomName_${rNum}", "text", title: "Custom Room Name", defaultValue: "Bedroom ${rNum}", submitOnChange: true
             input "roomOccupantName_${rNum}", "text", title: "Primary Occupant Name(s)", defaultValue: "Guest", required: false
             input "roomSpeaker_${rNum}", "capability.speechSynthesis", title: "Dedicated Room Speaker", required: false
@@ -1191,7 +1164,7 @@ def roomPage(params) {
             input "roomAnnounceAwayDoorbell_${rNum}", "bool", title: "Announce Away Doorbell Rings in Morning Brief?", defaultValue: false, submitOnChange: true
         }
         
-            section("Kid-Friendly Features (Junior Concierge)", hideable: true, hidden: true) {
+        section("Kid-Friendly Features (Junior Concierge)", hideable: true, hidden: true) {
             input "roomKidsNightWatch_${rNum}", "bool", title: "Enable Anti-Monster Security Check?", defaultValue: false, submitOnChange: true
             input "roomKidsWeekend_${rNum}", "bool", title: "Enable No-School Weekend Reminder?", defaultValue: false, submitOnChange: true
             input "roomKidsMode_${rNum}", "bool", title: "Enable Morning Jokes & Facts?", defaultValue: false, submitOnChange: true
@@ -1211,7 +1184,7 @@ def roomPage(params) {
             
             def gnPrev = buildRoomGreeting(rNum, "Good Night", [isTest: true])
             def gmPrev = buildRoomGreeting(rNum, "Good Morning", [isTest: true])
-            paragraph "<div style='${prevStyle}'><b>Live Routine Preview (${settings["roomName_${rNum}"] ?: "Room ${rNum}"}):</b><br><b>Good Night:</b> <i>${gnPrev}</i><br><br><b>Good Morning:</b> <i>${gmPrev}</i></div>"
+            paragraph "<div style='${PREV_STYLE}'><b>Live Routine Preview (${settings["roomName_${rNum}"] ?: "Room ${rNum}"}):</b><br><b>Good Night:</b> <i>${gnPrev}</i><br><br><b>Good Morning:</b> <i>${gmPrev}</i></div>"
         }
     }
 }
@@ -1291,6 +1264,9 @@ def ensureStateMaps() {
     if (state.quickLockCodes == null) state.quickLockCodes = [:]
     if (state.applianceHealthData == null) state.applianceHealthData = []
     if (state.mealPlan == null) state.mealPlan = ["Monday":"", "Tuesday":"", "Wednesday":"", "Thursday":"", "Friday":"", "Saturday":"", "Sunday":""]
+    if (state.habitHeatMap == null) state.habitHeatMap = [:]
+    if (state.packageOnPorch == null) state.packageOnPorch = false
+    if (state.packageArrivalTime == null) state.packageArrivalTime = 0
 }
 
 def initialize() {
@@ -1993,10 +1969,13 @@ def checkAnomalies() {
     def nowMins = (cal.get(Calendar.HOUR_OF_DAY) * 60) + cal.get(Calendar.MINUTE)
     
     state.learnedHabits?.each { uName, habitData ->
-        if (habitData.avgDepartureMins && state.hasArrivedToday[uName]) {
+        // THE FIX: Ensure they are actually home AND haven't departed yet!
+        def isHome = (state.hasArrivedToday[uName] == true || state.hasArrivedToday[uName] == "true") && !(state.hasDepartedToday[uName] == true || state.hasDepartedToday[uName] == "true")
+        
+        if (habitData.avgDepartureMins && isHome) {
             if (!state.anomalyAlertedToday[uName]) {
                 def expected = habitData.avgDepartureMins
-                // CRITICAL FIX: The 120-minute cap ensures late arrivals don't trigger the warning!
+                // The 120-minute cap ensures late arrivals don't trigger the warning!
                 if (nowMins > (expected + 15) && nowMins < (expected + 120)) { 
                     def expectedTimeStr = formatMinsToTime(expected)
                     def dispName = applyAlias(uName)
