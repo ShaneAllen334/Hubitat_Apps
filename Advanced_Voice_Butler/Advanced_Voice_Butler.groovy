@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.6
+ * Version 2.7
  */
 definition(
     name: "Advanced Voice Butler",
