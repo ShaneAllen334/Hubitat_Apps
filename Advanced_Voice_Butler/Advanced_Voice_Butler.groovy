@@ -584,6 +584,13 @@ def mainPage() {
             }
         }
         
+        section("Cross-App Integrations (Energy & Vacuum)", hideable: true, hidden: true) {
+            paragraph "<i>Settings for handling external alerts sent to the Butler, such as the Advanced Energy Management Controller.</i>"
+            input "crossAppRestrictedModes", "mode", title: "Restricted Modes (Stash in inbox, do not speak out loud)", multiple: true, required: false
+            input "crossAppRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
+            input "crossAppVolume", "number", title: "Announcement Volume (0-100)", required: false
+        }
+        
         section("Organic Breaking News Intercept", hideable: true, hidden: true) {
             input "enableBreakingNews", "bool", title: "Enable Organic News Intercept?", defaultValue: false, submitOnChange: true
             if (enableBreakingNews) {
@@ -1271,6 +1278,7 @@ def ensureStateMaps() {
     if (state.lastOverdueTasks == null) state.lastOverdueTasks = []
     if (state.hostedEvents == null) state.hostedEvents = [:]
     if (state.quickLockCodes == null) state.quickLockCodes = [:]
+    if (state.applianceHealthData == null) state.applianceHealthData = []
 }
 
 def initialize() {
@@ -1400,6 +1408,7 @@ def initialize() {
     // --- NEW: CROSS-APP TELEMETRY ---
     subscribe(location, "voiceButlerMsg", crossAppMessageHandler)
     subscribe(location, "voiceButlerStaffSync", staffSyncHandler) 
+    subscribe(location, "voiceButlerApplianceSync", applianceSyncHandler)
     
     // --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) SUBSCRIPTION ---
     if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler) }
@@ -4821,6 +4830,21 @@ def serveNotesPage() {
             staffHtml.append("<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>")
             staffHtml.append("</div>")
         }
+        // --- 0.1 DYNAMICALLY BUILD APPLIANCE HEALTH ---
+        StringBuilder applianceHtml = new StringBuilder()
+        if (state.applianceHealthData && state.applianceHealthData.size() > 0) {
+            applianceHtml.append("<details style='margin-bottom: 15px;'><summary>🔌 Appliance Health & Status</summary><div style='padding-top: 15px;'>")
+            applianceHtml.append("<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #222; border: 1px solid #444; margin-bottom: 5px; color: #fff;'>")
+            applianceHtml.append("<tr style='background-color: #333; border-bottom: 2px solid #555; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>State</th><th style='padding: 8px;'>Health</th></tr>")
+            
+            state.applianceHealthData.each { app ->
+                def hColor = app.health == "GOOD" ? "#2ecc71" : (app.health == "LEARNING" ? "#f1c40f" : (app.health.contains("CREEP") || app.health.contains("COILS") ? "#e67e22" : "#e74c3c"))
+                def sColor = app.state == "RUNNING" || app.state == "COOLING" ? "#3498db" : "#95a5a6"
+                
+                applianceHtml.append("<tr style='border-bottom: 1px solid #444;'><td style='padding: 8px;'><b>${app.name}</b></td><td style='padding: 8px; color: ${sColor};'><b>${app.state}</b></td><td style='padding: 8px; color: ${hColor}; font-weight: bold;'>${app.health}</td></tr>")
+            }
+            applianceHtml.append("</table></div></details>")
+        }
 
         // --- 0.5 DYNAMICALLY BUILD RSVP EVENT CARDS ---
         StringBuilder rsvpHtml = new StringBuilder("<details style='margin-bottom: 15px;'><summary>🥂 Party & Event Invitations</summary><div style='padding-top: 15px;'>")
@@ -5155,6 +5179,7 @@ def serveNotesPage() {
         html.append(chatHtml.toString())
         html.append(calendarHtml.toString())
         html.append(staffHtml.toString())
+        html.append(applianceHtml.toString())
         html.append(calendarAddHtml.toString())
         html.append(mailHtml.toString())
         html.append(rsvpHtml.toString())
@@ -6698,37 +6723,42 @@ def executeVehicleReminder() {
 def crossAppMessageHandler(evt) {
     ensureStateMaps()
     
-    // Check if the message came from the Vacuum Controller
-    if (evt.value == "vacuum") {
+    // Accept telemetry from Vacuum OR Energy Managers
+    if (evt.value == "vacuum" || evt.value == "energy") {
         def liveMsg = evt.descriptionText
         def stashMsg = evt.data 
         
         if (!liveMsg) return
 
         def presentFolks = getPresentUsers()
+        def sourceName = evt.value.capitalize()
         
         // SCENARIO 1: The house is completely empty
         if (presentFolks.size() == 0) {
             if (stashMsg) stashMessage(stashMsg)
-            addToHistory("CROSS-APP (Vacuum): House is empty. Stashed action for arrival inbox: '${stashMsg}'")
+            addToHistory("CROSS-APP (${sourceName}): House is empty. Stashed action for arrival inbox: '${stashMsg}'")
             return
         } 
         
-        // SCENARIO 2: People are home. Check for Do Not Disturb.
+        // SCENARIO 2: Check DND and Custom Restricted Modes
         def dndModesList = [settings.dndModes].flatten().findAll { it != null }
-        if (dndModesList.contains(location.mode) || (dndSwitch?.currentValue("switch") == "on")) {
+        def restrictedModesList = [settings.crossAppRestrictedModes].flatten().findAll { it != null }
+        
+        if (dndModesList.contains(location.mode) || restrictedModesList.contains(location.mode) || (dndSwitch?.currentValue("switch") == "on")) {
             if (stashMsg) stashMessage(stashMsg)
-            addToHistory("CROSS-APP (Vacuum): Suppressed live announcement due to DND/Night Mode. Stashed for morning inbox.")
+            addToHistory("CROSS-APP (${sourceName}): Suppressed live announcement due to restricted mode (${location.mode}). Stashed for inbox.")
             return
         }
         
         // SCENARIO 3: The house is active and ready for a live announcement
         def finalMsg = "%interruption%. Just keeping you informed: " + liveMsg
-        executeRoutedTTS(applyDynamicVars(finalMsg), "Global Indoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2)
-        addToHistory("CROSS-APP (Vacuum): Live dispatch announcement executed: '${liveMsg}'")
+        def targetVol = settings.crossAppVolume != null ? settings.crossAppVolume : settings.globalVolume
+        def rMode = settings.crossAppRoutingMode ?: "Global Indoor Speaker Only"
+        
+        executeRoutedTTS(applyDynamicVars(finalMsg), rMode, settings.globalVolume, targetVol, 2)
+        addToHistory("CROSS-APP (${sourceName}): Live dispatch announcement executed: '${liveMsg}'")
     }
 }
-
 // --- STAFF SCHEDULE RECEIVER ---
 def staffSyncHandler(evt) {
     ensureStateMaps()
@@ -7186,5 +7216,13 @@ def endHostedEvent(data) {
         }
         
         addToHistory("RSVP SYSTEM: Event '${ev.title}' ended. Party Mode disabled, wrap-up announced, and vacuum deployed.")
+    }
+}
+
+def applianceSyncHandler(evt) {
+    try {
+        state.applianceHealthData = new groovy.json.JsonSlurper().parseText(evt.value)
+    } catch(e) { 
+        log.warn "Failed to parse appliance sync data: ${e}" 
     }
 }
