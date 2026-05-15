@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.5
+ * Version 2.6
  */
 definition(
     name: "Advanced Voice Butler",
@@ -1161,6 +1161,8 @@ def roomPage(params) {
         
         section("Room Briefing Add-ons (News & Agenda)", hideable: true, hidden: true) {
             input "roomTimeDate_${rNum}", "bool", title: "Announce Current Time & Date?", defaultValue: false, submitOnChange: true
+            input "roomAnnounceInbox_${rNum}", "bool", title: "Announce Inbox Messages (Stashed Appliance Alerts)?", defaultValue: true, submitOnChange: true
+            input "roomAnnounceMeal_${rNum}", "bool", title: "Announce Today's Meal Plan?", defaultValue: false, submitOnChange: true
             input "roomAgendaEnable_${rNum}", "bool", title: "Enable Daily Agenda Reminders?", defaultValue: false, submitOnChange: true
             if (settings["roomAgendaEnable_${rNum}"]) {
                 input "roomAgendaMonday_${rNum}", "text", title: "Monday", required: false
@@ -2757,6 +2759,7 @@ def countMotionHandler(evt) {
     def nightModes = [settings.intruderModes].flatten().findAll { it != null }
     if (location.mode in nightModes || location.mode == "Night") {
         state.nightMotionCount = (state.nightMotionCount ?: 0) + 1
+        state.lastNightMotionCount = state.nightMotionCount // <-- THE FIX: Sync for Room Greetings
         state.pendingMorningReport = true
         if (settings.enableDebug) log.info "INCIDENT TRACKER: Logged Night Motion. Count is now ${state.nightMotionCount}"
     }
@@ -2767,6 +2770,7 @@ def countDoorbellHandler(evt) {
     def awayModes = [settings.quickExitModes].flatten().findAll { it != null }
     if (location.mode in awayModes || location.mode == "Away") {
         state.awayDoorbellCount = (state.awayDoorbellCount ?: 0) + 1
+        state.lastAwayDoorbellCount = state.awayDoorbellCount // <-- THE FIX: Sync for Room Greetings
         state.pendingArrivalReport = true
     }
 }
@@ -2776,10 +2780,8 @@ def playButlerReport(data) {
     def msg = ""
     if (type == "Arrival") {
         msg = "%interruption%, but there were ${data.count} doorbell rings while you were away. Please check the cameras."
-        state.awayDoorbellCount = 0 
     } else {
         msg = "There were ${data.count} motion events at the front door last night. Please check the cameras."
-        state.nightMotionCount = 0 
     }
     
     def targetSpeaker = settings.butlerLrSpeaker ?: globalIndoorSpeaker
@@ -3182,7 +3184,7 @@ def arrivalHandler(evt) {
         if (state.pendingArrivalReport && doorbellCount > 0) {
             greetingToPlay += " Also, there were ${doorbellCount} doorbell rings while you were away. Please check the cameras."
             state.pendingArrivalReport = false 
-            state.awayDoorbellCount = 0
+            // THE FIX: Removed the line that erased the count to 0!
             addToHistory("INCIDENT REPORT: Delivered Global Away Doorbell warning on arrival.")
         }
         // -----------------------------------------------------------
@@ -3256,10 +3258,12 @@ def modeChangeHandler(evt) {
     def awayList = [settings.butlerAwayModes].flatten().findAll { it != null }
     def nightList = [settings.butlerNightModes].flatten().findAll { it != null }
     
+    // Flag the report if exiting the mode, or Wipe the counts clean if entering the mode
     if (state.lastMode in awayList && !(newMode in awayList)) { if (state.awayDoorbellCount > 0) state.pendingArrivalReport = true }
-    if (newMode in awayList) { state.awayDoorbellCount = 0; state.pendingArrivalReport = false }
+    if (newMode in awayList) { state.awayDoorbellCount = 0; state.lastAwayDoorbellCount = 0; state.pendingArrivalReport = false }
+    
     if (state.lastMode in nightList && !(newMode in nightList)) { if (state.nightMotionCount > 0) state.pendingMorningReport = true }
-    if (newMode in nightList) { state.nightMotionCount = 0; state.pendingMorningReport = false }
+    if (newMode in nightList) { state.nightMotionCount = 0; state.lastNightMotionCount = 0; state.pendingMorningReport = false }
     
     state.lastMode = newMode
 }
@@ -3463,6 +3467,15 @@ def buildRoomGreeting(rNum, type, context = [:]) {
             parts << agendaStr
         }
 
+        // --- NEW: MEAL PLAN INJECTION ---
+        if (settings["roomAnnounceMeal_${rNum}"]) {
+            def todayMeal = state.mealPlan ? state.mealPlan[dowString] : ""
+            if (todayMeal && todayMeal.trim() != "") {
+                parts << getBridge("general") + "on the menu for dinner tonight is ${todayMeal}."
+            }
+        }
+        // --------------------------------
+
         if (settings["roomAnnounceNightMotion_${rNum}"]) {
             def count = state.lastNightMotionCount ?: 0
             if (count > 0 || isTest) {
@@ -3558,7 +3571,7 @@ def buildRoomGreeting(rNum, type, context = [:]) {
         // ---------------------------------------
         
         // --- ADULT ONLY: MESSAGE INBOX (MORNING) ---
-        if (!isKidRoom && settings.enableInbox && state.messageInbox && state.messageInbox.size() > 0) {
+        if (!isKidRoom && settings.enableInbox && settings["roomAnnounceInbox_${rNum}"] != false && state.messageInbox && state.messageInbox.size() > 0) {
             def inboxMsgs = state.messageInbox.join(", and ")
             parts << getBridge("general") + "while you were asleep, ${inboxMsgs}."
             if (!isTest) {
@@ -4744,6 +4757,30 @@ def serveNotesPage() {
             """)
         }
         
+        // --- 0.1c DYNAMICALLY BUILD MEAL PLAN WIDGET ---
+        StringBuilder mealPlanHtml = new StringBuilder("<details style='margin-bottom: 15px;'><summary>🍽️ Weekly Meal Plan</summary><div style='padding-top: 15px;'>")
+        mealPlanHtml.append("""
+            <div style='background-color: #222; padding: 15px; border-radius: 8px; border-left: 4px solid #e67e22; margin-bottom: 20px;'>
+                <b style='color:#e67e22;'>Update Menu</b>
+                <form action="${apiUrl}/meals/update?access_token=${state.accessToken}" method="POST" style="margin-top: 10px;">
+        """)
+        def daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        daysOfWeek.each { day ->
+            def currentMeal = state.mealPlan ? state.mealPlan[day] : ""
+            mealPlanHtml.append("""
+                    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <label style="width: 100px; color: #aaa; font-size: 13px; margin: 0;"><b>${day}</b></label>
+                        <input type="text" name="meal_${day}" value="${currentMeal}" placeholder="Enter dinner..." style="flex: 1; margin-bottom: 0; padding: 8px;">
+                    </div>
+            """)
+        }
+        mealPlanHtml.append("""
+                    <button type="submit" style="background-color: #e67e22; padding: 10px; margin-top: 10px;">Save Meal Plan</button>
+                </form>
+            </div>
+        </div></details>
+        """)
+        
         // --- 0.1a DYNAMICALLY BUILD ADD CALENDAR WIDGET ---
         StringBuilder calendarAddHtml = new StringBuilder("""
             <details style='margin-bottom: 15px;'><summary>➕ Add Calendar Event</summary>
@@ -4852,6 +4889,7 @@ def serveNotesPage() {
             staffHtml.append("<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>")
             staffHtml.append("</div>")
         }
+
         // --- 0.1 DYNAMICALLY BUILD APPLIANCE HEALTH ---
         StringBuilder applianceHtml = new StringBuilder()
         if (state.applianceHealthData && state.applianceHealthData.size() > 0) {
@@ -5200,6 +5238,7 @@ def serveNotesPage() {
         html.append(dashboardBtnHtml.toString())
         html.append(chatHtml.toString())
         html.append(calendarHtml.toString())
+        html.append(mealPlanHtml.toString()) // <-- ADDED HERE
         html.append(staffHtml.toString())
         html.append(applianceHtml.toString())
         html.append(calendarAddHtml.toString())
@@ -5303,7 +5342,6 @@ def serveNotesPage() {
         return render(contentType: "text/html", data: "<h3 style='color:white;'>Portal Error:</h3><p style='color:white;'>${e}</p><p style='color:white;'>Please check your Hubitat logs.</p>", status: 500)
     }
 }
-
 def getRedirectHtml() {
     // FIX: Using ../notes tells the browser to go up one directory level from /wifi/announce back to the main /notes page
     return """<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=../notes?access_token=${state.accessToken}"></head><body style="background-color:#0d0d0d;color:#fff;text-align:center;padding-top:50px;font-family:sans-serif;"><h3>Executing command...</h3></body></html>"""
@@ -5723,7 +5761,7 @@ def butlerLrMotionHandler(evt) {
                 enqueueTTS(targetSpeaker, applyDynamicVars(msg), vol, 4)
                 
                 state.pendingMorningReport = false
-                state.nightMotionCount = 0
+                // THE FIX: Removed the line that erased the count to 0!
                 state.lastMorningReportDate = todayDate // Lock it for the rest of the day
                 addToHistory("INCIDENT REPORT: Delivered Global Night Motion warning in Living Room.")
             }
