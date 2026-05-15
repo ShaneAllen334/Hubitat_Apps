@@ -2212,8 +2212,18 @@ def applyDynamicVars(String msg) {
     def interruptStr = "Pardon the interruption"
     if (present.size() == 1) interruptStr = "Pardon the interruption, ${present[0]}"
     else if (present.size() > 1) interruptStr = "Pardon the interruption everyone"
+    
+    // Dynamically build a name string for integrations that pass %name%
+    def dynamicName = "everyone"
+    if (present.size() == 1) dynamicName = present[0]
+    else if (present.size() > 1) dynamicName = present.join(" and ")
 
-    return msg.replace("%time%", tStr).replace("%date%", dStr).replace("%butler%", bName).replace("%timeOfDay%", timeOfDay).replace("%interruption%", interruptStr)
+    return msg.replace("%time%", tStr)
+              .replace("%date%", dStr)
+              .replace("%butler%", bName)
+              .replace("%timeOfDay%", timeOfDay)
+              .replace("%interruption%", interruptStr)
+              .replace("%name%", dynamicName)
 }
 
 // --- WEATHER HELPER ---
@@ -2345,6 +2355,12 @@ def executeTTS(item) {
     }
     
     def finalMsg = msg.replace("&", "and")
+    
+    // --- GLOBAL EMOJI FILTER ---
+    // Strips out all emojis sent from integrations so the TTS engine doesn't read them aloud
+    finalMsg = finalMsg.replaceAll(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/, "")
+    finalMsg = finalMsg.replaceAll(/\s+/, " ").trim()
+    // ---------------------------
     
     // Apply custom Butler Voice if configured and not Default
     if (settings.butlerVoice && settings.butlerVoice != "Default") {
@@ -2832,7 +2848,8 @@ def visitorHandler(evt) {
             if (!messages) messages = getDefaultMessages("PartyMode")
             def randomMsg = applyDynamicVars(messages[new Random().nextInt(messages.size())])
             
-            executeRoutedTTS(randomMsg, settings.partyRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.partyVolume != null ? settings.partyVolume : settings.outdoorVolume, 2, true)
+            // CHANGED to false for Chime
+            executeRoutedTTS(randomMsg, settings.partyRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.partyVolume != null ? settings.partyVolume : settings.outdoorVolume, 2, false)
             atomicState.lastOutdoorGreeting = now
             addToHistory("PARTY MODE: Guest doorbell answered. Queued: '${randomMsg}'")
         }
@@ -2842,7 +2859,9 @@ def visitorHandler(evt) {
             def messages = []
             for (int d = 1; d <= 10; d++) { if (settings["dndMessage_${d}"]) messages << settings["dndMessage_${d}"] }
             if (!messages) messages = getDefaultMessages("DND")
-            executeRoutedTTS(applyDynamicVars(messages[new Random().nextInt(messages.size())]), settings.dndRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2, isDoorbell)
+            
+            // CHANGED to false for Chime
+            executeRoutedTTS(applyDynamicVars(messages[new Random().nextInt(messages.size())]), settings.dndRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.outdoorVolume, 2, false)
             atomicState.lastOutdoorGreeting = now 
         }
     } else if (isAfterHours && isDoorbell) {
@@ -2851,7 +2870,9 @@ def visitorHandler(evt) {
             def messages = []
             for (int d = 1; d <= 15; d++) { if (settings["afterHoursMessage_${d}"]) messages << settings["afterHoursMessage_${d}"] }
             if (!messages) messages = getDefaultMessages("AfterHours")
-            executeRoutedTTS(applyDynamicVars(messages[new Random().nextInt(messages.size())]), settings.afterHoursRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.afterHoursVolume != null ? settings.afterHoursVolume : settings.outdoorVolume, 2, true)
+            
+            // CHANGED to false for Chime
+            executeRoutedTTS(applyDynamicVars(messages[new Random().nextInt(messages.size())]), settings.afterHoursRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.afterHoursVolume != null ? settings.afterHoursVolume : settings.outdoorVolume, 2, false)
             atomicState.lastOutdoorGreeting = now
         }
     } else if (!isDndActive && !isAfterHours && isDoorbell && enableDaytimeDoorbell) {
@@ -2878,7 +2899,8 @@ def visitorHandler(evt) {
             }
             // ----------------------------------
 
-            executeRoutedTTS(applyDynamicVars(greetingToPlay), settings.daytimeRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.daytimeDoorbellVolume != null ? settings.daytimeDoorbellVolume : settings.outdoorVolume, 2, true)
+            // CHANGED to false for Chime
+            executeRoutedTTS(applyDynamicVars(greetingToPlay), settings.daytimeRoutingMode ?: "Outdoor Speaker Only", settings.globalVolume, settings.daytimeDoorbellVolume != null ? settings.daytimeDoorbellVolume : settings.outdoorVolume, 2, false)
             atomicState.lastOutdoorGreeting = now
             
             if (willFollowUp && settings.daytimeDoorContact) {
