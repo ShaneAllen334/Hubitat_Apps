@@ -59,6 +59,10 @@ mappings {
     path("/scout/grocery") { action: [POST: "scoutGroceryEndpoint"] }
     path("/scout/detailing") { action: [POST: "scoutDetailingEndpoint"] }
     path("/scout/cinema") { action: [POST: "scoutCinemaEndpoint"] }
+    
+    // --- PORTAL MAPPINGS ---
+    path("/room/toggle") { action: [POST: "roomToggleEndpoint"] }
+    path("/staff/clean") { action: [POST: "staffCleanEndpoint"] }
 }
 
 def getRoutingOptions() {
@@ -690,6 +694,12 @@ def pageEstate() {
                 input "fallbackEndTime", "time", title: "Window End (e.g., 4:30 PM)", required: true
                 input "fallbackDays", "enum", title: "Active Days", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], multiple: true, defaultValue: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
             }
+        }
+
+        section("Portal Dashboard Integrations", hideable: true, hidden: true) {
+            paragraph "<i>Select the Virtual Override Switches from your 'Advanced Room Occupancy' app to control them from the web portal.</i>"
+            input "portalRoomSwitches", "capability.switch", title: "Room Occupancy Override Switches", multiple: true, required: false
+            input "portalVacuum", "capability.switch", title: "Cleaning Staff / Vacuum Switch (Triggered by Portal)", required: false
         }
     }
 }
@@ -4843,23 +4853,27 @@ def serveNotesPage() {
         // --- 0.1d DYNAMICALLY BUILD ON-DEMAND AI SCOUTS WIDGET ---
         StringBuilder scoutButtonsHtml = new StringBuilder()
         scoutButtonsHtml.append("""
-            <div style='background-color: #222; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3498db; text-align: left;'>
-                <b style='color:#3498db; display:block; margin-bottom:12px; font-size: 14px;'>🧠 On-Demand AI Scouts</b>
-                <div style='display: flex; flex-direction: column; gap: 10px;'>
-                    <form action="${apiUrl}/scout/grocery?access_token=${state.accessToken}" method="POST" style="margin:0;">
-                        <input type="hidden" name="dummy" value="trigger">
-                        <button type="submit" style="background-color: #27ae60; padding: 10px; font-size:14px;">🛒 Grab Grocery Deals</button>
-                    </form>
-                    <form action="${apiUrl}/scout/detailing?access_token=${state.accessToken}" method="POST" style="margin:0;">
-                        <input type="hidden" name="dummy" value="trigger">
-                        <button type="submit" style="background-color: #e67e22; padding: 10px; font-size:14px;">🚗 Grab Detailing Info</button>
-                    </form>
-                    <form action="${apiUrl}/scout/cinema?access_token=${state.accessToken}" method="POST" style="margin:0;">
-                        <input type="hidden" name="dummy" value="trigger">
-                        <button type="submit" style="background-color: #9b59b6; padding: 10px; font-size:14px;">🎬 Grab Movie Information</button>
-                    </form>
+            <details style='margin-bottom: 15px;'>
+                <summary>🧠 On-Demand AI Scouts</summary>
+                <div style='padding-top: 15px;'>
+                    <div style='background-color: #222; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; text-align: left;'>
+                        <div style='display: flex; flex-direction: column; gap: 10px;'>
+                            <form action="${apiUrl}/scout/grocery?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                                <input type="hidden" name="dummy" value="trigger">
+                                <button type="submit" style="background-color: #27ae60; padding: 10px; font-size:14px;">🛒 Grab Grocery Deals</button>
+                            </form>
+                            <form action="${apiUrl}/scout/detailing?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                                <input type="hidden" name="dummy" value="trigger">
+                                <button type="submit" style="background-color: #e67e22; padding: 10px; font-size:14px;">🚗 Grab Detailing Info</button>
+                            </form>
+                            <form action="${apiUrl}/scout/cinema?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                                <input type="hidden" name="dummy" value="trigger">
+                                <button type="submit" style="background-color: #9b59b6; padding: 10px; font-size:14px;">🎬 Grab Movie Information</button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </details>
         """)
         
         // --- 0.1b DYNAMICALLY BUILD CHAT WIDGET ---
@@ -4944,10 +4958,19 @@ def serveNotesPage() {
             def statusText = daysRemaining == 0 ? "Deploying Imminently" : "Standby (${daysRemaining} Days)"
             def dayPlural = daysRemaining == 1 ? "day" : "days"
             
-            staffHtml.append("<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColor}; margin-bottom: 15px; font-size: 14px;'>")
-            staffHtml.append("<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>🧹 Cleaning Staff Schedule</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>")
+            staffHtml.append("<details style='margin-bottom: 15px;'><summary>🧹 Cleaning Staff Schedule</summary><div style='padding-top: 15px;'>")
+            staffHtml.append("<div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColor}; font-size: 14px;'>")
+            staffHtml.append("<div style='display: flex; justify-content: space-between; margin-bottom: 5px;'><b style='color: #fff;'>Status</b><span style='color:${statusColor}; font-weight: bold;'>${statusText}</span></div>")
             staffHtml.append("<div style='color: #aaa; font-size: 13px; line-height: 1.4;'><b>Last Full Sweep:</b> ${daysIdle} days ago.<br><b>Mandate:</b> The Butler will automatically deploy the staff for a deep clean in ${daysRemaining} ${dayPlural}.</div>")
-            staffHtml.append("</div>")
+            
+            // Clean Now Button (ADDED DUMMY INPUT HERE)
+            staffHtml.append("""
+                <form action="${apiUrl}/staff/clean?access_token=${state.accessToken}" method="POST" style="margin-top: 10px; margin-bottom: 0;">
+                    <input type="hidden" name="dummy" value="trigger">
+                    <button type="submit" style="background-color: #27ae60; padding: 8px; font-size: 13px;">🧹 Deploy Staff Now</button>
+                </form>
+            """)
+            staffHtml.append("</div></div></details>")
         }
 
         // --- 0.1 DYNAMICALLY BUILD APPLIANCE HEALTH ---
@@ -4970,14 +4993,18 @@ def serveNotesPage() {
         StringBuilder trashHtml = new StringBuilder()
         if (state.trashData) {
             trashHtml.append("""
-                <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #27ae60; margin-bottom: 15px;'>
-                    <b style='color:#fff;'>🗑️ Waste Management</b><br>
-                    <table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; margin-top: 10px; color: #aaa;'>
-                        <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0; width: 40%;'><b>Bin Status</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.status}</td></tr>
-                        <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0;'><b>Capacity & Hygiene</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.fill}% Full | ${state.trashData.hygiene}</td></tr>
-                        <tr><td style='padding: 6px 0;'><b>Next Collection</b></td><td style='padding: 6px 0; color:#27ae60;'><b>${state.trashData.nextPickup}</b></td></tr>
-                    </table>
-                </div>
+                <details style='margin-bottom: 15px;'>
+                    <summary>🗑️ Waste Management</summary>
+                    <div style='padding-top: 15px;'>
+                        <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #27ae60;'>
+                            <table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; color: #aaa;'>
+                                <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0; width: 40%;'><b>Bin Status</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.status}</td></tr>
+                                <tr style='border-bottom: 1px solid #333;'><td style='padding: 6px 0;'><b>Capacity & Hygiene</b></td><td style='padding: 6px 0; color:#fff;'>${state.trashData.fill}% Full | ${state.trashData.hygiene}</td></tr>
+                                <tr><td style='padding: 6px 0;'><b>Next Collection</b></td><td style='padding: 6px 0; color:#27ae60;'><b>${state.trashData.nextPickup}</b></td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </details>
             """)
         }
 
@@ -5114,6 +5141,10 @@ def serveNotesPage() {
                     def emailSub = java.net.URLEncoder.encode("${cName} Contact Info", "UTF-8")
                     def emailMsg = java.net.URLEncoder.encode("Here is the contact information for ${cName}:\n${cInfo}", "UTF-8")
                     
+                    // Tel link extraction
+                    def telNum = cInfo.replaceAll("[^0-9+]", "")
+                    if (!telNum) telNum = cInfo
+                    
                     directoryHtml.append("""
                         <div class='note-item' style='display: flex; flex-direction: column; border-left-color: #8e44ad; background: #222;'>
                             <div style='display: flex; justify-content: space-between; align-items: center;'>
@@ -5126,6 +5157,7 @@ def serveNotesPage() {
                             <div style='display: flex; gap: 10px; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;'>
                                 <a href='sms:?&body=${smsMsg}' style='flex: 1; text-decoration: none;'><div style='background: #27ae60; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>💬 Text Info</div></a>
                                 <a href='mailto:?subject=${emailSub}&body=${emailMsg}' style='flex: 1; text-decoration: none;'><div style='background: #3498db; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>✉️ Email Info</div></a>
+                                <a href='tel:${telNum}' style='flex: 1; text-decoration: none;'><div style='background: #e67e22; color: white; padding: 8px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 12px;'>📞 Call</div></a>
                             </div>
                         </div>
                     """)
@@ -5232,7 +5264,42 @@ def serveNotesPage() {
             quickReplyHtml.append("</div></div></details>")
         }
 
-// --- 6. DASHBOARD SHORTCUT ---
+        // --- 5.5 DYNAMICALLY BUILD ROOM OCCUPANCY ---
+        StringBuilder roomsHtml = new StringBuilder()
+        if (settings.portalRoomSwitches) {
+            roomsHtml.append("<details style='margin-bottom: 15px;'><summary>🏠 Room Occupancy</summary><div style='padding-top: 15px;'><div style='display: flex; flex-wrap: wrap; gap: 10px;'>")
+            
+            settings.portalRoomSwitches.sort { it.displayName }.each { dev ->
+                def isOcc = dev.currentValue("switch") == "on"
+                def sColor = isOcc ? "#27ae60" : "#c0392b"
+                def sText = isOcc ? "Occupied" : "Empty"
+                def toggleCmd = isOcc ? "off" : "on"
+                def btnText = isOcc ? "Mark Empty" : "Mark Occupied"
+                def btnColor = isOcc ? "#c0392b" : "#27ae60"
+                
+                // Clean the device name of redundant tags
+                def cleanName = dev.displayName.replaceAll(/(?i)\(Virtual\)/, "").replaceAll(/(?i)Occupied/, "").replaceAll(/(?i)Override/, "").replaceAll(/(?i)Switch/, "").trim()
+                cleanName = cleanName.replaceAll(/\s+/, " ")
+                if (!cleanName) cleanName = dev.displayName // Fallback
+                
+                roomsHtml.append("""
+                    <div style='background-color: #1e1e1e; padding: 12px; border-radius: 6px; border-left: 4px solid ${sColor}; flex: 1 1 calc(50% - 10px); box-sizing: border-box; font-size: 14px; display: flex; flex-direction: column; justify-content: space-between;'>
+                        <div style='margin-bottom: 10px;'>
+                            <b>${cleanName}</b><br>
+                            <span style='color:${sColor}; font-weight: bold;'>${sText}</span>
+                        </div>
+                        <form action="${apiUrl}/room/toggle?access_token=${state.accessToken}" method="POST" style="margin:0;">
+                            <input type="hidden" name="deviceId" value="${dev.id}">
+                            <input type="hidden" name="command" value="${toggleCmd}">
+                            <button type="submit" style="padding: 6px 10px; margin: 0; font-size: 12px; background-color: ${btnColor}; color: #fff; border-radius: 4px; width: 100%;">${btnText}</button>
+                        </form>
+                    </div>
+                """)
+            }
+            roomsHtml.append("</div></div></details>")
+        }
+
+        // --- 6. DASHBOARD SHORTCUT ---
         StringBuilder dashboardBtnHtml = new StringBuilder()
         if (settings.taskDashboardUrl) {
             def dueCount = 0
@@ -5326,6 +5393,7 @@ def serveNotesPage() {
         // --- 2. ESTATE MANAGEMENT ---
         html.append("<details class='master-section'><summary>🏰 Estate Management</summary><div class='master-content'>")
         html.append(dashboardBtnHtml.toString())
+        html.append(roomsHtml.toString())
         html.append(trashHtml.toString())
         html.append(staffHtml.toString())
         html.append(applianceHtml.toString())
@@ -7497,3 +7565,58 @@ def scoutCinemaEndpoint() {
 def triggerGroceryScout() { executeGroceryScout(true) }
 def triggerVehicleScout() { executeVehicleScout(true) }
 def triggerCinemaScout() { executeCinemaScout(true) }
+
+// --- PORTAL ENDPOINTS ---
+def roomToggleEndpoint() {
+    try {
+        ensureStateMaps()
+        def formParams = [:]
+        
+        // Safely parse the POST body manually to avoid Hubitat's implicit 'params' shadow crash
+        def bodyText = request?.body ? request.body.toString() : ""
+        if (bodyText) {
+            bodyText.split('&').each {
+                def parts = it.split('=')
+                if (parts.size() > 1) {
+                    formParams[parts[0]] = java.net.URLDecoder.decode(parts[1], "UTF-8")
+                }
+            }
+        }
+        
+        def dId = formParams.deviceId
+        def cmd = formParams.command
+        
+        if (dId && cmd) {
+            // Flatten forces it into a list so .find() doesn't crash if you only have 1 room
+            def allSwitches = [settings.portalRoomSwitches].flatten().findAll { it != null }
+            def dev = allSwitches.find { it.id == dId }
+            
+            if (dev) {
+                if (cmd == "on") dev.on()
+                else dev.off()
+                addToHistory("PORTAL: Room '${dev.displayName}' manually marked as ${cmd == 'on' ? 'Occupied' : 'Empty'}.")
+            }
+        }
+    } catch(Exception e) { 
+        log.warn "Voice Butler Portal - Room Toggle Error: ${e}" 
+    }
+    
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
+
+def staffCleanEndpoint() {
+    try {
+        ensureStateMaps()
+        def vac = settings.portalVacuum
+        if (vac) {
+            vac.on()
+        }
+        // Broadcast to other apps (like Advanced Energy or the Staff Scheduler)
+        sendLocationEvent(name: "voiceButlerStaffCommand", value: "clean", isStateChange: true)
+        addToHistory("PORTAL: Cleaning staff deployed manually.")
+    } catch(Exception e) { 
+        log.warn "Voice Butler Portal - Staff Clean Error: ${e}" 
+    }
+    
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
+}
