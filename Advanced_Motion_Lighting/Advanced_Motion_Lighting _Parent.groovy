@@ -22,12 +22,15 @@ def mainPage() {
     dynamicPage(name: "mainPage", title: "Advanced Motion Lighting", install: true, uninstall: true) {
 
         section("Global System Dashboard") {
-            if (pauseSystem) {
+        
+            if (state.emergencyActive) {
+                paragraph "<div style='background-color: #dc3545; color: white; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold; font-size: 16px; text-align: center;'>🚨 EMERGENCY OVERRIDE ACTIVE 🚨<br>Smoke or CO detected! All lighting rules are paused.</div>"
+            } else if (pauseSystem) {
                 paragraph "<div style='background-color: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 5px; font-weight: bold; font-size: 16px; text-align: center;'>⚠️ GLOBAL SYSTEM PAUSED ⚠️<br>All lighting rules are currently disabled.</div>"
             }
             
             input "btnRefresh", "button", title: "🔄 Refresh Dashboard Data Now"
-            
+      
             def children = getChildApps()
             if (children) {
                 def tableHTML = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
@@ -49,9 +52,11 @@ def mainPage() {
                 children.each { child ->
                     try {
                         def z = child.getZoneStatus()
+                   
                         if (z) {
                             def lightColor = z.light.contains("ON") ? "green" : "grey"
                             def rowBg = (renderedCount % 2 == 0) ? "#ffffff" : "#f9f9f9"
+                   
                             if (z.health) healthData.addAll(z.health)
 
                             tableHTML += "<tr style='border-bottom: 1px solid #ddd; background-color: ${rowBg};'>"
@@ -62,6 +67,7 @@ def mainPage() {
                             tableHTML += "<td style='padding: 8px;'>${z.status}${triggerText}</td>"
                             tableHTML += "<td style='padding: 8px;'>${z.timer}</td>"
                             tableHTML += "</tr>"
+ 
                             renderedCount++
                             
                             // Process ROI Data
@@ -114,6 +120,12 @@ def mainPage() {
             input "masterEnableSwitch", "capability.switch", title: "Master Disable Switch", required: false
             input "enableGlobalHealth", "bool", title: "Enable Global Battery & Health Watchdog?", defaultValue: false, submitOnChange: true
         }
+
+        section("Emergency Safety Override") {
+            paragraph "If any of these sensors detect an event, the entire lighting system will automatically pause, allowing your safety apps to take over and preventing this app from turning lights off."
+            input "smokeSensors", "capability.smokeDetector", title: "Smoke Detectors", multiple: true, required: false
+            input "coSensors", "capability.carbonMonoxideDetector", title: "Carbon Monoxide (CO) Detectors", multiple: true, required: false
+        }
         
         section("Global Color Temperature") {
             input "globalCTVar", "string", title: "Global CT Hub Variable Name (Exact text)", required: false
@@ -147,10 +159,29 @@ def initialize() {
     if (arrivalMode) subscribe(location, "mode", modeChangeHandler)
     if (arrivalShadesSensor) subscribe(arrivalShadesSensor, "contact", shadesContactHandler)
     if (globalCTVar) subscribe(location, "variable.${globalCTVar}", globalCTHandler)
+    
+    // Safety Subscriptions
+    if (smokeSensors) subscribe(smokeSensors, "smoke", emergencyHandler)
+    if (coSensors) subscribe(coSensors, "carbonMonoxide", emergencyHandler)
 }
 
 def isSystemPaused() {
-    return pauseSystem == true
+    return (pauseSystem == true || state.emergencyActive == true)
+}
+
+def emergencyHandler(evt) {
+    def isEmergency = false
+    
+    if (smokeSensors?.any { it.currentValue("smoke") == "detected" }) isEmergency = true
+    if (coSensors?.any { it.currentValue("carbonMonoxide") == "detected" }) isEmergency = true
+
+    if (isEmergency && !state.emergencyActive) {
+        log.warn "🚨 EMERGENCY DETECTED! Pausing all lighting rules."
+        state.emergencyActive = true
+    } else if (!isEmergency && state.emergencyActive) {
+        log.info "✅ Emergency cleared. Resuming lighting rules."
+        state.emergencyActive = false
+    }
 }
 
 def globalCTHandler(evt) {
