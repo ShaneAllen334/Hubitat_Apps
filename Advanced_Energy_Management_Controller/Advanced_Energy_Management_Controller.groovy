@@ -21,7 +21,7 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "Energy Management Core", install: true, uninstall: true) {
         
-        section("Dashboard Actions") {
+        section("Dashboard Actions", hideable: true, hidden: true) {
             href(name: "refreshPage", title: "🔄 Refresh Data", page: "mainPage")
             href(name: "maintenancePage", title: "🛠️ Hardware Maintenance Reset", description: "Clear health warnings after servicing an appliance.", page: "maintenancePage")
             href(name: "clearDataPage", title: "🗑️ Clear All Data", description: "Reset all history, baselines, and counters.", page: "clearDataPage")
@@ -53,18 +53,22 @@ def mainPage() {
                     def usedKwh = currentEnergy - baselineEnergy
                     if (usedKwh < 0) usedKwh = 0 
                     def estCost = usedKwh * kwhRate
-                    def costStr = String.format("\$%.2f", estCost)
+                    def costStr = String.format("\$%.2f", estCost.toDouble())
                     
                     // Health Check & Compressor Status
                     def health = "<span style='color: green;'>GOOD</span>"
                     def struggle = state["${key}_struggleCount"] ?: 0
                     
-                    if (state["${key}_creepWarning"]) health = "<span style='color: orange;'>CREEPING WATTS</span>"
-                    if (struggle >= 3 && struggle < 6) health = "<span style='color: orange;'>CLEAN COILS</span>"
-                    if (struggle >= 6) health = "<span style='color: red;'>STRUGGLING</span>"
-                    if (state["${key}_spikeWarning"]) health = "<span style='color: red;'>SPIKE DETECTED</span>"
-                    if (state["${key}_tempWarningActive"]) health = "<span style='color: red;'>HIGH TEMP ALERT</span>"
-                    if (state["${key}_tempCreepWarning"]) health = "<span style='color: orange;'>TEMP CREEPING</span>"
+                    if (state["${key}_learningPhaseComplete"] != true) {
+                        health = "<span style='color: #8a6d3b;'>LEARNING BASELINE</span>"
+                    } else {
+                        if (state["${key}_creepWarning"]) health = "<span style='color: orange;'>CREEPING WATTS</span>"
+                        if (struggle >= 3 && struggle < 6) health = "<span style='color: orange;'>CLEAN COILS</span>"
+                        if (struggle >= 6) health = "<span style='color: red;'>STRUGGLING</span>"
+                        if (state["${key}_spikeWarning"]) health = "<span style='color: red;'>SPIKE DETECTED</span>"
+                        if (state["${key}_tempWarningActive"]) health = "<span style='color: red;'>HIGH TEMP ALERT</span>"
+                        if (state["${key}_tempCreepWarning"]) health = "<span style='color: orange;'>TEMP CREEPING</span>"
+                    }
                     
                     def powerColor = currentPower > 10 ? "blue" : "black"
                     
@@ -90,7 +94,7 @@ def mainPage() {
                     def currentRunMins = Math.round(currentRunMs / 60000.0)
                     lastRunStr = "Running (${currentRunMins} min)"
                 } else if (state["${key}_lastRunLengthMins"]) {
-                    lastRunStr = "${Math.round(state["${key}_lastRunLengthMins"])} min"
+                    lastRunStr = "${Math.round(state["${key}_lastRunLengthMins"].toString().toDouble())} min"
                 }
                 
                 def runCount = state["${key}_7DayRunCount"] ?: 0
@@ -124,6 +128,79 @@ def mainPage() {
             }
             statusText += "</table>"
             
+            // Baseline Diagnostics & Learning Progress
+            statusText += "<b>Baseline Diagnostics & Learning Progress</b><br>"
+            statusText += "<p style='font-size: 11px; color: #555; margin-top: 0px;'>Displays the locked healthy baseline for each appliance compared to its current average performance. Alignment indicates how far the appliance has deviated from its baseline, warning of creeping averages before hardware fails.</p>"
+            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fdfdfd; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            statusText += "<tr style='background-color: #e0e0e0; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>Learning Status</th><th style='padding: 8px;'>Baseline (Power / Cycle)</th><th style='padding: 8px;'>Current (Power / Cycle)</th><th style='padding: 8px;'>Alignment</th></tr>"
+
+            appliances.each { key, name ->
+                def pMeter = settings["${key}Power"]
+                if (pMeter) {
+                    def isLearned = state["${key}_learningPhaseComplete"]
+                    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
+                    def startTime = state["${key}_learningStartTime"] ?: now()
+                    def elapsedMs = now() - startTime
+                    def elapsedDays = elapsedMs / 86400000.0
+                    def daysRemaining = learningDays - elapsedDays
+                    if (daysRemaining < 0) daysRemaining = 0
+
+                    def learningStr = ""
+                    if (isLearned) {
+                        learningStr = "<span style='color: green; font-weight: bold;'>✅ Locked</span>"
+                    } else {
+                        learningStr = "<span style='color: #8a6d3b;'>Learning: ${String.format("%.1f", elapsedDays.toDouble())} / ${learningDays} d<br><span style='font-size: 10px;'>(${String.format("%.1f", daysRemaining.toDouble())} days left)</span></span>"
+                    }
+
+                    def basePwr = state["${key}_baselineAvg"] ? "${Math.round(state["${key}_baselineAvg"].toString().toDouble())}W" : "--"
+                    def currPwr = state["${key}_avgPower"] ? "${Math.round(state["${key}_avgPower"].toString().toDouble())}W" : "--"
+
+                    def baseCycle = state["${key}_baselineCycleMins"] ? "${Math.round(state["${key}_baselineCycleMins"].toString().toDouble())}m" : "--"
+                    def runCount7D = state["${key}_7DayRunCount"] ?: 0
+                    def totalMins = state["${key}_7DayTotalCycleMins"] ?: 0.0
+                    def currCycle = runCount7D > 0 ? "${Math.round(totalMins / runCount7D)}m" : "--"
+
+                    // Hide Cycle metrics for non-compressor units to keep it clean
+                    if (key != "refrigerator" && key != "chestFreezer") {
+                        baseCycle = "N/A"
+                        currCycle = "N/A"
+                    }
+
+                    def alignment = "<span style='color: gray;'>Calibrating...</span>"
+                    if (isLearned) {
+                        def bPwrVal = state["${key}_baselineAvg"]?.toString()?.toDouble() ?: 0.0
+                        def cPwrVal = state["${key}_avgPower"]?.toString()?.toDouble() ?: 0.0
+                        def pwrHealth = "Good"
+                        def pwrColor = "green"
+                        
+                        if (bPwrVal > 0) {
+                            def variance = ((cPwrVal - bPwrVal) / bPwrVal) * 100
+                            if (variance > 20) { pwrHealth = "Creeping"; pwrColor = "orange" }
+                            else if (variance < -20) { pwrHealth = "Below Normal"; pwrColor = "blue" }
+                        }
+
+                        if (key == "refrigerator" || key == "chestFreezer") {
+                            def bCycVal = state["${key}_baselineCycleMins"]?.toString()?.toDouble() ?: 0.0
+                            def cCycVal = runCount7D > 0 ? (totalMins / runCount7D) : 0.0
+                            def cycHealth = "Good"
+                            def cycColor = "green"
+                            
+                            if (bCycVal > 0) {
+                                 def variance = ((cCycVal - bCycVal) / bCycVal) * 100
+                                 if (variance > 30) { cycHealth = "Struggling"; cycColor = "red" }
+                                 else if (variance > 15) { cycHealth = "Elevated"; cycColor = "orange" }
+                            }
+                            alignment = "<span style='color: ${pwrColor};'>Pwr: ${pwrHealth}</span><br><span style='color: ${cycColor};'>Cyc: ${cycHealth}</span>"
+                        } else {
+                            alignment = "<span style='color: ${pwrColor}; font-weight:bold;'>${pwrHealth}</span>"
+                        }
+                    }
+
+                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px;'>${learningStr}</td><td style='padding: 8px;'>${basePwr} / ${baseCycle}</td><td style='padding: 8px;'>${currPwr} / ${currCycle}</td><td style='padding: 8px;'>${alignment}</td></tr>"
+                }
+            }
+            statusText += "</table>"
+            
             // ROI Table for Scheduled Savings & Maintenance
             statusText += "<b>Financial Savings (ROI)</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #eef9f0; border: 1px solid #ccc; margin-bottom: 15px;'>"
             statusText += "<tr style='background-color: #dcedc8; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>Sch. Savings</th><th style='padding: 8px;'>Maint. Savings</th><th style='padding: 8px;'>Total (7D)</th></tr>"
@@ -135,27 +212,29 @@ def mainPage() {
                 def appTotal = schSavings + maintSavings
                 totalSavings += appTotal
                 
-                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", schSavings)}</td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", maintSavings)}</td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", appTotal)}</td></tr>"
+                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", schSavings.toDouble())}</td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", maintSavings.toDouble())}</td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", appTotal.toDouble())}</td></tr>"
             }
-            statusText += "<tr style='background-color: #c5e1a5;'><td style='padding: 8px;' colspan='3'><b>Total Saved</b></td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", totalSavings)}</td></tr>"
+            statusText += "<tr style='background-color: #c5e1a5;'><td style='padding: 8px;' colspan='3'><b>Total Saved</b></td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", totalSavings.toDouble())}</td></tr>"
             statusText += "</table>"
             
             paragraph statusText
         }
 
-        section("Global Core Settings") {
+        section("Global Core Settings", hideable: true, hidden: true) {
+            input "enableVoiceButler", "bool", title: "Enable Advanced Voice Butler Integration?", defaultValue: true, submitOnChange: true, description: "Sends health alerts and cycle completions to the Butler for smart-routing."
             input "costPerKwh", "decimal", title: "Electricity Cost (\$ per kWh)", required: true, defaultValue: 0.13, description: "Your default rate is \$0.13."
             input "enableMaintenanceRoi", "bool", title: "Track ROI for Maintenance (Coil Cleaning, etc.)?", defaultValue: true, required: false, description: "Calculates savings when an appliance runs more efficiently after a health reset."
+            input "learningCurveDays", "number", title: "Baseline Learning Period (Days)", defaultValue: 7, required: true, description: "Number of days the app will monitor to learn what a 'normal' baseline looks like before alerting you."
         }
 
-        section("Appliance Scheduling & Shutdown") {
+        section("Appliance Scheduling & Shutdown", hideable: true, hidden: true) {
             input "scheduleStart", "time", title: "Time to turn appliances OFF", required: false
             input "scheduleEnd", "time", title: "Time to turn appliances ON", required: false
-            input "safeShutdownThreshold", "number", title: "Safe Shutdown Power Threshold (Watts)", defaultValue: 15, required: true, description: "Appliance stays on if drawing more than this."
+            input "safeShutdownThreshold", "decimal", title: "Safe Shutdown Power Threshold (Watts)", defaultValue: 15.0, required: true, description: "Appliance stays on if drawing more than this."
             paragraph "Note: Refrigerator and Chest Freezer are permanently excluded from time-based schedule shutdowns."
         }
         
-        section("Manual Override Button") {
+        section("Manual Override Button", hideable: true, hidden: true) {
             input "overrideButton", "capability.pushableButton", title: "Override Button(s)", required: false, multiple: true
             input "legacyOverrideButton", "capability.button", title: "Legacy Button Devices (Use this if your button didn't show in the list above)", required: false, multiple: true
             input "buttonNumber", "text", title: "Button Number(s) (Comma separated, e.g., 1, 2)", defaultValue: "1", required: false, description: "Leave blank to allow all buttons on the device."
@@ -170,12 +249,12 @@ def mainPage() {
             input "refrigeratorTemp", "capability.temperatureMeasurement", title: "Internal Temperature Sensor", required: false
             input "refrigeratorRoomTemp", "capability.temperatureMeasurement", title: "Room Temperature Sensor", required: false
             input "refrigeratorOutsideTemp", "capability.temperatureMeasurement", title: "Outside Air Temperature Sensor", required: false
-            input "refrigeratorTempThreshold", "number", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 42, required: false
-            input "refrigeratorSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 800, required: false
-            input "refrigeratorRunWatts", "number", title: "Compressor Running Threshold (Watts)", defaultValue: 80, required: false, description: "Watts required to consider the compressor 'running'."
-            input "refrigeratorStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "refrigeratorDebounce", "number", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
-            input "refrigeratorMaintenanceHours", "number", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000, required: false
+            input "refrigeratorTempThreshold", "decimal", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 42.0, required: false
+            input "refrigeratorSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 800.0, required: false
+            input "refrigeratorRunWatts", "decimal", title: "Compressor Running Threshold (Watts)", defaultValue: 80.0, required: false, description: "Watts required to consider the compressor 'running'."
+            input "refrigeratorStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "refrigeratorDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
+            input "refrigeratorMaintenanceHours", "decimal", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000.0, required: false
             
             paragraph "Active Protection: If this switch is ever turned OFF manually or by another app, it will be instantly forced back ON. (Mode-based shutdown has been disabled for safety)."
             
@@ -203,12 +282,12 @@ def mainPage() {
             input "chestFreezerTemp", "capability.temperatureMeasurement", title: "Internal Temperature Sensor", required: false
             input "chestFreezerRoomTemp", "capability.temperatureMeasurement", title: "Room Temperature Sensor", required: false
             input "chestFreezerOutsideTemp", "capability.temperatureMeasurement", title: "Outside Air Temperature Sensor", required: false
-            input "chestFreezerTempThreshold", "number", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 15, required: false
-            input "chestFreezerSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 800, required: false
-            input "chestFreezerRunWatts", "number", title: "Compressor Running Threshold (Watts)", defaultValue: 80, required: false, description: "Watts required to consider the compressor 'running'."
-            input "chestFreezerStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "chestFreezerDebounce", "number", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
-            input "chestFreezerMaintenanceHours", "number", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000, required: false
+            input "chestFreezerTempThreshold", "decimal", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 15.0, required: false
+            input "chestFreezerSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 800.0, required: false
+            input "chestFreezerRunWatts", "decimal", title: "Compressor Running Threshold (Watts)", defaultValue: 80.0, required: false, description: "Watts required to consider the compressor 'running'."
+            input "chestFreezerStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "chestFreezerDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
+            input "chestFreezerMaintenanceHours", "decimal", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000.0, required: false
             
             paragraph "Active Protection: If this switch is ever turned OFF manually or by another app, it will be instantly forced back ON. (Mode-based shutdown has been disabled for safety)."
             
@@ -233,10 +312,10 @@ def mainPage() {
             input "hotWaterHeaterSwitch", "capability.switch", title: "Appliance Switch", required: false
             input "hotWaterHeaterPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
             input "hotWaterHeaterEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "hotWaterHeaterSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 6000, required: false
-            input "hotWaterHeaterRunWatts", "number", title: "Heating Threshold (Watts)", defaultValue: 1000, required: false
-            input "hotWaterHeaterStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "hotWaterHeaterDebounce", "number", title: "Heating Pause/Debounce Time (Minutes)", defaultValue: 5, required: false, description: "Wait this long after power drops before declaring cycle complete."
+            input "hotWaterHeaterSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 6000.0, required: false
+            input "hotWaterHeaterRunWatts", "decimal", title: "Heating Threshold (Watts)", defaultValue: 1000.0, required: false
+            input "hotWaterHeaterStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "hotWaterHeaterDebounce", "decimal", title: "Heating Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
             
             paragraph "Mode-Based Power Control"
             input "hotWaterHeaterTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
@@ -244,7 +323,7 @@ def mainPage() {
             
             paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
             input "hotWaterHeaterEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "hotWaterHeaterCoolDownMins", "number", title: "Cool Down Duration (Minutes)", defaultValue: 120, required: false
+            input "hotWaterHeaterCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
             
             paragraph "Auto-Off Settings"
             input "hotWaterHeaterAutoOff", "bool", title: "Turn OFF switch automatically when heating cycle finishes?", defaultValue: false, required: false
@@ -271,10 +350,10 @@ def mainPage() {
             input "washerDryerSwitch", "capability.switch", title: "Appliance Switch", required: false
             input "washerDryerPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
             input "washerDryerEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "washerDryerSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 3000, required: false
-            input "washerDryerRunWatts", "number", title: "Cycle Running Threshold (Watts)", defaultValue: 20, required: false
-            input "washerDryerStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "washerDryerDebounce", "number", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15, required: false, description: "Wait this long after power drops before declaring cycle complete."
+            input "washerDryerSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 3000.0, required: false
+            input "washerDryerRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 20.0, required: false
+            input "washerDryerStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "washerDryerDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
             
             paragraph "Mode-Based Power Control"
             input "washerDryerTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
@@ -282,7 +361,7 @@ def mainPage() {
             
             paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
             input "washerDryerEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "washerDryerCoolDownMins", "number", title: "Cool Down Duration (Minutes)", defaultValue: 120, required: false
+            input "washerDryerCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
             
             paragraph "Auto-Off Settings"
             input "washerDryerAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
@@ -309,10 +388,10 @@ def mainPage() {
             input "dishwasherSwitch", "capability.switch", title: "Appliance Switch", required: false
             input "dishwasherPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
             input "dishwasherEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "dishwasherSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 1800, required: false
-            input "dishwasherRunWatts", "number", title: "Cycle Running Threshold (Watts)", defaultValue: 15, required: false
-            input "dishwasherStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "dishwasherDebounce", "number", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15, required: false, description: "Wait this long after power drops before declaring cycle complete."
+            input "dishwasherSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 1800.0, required: false
+            input "dishwasherRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 15.0, required: false
+            input "dishwasherStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "dishwasherDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
             
             paragraph "Mode-Based Power Control"
             input "dishwasherTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
@@ -320,7 +399,7 @@ def mainPage() {
             
             paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
             input "dishwasherEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "dishwasherCoolDownMins", "number", title: "Cool Down Duration (Minutes)", defaultValue: 120, required: false
+            input "dishwasherCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
             
             paragraph "Auto-Off Settings"
             input "dishwasherAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
@@ -347,10 +426,10 @@ def mainPage() {
             input "microwaveSwitch", "capability.switch", title: "Appliance Switch", required: false
             input "microwavePower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
             input "microwaveEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "microwaveSpike", "number", title: "Spike Warning Threshold (Watts)", defaultValue: 2000, required: false
-            input "microwaveRunWatts", "number", title: "Cycle Running Threshold (Watts)", defaultValue: 15, required: false
-            input "microwaveStartDelay", "number", title: "Cycle Start Delay (Minutes)", defaultValue: 1, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "microwaveDebounce", "number", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 1, required: false, description: "Wait this long after power drops before declaring cycle complete."
+            input "microwaveSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 2000.0, required: false
+            input "microwaveRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 15.0, required: false
+            input "microwaveStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
+            input "microwaveDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
             
             paragraph "Mode-Based Power Control"
             input "microwaveTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
@@ -358,7 +437,7 @@ def mainPage() {
             
             paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
             input "microwaveEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "microwaveCoolDownMins", "number", title: "Cool Down Duration (Minutes)", defaultValue: 120, required: false
+            input "microwaveCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
             
             paragraph "Auto-Off Settings"
             input "microwaveAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
@@ -409,7 +488,19 @@ def doResetPage(params) {
         state.remove("${key}_tempWarningActive")
         state.remove("${key}_tempCreepWarning")
         state.remove("${key}_totalRunHours")
-   
+    
+        // Clear Learning States
+        state.remove("${key}_learningCyclesCount")
+        state.remove("${key}_learningCyclesTotalMins")
+        state.remove("${key}_learningRoomTempTotal")
+        state.remove("${key}_learningOutsideTempTotal")
+        state.remove("${key}_baselineRoomTemp")
+        state.remove("${key}_baselineOutsideTemp")
+        
+        // Reset Day-Based Learning Clock
+        state["${key}_learningStartTime"] = now()
+        state["${key}_learningPhaseComplete"] = false
+
         // Capture inefficient state before reset for ROI tracking
         if (state["${key}_baselineAvg"] && state["${key}_avgPower"]) {
             def currentAvg = state["${key}_avgPower"].toString().toDouble()
@@ -427,11 +518,11 @@ def doResetPage(params) {
         
         state["${key}_context"] = "Maintenance Reset"
         
-        log.info "Maintenance reset performed for ${name}."
+        log.info "Maintenance reset performed for ${name}. Restarting learning phase."
         
         dynamicPage(name: "doResetPage", title: "${name} Reset Complete", nextPage: "mainPage") {
             section() {
-                paragraph "✅ The health and maintenance warnings for your ${name} have been successfully cleared.\n\nThe system has refreshed the baselines and will begin tracking its normal operations anew."
+                paragraph "✅ The health and maintenance warnings for your ${name} have been successfully cleared.\n\nThe system has refreshed the baselines and will begin monitoring its normal operations anew over the next ${settings["learningCurveDays"] ?: 7} days to learn a fresh baseline."
             }
         }
     } else {
@@ -458,8 +549,8 @@ def clearAllData() {
         state.remove("${key}_avgPower")
         state.remove("${key}_idlePowerAvg")
         state.remove("${key}_roiSavings")
-        state.remove("${key}_maintRoiSavings") // Cleared new maintenance ROI
-        state.remove("${key}_inefficientPowerMark") // Cleared inefficient mark
+        state.remove("${key}_maintRoiSavings") 
+        state.remove("${key}_inefficientPowerMark") 
         state.remove("${key}_totalRunHours")
         state.remove("${key}_struggleCount")
         state.remove("${key}_7DayRunCount")
@@ -485,6 +576,16 @@ def clearAllData() {
         state.remove("${key}_tempCreepWarning")
         state.remove("${key}_dailyAvgRoomTemp")
         state.remove("${key}_dailyMaxOutsideTemp")
+        
+        // Clear Learning States
+        state.remove("${key}_learningCyclesCount")
+        state.remove("${key}_learningCyclesTotalMins")
+        state.remove("${key}_learningRoomTempTotal")
+        state.remove("${key}_learningOutsideTempTotal")
+        state.remove("${key}_baselineRoomTemp")
+        state.remove("${key}_baselineOutsideTemp")
+        state.remove("${key}_learningStartTime")
+        state.remove("${key}_learningPhaseComplete")
     }
     
     log.info "All Energy Management Controller data has been reset by the user."
@@ -517,6 +618,10 @@ def initialize() {
         if (!state["${key}_lastRunLengthMins"]) state["${key}_lastRunLengthMins"] = 0.0
         if (!state["${key}_context"]) state["${key}_context"] = "Normal"
         if (!state["${key}_cycleEndTime"]) state["${key}_cycleEndTime"] = 0
+        
+        // Day-Based Learning Initialization
+        if (!state["${key}_learningStartTime"]) state["${key}_learningStartTime"] = now()
+        if (state["${key}_learningPhaseComplete"] == null) state["${key}_learningPhaseComplete"] = false
         
         // Force-fetch current temperatures on startup instead of waiting for events
         if (state["${key}_dailyAvgRoomTemp"] == null || state["${key}_dailyAvgRoomTemp"] == 0.0) {
@@ -573,7 +678,7 @@ def initialize() {
     if (allOverrideButtons) {
         def actions = buttonAction ?: ["pushed"]
         if (!(actions instanceof List)) actions = [actions]
-       
+        
         actions.each { action ->
             subscribe(allOverrideButtons, action, buttonHandler)
             // Support for legacy ST event formats
@@ -584,6 +689,10 @@ def initialize() {
     schedule("0 0 0 * * ?", resetDailyCounters)
     schedule("0 5 0 ? * SUN", resetWeeklyCounters)
     schedule("0 0 2 * * ?", dailyHealthCheck) 
+    
+    // --- VOICE BUTLER SYNC ---
+    runEvery5Minutes("syncApplianceHealthToButler")
+    syncApplianceHealthToButler()
 }
 
 def roomTempHandler(evt) {
@@ -698,13 +807,13 @@ def alwaysOnProtectionHandler(evt) {
             log.warn "Protection Triggered: Refrigerator turned off. Forcing ON."
             state["refrigerator_systemActionPending"] = true
             state["refrigerator_context"] = "Protection Force-ON"
-            settings["refrigeratorSwitch"]?.on()
+            executeSwitchCommandAndRefresh(settings["refrigeratorSwitch"], "on")
             sendAlert("🚨 CRITICAL PROTECTION: Your Refrigerator switch was turned OFF! The system has automatically forced it back ON to prevent food spoilage.", "refrigerator", "protection")
         } else if (settings["chestFreezerSwitch"]?.id == deviceId) {
             log.warn "Protection Triggered: Chest Freezer turned off. Forcing ON."
             state["chestFreezer_systemActionPending"] = true
             state["chestFreezer_context"] = "Protection Force-ON"
-            settings["chestFreezerSwitch"]?.on()
+            executeSwitchCommandAndRefresh(settings["chestFreezerSwitch"], "on")
             sendAlert("🚨 CRITICAL PROTECTION: Your Chest Freezer switch was turned OFF! The system has automatically forced it back ON to prevent food spoilage.", "chestFreezer", "protection")
         }
     }
@@ -727,12 +836,12 @@ def modeChangeHandler(evt) {
             // Process Turn ON logic first
             if (onModes && onModes.contains(newMode)) {
                 if (sw.currentValue("switch") != "on") {
-                    if (actionCount > 0) pauseExecution(1000) // Prevent mesh flooding
+                    if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
                     actionCount++
                     
                     state["${key}_systemActionPending"] = true
                     state["${key}_context"] = "Mode Restore"
-                    sw.on()
+                    executeSwitchCommandAndRefresh(sw, "on")
                     
                     if (state["${key}_offTimeStart"]) {
                         def offTimeMs = now() - state["${key}_offTimeStart"]
@@ -747,7 +856,7 @@ def modeChangeHandler(evt) {
             } 
             // Then process Turn OFF logic
             else if (offModes && offModes.contains(newMode)) {
-                if (actionCount > 0) pauseExecution(1000) // Prevent mesh flooding
+                if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
                 actionCount++
                 executeApplianceShutdown(key)
             }
@@ -774,7 +883,7 @@ def executeApplianceShutdown(key) {
     def safeThreshold = settings["safeShutdownThreshold"]?.toString()?.toDouble() ?: 15.0
     def allowCoolDown = settings["${key}EnableCoolDown"] != false // Default to true
     
-    def coolDownMins = settings["${key}CoolDownMins"]?.toString()?.toInteger() ?: 120
+    def coolDownMins = settings["${key}CoolDownMins"]?.toString()?.toDouble() ?: 120.0
     
     // Verify we are still in a mode that dictates shutdown before proceeding
     if (sw && settings["${key}TurnOffModes"]?.contains(location.mode)) {
@@ -784,7 +893,7 @@ def executeApplianceShutdown(key) {
         if (currentPower > safeThreshold || state["${key}_isRunning"]) {
             log.info "${key} is actively running (${currentPower}W). Delaying Mode Shutdown."
             state["${key}_context"] = "Delayed Shutdown (Running)"
-            runIn(900, "retryModeShutdown_${key}") // Check again in 15 minutes
+            runIn(900.toInteger(), "retryModeShutdown_${key}".toString()) // Check again in 15 minutes
         } 
         else {
             // CONDITION 2: Appliance is off, but recently finished a cycle (and Cool Down is enabled)
@@ -794,17 +903,17 @@ def executeApplianceShutdown(key) {
             
             if (allowCoolDown && timeSinceLastRunMs < thirtyMinsMs) {
                 // Calculate how much of the cool down is remaining based on when the cycle ended
-                def coolDownWindowMs = coolDownMins * 60000
+                def coolDownWindowMs = Math.round(coolDownMins * 60000.0)
                 def remainingCoolDownMs = coolDownWindowMs - timeSinceLastRunMs
                 
                 if (remainingCoolDownMs > 0) {
-                    def remainingCoolDownSecs = Math.round(remainingCoolDownMs / 1000)
-                    def remainingCoolDownMinsCalc = Math.round(remainingCoolDownSecs / 60)
+                    def remainingCoolDownSecs = Math.round(remainingCoolDownMs / 1000.0).toInteger()
+                    def remainingCoolDownMinsCalc = Math.round(remainingCoolDownSecs / 60.0)
                     
                     log.info "${key} recently ran. Applying Cool Down period. Postponing shutdown for ${remainingCoolDownMinsCalc} minutes."
                     state["${key}_context"] = "Cooling Down (${remainingCoolDownMinsCalc}m remaining)"
                     
-                    runIn(remainingCoolDownSecs, "endCoolDownShutdown_${key}")
+                    runIn(remainingCoolDownSecs, "endCoolDownShutdown_${key}".toString())
                 } else {
                     finalizeShutdown(key)
                 }
@@ -824,7 +933,7 @@ def finalizeShutdown(key) {
          if (sw.currentValue("switch") != "off") {
             state["${key}_systemActionPending"] = true
             state["${key}_context"] = "Mode Shutdown"
-            sw.off()
+            executeSwitchCommandAndRefresh(sw, "off")
             state["${key}_offTimeStart"] = now()
             log.info "${key} turned OFF via Mode Shutdown."
         }
@@ -856,7 +965,7 @@ def buttonHandler(evt) {
     
     triggerTurnOn()
     
-    runIn(7200, endOverrideAndCheckSchedule)
+    runIn(7200.toInteger(), endOverrideAndCheckSchedule)
 }
 
 def endOverrideAndCheckSchedule() {
@@ -887,12 +996,12 @@ def triggerTurnOff() {
                 needsRetry = true
             } else {
                 if (sw.currentValue("switch") != "off") {
-                    if (actionCount > 0) pauseExecution(1000) // Prevent mesh flooding
+                    if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
                     actionCount++
                     
                     state["${key}_systemActionPending"] = true
                     state["${key}_context"] = "Scheduled Shutdown"
-                    sw.off()
+                    executeSwitchCommandAndRefresh(sw, "off")
                     state["${key}_offTimeStart"] = now()
                 }
             }
@@ -900,7 +1009,7 @@ def triggerTurnOff() {
     }
     
     if (needsRetry) {
-        runIn(900, "triggerTurnOff") // Fixed missing quotes around method name
+        runIn(900.toInteger(), "triggerTurnOff") 
     }
 }
 
@@ -914,14 +1023,14 @@ def triggerTurnOn() {
         if (sw) {
             // Check state before firing to avoid redundant ON commands
             if (sw.currentValue("switch") != "on") { 
-                if (actionCount > 0) pauseExecution(1000) // Prevent mesh flooding
+                if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
                 actionCount++
                 
                 state["${key}_systemActionPending"] = true
                 if (state["${key}_context"] != "Manual Override") {
                     state["${key}_context"] = "Scheduled Restore"
                 }
-                sw.on()
+                executeSwitchCommandAndRefresh(sw, "on")
                 
                 if (state["${key}_offTimeStart"]) {
                     def offTimeMs = now() - state["${key}_offTimeStart"]
@@ -946,16 +1055,16 @@ def powerHandler(evt) {
         if (settings["${key}Power"]?.id == meterId) {
             
             // 1. Spike Detection (60 Second Delay)
-            def spikeThreshold = settings["${key}Spike"]?.toString()?.toDouble() ?: 5000
+            def spikeThreshold = settings["${key}Spike"]?.toString()?.toDouble() ?: 5000.0
             if (currentPower > spikeThreshold) {
                 if (!state["${key}_spikePending"]) {
                     state["${key}_spikePending"] = true
-                    runIn(60, "confirmSpike_${key}")
+                    runIn(60.toInteger(), "confirmSpike_${key}".toString())
                 }
             } else if (currentPower < (spikeThreshold * 0.8)) {
                 state["${key}_spikePending"] = false
                 state["${key}_spikeWarning"] = false 
-                unschedule("confirmSpike_${key}")
+                unschedule("confirmSpike_${key}".toString())
             }
             
             // 2. State Tracking with Start Delay & Debounced Cycle Completion 
@@ -979,7 +1088,7 @@ def powerHandler(evt) {
                 // Cancel any pending stop/completion countdowns because we surged back over threshold
                 if (state["${key}_stopPending"]) {
                     state["${key}_stopPending"] = false
-                    unschedule("checkCycleComplete_${key}")
+                    unschedule("checkCycleComplete_${key}".toString())
                 }
                 
                 // If we are not fully "running" and haven't started a delayed confirmation yet
@@ -987,11 +1096,11 @@ def powerHandler(evt) {
                     state["${key}_startPending"] = true
                     state["${key}_tentativeStartTime"] = now()
                     
-                    def startDelayMins = settings["${key}StartDelay"]?.toString()?.toInteger() ?: 1
-                    def startDelaySecs = startDelayMins * 60
+                    def startDelayMins = settings["${key}StartDelay"]?.toString()?.toDouble() ?: 1.0
+                    def startDelaySecs = Math.round(startDelayMins * 60.0).toInteger()
              
                     if (startDelaySecs > 0) {
-                        runIn(startDelaySecs, "confirmCycleStart_${key}")
+                        runIn(startDelaySecs, "confirmCycleStart_${key}".toString())
                     } else {
                         startCycle(key) // Immediate start if user set delay to 0
                     }
@@ -1002,7 +1111,7 @@ def powerHandler(evt) {
                 // If we were just waiting to start, it was a false spike (e.g., fridge door opened)
                 if (state["${key}_startPending"]) {
                     state["${key}_startPending"] = false
-                    unschedule("confirmCycleStart_${key}")
+                    unschedule("confirmCycleStart_${key}".toString())
                     state.remove("${key}_tentativeStartTime")
                 }
                 
@@ -1010,9 +1119,9 @@ def powerHandler(evt) {
                 if (wasRunning && !state["${key}_stopPending"]) {
                     state["${key}_stopPending"] = true
                     
-                    def debounceMins = settings["${key}Debounce"]?.toString()?.toInteger() ?: 15
-                    def debounceSecs = debounceMins * 60
-                    runIn(debounceSecs, "checkCycleComplete_${key}")
+                    def debounceMins = settings["${key}Debounce"]?.toString()?.toDouble() ?: 15.0
+                    def debounceSecs = Math.round(debounceMins * 60.0).toInteger()
+                    runIn(debounceSecs, "checkCycleComplete_${key}".toString())
                 }
             }
             
@@ -1077,8 +1186,8 @@ def finishCycle(key, name) {
         state["${key}_cycleEndTime"] = now()
         
         if (state["${key}_cycleStartTime"]) {
-            def debounceMins = settings["${key}Debounce"]?.toString()?.toInteger() ?: 15
-            def debounceMs = debounceMins * 60000
+            def debounceMins = settings["${key}Debounce"]?.toString()?.toDouble() ?: 15.0
+            def debounceMs = Math.round(debounceMins * 60000.0)
             
             // Subtract the dynamic debounce window from the total run time for accuracy
             def cycleDurationMs = now() - state["${key}_cycleStartTime"] - debounceMs 
@@ -1096,7 +1205,43 @@ def finishCycle(key, name) {
             state["${key}_totalRunHours"] = (state["${key}_totalRunHours"] ?: 0.0) + cycleDurationHours
             
             if (cycleDurationMins > 1) {
-                sendAlert("✅ Your ${name} cycle is complete! (Ran for ${Math.round(cycleDurationMins)} mins)", key, "cycle")
+                def liveMsg = "✅ Your ${name} cycle is complete! (Ran for ${Math.round(cycleDurationMins)} mins)"
+                def stashMsg = "the ${name} completed a cycle"
+                
+                if (key == "dishwasher") {
+                    def dishMsgs = [
+                        "The dishwasher has finished its cycle. The dishes are now clean.",
+                        "The dishwashing cycle is complete. You may unload the clean dishes at your convenience.",
+                        "Your dishwasher has successfully completed its cleaning cycle.",
+                        "The dishes are clean and ready to be put away.",
+                        "The dishwasher has stopped running. The cycle is finished.",
+                        "The kitchen dishwasher has completed its wash cycle.",
+                        "All dishes have been washed and the dishwasher is now idle.",
+                        "The dishwasher cycle has ended. The dishes are sparkling clean.",
+                        "The cleaning cycle for the dishwasher is now complete.",
+                        "Your dishes are done washing."
+                    ]
+                    liveMsg = dishMsgs[new Random().nextInt(dishMsgs.size())]
+                    stashMsg = "the dishwasher finished running"
+                } else if (key == "washerDryer") {
+                    def washMsgs = [
+                        "The laundry cycle has finished. Please check the washer or dryer.",
+                        "The laundry has completed its cycle.",
+                        "Your clothes are done. The laundry cycle is complete.",
+                        "The washing machine or dryer has finished its run.",
+                        "The laundry is ready to be folded or moved.",
+                        "The laundry cycle has concluded.",
+                        "Your laundry is done processing.",
+                        "The washer dryer combo has finished running.",
+                        "Attention, the laundry cycle is now complete.",
+                        "The clothes are finished washing or drying."
+                    ]
+                    liveMsg = washMsgs[new Random().nextInt(washMsgs.size())]
+                    stashMsg = "the laundry finished its cycle"
+                }
+
+                // Send the generated message and its stashed inbox variant
+                sendAlert(liveMsg, key, "cycle", stashMsg)
             }
             
             if (key == "refrigerator" || key == "chestFreezer") {
@@ -1122,25 +1267,73 @@ def finishCycle(key, name) {
 def trackCompressorHealth(key, name, cycleDurationMins) {
     if (cycleDurationMins < 5) return
     
-    def baselineDuration = state["${key}_baselineCycleMins"]?.toString()?.toDouble() ?: cycleDurationMins
-    
-    if (baselineDuration == 0.0 || baselineDuration == cycleDurationMins) {
-        state["${key}_baselineCycleMins"] = cycleDurationMins
-    } else {
-        if (cycleDurationMins > (baselineDuration * 1.30)) {
-            state["${key}_struggleCount"] = (state["${key}_struggleCount"] ?: 0) + 1
+    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
+    def learningPeriodMs = learningDays * 86400000
+
+    // 1. DAY-BASED LEARNING PHASE
+    if (state["${key}_learningPhaseComplete"] != true) {
+        def elapsedMs = now() - (state["${key}_learningStartTime"] ?: now())
+
+        if (elapsedMs < learningPeriodMs) {
+            state["${key}_learningCyclesCount"] = (state["${key}_learningCyclesCount"] ?: 0) + 1
+            state["${key}_learningCyclesTotalMins"] = (state["${key}_learningCyclesTotalMins"] ?: 0.0) + cycleDurationMins
             
-            if (state["${key}_struggleCount"] == 3) {
-                sendAlert("🧹 ${name} Maintenance: Compressor is running 30% longer than normal. Please clean the condenser coils and check airflow to prevent failure.", key, "health")
-            } else if (state["${key}_struggleCount"] >= 7) {
-                sendAlert("⚠️ ${name} CRITICAL Warning: Unit is severely struggling to cool. Compressor cycles are continuously extended. Hardware failure may be imminent.", key, "health")
-                state["${key}_struggleCount"] = 0 
-            }
+            // Accumulate temperatures to establish environmental baselines
+            def rTemp = state["${key}_dailyAvgRoomTemp"]?.toString()?.toDouble() ?: 70.0
+            def oTemp = state["${key}_dailyMaxOutsideTemp"]?.toString()?.toDouble() ?: 70.0
+            
+            state["${key}_learningRoomTempTotal"] = (state["${key}_learningRoomTempTotal"] ?: 0.0) + rTemp
+            state["${key}_learningOutsideTempTotal"] = (state["${key}_learningOutsideTempTotal"] ?: 0.0) + oTemp
+            
+            def elapsedDays = String.format("%.1f", (elapsedMs / 86400000.0))
+            log.info "${name} is learning (${elapsedDays}/${learningDays} days elapsed)..."
+            return // Exit early; no alerts during the learning phase
         } else {
-            state["${key}_baselineCycleMins"] = (baselineDuration * 0.98) + (cycleDurationMins * 0.02)
-            if (state["${key}_struggleCount"] > 0) {
-                state["${key}_struggleCount"] = state["${key}_struggleCount"] - 1
-            }
+            // Lock in the final baselines once the phase is complete
+            def count = state["${key}_learningCyclesCount"] ?: 1 // Prevent div by zero
+            state["${key}_baselineCycleMins"] = (state["${key}_learningCyclesTotalMins"] ?: cycleDurationMins) / count
+            state["${key}_baselineRoomTemp"] = (state["${key}_learningRoomTempTotal"] ?: 70.0) / count
+            state["${key}_baselineOutsideTemp"] = (state["${key}_learningOutsideTempTotal"] ?: 70.0) / count
+            
+            state["${key}_learningPhaseComplete"] = true
+            
+            log.info "${name} completed learning phase. Locked Baselines -> Cycle: ${state["${key}_baselineCycleMins"]} min | Room Temp: ${state["${key}_baselineRoomTemp"]}° | Out Temp: ${state["${key}_baselineOutsideTemp"]}°"
+        }
+    }
+
+    // 2. MONITORING PHASE (After learning is complete)
+    def baselineDuration = state["${key}_baselineCycleMins"]?.toString()?.toDouble() ?: cycleDurationMins
+    def baselineRoomTemp = state["${key}_baselineRoomTemp"]?.toString()?.toDouble() ?: 70.0
+    def baselineOutTemp  = state["${key}_baselineOutsideTemp"]?.toString()?.toDouble() ?: 70.0
+    
+    def currentRoomTemp = state["${key}_dailyAvgRoomTemp"]?.toString()?.toDouble() ?: baselineRoomTemp
+    def currentOutTemp  = state["${key}_dailyMaxOutsideTemp"]?.toString()?.toDouble() ?: baselineOutTemp
+
+    // 3. TEMPERATURE COMPENSATION
+    def roomTempDelta = currentRoomTemp - baselineRoomTemp
+    if (roomTempDelta < 0) roomTempDelta = 0.0 // Don't shrink expected times drastically, just accommodate heat stress
+
+    def outTempDelta = currentOutTemp - baselineOutTemp
+    if (outTempDelta < 0) outTempDelta = 0.0
+
+    // Add 3% extra run time allowance per degree of room heat, and 1% per degree of outside heat
+    def expectedDuration = baselineDuration * (1.0 + (roomTempDelta * 0.03) + (outTempDelta * 0.01))
+
+    // 4. HEALTH EVALUATION
+    if (cycleDurationMins > (expectedDuration * 1.30)) {
+        state["${key}_struggleCount"] = (state["${key}_struggleCount"] ?: 0) + 1
+        
+        if (state["${key}_struggleCount"] == 3) {
+            sendAlert("🧹 ${name} Maintenance: Compressor is running 30% longer than its temperature-adjusted normal. Please clean the condenser coils and check airflow to prevent failure.", key, "health")
+        } else if (state["${key}_struggleCount"] >= 7) {
+            sendAlert("⚠️ ${name} CRITICAL Warning: Unit is severely struggling to cool despite temperature adjustments. Hardware failure may be imminent.", key, "health")
+            state["${key}_struggleCount"] = 0 
+        }
+    } else {
+        // Run time is normal. Gently roll the baseline to account for slow seasonal shifts.
+        state["${key}_baselineCycleMins"] = (baselineDuration * 0.99) + (cycleDurationMins * 0.01)
+        if (state["${key}_struggleCount"] > 0) {
+            state["${key}_struggleCount"] = state["${key}_struggleCount"] - 1
         }
     }
 }
@@ -1149,8 +1342,21 @@ def dailyHealthCheck() {
     def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
     def kwhRate = settings["costPerKwh"]?.toString()?.toDouble() ?: 0.13
     def allowMaintRoi = settings["enableMaintenanceRoi"] != false // Defaults to true
+    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
+    def learningPeriodMs = learningDays * 86400000
 
     appliances.each { key, name ->
+        // Graduate non-compressor appliances out of the learning phase so they display properly in the UI
+        if (key != "refrigerator" && key != "chestFreezer") {
+            if (state["${key}_learningPhaseComplete"] != true) {
+                def elapsedMs = now() - (state["${key}_learningStartTime"] ?: now())
+                if (elapsedMs >= learningPeriodMs) {
+                    state["${key}_learningPhaseComplete"] = true
+                    log.info "${name} learning phase complete."
+                }
+            }
+        }
+    
         def avgPower = state["${key}_avgPower"]?.toString()?.toDouble() ?: 0.0
         
         // --- NEW ROI CALCULATION FOR MAINTENANCE SAVINGS ---
@@ -1220,8 +1426,19 @@ def resetWeeklyCounters() {
     }
 }
 
-def sendAlert(msg, key, alertType) {
-    // 1. Time & Mode Gatekeeping (Per Appliance)
+def sendAlert(msg, key, alertType, stashMsg = null) {
+    // --- VOICE BUTLER INTEGRATION (MOVED TO TOP) ---
+    // Sends to Butler FIRST, so it can stash the message overnight even if local alerts are muted!
+    if (settings.enableVoiceButler) {
+        // Only send standard "cycle" completions to the Butler if it is the Laundry or Dishwasher.
+        // ALWAYS send health, temperature, and power spike alerts for all appliances.
+        if (alertType != "cycle" || key == "dishwasher" || key == "washerDryer") {
+            def defaultStash = stashMsg ?: "there was a ${alertType} alert regarding the ${key}"
+            sendLocationEvent(name: "voiceButlerMsg", value: "energy", data: defaultStash, descriptionText: msg, isStateChange: true)
+        }
+    }
+
+    // 1. Time & Mode Gatekeeping (Per Appliance Local Alerts)
     def aModes = settings["${key}AlertModes"]
     if (aModes && !aModes.contains(location.mode)) return
     
@@ -1252,7 +1469,7 @@ def sendAlert(msg, key, alertType) {
     def audioEvents = settings["${key}AudioEvents"] ?: []
     def audioTrack = settings["${key}AudioTrack"]?.toString() ?: "1"
 
-    // 3. Execute Allowed Notifications
+    // 3. Execute Allowed Local Notifications
     if (pushDev && pushEvents.contains(alertType)) {
         pushDev.deviceNotification(msg)
     }
@@ -1261,16 +1478,14 @@ def sendAlert(msg, key, alertType) {
         ttsDev.speak(msg)
     }
     
-    // FIX APPLIED: Routing audio through the safe Zooz Helper
     if (audioDev && audioEvents.contains(alertType)) {
         playZoozSound(audioDev, audioTrack)
     }
 }
 
-// FIX APPLIED: New safe play function handling playSound, playTrack, and chime with mesh protection
 def playZoozSound(devices, sound) {
     if (!devices || sound == null) return
-    def soundInt = sound.toInteger()
+    def soundInt = Math.round(sound.toString().toDouble()).toInteger() // Extremely safe integer cast
     
     // Handle single device or list of devices
     def devList = devices instanceof List ? devices : [devices]
@@ -1278,7 +1493,7 @@ def playZoozSound(devices, sound) {
     devList.eachWithIndex { dev, index ->
         // Add a 1000ms (1 second) delay before subsequent devices to prevent Z-Wave mesh flooding
         if (index > 0) {
-            pauseExecution(1000)
+            pauseExecution(1000.toInteger())
         }
 
         try {
@@ -1294,5 +1509,63 @@ def playZoozSound(devices, sound) {
         } catch (e) {
             log.error "Failed to play audio on ${dev.displayName}: ${e}"
         }
+    }
+}
+
+def executeSwitchCommandAndRefresh(sw, action) {
+    if (!sw) return
+    
+    if (action == "on") {
+        sw.on()
+    } else if (action == "off") {
+        sw.off()
+    }
+    
+    // Give the device time to physically actuate the relay and the mesh time to process the state change
+    pauseExecution(1500.toInteger())
+    
+    // Safely check if the device driver supports the Refresh capability before calling it
+    if (sw.hasCommand("refresh")) {
+        sw.refresh()
+    }
+}
+
+def syncApplianceHealthToButler() {
+    if (!settings.enableVoiceButler) return
+    def payload = []
+    def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
+    
+    appliances.each { key, name ->
+        if (settings["${key}Power"]) {
+            def isRunning = state["${key}_isRunning"]
+            def stateStr = isRunning ? "RUNNING" : "IDLE"
+            if (key == "refrigerator" || key == "chestFreezer") {
+                stateStr = isRunning ? "COOLING" : "IDLE"
+            }
+            if (state["${key}_startPending"]) stateStr = "STARTING..."
+            if (state["${key}_stopPending"]) stateStr = "PAUSED"
+            
+            def health = "GOOD"
+            def struggle = state["${key}_struggleCount"] ?: 0
+            if (state["${key}_learningPhaseComplete"] != true) {
+                health = "LEARNING"
+            } else {
+                if (state["${key}_creepWarning"]) health = "CREEPING WATTS"
+                if (struggle >= 3 && struggle < 6) health = "CLEAN COILS"
+                if (struggle >= 6) health = "STRUGGLING"
+                if (state["${key}_spikeWarning"]) health = "SPIKE DETECTED"
+                if (state["${key}_tempWarningActive"]) health = "HIGH TEMP"
+                if (state["${key}_tempCreepWarning"]) health = "TEMP CREEPING"
+            }
+            
+            payload << [
+                name: name,
+                state: stateStr,
+                health: health
+            ]
+        }
+    }
+    if (payload.size() > 0) {
+        sendLocationEvent(name: "voiceButlerApplianceSync", value: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
     }
 }
