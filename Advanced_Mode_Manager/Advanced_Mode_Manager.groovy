@@ -32,6 +32,8 @@ def mainPage() {
             if (state.pendingTargetMode && state.pendingTargetTime) {
                 def remainingMins = Math.max(0, Math.round((state.pendingTargetTime - now()) / 60000))
                 pendingActionStr = "<span style='color:#e67e22;'><b>Shifting to '${state.pendingTargetMode}' in ${remainingMins} minutes</b></span>"
+            } else if (state.autoAwayPending) {
+                pendingActionStr = "<span style='color:#e74c3c;'><b>Auto Away Countdown Active</b></span>"
             }
 
             def dashHTML = """
@@ -53,7 +55,7 @@ def mainPage() {
             paragraph dashHTML
             
             input "sweepModeBtn", "button", title: "Sweep Mode (Force Immediate Enforcement)"
-            if (state.pendingTargetMode) input "abortTransition", "button", title: "Abort Pending Transition"
+            if (state.pendingTargetMode || state.autoAwayPending) input "abortTransition", "button", title: "Abort Pending Transition"
 
             paragraph "<hr><b>Recent Action History</b>"
             input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
@@ -105,14 +107,14 @@ def mainPage() {
                     input "dcTtsBlocker${i}", "capability.switch", title: "Block Announcements if this switch is ON (e.g., TV)", required: false, multiple: false
                     
                     if (settings["dcTtsSpeakers${i}"] && settings["dcTtsMessage${i}"]) {
-                        input "testTts${i}", "button", title: "Test TTS Announcement"
+                        input "testTts${i}", "button", title: "Test TTS Announcement (Bypasses Motion Check)"
                     }
                     
                     input "dcZoozChimes${i}", "capability.chime", title: "Target Zooz Chime Devices", required: false, multiple: true, submitOnChange: true
                     input "dcZoozSound${i}", "number", title: "Zooz Chime Sound File #", required: false, submitOnChange: true
                     
                     if (settings["dcZoozChimes${i}"] && settings["dcZoozSound${i}"] != null) {
-                        input "testZooz${i}", "button", title: "Test Zooz Chime"
+                        input "testZooz${i}", "button", title: "Test Zooz Chime (Bypasses Motion Check)"
                     }
 
                     // --- INOVELLI LED CONTROL ---
@@ -176,7 +178,38 @@ def mainPage() {
         }
 
         // ==============================================================================
-        // SECTION 3: INOVELLI SCHEDULED DIMMING
+        // SECTION 3: GLOBAL AUDIO ROOM MAPPING
+        // ==============================================================================
+        section("<b>Global Audio Room Mapping</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>1-to-1 Motion Filtering:</b> Map your speakers to motion sensors here. When a Mode Rule attempts to play audio on a speaker, it will automatically intercept the command and check if that specific speaker's room has recent motion. (Speakers not mapped here will play unconditionally).</div>"
+            
+            input "audioMotionTimeout", "number", title: "Audio Motion Timeout (Minutes)", defaultValue: 5, description: "Time to wait after motion stops before muting announcements (prevents muting if someone is sitting still)."
+            input "alwaysOnRoom", "enum", title: "Select ONE room to ALWAYS announce (Ignores motion)", options: ["1": "Room 1", "2": "Room 2", "3": "Room 3", "4": "Room 4", "5": "Room 5", "6": "Room 6", "7": "Room 7"], required: false
+            
+            input "room1Speaker", "capability.actuator", title: "Room 1 Speaker(s) (TTS/Zooz)", required: false, multiple: true
+            input "room1Motion", "capability.motionSensor", title: "Room 1 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room2Speaker", "capability.actuator", title: "Room 2 Speaker(s)", required: false, multiple: true
+            input "room2Motion", "capability.motionSensor", title: "Room 2 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room3Speaker", "capability.actuator", title: "Room 3 Speaker(s)", required: false, multiple: true
+            input "room3Motion", "capability.motionSensor", title: "Room 3 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room4Speaker", "capability.actuator", title: "Room 4 Speaker(s)", required: false, multiple: true
+            input "room4Motion", "capability.motionSensor", title: "Room 4 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room5Speaker", "capability.actuator", title: "Room 5 Speaker(s)", required: false, multiple: true
+            input "room5Motion", "capability.motionSensor", title: "Room 5 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room6Speaker", "capability.actuator", title: "Room 6 Speaker(s)", required: false, multiple: true
+            input "room6Motion", "capability.motionSensor", title: "Room 6 Motion Sensor(s)", required: false, multiple: true
+            
+            input "room7Speaker", "capability.actuator", title: "Room 7 Speaker(s)", required: false, multiple: true
+            input "room7Motion", "capability.motionSensor", title: "Room 7 Motion Sensor(s)", required: false, multiple: true
+        }
+
+        // ==============================================================================
+        // SECTION 4: INOVELLI SCHEDULED DIMMING
         // ==============================================================================
         section("<b>Scheduled Inovelli LED Dimming</b>") {
             paragraph "<div style='font-size:13px; color:#555;'><b>Daily Timers:</b> Automatically adjust the default brightness of your Inovelli LED light bars at specific times (e.g., dim at night, brighten in morning).</div>"
@@ -195,6 +228,56 @@ def mainPage() {
                 input "ledLevel2", "number", title: "LED Light % (0-100)", required: true, defaultValue: 100
             }
         }
+        
+        // ==============================================================================
+        // SECTION 5: BUTTON CONTROLLER MODE MAPPING
+        // ==============================================================================
+        section("<b>Button Controller Mode Mapping</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>Physical Override:</b> Change modes instantly using a physical button or remote. You can restrict these button commands to only work if the hub is currently in a specific mode. <i>Click a rule below to expand it.</i></div>"
+        }
+        
+        for (int i = 1; i <= 8; i++) {
+            def dynamicTitle = (settings["btnEnable${i}"] && settings["btnDevice${i}"]) ? "<b>Button Rule ${i} (${settings["btnDevice${i}"]} Btn ${settings["btnNum${i}"]})</b>" : "<b>Button Rule ${i}</b>"
+            
+            section(dynamicTitle, hideable: true, hidden: true) {
+                input "btnEnable${i}", "bool", title: "<b>Enable Button Rule ${i}</b>", defaultValue: false, submitOnChange: true
+                if (settings["btnEnable${i}"]) {
+                    input "btnDevice${i}", "capability.pushableButton", title: "Button Device", required: true, submitOnChange: true
+                    input "btnNum${i}", "number", title: "Button Number", required: true, defaultValue: 1
+                    input "btnAction${i}", "enum", title: "Button Action", required: true, defaultValue: "pushed", options: [
+                        "pushed": "Pushed", 
+                        "held": "Held", 
+                        "doubleTapped": "Double Tapped", 
+                        "released": "Released"
+                    ]
+                    
+                    paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #c0392b;'><b>Conditions & Transitions</b></div>"
+                    input "btnCondMode${i}", "mode", title: "<b>[CONDITION]</b> ONLY execute if current mode is...", required: false, multiple: true, description: "Leave blank to allow any mode"
+                    input "btnTargetMode${i}", "mode", title: "<b>[TRANSITION]</b> Then change mode to...", required: true
+                }
+            }
+        }
+
+        // ==============================================================================
+        // SECTION 6: AUTO AWAY
+        // ==============================================================================
+        section("<b>Auto Away</b>") {
+            paragraph "<div style='font-size:13px; color:#555;'><b>Smart Departure:</b> Automatically transition to an Away mode when everyone leaves, no motion is detected for a set time, and Guest Mode is disabled.</div>"
+            
+            input "autoAwayEnable", "bool", title: "<b>Enable Auto Away Logic</b>", defaultValue: false, submitOnChange: true
+            
+            if (settings["autoAwayEnable"]) {
+                paragraph "<div style='background-color:#f4f6f9; padding:8px; border-left:3px solid #e74c3c;'><b>Away Conditions</b></div>"
+                input "aaAllowedModes", "mode", title: "<b>[CONDITION]</b> Only execute if current mode is...", required: true, multiple: true
+                input "aaTargetMode", "mode", title: "<b>[TRANSITION]</b> Change Mode To...", required: true
+                
+                input "aaPresenceSensors", "capability.presenceSensor", title: "Arrival Sensors (All must be departed)", required: true, multiple: true
+                input "aaGuestSwitch", "capability.switch", title: "Guest Virtual Switch (Must be OFF)", required: false, multiple: false
+                
+                input "aaMotionSensors", "capability.motionSensor", title: "Motion Sensors to Monitor", required: true, multiple: true
+                input "aaQuietTime", "number", title: "Quiet Time (Minutes of no motion before triggering)", required: true, defaultValue: 15
+            }
+        }
     }
 }
 
@@ -208,8 +291,28 @@ def updated() { unsubscribe(); unschedule(); initialize() }
 def initialize() {
     if (!state.actionHistory) state.actionHistory = []
     clearPendingTransition()
+    state.autoAwayPending = false
     
-    subscribe(location, "mode", modeChangeHandler)
+    // Subscribe to Mode Changes
+    subscribe(location, "mode", "modeChangeHandler")
+    
+    // Subscribe to Auto Away Sensors
+    if (settings["autoAwayEnable"]) {
+        subscribe(settings["aaPresenceSensors"], "presence", "autoAwayEvalHandler")
+        subscribe(settings["aaMotionSensors"], "motion", "autoAwayEvalHandler")
+        if (settings["aaGuestSwitch"]) {
+            subscribe(settings["aaGuestSwitch"], "switch", "autoAwayEvalHandler")
+        }
+    }
+    
+    // Subscribe to specific room motion sensors for Audio Logic
+    if (settings.room1Motion) subscribe(settings.room1Motion, "motion.active", "room1MotionHandler")
+    if (settings.room2Motion) subscribe(settings.room2Motion, "motion.active", "room2MotionHandler")
+    if (settings.room3Motion) subscribe(settings.room3Motion, "motion.active", "room3MotionHandler")
+    if (settings.room4Motion) subscribe(settings.room4Motion, "motion.active", "room4MotionHandler")
+    if (settings.room5Motion) subscribe(settings.room5Motion, "motion.active", "room5MotionHandler")
+    if (settings.room6Motion) subscribe(settings.room6Motion, "motion.active", "room6MotionHandler")
+    if (settings.room7Motion) subscribe(settings.room7Motion, "motion.active", "room7MotionHandler")
     
     // Schedule Inovelli LED Timers
     if (settings["ledDimEnable"] && settings["ledTime1"]) {
@@ -229,17 +332,22 @@ def initialize() {
     for (int i = 1; i <= 8; i++) {
         // Subscribe to Presence Tethers
         if (settings["transEnable${i}"] && settings["transUseTether${i}"] && settings["transTetherPresence${i}"]) {
-            subscribe(settings["transTetherPresence${i}"], "presence", presenceTetherHandler)
+            subscribe(settings["transTetherPresence${i}"], "presence", "presenceTetherHandler")
         }
         
         // Subscribe to LED Blocker Switches
         if (settings["dcEnable${i}"] && settings["dcInovelliBlocker${i}"]) {
-            subscribe(settings["dcInovelliBlocker${i}"], "switch.off", blockerSwitchHandler)
+            subscribe(settings["dcInovelliBlocker${i}"], "switch.off", "blockerSwitchHandler")
         }
         
         // Subscribe to Inovelli switches turning off
         if (settings["dcEnable${i}"] && settings["dcInovelli${i}"]) {
-            subscribe(settings["dcInovelli${i}"], "switch.off", inovelliSwitchOffHandler)
+            subscribe(settings["dcInovelli${i}"], "switch.off", "inovelliSwitchOffHandler")
+        }
+        
+        // Subscribe to Button Controllers
+        if (settings["btnEnable${i}"] && settings["btnDevice${i}"] && settings["btnAction${i}"]) {
+            subscribe(settings["btnDevice${i}"], settings["btnAction${i}"], "buttonHandler")
         }
     }
     
@@ -247,14 +355,22 @@ def initialize() {
 }
 
 String getHumanReadableStatus() {
+    if (state.autoAwayPending) return "Auto Away conditions met. Countdown to Away active."
     if (state.pendingTargetMode) return "Countdown Active. Monitoring tethers and waiting to transition."
     return "Idle. Waiting for a trigger mode to activate."
 }
 
 def appButtonHandler(btn) {
     if (btn == "abortTransition") { 
-        logAction("User aborted transition to '${state.pendingTargetMode}'.")
-        clearPendingTransition() 
+        if (state.autoAwayPending) {
+            logAction("User aborted Auto Away transition.")
+            unschedule("executeAutoAway")
+            state.autoAwayPending = false
+        }
+        if (state.pendingTargetMode) {
+            logAction("User aborted transition to '${state.pendingTargetMode}'.")
+            clearPendingTransition() 
+        }
     }
     else if (btn == "clearHistory") { 
         state.actionHistory = []
@@ -269,8 +385,8 @@ def appButtonHandler(btn) {
         def speakers = settings["dcTtsSpeakers${idx}"]
         def msg = settings["dcTtsMessage${idx}"]
         if (speakers && msg) {
-            speakers.speak(msg)
-            logAction("Tested TTS for Rule ${idx}: ${msg}")
+            playTts(speakers, msg, true)
+            logAction("Tested TTS for Rule ${idx}: ${msg} (Motion Check Bypassed)")
         }
     }
     else if (btn.startsWith("testZooz")) {
@@ -278,9 +394,8 @@ def appButtonHandler(btn) {
         def chimes = settings["dcZoozChimes${idx}"]
         def sound = settings["dcZoozSound${idx}"]
         if (chimes && sound != null) {
-            // FIX APPLIED: Routing test button through safe Zooz Helper
-            playZoozSound(chimes, sound)
-            logAction("Tested Zooz Chime for Rule ${idx}: Sound ${sound}")
+            playZoozSound(chimes, sound, true)
+            logAction("Tested Zooz Chime for Rule ${idx}: Sound ${sound} (Motion Check Bypassed)")
         }
     }
 }
@@ -288,6 +403,33 @@ def appButtonHandler(btn) {
 // ------------------------------------------------------------------------------
 // HANDLERS
 // ------------------------------------------------------------------------------
+
+def buttonHandler(evt) {
+    def devId = evt.device.id
+    def action = evt.name
+    def btnNum = evt.value.toString()
+    def currentMode = location.mode
+
+    for (int i = 1; i <= 8; i++) {
+        if (settings["btnEnable${i}"] && settings["btnDevice${i}"]?.id == devId) {
+            if (settings["btnAction${i}"] == action && settings["btnNum${i}"].toString() == btnNum) {
+                
+                def conditionModes = settings["btnCondMode${i}"]
+                def targetMode = settings["btnTargetMode${i}"]
+                
+                if (!conditionModes || conditionModes.contains(currentMode)) {
+                    logAction("🔘 Button Rule ${i} Match: ${evt.device.displayName} (Button ${btnNum} ${action}). Changing mode to '${targetMode}'.")
+                    
+                    if (state.pendingTargetMode != null) clearPendingTransition()
+                    
+                    location.setMode(targetMode)
+                } else {
+                    logAction("🔘 Button Rule ${i} Skipped: Current mode '${currentMode}' does not match required conditions.")
+                }
+            }
+        }
+    }
+}
 
 def presenceTetherHandler(evt) {
     if (state.pendingRuleNumber == null || evt.value != "not present") return
@@ -300,18 +442,15 @@ def presenceTetherHandler(evt) {
     }
 }
 
-// This runs when a blocking switch (like Mail Arrived) turns off
 def blockerSwitchHandler(evt) {
     if (evt.value == "off") {
         logAction("LED Blocker Switch '${evt.device.displayName}' turned off. Re-evaluating LED colors for current mode...")
         def currentMode = location.mode
         
-        // Loop through all rules to find the one matching the CURRENT mode
         for (int i = 1; i <= 8; i++) {
             if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
                 if (settings["dcInovelli${i}"] && settings["dcInovelliColor${i}"] != null) {
                     
-                    // Verify the rule's blocker is indeed off before applying
                     def ruleBlocker = settings["dcInovelliBlocker${i}"]
                     if (!ruleBlocker || ruleBlocker.currentValue("switch") != "on") {
                         enforceInovelliLEDs(i)
@@ -329,16 +468,12 @@ def blockerSwitchHandler(evt) {
     }
 }
 
-// This runs when an Inovelli switch itself physically or digitally turns off
 def inovelliSwitchOffHandler(evt) {
     def currentMode = location.mode
     for (int i = 1; i <= 8; i++) {
         if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
-            // Check if the device that triggered the event is used in this rule
             if (settings["dcInovelli${i}"]?.find { it.id == evt.device.id }) {
                 def blocker = settings["dcInovelliBlocker${i}"]
-                
-                // Only re-apply the mode color if the Mail Switch (Blocker) is OFF
                 if (!blocker || blocker.currentValue("switch") != "on") {
                     logAction("Switch '${evt.device.displayName}' turned off. Re-applying Mode LED settings.")
                     enforceInovelliLEDs(i)
@@ -355,6 +490,9 @@ def modeChangeHandler(evt) {
         logAction("Intervention: Mode changed to '${newMode}'. Aborting timer for '${state.pendingTargetMode}'.")
         clearPendingTransition()
     }
+    
+    // Evaluate Auto Away on Mode Change (Ensures we check if entering an allowed mode)
+    if (settings["autoAwayEnable"]) checkAutoAwayConditions()
     
     // 1. Process Instant Device Controls
     for (int i = 1; i <= 8; i++) {
@@ -377,8 +515,166 @@ def modeChangeHandler(evt) {
                 state.pendingRuleNumber = i
                 logAction("Transition Rule ${i}: Delay active. Shifting '${newMode}' to '${target}' in ${delayMins} mins.")
                 runIn((delayMins * 60).toInteger(), "executeTransition")
-                break // Only allow one transition timer to run at a time
+                break 
             }
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------
+// AUTO AWAY ENGINE
+// ------------------------------------------------------------------------------
+
+def autoAwayEvalHandler(evt) {
+    checkAutoAwayConditions()
+}
+
+def checkAutoAwayConditions() {
+    if (!settings["autoAwayEnable"]) return
+
+    def currentMode = location.mode
+    def allowed = settings["aaAllowedModes"]?.contains(currentMode)
+    
+    // Guest Switch OFF Check (if undefined, treat as OFF)
+    def guestOff = !settings["aaGuestSwitch"] || settings["aaGuestSwitch"].currentValue("switch") == "off"
+    
+    // Presence check (Every sensor must NOT be present)
+    def allGone = settings["aaPresenceSensors"]?.every { it.currentValue("presence") != "present" }
+    
+    // Motion check (Every sensor must NOT be active)
+    def allQuiet = settings["aaMotionSensors"]?.every { it.currentValue("motion") != "active" }
+
+    if (allowed && guestOff && allGone && allQuiet) {
+        if (!state.autoAwayPending) {
+            def delayMins = settings["aaQuietTime"] ?: 15
+            logAction("🚗 Auto Away conditions met. Initiating ${delayMins}-minute countdown to '${settings.aaTargetMode}'.")
+            state.autoAwayPending = true
+            // Setting overwrite to true handles consecutive quiet moments correctly
+            runIn(delayMins * 60, "executeAutoAway", [overwrite: true])
+        }
+    } else {
+        if (state.autoAwayPending) {
+            logAction("🛑 Auto Away Interrupted: Conditions no longer met. Countdown aborted.")
+            unschedule("executeAutoAway")
+            state.autoAwayPending = false
+        }
+    }
+}
+
+def executeAutoAway() {
+    // Final verification to ensure conditions haven't changed in the exact millisecond of execution
+    def allowed = settings["aaAllowedModes"]?.contains(location.mode)
+    def guestOff = !settings["aaGuestSwitch"] || settings["aaGuestSwitch"].currentValue("switch") == "off"
+    def allGone = settings["aaPresenceSensors"]?.every { it.currentValue("presence") != "present" }
+    def allQuiet = settings["aaMotionSensors"]?.every { it.currentValue("motion") != "active" }
+
+    if (allowed && guestOff && allGone && allQuiet) {
+        def target = settings["aaTargetMode"]
+        logAction("⏱️ Auto Away countdown complete! Transitioning mode to '${target}'.")
+        state.autoAwayPending = false
+        location.setMode(target)
+    } else {
+        logAction("⚠️ Auto Away countdown complete, but conditions changed at the last second. Aborting.")
+        state.autoAwayPending = false
+    }
+}
+
+// ------------------------------------------------------------------------------
+// AUDIO & 1-TO-1 MOTION HELPER ENGINE
+// ------------------------------------------------------------------------------
+
+def room1MotionHandler(evt) { state.lastMotionRoom1 = now() }
+def room2MotionHandler(evt) { state.lastMotionRoom2 = now() }
+def room3MotionHandler(evt) { state.lastMotionRoom3 = now() }
+def room4MotionHandler(evt) { state.lastMotionRoom4 = now() }
+def room5MotionHandler(evt) { state.lastMotionRoom5 = now() }
+def room6MotionHandler(evt) { state.lastMotionRoom6 = now() }
+def room7MotionHandler(evt) { state.lastMotionRoom7 = now() }
+
+def isSpeakerMotionActive(speaker) {
+    boolean isMapped = false
+    boolean hasMotion = false
+    
+    for (int i = 1; i <= 7; i++) {
+        def mappedSpeaker = settings["room${i}Speaker"]
+        if (mappedSpeaker) {
+            def mappedList = mappedSpeaker instanceof List ? mappedSpeaker : [mappedSpeaker]
+            if (mappedList.any { it.id == speaker.id }) {
+                isMapped = true
+                
+                if (settings.alwaysOnRoom && settings.alwaysOnRoom.toString() == i.toString()) {
+                    hasMotion = true
+                }
+                
+                def motion = settings["room${i}Motion"]
+                if (!motion) {
+                    hasMotion = true 
+                } else {
+                    def mList = motion instanceof List ? motion : [motion]
+                    if (mList.any { it.currentValue("motion") == "active" }) {
+                        state."lastMotionRoom${i}" = now()
+                        hasMotion = true
+                    } else {
+                        def lastTime = state."lastMotionRoom${i}"
+                        if (lastTime) {
+                            long timeoutMillis = (settings.audioMotionTimeout ?: 5) * 60 * 1000
+                            if ((now() - lastTime) <= timeoutMillis) {
+                                hasMotion = true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!isMapped) return true 
+    return hasMotion
+}
+
+def playTts(speakers, msg, force = false) {
+    if (!speakers || !msg) return
+    def devList = speakers instanceof List ? speakers : [speakers]
+    
+    devList.each { dev ->
+        if (force || isSpeakerMotionActive(dev)) {
+            try {
+                dev.speak(msg)
+            } catch (e) {
+                log.error "Failed to play TTS on ${dev.displayName}: ${e}"
+            }
+        } else {
+            logAction("Skipping TTS on ${dev.displayName}: No recent motion.")
+        }
+    }
+}
+
+def playZoozSound(devices, sound, force = false) {
+    if (!devices || sound == null) return
+    def soundInt = sound.toString().isNumber() ? sound.toString().toInteger() : null
+    
+    def devList = devices instanceof List ? devices : [devices]
+    
+    devList.eachWithIndex { dev, index ->
+        if (force || isSpeakerMotionActive(dev)) {
+            if (index > 0) {
+                pauseExecution(1000)
+            }
+            try {
+                if (dev.hasCommand("playSound") && soundInt != null) {
+                    dev.playSound(soundInt)
+                } else if (dev.hasCommand("playTrack")) {
+                    dev.playTrack(sound.toString())
+                } else if (dev.hasCommand("chime") && soundInt != null) {
+                    dev.chime(soundInt)
+                } else {
+                    log.warn "Advanced Mode Manager: Device ${dev.displayName} does not support standard sound commands."
+                }
+            } catch (e) {
+                log.error "Failed to play Zooz audio on ${dev.displayName}: ${e}"
+            }
+        } else {
+            logAction("Skipping Zooz Chime on ${dev.displayName}: No recent motion.")
         }
     }
 }
@@ -405,7 +701,6 @@ def executeTransition() {
     def ruleIdx = state.pendingRuleNumber
     if (location.mode == state.pendingTriggerMode && ruleIdx != null) {
         
-        // Condition Gates Check
         if (settings["transUseGates${ruleIdx}"]) {
             if (settings["transConditionMotion${ruleIdx}"]?.any { it.currentValue("motion") == "active" }) {
                 logAction("🛑 Aborted: Motion active.")
@@ -439,14 +734,12 @@ def enforceDevices(ruleIdx) {
     if (settings["dcLocksLock${ruleIdx}"]) { settings["dcLocksLock${ruleIdx}"].lock(); logMsg += "[Locked] " }
     if (settings["dcGarageClose${ruleIdx}"]) { settings["dcGarageClose${ruleIdx}"].close(); logMsg += "[Closed] " }
     
-    // --- Delayed Switches ON Logic ---
     if (settings["dcDelayedSwitchesOn${ruleIdx}"] && settings["dcDelayMins${ruleIdx}"] != null) {
         def delaySecs = (settings["dcDelayMins${ruleIdx}"] * 60).toInteger()
         runIn(delaySecs, "turnOnDelayedSwitches", [data: [ruleIdx: ruleIdx], overwrite: false])
         logMsg += "[Delayed ON: ${settings["dcDelayMins${ruleIdx}"]}-min timer started] "
     }
 
-    // --- Weather Forecast Auto Logic ---
     if (settings["dcWeatherSwitch${ruleIdx}"]) { 
         def weatherDelayMins = settings["dcWeatherDelay${ruleIdx}"] ?: 0
         if (weatherDelayMins > 0) {
@@ -460,7 +753,6 @@ def enforceDevices(ruleIdx) {
         }
     }
     
-    // --- Audio Announcements ---
     def ruleTtsSpeakers = settings["dcTtsSpeakers${ruleIdx}"]
     def ttsMsg = settings["dcTtsMessage${ruleIdx}"]
     def ttsBlocker = settings["dcTtsBlocker${ruleIdx}"]
@@ -472,26 +764,22 @@ def enforceDevices(ruleIdx) {
         if (ttsBlocker && ttsBlocker.currentValue("switch") == "on") {
             logMsg += "[TTS: Blocked by '${ttsBlocker.displayName}'] "
         } else {
-            ruleTtsSpeakers.speak(ttsMsg)
-            logMsg += "[TTS: ${ttsMsg}] "
+            playTts(ruleTtsSpeakers, ttsMsg)
+            logMsg += "[TTS: Processed '${ttsMsg}'] "
         }
     }
     
-    // Delayed execution for Zooz Chimes
     if (chimeSound != null && ruleZoozChimes) {
         runInMillis(2000, "playDelayedZoozChimes", [data: [ruleIdx: ruleIdx]])
         logMsg += "[Zooz Chime: Scheduled File ${chimeSound} (Delayed 2s)] "
     }
 
-    // Process Inovelli LED color changes
     if (settings["dcInovelli${ruleIdx}"] && settings["dcInovelliColor${ruleIdx}"] != null) {
         def blocker = settings["dcInovelliBlocker${ruleIdx}"]
         
-        // Check if the user defined a blocker switch and if it is currently ON
         if (blocker && blocker.currentValue("switch") == "on") {
             logMsg += "[Inovelli LEDs: Blocked by '${blocker.displayName}'] "
         } else {
-            // Safe to change colors
             enforceInovelliLEDs(ruleIdx)
             
             def colorMap = ["0":"Red", "14":"Orange", "35":"Lemon", "64":"Lime", "85":"Green", "106":"Teal", "127":"Cyan", "149":"Aqua", "170":"Blue", "191":"Violet", "212":"Magenta", "234":"Pink", "255":"White"]
@@ -507,58 +795,45 @@ def enforceDevices(ruleIdx) {
     if (logMsg != "State Sweep -> ") logAction(logMsg)
 }
 
-// Helper function to process native driver commands for Inovelli LEDs
 def enforceInovelliLEDs(ruleIdx) {
     def rawColor = settings["dcInovelliColor${ruleIdx}"]
     def rawLevel = settings["dcInovelliLevel${ruleIdx}"]
     def rawEffect = settings["dcInovelliEffect${ruleIdx}"]
    
-    // Fix: Explicitly check for null instead of using Elvis operator (?:) 
-    // because Groovy treats 0 (Red or Effect Off) as a "false" value.
     def colorVal = rawColor != null ? rawColor.toInteger() : 170
     def levelVal = rawLevel != null ? rawLevel.toInteger() : 100
     def effectVal = rawEffect != null ? rawEffect.toInteger() : 1
     def targetVal = settings["dcInovelliTarget${ruleIdx}"] ?: "All"
-    def durationVal = 255 // 255 = Indefinite duration
+    def durationVal = 255 
     
     settings["dcInovelli${ruleIdx}"].each { dev ->
-        // 1. Update the base "Idle" colors and intensities using standard setParameter
-        // The driver's setParameter method handles size natively
-        dev.setParameter(95, colorVal) // LED Color (When On)
-        dev.setParameter(96, colorVal) // LED Color (When Off)
+        dev.setParameter(95, colorVal) 
+        dev.setParameter(96, colorVal) 
     
-        dev.setParameter(97, levelVal) // LED Intensity (When On)
-        dev.setParameter(98, levelVal) // LED Intensity (When Off)
+        dev.setParameter(97, levelVal) 
+        dev.setParameter(98, levelVal) 
         
-        // 2. Trigger the active Notification Effect using the driver's native custom commands
         if (targetVal == "All") {
             if (dev.hasCommand("ledEffectAll")) {
                 dev.ledEffectAll(effectVal, colorVal, levelVal, durationVal)
-            } else {
-                log.warn "Advanced Mode Manager: Device ${dev.displayName} does not support ledEffectAll command."
             }
         } else {
-            // Target is a specific LED (1-7)
             if (dev.hasCommand("ledEffectOne")) {
                 dev.ledEffectOne(targetVal, effectVal, colorVal, levelVal, durationVal)
-            } else {
-                log.warn "Advanced Mode Manager: Device ${dev.displayName} does not support ledEffectOne command."
             }
         }
     }
 }
 
-// Helper function to routinely refresh the colors and effects
 def refreshInovelliColor() {
     def currentMode = location.mode
     def refreshCount = 0
     for (int i = 1; i <= 8; i++) {
         if (settings["dcEnable${i}"] && settings["dcMode${i}"] == currentMode) {
             if (settings["dcInovelli${i}"] && settings["dcInovelliColor${i}"] != null) {
-               
+                
                 def blocker = settings["dcInovelliBlocker${i}"]
                 
-                // Ensure no active blocker before reissuing the color/effect
                 if (!blocker || blocker.currentValue("switch") != "on") {
                     enforceInovelliLEDs(i)
                     refreshCount++
@@ -580,8 +855,8 @@ def executeLedTimer1() {
     def level = settings["ledLevel1"] != null ? settings["ledLevel1"].toInteger() : 50
     logAction("Scheduled LED Timer 1 triggered. Setting Inovelli LEDs to ${level}%.")
     settings["ledDimSwitches"].each { dev ->
-        dev.setParameter(97, level) // LED Intensity (When On)
-        dev.setParameter(98, level) // LED Intensity (When Off)
+        dev.setParameter(97, level) 
+        dev.setParameter(98, level) 
     }
 }
 
@@ -590,42 +865,14 @@ def executeLedTimer2() {
     def level = settings["ledLevel2"] != null ? settings["ledLevel2"].toInteger() : 100
     logAction("Scheduled LED Timer 2 triggered. Setting Inovelli LEDs to ${level}%.")
     settings["ledDimSwitches"].each { dev ->
-        dev.setParameter(97, level) // LED Intensity (When On)
-        dev.setParameter(98, level) // LED Intensity (When Off)
+        dev.setParameter(97, level) 
+        dev.setParameter(98, level) 
     }
 }
 
 // ------------------------------------------------------------------------------
 // UTILITY FUNCTIONS
 // ------------------------------------------------------------------------------
-
-// FIX APPLIED: New safe play function handling playSound, playTrack, and chime with mesh protection
-def playZoozSound(devices, sound) {
-    if (!devices || sound == null) return
-    def soundInt = sound.toInteger()
-    
-    def devList = devices instanceof List ? devices : [devices]
-    
-    devList.eachWithIndex { dev, index ->
-        if (index > 0) {
-            pauseExecution(1000)
-        }
-        
-        try {
-            if (dev.hasCommand("playSound")) {
-                dev.playSound(soundInt)
-            } else if (dev.hasCommand("playTrack")) {
-                dev.playTrack(sound.toString())
-            } else if (dev.hasCommand("chime")) {
-                dev.chime(soundInt)
-            } else {
-                log.warn "Advanced Mode Manager: Device ${dev.displayName} does not support standard sound commands (playSound, playTrack, or chime)."
-            }
-        } catch (e) {
-            log.error "Failed to play audio on ${dev.displayName}: ${e}"
-        }
-    }
-}
 
 def turnOnDelayedSwitches(data) {
     def ruleIdx = data?.ruleIdx
@@ -652,7 +899,6 @@ def turnOffWeatherSwitch(data) {
     }
 }
 
-// FIX APPLIED: Routing delayed mesh execution through safe Zooz Helper
 def playDelayedZoozChimes(data) {
     def ruleIdx = data?.ruleIdx
     if (ruleIdx && settings["dcZoozChimes${ruleIdx}"]) {
