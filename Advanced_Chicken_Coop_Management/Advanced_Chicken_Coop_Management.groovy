@@ -58,15 +58,15 @@ def mainPage() {
                 def dDoor = settings["coopDoor_${i}"]
                 def dContact = settings["doorContact_${i}"]
                 def doorStatus = dDoor ? dDoor.currentValue("door") : "Manual / Not Automated"
-                def dColor = doorStatus == "closed" ? "green" : (doorStatus == "open" ? "#e67e22" : "#333")
+                def dColor = doorStatus?.toString()?.toLowerCase() == "closed" ? "green" : (doorStatus?.toString()?.toLowerCase() == "open" ? "#e67e22" : "#333")
                 
-                def doorDisplay = "Motor: <span style='color:${dColor};'>${doorStatus?.toUpperCase()}</span>"
+                def doorDisplay = "Motor: <span style='color:${dColor};'>${doorStatus?.toString()?.toUpperCase()}</span>"
                 if (dContact) {
                     def dHealthy = isSensorHealthy(dContact, settings.sensorHealthHours)
                     def contactStatus = dContact.currentValue("contact")
-                    def cColor = contactStatus == "closed" ? "green" : (contactStatus == "open" ? "#e67e22" : "#333")
+                    def cColor = contactStatus?.toString()?.toLowerCase() == "closed" ? "green" : (contactStatus?.toString()?.toLowerCase() == "open" ? "#e67e22" : "#333")
                     def healthWarning = dHealthy ? "" : " <span style='color:red; font-weight:bold;'>[⚠️ OFFLINE/STALE]</span>"
-                    doorDisplay += "<br><span style='font-size:11px; color:#555;'>Sensor: <span style='color:${cColor}; font-weight:bold;'>${contactStatus?.toUpperCase()}</span>${healthWarning}</span>"
+                    doorDisplay += "<br><span style='font-size:11px; color:#555;'>Sensor: <span style='color:${cColor}; font-weight:bold;'>${contactStatus?.toString()?.toUpperCase()}</span>${healthWarning}</span>"
                 } else {
                     doorDisplay += "<br><span style='font-size:11px; color:#555;'>Sensor: Unmonitored</span>"
                 }
@@ -106,8 +106,8 @@ def mainPage() {
                 def shadePct = settings["sunshadePercent_${i}"] ?: 0
                 def shadeDisplay = (shadePct > 0 && isDaylight()) ? "<br><span style='font-size:11px; color:#f39c12;'>🌤️ Sunshade Active (-${shadePct}%)</span>" : ""
 
-                def temp = tData.temp != null ? tData.temp.setScale(1, BigDecimal.ROUND_HALF_UP) : "--"
-                def hum = hData.hum != null ? hData.hum.setScale(1, BigDecimal.ROUND_HALF_UP) : "--"
+                def temp = tData.temp != null ? (tData.temp as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP) : "--"
+                def hum = hData.hum != null ? (hData.hum as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP) : "--"
                 def isEstimated = (tData.isEstimated || hData.isEstimated) ? " <span style='color: #e67e22; font-size: 11px; font-weight: bold;'>(Estimated)</span>" : ""
 
                 // Wind Chill Calculation (Only applies if temperature is an outdoor estimate!)
@@ -137,9 +137,9 @@ def mainPage() {
                 if (vContact) {
                     def vHealthy = isSensorHealthy(vContact, settings.sensorHealthHours)
                     def vState = vContact.currentValue("contact")
-                    def vColor = vState == "closed" ? "green" : (vState == "open" ? "#e67e22" : "#333")
+                    def vColor = vState?.toString()?.toLowerCase() == "closed" ? "green" : (vState?.toString()?.toLowerCase() == "open" ? "#e67e22" : "#333")
                     def vHealthWarning = vHealthy ? "" : " <span style='color:red; font-weight:bold;'>[⚠️ OFFLINE/STALE]</span>"
-                    ventStatusHtml = "<br><span style='font-size:11px; color:#555;'>Vent Sensor: <span style='color:${vColor}; font-weight:bold;'>${vState?.toUpperCase()}</span>${vHealthWarning}</span>"
+                    ventStatusHtml = "<br><span style='font-size:11px; color:#555;'>Vent Sensor: <span style='color:${vColor}; font-weight:bold;'>${vState?.toString()?.toUpperCase()}</span>${vHealthWarning}</span>"
                 }
 
                 // Health Guardian
@@ -255,7 +255,7 @@ def notificationPage() {
         }
         section("Peace of Mind & Sensor Failsafes") {
             paragraph "If you consistently manually open doors or vents early, the smart mute will keep the app completely silent. Set a bypass interval here so the app occasionally confirms the status to give you peace of mind."
-            input "pomBypassHours", "number", title: "Silence Bypass Interval (Hours)", defaultValue: 48, required: false, description: "If an alert is muted because the door/vent is already in the correct state, bypass the mute once every X hours."
+            input "pomBypassHours", "number", title: "Silence Bypass Interval (Hours)", defaultValue: 48, required: false, description: "Set to 0 to completely mute 'already open/closed' Peace of Mind alerts. If an alert is muted because the door/vent is already in the correct state, bypass the mute once every X hours."
             
             paragraph "If a sensor stops communicating entirely (e.g., dead battery, fell off), the app should stop trusting its 'Closed' or 'Open' state and resume sending you manual reminders. Set the timeout threshold below."
             input "sensorHealthHours", "number", title: "Sensor Health Timeout (Hours)", defaultValue: 48, required: false, description: "If a contact sensor has no heartbeat/activity for this many hours, the app assumes it failed and ignores its state."
@@ -637,7 +637,6 @@ def initialize() {
 }
 
 // --- NOTIFICATION AGGREGATION ENGINE ---
-// This queues alerts and sends them out cleanly combined 5 seconds later
 def queueGroupingAlert(category, coopName, msgTemplate, audioTrack, appendWarning = "") {
     if (!state.groupAlerts) state.groupAlerts = [:]
     if (!state.groupAlerts[category]) state.groupAlerts[category] = [coops: [], msgTemplate: msgTemplate, audioTrack: audioTrack, warnings: []]
@@ -649,7 +648,6 @@ def queueGroupingAlert(category, coopName, msgTemplate, audioTrack, appendWarnin
         }
     }
     
-    // Refresh the 5-second timer. If another coop fires within 5 seconds, it groups perfectly.
     runIn(5, "flushGroupAlerts")
 }
 
@@ -662,10 +660,18 @@ def flushGroupAlerts() {
             def warnStr = data.warnings ? data.warnings.join(" ") : ""
             def finalMsg = data.msgTemplate.replace("%COOPS%", coopStr) + warnStr
             
-            sendAlert(finalMsg, data.audioTrack)
+            // Map the coop string back to an index for the relevance checker
+            def cIdx = 1
+            for (int i = 1; i <= 3; i++) {
+                def cName = settings["coopName_${i}"] ?: "Coop ${i}"
+                if (data.coops.contains(cName)) cIdx = i
+            }
+
+            // Pass 'category' as the alertType, and cIdx as the coopIdx
+            sendAlert(finalMsg, data.audioTrack, false, category, new Date().time, cIdx)
         }
     }
-    state.groupAlerts = [:] // Clear the queue after sending
+    state.groupAlerts = [:] 
 }
 
 // --- SENSOR HEALTH & FAILOVER ENGINE ---
@@ -679,7 +685,6 @@ def isSensorHealthy(sensor, timeoutHours) {
     if (!sensor) return false
     if (!timeoutHours || timeoutHours <= 0) return true
     
-    // Try native Hubitat getLastActivity if available
     try {
         def lastAct = sensor.getLastActivity()
         if (lastAct != null) {
@@ -687,13 +692,12 @@ def isSensorHealthy(sensor, timeoutHours) {
         }
     } catch (Exception e) {}
     
-    // Fallback to our own state tracking heartbeat
     def lastSeen = state["lastSeen_${sensor.id}"]
     if (lastSeen) {
         return (new Date().time - lastSeen) <= (timeoutHours * 3600000)
     }
     
-    return true // Prevent false positives directly after a fresh install
+    return true 
 }
 
 def getCoopTemperature(i) {
@@ -701,13 +705,11 @@ def getCoopTemperature(i) {
     def dOutTemp = settings["outdoorTempSensor_${i}"]
     def healthHours = settings.sensorHealthHours ?: 48
 
-    // Try indoor sensor first
     if (dTemp && isSensorHealthy(dTemp, healthHours)) {
         def t = dTemp.currentValue("temperature")
         if (t != null) return [temp: t as BigDecimal, isEstimated: false]
     }
 
-    // Failover to outdoor sensor + offset
     if (dOutTemp && isSensorHealthy(dOutTemp, healthHours)) {
         def t = dOutTemp.currentValue("temperature")
         if (t != null) {
@@ -744,7 +746,7 @@ def updateDashboardDevice() {
     def childId = "coopPanel_${app.id}"
     def child = getChildDevice(childId)
     
-    if (!child) return // Only update if they created the device
+    if (!child) return 
     
     def count = (settings.coopCount ?: "1") as Integer
     child.sendEvent(name: "sunCountdown", value: getSunCountdown())
@@ -758,16 +760,16 @@ def updateDashboardDevice() {
         def dStatus = "Unknown"
         def dColor = "#333"
         if (dContact) {
-            dStatus = dContact.currentValue("contact")?.toUpperCase() ?: "N/A"
+            dStatus = dContact.currentValue("contact")?.toString()?.toUpperCase() ?: "N/A"
         } else if (dDoor) {
-            dStatus = dDoor.currentValue("door")?.toUpperCase() ?: "N/A"
+            dStatus = dDoor.currentValue("door")?.toString()?.toUpperCase() ?: "N/A"
         }
         if (dStatus == "OPEN") dColor = "#e67e22"
         if (dStatus == "CLOSED") dColor = "green"
 
         // Temp Status via Failover Engine
         def tData = getCoopTemperature(i)
-        def tempStr = tData.temp != null ? tData.temp.setScale(1, BigDecimal.ROUND_HALF_UP) + "&deg;" : "--"
+        def tempStr = tData.temp != null ? (tData.temp as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP) + "&deg;" : "--"
         
         // Feed & Water
         def vWater = (state["virtualWaterGal_${i}"] ?: 0.0) as BigDecimal
@@ -803,8 +805,8 @@ def updateDashboardDevice() {
 def checkDoorStates() {
     if (!masterEnable) return
     
-    def sunInfo = getSunriseAndSunset()
     def now = new Date()
+    def sunInfo = getSunriseAndSunset()
     def count = (settings.coopCount ?: "1") as Integer
     
     for (int i = 1; i <= count; i++) {
@@ -819,15 +821,16 @@ def checkDoorStates() {
         def dHealthy = isSensorHealthy(dContact, settings.sensorHealthHours)
         
         if (dContact && dHealthy) {
-            isOpen = (dContact.currentValue("contact") == "open")
+            isOpen = (dContact.currentValue("contact")?.toString()?.toLowerCase() == "open")
         } else {
-            isOpen = (cDoor?.currentValue("door") == "open")
+            isOpen = (cDoor?.currentValue("door")?.toString()?.toLowerCase() == "open")
         }
         
         def oOff = settings["openOffset_${i}"] ?: 15
         def cOff = settings["closeOffset_${i}"] ?: 30
         
         if (sunInfo?.sunrise && sunInfo?.sunset) {
+            // Calculate absolute open and close times for today
             def openTime = new Date(sunInfo.sunrise.time + (oOff * 60000))
             def closeTime = new Date(sunInfo.sunset.time + (cOff * 60000))
             
@@ -842,9 +845,9 @@ def checkDoorStates() {
             def healthWarning = (!dHealthy && dContact) ? " [⚠️ Sensor Offline/Stale]" : ""
             
             if (shouldBeOpen && !isOpen) {
-                queueGroupingAlert("hourlyDoorOpen", coopName, "Hourly Reminder: The door for %COOPS% is still CLOSED but it is daytime.", settings.audioDoorReminderOpen, healthWarning)
+                queueGroupingAlert("hourlyDoorOpen", coopName, "Hourly Reminder: Please OPEN the door for %COOPS%. It is daytime but the door is currently closed.", settings.audioDoorReminderOpen, healthWarning)
             } else if (!shouldBeOpen && isOpen) {
-                queueGroupingAlert("hourlyDoorClose", coopName, "Hourly Reminder: The door for %COOPS% is still OPEN but it is nighttime.", settings.audioDoorReminderClose, healthWarning)
+                queueGroupingAlert("hourlyDoorClose", coopName, "Hourly Reminder: Please CLOSE the door for %COOPS%. It is nighttime but the door is currently open.", settings.audioDoorReminderClose, healthWarning)
             }
         }
     }
@@ -931,7 +934,6 @@ def isSpeakerMotionActive(speaker, alertType) {
                         } else {
                             def lastTime = state."lastMotionRoom${i}"
                             if (lastTime) {
-                                // FIX: Enforce Integer casting to prevent Groovy String multiplication crash
                                 long timeoutMillis = ((settings.audioMotionTimeout ?: 5) as Integer) * 60000L
                                 if ((now() - lastTime) <= timeoutMillis) {
                                     hasMotion = true
@@ -954,8 +956,8 @@ def modeChangeHandler(evt) {
     
     if (settings.allowedModes.contains(evt.value)) {
         if (state.queuedAlerts && state.queuedAlerts.size() > 0) {
-            logDebug("Entered allowed mode (${evt.value}). Scheduling queued alerts in 10 minutes.")
-            runIn(600, "playQueuedAlerts")
+            logDebug("Entered allowed mode (${evt.value}). Checking relevance of queued alerts...")
+            runIn(30, "playQueuedAlerts")
         }
     }
 }
@@ -964,38 +966,102 @@ def playQueuedAlerts() {
     if (!state.queuedAlerts || state.queuedAlerts.size() == 0) return
     
     def alert = state.queuedAlerts.remove(0)
-    sendAlert(alert.pushMsg, alert.audioMsg, false, alert.alertType)
+    def nowMs = new Date().time
+    
+    // 1. Drop alerts older than 2 hours
+    def isStale = alert.timestamp ? (nowMs - alert.timestamp > 7200000) : false 
+    
+    // 2. Drop alerts that no longer "matter" based on current sensor state
+    def isStillRelevant = true
+    if (alert.alertType && alert.coopIdx) {
+        isStillRelevant = checkAlertRelevance(alert.alertType, alert.coopIdx)
+    }
+    
+    if (!isStale && isStillRelevant) {
+        sendAlert(alert.pushMsg, alert.audioMsg, false, alert.alertType, alert.timestamp, alert.coopIdx)
+    } else {
+        logDebug("Dropped irrelevant or stale alert: ${alert.pushMsg}")
+    }
     
     if (state.queuedAlerts.size() > 0) {
-        runIn(15, "playQueuedAlerts") // Stagger multiple queued alerts by 15 seconds
+        runIn(10, "playQueuedAlerts") // Stagger multiple queued alerts by 10 seconds
     }
 }
 
-def sendAlert(pushMsg, audioMsg, isTest = false, alertType = "general") {
+// Logical validator to see if a notification is still needed
+def checkAlertRelevance(type, i) {
+    if (!type) return true
+    
+    def typeLower = type.toLowerCase()
+    def dContact = settings["doorContact_${i}"]
+    def vContact = settings["ventContact_${i}"]
+    
+    // --- DOOR LOGIC ---
+    if (typeLower.contains("door")) {
+        def isDay = isDaylight() // Built-in function checking sunrise/sunset
+        
+        // 1. Time of Day Mismatch (Absolute kill switch for stale alerts)
+        if (typeLower.contains("close") && isDay) return false // Never ask to close during the day
+        if (typeLower.contains("open") && !isDay) return false // Never ask to open at night
+        
+        // 2. Physical State Match (Already achieved)
+        if (typeLower.contains("open") && dContact?.currentValue("contact") == "open") return false
+        if (typeLower.contains("close") && dContact?.currentValue("contact") == "closed") return false
+    }
+    
+    // --- VENT LOGIC ---
+    if (typeLower.contains("vent")) {
+        if (typeLower.contains("open") && vContact?.currentValue("contact") == "open") return false
+        if (typeLower.contains("close") && vContact?.currentValue("contact") == "closed") return false
+    }
+    
+    // --- WATER LOGIC ---
+    if (typeLower.contains("water") && state["virtualWaterGal_${i}"] > 1.0) {
+        return false // Ignore low water alerts if it was refilled
+    }
+    
+    return true
+}
+
+def sendAlert(pushMsg, audioMsg, isTest = false, alertType = "general", originalTimestamp = null, coopIdx = 1) {
     def isAllowed = true
+    
+    // 1. Check Hub Mode restrictions
     if (settings.allowedModes && !settings.allowedModes.contains(location.mode)) {
         isAllowed = false
     }
     
+    // 2. Security SOS always bypasses mode restrictions if configured
     if (alertType == "security" && settings.securityBypassModes) {
-        isAllowed = true // Bypass hub mode restrictions for SOS alerts
+        isAllowed = true 
     }
     
+    // 3. If restricted, push to queue with current context
     if (!isAllowed && !isTest) {
         if (!state.queuedAlerts) state.queuedAlerts = []
-        state.queuedAlerts << [pushMsg: pushMsg, audioMsg: audioMsg, alertType: alertType]
+        
+        // Added 'coopIdx' to the map so the Queue Engine can verify sensor state later
+        state.queuedAlerts << [
+            pushMsg: pushMsg, 
+            audioMsg: audioMsg, 
+            alertType: alertType, 
+            timestamp: originalTimestamp ?: new Date().time,
+            coopIdx: coopIdx
+        ]
+        
         if (state.queuedAlerts.size() > 10) state.queuedAlerts = state.queuedAlerts.drop(1)
-        logDebug("Mode restricted. Alert queued: ${pushMsg}")
+        logDebug("Mode restricted. Alert queued for Coop ${coopIdx}: ${pushMsg}")
         return
     }
 
+    // 4. Execute Real-time Push Notifications
     if (pushDevices && pushMsg) {
         pushDevices.each { it.deviceNotification(pushMsg) }
         logDebug("Push Alert Sent: ${pushMsg}")
     }
     
+    // 5. Execute Text-to-Speech (with 1-to-1 Room Motion filtering)
     if (ttsDevices && pushMsg) {
-        // FIX: Cast volume to Integer safely
         def vol = (settings.audioVolume ?: 65) as Integer
         ttsDevices.each { speaker ->
             if (isTest || isSpeakerMotionActive(speaker, alertType)) {
@@ -1008,8 +1074,8 @@ def sendAlert(pushMsg, audioMsg, isTest = false, alertType = "general") {
         }
     }
     
+    // 6. Execute Sound Files/Chimes (with 1-to-1 Room Motion filtering)
     if (soundDevices && audioMsg) {
-        // FIX: Cast volume to Integer safely
         def vol = (settings.audioVolume ?: 65) as Integer
         def isNumeric = audioMsg.toString().isNumber()
         def trackNum = isNumeric ? audioMsg.toString().toInteger() : null
@@ -1163,7 +1229,7 @@ def midnightReset() {
             def currentFeed = (state["virtualFeedLbs_${i}"] ?: 0.0) as BigDecimal
             def newFeed = currentFeed - actualFeed
             
-            state["virtualFeedLbs_${i}"] = newFeed < 0 ? 0.0 : newFeed.setScale(1, BigDecimal.ROUND_HALF_UP)
+            state["virtualFeedLbs_${i}"] = newFeed < 0 ? 0.0 : (newFeed as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP)
             
             def estFeedDays = baseFeed > 0 ? state["virtualFeedLbs_${i}"] / baseFeed : 0
             if (estFeedDays <= 2.0 && notifyFeed && !state["feedAlertSent_${i}"]) {
@@ -1179,7 +1245,7 @@ def midnightReset() {
             def currentWater = (state["virtualWaterGal_${i}"] ?: 0.0) as BigDecimal
             def newWater = currentWater - actualWater
             
-            state["virtualWaterGal_${i}"] = newWater < 0 ? 0.0 : newWater.setScale(2, BigDecimal.ROUND_HALF_UP)
+            state["virtualWaterGal_${i}"] = newWater < 0 ? 0.0 : (newWater as BigDecimal).setScale(2, BigDecimal.ROUND_HALF_UP)
             
             def estWaterDays = baseWater > 0 ? state["virtualWaterGal_${i}"] / baseWater : 0
             if (estWaterDays <= 2.0 && notifyFeed && !state["waterAlertSent_${i}"] && !settings["waterFloat_${i}"]) {
@@ -1195,7 +1261,7 @@ def midnightReset() {
         state["todayInLow_${i}"] = null
         
         state["yesterdayOutHigh_${i}"] = state["todayOutHigh_${i}"] ?: "--"
-        state["yesterdayOutHigh_${i}"] = state["todayOutHigh_${i}"] ?: "--"
+        state["yesterdayOutLow_${i}"] = state["todayOutLow_${i}"] ?: "--"
         state["todayOutHigh_${i}"] = null
         state["todayOutLow_${i}"] = null
         
@@ -1326,8 +1392,8 @@ def securityHandler3(evt) { handleSecurity(evt, 3) }
 // --- CORE HANDLER LOGIC ---
 
 def isDaylight() {
-    def sunInfo = getSunriseAndSunset()
     def now = new Date()
+    def sunInfo = getSunriseAndSunset(date: now)
     if (sunInfo?.sunrise && sunInfo?.sunset) {
         return now.after(sunInfo.sunrise) && now.before(sunInfo.sunset)
     }
@@ -1364,9 +1430,9 @@ def handleDoorOpen(i) {
     def dHealthy = isSensorHealthy(dContact, settings.sensorHealthHours)
     
     if (dContact && dHealthy) {
-        if (dContact.currentValue("contact") == "open") isAlreadyOpen = true
+        if (dContact.currentValue("contact")?.toString()?.toLowerCase() == "open") isAlreadyOpen = true
     } else if (cDoor) {
-        if (cDoor.currentValue("door") == "open") isAlreadyOpen = true
+        if (cDoor.currentValue("door")?.toString()?.toLowerCase() == "open") isAlreadyOpen = true
     }
 
     def sensorWarning = (!dHealthy && dContact) ? " [⚠️ Sensor Offline/Stale]" : ""
@@ -1377,7 +1443,7 @@ def handleDoorOpen(i) {
         def nowMs = new Date().time
         
         if (pomHours != null && pomHours > 0 && (nowMs - lastPom) >= (pomHours * 3600000)) {
-            if (notifyDoor) queueGroupingAlert("pomDoorOpen", coopName, "Peace of Mind: Morning schedule reached. Door is already OPEN for %COOPS%.", settings.audioDoorOpen)
+            if (notifyDoor) queueGroupingAlert("pomDoorOpen", coopName, "Peace of Mind: Morning schedule reached. Door is already OPEN for %COOPS%.", null)
             state["lastPomTime_doorOpen_${i}"] = nowMs
         } else {
             logDebug("${coopName}: Door is already open. Skipping reminders.")
@@ -1404,38 +1470,43 @@ def handleDoorClose(i) {
     def cDoor = settings["coopDoor_${i}"]
     def dContact = settings["doorContact_${i}"]
 
-    // Reset daily close vent reminder so it triggers again for the coming night
-    state["ventCloseAlertSent_${i}"] = false
-    runIn(15, "forceClimateCheck${i}")
-
     // Check if the door is already physically closed (And Sensor is Healthy)
     def isAlreadyClosed = false
     def dHealthy = isSensorHealthy(dContact, settings.sensorHealthHours)
     
     if (dContact && dHealthy) {
-        if (dContact.currentValue("contact") == "closed") isAlreadyClosed = true
+        if (dContact.currentValue("contact")?.toString()?.toLowerCase() == "closed") isAlreadyClosed = true
     } else if (cDoor) {
-        if (cDoor.currentValue("door") == "closed") isAlreadyClosed = true
+        if (cDoor.currentValue("door")?.toString()?.toLowerCase() == "closed") isAlreadyClosed = true
     }
 
     def sensorWarning = (!dHealthy && dContact) ? " [⚠️ Sensor Offline/Stale]" : ""
 
+    // --- LOGIC FIX: STOP REDUNDANT CHECKS ---
     if (isAlreadyClosed) {
         def pomHours = settings.pomBypassHours
         def lastPom = state["lastPomTime_doorClose_${i}"] ?: 0
         def nowMs = new Date().time
         
+        // If PoM is 0, this entire block is skipped, keeping the app silent.
         if (pomHours != null && pomHours > 0 && (nowMs - lastPom) >= (pomHours * 3600000)) {
-            if (notifyDoor) queueGroupingAlert("pomDoorClose", coopName, "Peace of Mind: Evening schedule reached. Door is already CLOSED for %COOPS%.", settings.audioDoorClose)
+            if (notifyDoor) queueGroupingAlert("pomDoorClose", coopName, "Peace of Mind: Evening schedule reached. Door is already CLOSED for %COOPS%.", null)
             state["lastPomTime_doorClose_${i}"] = nowMs
         } else {
-            logDebug("${coopName}: Door is already closed. Skipping reminders.")
+            logDebug("${coopName}: Door is already closed. Skipping reminders and climate resets.")
         }
         updateDashboardDevice()
-        return
+        return // EXIT HERE: Don't trigger climate checks or reset alerts if we are already secure.
     }
 
-    // Since we are sending a real notification, reset the Peace of Mind timer
+    // --- TRANSITION LOGIC (Only runs if the door actually needs to be closed) ---
+
+    // FIX: Force 'ventOpenAlertSent' to true. This tells the climate engine "we already 
+    // talked about opening doors today" so it won't contradict the sunset close command.
+    state["ventOpenAlertSent_${i}"] = true 
+    state["ventCloseAlertSent_${i}"] = false 
+
+    // Reset the Peace of Mind timer since we are initiating a real action
     state["lastPomTime_doorClose_${i}"] = new Date().time
 
     if (manualMode || !cDoor) {
@@ -1446,6 +1517,9 @@ def handleDoorClose(i) {
         if (notifyDoor) queueGroupingAlert("doorCloseAuto", coopName, "Automated doors are closing for %COOPS%.", settings.audioDoorClose, sensorWarning)
         if (dContact && notifyTardy) runIn(300, "verifyDoorClosed${i}")
     }
+    
+    // Only run the climate check if the door actually just transitioned.
+    runIn(30, "forceClimateCheck${i}")
     updateDashboardDevice()
 }
 
@@ -1455,7 +1529,7 @@ def handleVerifyDoor(i) {
     def dHealthy = isSensorHealthy(dContact, settings.sensorHealthHours)
     
     // Only verify if the sensor is healthy. If it's failed, it will just spam tardy alerts every day.
-    if (dContact && dHealthy && dContact.currentValue("contact") == "open") {
+    if (dContact && dHealthy && dContact.currentValue("contact")?.toString()?.toLowerCase() == "open") {
         log.warn "CRITICAL [${coopName}]: Door failed to close!"
         sendAlert("[${coopName}] CRITICAL: Jammed Door/Tardy Chicken! Door is OPEN 5 mins after close time.", "Warning, the ${coopName} door is jammed.")
     }
@@ -1675,8 +1749,8 @@ def handleOutdoorClimate(evt, i) {
     
     def vContact = settings["ventContact_${i}"]
     def vHealthy = isSensorHealthy(vContact, settings.sensorHealthHours)
-    def isVentOpen = (vContact && vHealthy) ? (vContact.currentValue("contact") == "open") : false
-    def isVentClosed = (vContact && vHealthy) ? (vContact.currentValue("contact") == "closed") : false
+    def isVentOpen = (vContact && vHealthy) ? (vContact.currentValue("contact")?.toString()?.toLowerCase() == "open") : false
+    def isVentClosed = (vContact && vHealthy) ? (vContact.currentValue("contact")?.toString()?.toLowerCase() == "closed") : false
     def sensorWarning = (!vHealthy && vContact) ? " [⚠️ Sensor Offline]" : ""
     
     def pomHours = settings.pomBypassHours
@@ -1687,7 +1761,7 @@ def handleOutdoorClimate(evt, i) {
             if (vContact && isVentOpen) {
                 def lastPom = state["lastPomTime_ventOpen_${i}"] ?: 0
                 if (pomHours != null && pomHours > 0 && (nowMs - lastPom) >= (pomHours * 3600000)) {
-                    queueGroupingAlert("pomVentOpen", coopName, "Peace of Mind: Temp is ${currentTemp}°. Vents are already OPEN for %COOPS%.", settings.audioVentOpen)
+                    queueGroupingAlert("pomVentOpen", coopName, "Peace of Mind: Temp is ${currentTemp}°. Vents are already OPEN for %COOPS%.", null)
                     state["lastPomTime_ventOpen_${i}"] = nowMs
                 } else {
                     logDebug("${coopName}: Vents already open. Muting OPEN reminder.")
@@ -1704,7 +1778,7 @@ def handleOutdoorClimate(evt, i) {
             if (vContact && isVentClosed) {
                 def lastPom = state["lastPomTime_ventClose_${i}"] ?: 0
                 if (pomHours != null && pomHours > 0 && (nowMs - lastPom) >= (pomHours * 3600000)) {
-                    queueGroupingAlert("pomVentClose", coopName, "Peace of Mind: Temp is ${currentTemp}°. Vents are already CLOSED for %COOPS%.", settings.audioVentClose)
+                    queueGroupingAlert("pomVentClose", coopName, "Peace of Mind: Temp is ${currentTemp}°. Vents are already CLOSED for %COOPS%.", null)
                     state["lastPomTime_ventClose_${i}"] = nowMs
                 } else {
                     logDebug("${coopName}: Vents already closed. Muting CLOSE reminder.")
