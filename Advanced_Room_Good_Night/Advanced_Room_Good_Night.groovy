@@ -5,7 +5,7 @@ definition(
     name: "Advanced Room Good Night",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Ultimate Good Night controller with Live Sleep Dashboard, Variable Speed Ceiling Fans, Auto-Sleep Quality Tracking, Power-Failure Recovery, Periodic State Enforcement, Hourly Fan Wiggle, and Command History.",
+    description: "Ultimate Good Night controller with Live Sleep Dashboard, Variable Speed Ceiling Fans, Power-Failure Recovery, Periodic State Enforcement, Hourly Fan Wiggle, Delayed Shut-Offs, Separate Light/Audio Fading, Emergency Life-Safety Override, and Command History.",
     category: "Convenience",
     iconUrl: "",
     iconX2Url: ""
@@ -91,9 +91,13 @@ def mainPage() {
                     def cHum = hSensor ? hSensor.currentValue("humidity") : null
                     def sleepQuality = calculateSleepSuitability(cTemp, cHum)
                     
+                    def overrideFadeInUri = settings["audioFadeInUri${i}"]
                     def tonightTrack = "Not Generated Yet"
                     def aType = settings["audioSourceType${i}"] ?: "uri"
-                    if (aType == "uri" && state."nextUri${i}") {
+                    
+                    if (overrideFadeInUri) {
+                        tonightTrack = "Override URI Active"
+                    } else if (aType == "uri" && state."nextUri${i}") {
                         tonightTrack = state."nextUri${i}"
                     } else if (aType == "switch" && state."nextSwitchId${i}") {
                         def nId = state."nextSwitchId${i}"
@@ -121,9 +125,22 @@ def mainPage() {
                     def targetSpeedDisp = "N/A"
                     
                     if (isAsleep) {
-                        def isWindingDown = state."windDownActive${i}"
-                        expLights = isWindingDown ? "Fading Out (Wind Down Active)" : (settings["roomLightsOn${i}"] ? "OFF / Bedtime Plugs ON" : "OFF")
-                        expAudio = isWindingDown ? "Fading Out (Wind Down Active)" : "PLAYING (Unless Timer Ended)"
+                        def isFadingInAudio = state."fadeInActive${i}"
+                        def isFadingAudio = state."fadeActive${i}"
+                        def isFadingLight = state."lightFadeActive${i}"
+                        
+                        expLights = isFadingLight ? "Fading Out" : (settings["roomLightsOn${i}"] ? "OFF / Bedtime Plugs ON" : "OFF")
+                        
+                        def minVolDisp = settings["audioFadeMinVol${i}"] != null ? settings["audioFadeMinVol${i}"] : 0
+                        def targetVolDisp = settings["audioVolume${i}"] != null ? settings["audioVolume${i}"] : 30
+                        
+                        if (isFadingInAudio) {
+                            expAudio = "Fading In to ${targetVolDisp}%"
+                        } else if (isFadingAudio) {
+                            expAudio = "Fading Out to ${minVolDisp}%"
+                        } else {
+                            expAudio = "PLAYING (Unless Timer Ended)"
+                        }
                         
                         if (cTemp != null) {
                             def stdSet = settings["fanSetpoint${i}"]
@@ -169,24 +186,7 @@ def mainPage() {
                         <tr><td class="dash-hl">Lights/Shades</td><td class="dash-val">${expLights}</td></tr>
                         <tr><td class="dash-hl">Audio Track</td><td class="dash-val">${expAudio}</td></tr>
                     </table>
-                    
-                    <table class="dash-table" style="margin-top: 0;">
-                        <thead>
-                            <tr><th colspan='2' style="background-color:#5a6268;">Sleep Analytics & History</th></tr>
-                            <tr><th>Date</th><th>Duration (Consistency Score: ${calculateConsistencyScore(state."sleepHistory${i}")})</th></tr>
-                        </thead>
-                        <tbody>
                     """
-                    
-                    def histList = state."sleepHistory${i}" ?: []
-                    if (histList.size() > 0) {
-                        histList.each { entry ->
-                            dashHTML += "<tr><td>${entry.date}</td><td><b>${entry.duration}</b></td></tr>"
-                        }
-                    } else {
-                        dashHTML += "<tr><td colspan='2' style='color:#888;'><i>No history recorded yet.</i></td></tr>"
-                    }
-                    dashHTML += "</tbody></table>"
                 }
             }
             
@@ -209,10 +209,18 @@ def mainPage() {
             input "clearLogBtn", "button", title: "Clear Command History"
         }
 
+        section("<b>Global Life-Safety Override</b>", hideable: true, hidden: true) {
+            paragraph "<i>If smoke or carbon monoxide is detected, the app will instantly kill all fans (to prevent spreading smoke), turn all configured room lights to 100% for egress, and stop all audio playback.</i>"
+            input "emergencyAlarms", "capability.smokeDetector", title: "Smoke Detectors", multiple: true, required: false
+            input "emergencyCO", "capability.carbonMonoxideDetector", title: "Carbon Monoxide Detectors", multiple: true, required: false
+        }
+
         section("<b>Global Settings & Logs</b>", hideable: true, hidden: true) {
+            input "switchDebounceDelay", "number", title: "Switch Debounce/Delay (Seconds)", defaultValue: 3, required: true, description: "Waits X seconds before executing Good Night/Wake Up to absorb accidental rapid flips."
             input "enablePeriodicEnforcement", "bool", title: "<b>Enable Periodic State Enforcement</b><br><i>(Checks every 10 mins to ensure lights are off, fans are correct, and mode is synced)</i>", defaultValue: true
             input "enableWiggle", "bool", title: "<b>Master Enable: Hourly Fan Wiggle (Self-Healing)</b><br><i>(Global toggle to allow room fans to run their configured Wiggle routines)</i>", defaultValue: true
-            input "txtLogEnable", "bool", title: "Enable Action Logging", defaultValue: true
+            input "txtLogEnable", "bool", title: "Enable Action Logging (Info)", defaultValue: true
+            input "debugLogEnable", "bool", title: "Enable Debug Logging", defaultValue: false
         }
         
         section("<b>Global Handshake: Mode Synchronization</b>", hideable: true, hidden: true) {
@@ -296,8 +304,20 @@ def mainPage() {
                     input "enableWiggle${i}", "bool", title: "Enable Hourly Wiggle for this specific fan", defaultValue: true
                     
                     paragraph "<b>2. Lighting & Shades</b>"
-                    input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF", multiple: true, required: false
+                    input "roomLights${i}", "capability.switch", title: "Lights to Turn OFF immediately (if fade disabled)", multiple: true, required: false
+                    
+                    input "enableLightFade${i}", "bool", title: "<b>Enable Smooth Light Fade-Out</b>", submitOnChange: true
+                    if (settings["enableLightFade${i}"]) {
+                        paragraph "<i>Slowly dims dimmable lights to zero over the specified timeframe when going to sleep. Non-dimmable lights will turn off immediately.</i>"
+                        input "lightFadeDuration${i}", "number", title: "Light Fade Duration (Minutes)", defaultValue: 15, required: true
+                    }
+                    
                     input "roomLightsOn${i}", "capability.switch", title: "Lights/Plugs to Turn ON (Turns OFF when waking)", multiple: true, required: false
+                    
+                    paragraph "<b>Delayed Shut-Off (e.g., Nightlights/RGB)</b>"
+                    input "delayedOffSwitches${i}", "capability.switch", title: "Switches to turn OFF later", multiple: true, required: false
+                    input "delayedOffTime${i}", "number", title: "Delay Time (Minutes)", required: false, defaultValue: 120
+
                     input "pauseLightingEnforcement${i}", "capability.switch", title: "Pause Lighting Enforcement Switch", required: false
                     input "romanceSwitch${i}", "capability.switch", title: "Romance / Override Switch (Stops 10-min cycle)", required: false
                     input "shadeContact${i}", "capability.contactSensor", title: "Shade Open/Close Contact Sensor", required: false
@@ -329,9 +349,9 @@ def mainPage() {
                     paragraph "<b>3. Sonos Audio Polish</b>"
                     input "roomSpeakerPower${i}", "capability.switch", title: "Sonos Speaker Power Plug (Optional)", required: false
                     input "roomSpeaker${i}", "capability.musicPlayer", title: "Sonos Speaker", required: false
-                    input "audioVolume${i}", "number", title: "Fixed Nighttime Volume (1-100)", required: false, defaultValue: 15
-                    input "audioTimer${i}", "number", title: "Sleep Timer: Stop audio after X minutes", required: false
+                    input "audioStartDelay${i}", "number", title: "Audio Start Delay (Minutes)", required: false, defaultValue: 8, description: "Delays the music to allow Voice Butler TTS to finish."
                     
+                    paragraph "<b>Audio Track Configuration</b>"
                     input "audioSourceType${i}", "enum", title: "Audio Source Type", options: ["uri":"Direct Audio URIs", "switch":"Sonos Favorite Virtual Switches"], defaultValue: "uri", submitOnChange: true
                     
                     if ((settings["audioSourceType${i}"] ?: "uri") == "uri") {
@@ -348,12 +368,35 @@ def mainPage() {
                         input "audioSwitch${i}_5", "capability.switch", title: "Favorite Switch 5", required: false
                     }
                     
-                    paragraph "<b>4. Adaptive Wind Down (Fade Out)</b>"
-                    input "enableWindDown${i}", "bool", title: "<b>Enable Smooth Wind Down Transition</b>", submitOnChange: true
-                    if (settings["enableWindDown${i}"]) {
-                        paragraph "<i>Slowly fades audio volume and dims lights to zero over the specified timeframe when going to sleep.</i>"
-                        input "windDownDuration${i}", "number", title: "Wind Down Duration (Minutes)", defaultValue: 15, required: true
-                        input "windDownStartVol${i}", "number", title: "Starting Audio Volume (%)", defaultValue: 30, required: true
+                    paragraph "<b>Audio Volume & Fade-In (Start of Sleep)</b>"
+                    input "audioVolume${i}", "number", title: "Target Nighttime Volume (1-100)", required: false, defaultValue: 30
+                    
+                    input "enableAudioFadeIn${i}", "bool", title: "<b>Enable Smooth Audio Fade-In</b>", submitOnChange: true
+                    if (settings["enableAudioFadeIn${i}"]) {
+                        input "audioFadeInDuration${i}", "number", title: "Fade-In Duration (Minutes)", defaultValue: 5, required: true
+                        input "audioFadeInStartVol${i}", "number", title: "Starting Volume (%)", defaultValue: 1, required: true
+                        input "audioFadeInUri${i}", "text", title: "Optional Override URI (Plays this specific URI instead of standard audio source)", required: false
+                    }
+
+                    paragraph "<b>Audio Timer & Fade-Out</b>"
+                    input "audioTimer${i}", "number", title: "Total Sleep Timer: Stop audio after X minutes", required: false, submitOnChange: true
+                    
+                    if (settings["audioTimer${i}"]) {
+                        input "enableAudioFade${i}", "bool", title: "<b>Enable Smooth Fade-Out</b>", submitOnChange: true
+                        if (settings["enableAudioFade${i}"]) {
+                            input "audioFadeDuration${i}", "number", title: "Fade-Out Duration (Minutes)", defaultValue: 15, required: true, description: "The volume will slowly step down to your target minimum volume over the last X minutes of the Sleep Timer to prevent abrupt waking."
+                            input "audioFadeMinVol${i}", "number", title: "Minimum Fade Volume (%)", defaultValue: 1, required: true, description: "Set to 1 or higher to prevent the Sonos Green Mute LED from turning on at night."
+                        }
+                    }
+
+                    paragraph "<b>Morning Audio & Ramp-Up (Wake Up)</b>"
+                    input "enableMorningAudio${i}", "bool", title: "<b>Enable Morning Audio Ramp-Up</b>", submitOnChange: true
+                    if (settings["enableMorningAudio${i}"]) {
+                        input "morningAudioUri${i}", "text", title: "Morning Audio URI (Optional)", required: false
+                        input "morningAudioSwitch${i}", "capability.switch", title: "Morning Sonos Favorite Virtual Switch (Optional)", required: false
+                        input "morningFadeInDuration${i}", "number", title: "Ramp-Up Duration (Minutes)", defaultValue: 5, required: true
+                        input "morningStartVol${i}", "number", title: "Starting Volume (%)", defaultValue: 1, required: true
+                        input "morningTargetVol${i}", "number", title: "Target Daytime Volume (%)", defaultValue: 30, required: true
                     }
                 }
             }
@@ -436,6 +479,13 @@ def initialize() {
         runEvery1Hour("doHourlyWiggle")
     }
     
+    if (emergencyAlarms) {
+        subscribe(emergencyAlarms, "smoke.detected", emergencyHandler)
+    }
+    if (emergencyCO) {
+        subscribe(emergencyCO, "carbonMonoxide.detected", emergencyHandler)
+    }
+    
     for (int i = 1; i <= 4; i++) {
         if (settings["enableRoom${i}"]) {
             if (settings["roomSwitch${i}"]) {
@@ -459,7 +509,6 @@ def initialize() {
                 subscribe(settings["readingButton2_${i}"], "pushed", readingButtonHandler)
             }
             
-            if (!state."sleepHistory${i}") state."sleepHistory${i}" = []
             prepNextAudio(i)
         }
     }
@@ -470,6 +519,70 @@ def initialize() {
         }
         if (blockingSwitches) {
             subscribe(blockingSwitches, "switch", blockingSwitchHandler)
+        }
+    }
+}
+
+// --- LIFE SAFETY EMERGENCY OVERRIDE ---
+def emergencyHandler(evt) {
+    logInfo("🚨 EMERGENCY: ${evt.name.toUpperCase()} DETECTED BY ${evt.device.displayName}! INITIATING LIFE-SAFETY OVERRIDE 🚨")
+    
+    for (int i = 1; i <= 4; i++) {
+        if (settings["enableRoom${i}"]) {
+            def rName = settings["roomName${i}"] ?: "Room ${i}"
+            
+            // 1. Cancel all sleep timers and fade loops
+            state.remove("fadeActive${i}")
+            state.remove("fadeInActive${i}")
+            state.remove("morningFadeInActive${i}")
+            state.remove("lightFadeActive${i}")
+            unschedule("lightFadeCompleteRoom${i}")
+            unschedule("startAudioFadeInRoom${i}")
+            unschedule("startMorningAudioFadeInRoom${i}")
+            unschedule("startAudioFadeRoom${i}")
+            unschedule("playDelayedAudioRoom${i}")
+            unschedule("stopAudioRoom${i}")
+            unschedule("applyDelayedFanSpeedRoom${i}")
+            unschedule("applyDelayedVolumeRoom${i}")
+            unschedule("delayedOffRoom${i}")
+            
+            // 2. Kill all fans to stop smoke circulation
+            settings["roomFans${i}"]?.off()
+            
+            def cFanSpeed = settings["ceilingFanSpeed${i}"]
+            def fType = settings["fanType${i}"] ?: "3_speed"
+            if (cFanSpeed && cFanSpeed.hasCommand("setSpeed") && fType != "on_off") {
+                cFanSpeed.setSpeed("off")
+            }
+            settings["ceilingFanSwitch${i}"]?.off()
+            
+            // 3. Stop audio to allow alarms to be heard
+            settings["roomSpeaker${i}"]?.stop()
+            
+            // 4. Egress Lighting (Snap to 100%)
+            def lights = settings["roomLights${i}"]
+            if (lights) {
+                lights.each { lgt ->
+                    if (lgt.hasCommand("setLevel")) {
+                        lgt.setLevel(100)
+                    } else {
+                        lgt.on()
+                    }
+                }
+            }
+            
+            def lightsOn = settings["roomLightsOn${i}"]
+            if (lightsOn) {
+                lightsOn.each { lgt ->
+                    if (lgt.hasCommand("setLevel")) {
+                        lgt.setLevel(100)
+                    } else {
+                        lgt.on()
+                    }
+                }
+            }
+            
+            logInfo("${rName}: Emergency Protocol Executed - Fans OFF, Audio STOPPED, Lights 100%.")
         }
     }
 }
@@ -488,6 +601,16 @@ def goodNightButtonHandler(evt) {
         def rName = settings["roomName${i}"] ?: "Room ${i}"
 
         if (confBtn && confBtn.id == btnId && evt.name == confAction && btnNum == confNum) {
+            
+            // --- HARDWARE DEADBAND (ANTI-BOUNCE) ---
+            def lastPress = state."lastBtnPress${i}" ?: 0
+            if (now() - lastPress < 3000) { // 3000 milliseconds = 3 seconds
+                logInfo("${rName}: Hardware button bounce/stutter detected. Ignoring duplicate signal.")
+                return 
+            }
+            state."lastBtnPress${i}" = now()
+            // ---------------------------------------
+
             def rModes = settings["gnButtonModes${i}"]
             if (rModes && !(rModes as List).contains(location.mode)) {
                 logInfo("${rName}: Good Night button pressed, but not in an allowed mode.")
@@ -591,30 +714,6 @@ def isReadingLightActive(roomNum, lightDeviceId) {
     return false
 }
 
-// --- SLEEP ANALYTICS MATH ---
-def calculateConsistencyScore(histList) {
-    if (!histList) return "Data needed"
-    
-    // Filter out old legacy history entries that don't have the new startMins data point
-    def validEntries = histList.findAll { it.startMins != null }
-    
-    if (validEntries.size() < 3) return "Data needed"
-    
-    def sum = 0
-    validEntries.each { sum += it.startMins }
-    def mean = sum / validEntries.size()
-    
-    def sumSqDev = 0
-    validEntries.each { sumSqDev += Math.pow((it.startMins - mean), 2) }
-    def stdDev = Math.sqrt(sumSqDev / validEntries.size())
-    
-    if (stdDev < 30) return "<span style='color:green; font-weight:bold;'>A+</span>"
-    if (stdDev < 45) return "<span style='color:green;'>A</span>"
-    if (stdDev < 60) return "<span style='color:orange;'>B</span>"
-    if (stdDev < 90) return "<span style='color:orange;'>C</span>"
-    return "<span style='color:red;'>D (Irregular)</span>"
-}
-
 // --- HOURLY FAN WIGGLE ---
 def doHourlyWiggle() {
     if (!settings.enableWiggle) return 
@@ -683,17 +782,14 @@ def periodicEnforcementHandler() {
                 
                 if (state."roomAsleepStatus${i}") {
                     
-                    if (state."windDownActive${i}") {
-                        if (txtLogEnable) log.debug "ENFORCEMENT: Skipping ${rName} (Wind Down Active)."
-                        continue
-                    }
-                    
                     def pauseEnforce = settings["pauseLightingEnforcement${i}"]
                     def romanceSw = settings["romanceSwitch${i}"]
                     
                     def isPaused = (pauseEnforce?.currentValue("switch") == "on") || (romanceSw?.currentValue("switch") == "on")
                     
-                    if (!isPaused) {
+                    if (state."lightFadeActive${i}") {
+                        if (txtLogEnable) log.debug "ENFORCEMENT: Skipping ${rName} light checks (Smooth Light Fade currently active)."
+                    } else if (!isPaused) {
                         if (txtLogEnable) log.debug "ENFORCEMENT: No overrides active. Proceeding with forced light shutdown for ${rName}."
                         
                         def lights = settings["roomLights${i}"]
@@ -819,6 +915,7 @@ def blockingSwitchHandler(evt) {
     evaluateGlobalMode(evt)
 }
 
+// --- SWITCH DEBOUNCE (ABSORB METHOD) ---
 def roomSwitchHandler(evt) {
     def roomNum = null
     for (int i = 1; i <= 4; i++) {
@@ -831,6 +928,24 @@ def roomSwitchHandler(evt) {
     }
     if (!roomNum) return
     
+    def debounceSecs = settings.switchDebounceDelay != null ? settings.switchDebounceDelay.toInteger() : 3
+
+    if (debounceSecs > 0) {
+        if (txtLogEnable) log.debug "Debounce active: Delaying evaluation for Room ${roomNum} by ${debounceSecs}s to absorb rapid toggles."
+        // We use dedicated wrappers so simultaneous room changes don't overwrite each other
+        runIn(debounceSecs, "commitRoomSwitch${roomNum}")
+    } else {
+        commitRoomSwitch(roomNum)
+    }
+}
+
+// --- DEBOUNCE WRAPPERS ---
+def commitRoomSwitch1() { commitRoomSwitch(1) }
+def commitRoomSwitch2() { commitRoomSwitch(2) }
+def commitRoomSwitch3() { commitRoomSwitch(3) }
+def commitRoomSwitch4() { commitRoomSwitch(4) }
+
+def commitRoomSwitch(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     def sw1 = settings["roomSwitch${roomNum}"]
     def sw2 = settings["partnerSwitch${roomNum}"]
@@ -844,14 +959,9 @@ def roomSwitchHandler(evt) {
     
     def wasAsleep = state."roomAsleepStatus${roomNum}" ?: false
     
+    // Evaluate the final settled state
     if (isNowAsleep && !wasAsleep) {
         state."roomAsleepStatus${roomNum}" = true
-        state."sleepStartTime${roomNum}" = now()
-        
-        def dt = new Date()
-        def minsSinceMidnight = (dt.getHours() * 60) + dt.getMinutes()
-        if (dt.getHours() < 12) minsSinceMidnight += 1440 
-        state."sleepStartMinsOfDay${roomNum}" = minsSinceMidnight
         
         logInfo("${rName}: Good Night Triggered (Multi-Occupant Sync Met if enabled). Engaging Routine.")
         executeRoomGoodNight(roomNum)
@@ -867,24 +977,8 @@ def roomSwitchHandler(evt) {
         
     } else if (!isNowAsleep && wasAsleep) {
         state."roomAsleepStatus${roomNum}" = false
-        def startTime = state."sleepStartTime${roomNum}"
-        if (startTime) {
-            def totalMins = Math.round((now() - startTime) / 60000.0).toInteger()
-            def hours = (totalMins / 60).toInteger()
-            def mins = totalMins % 60
-            
-            logInfo("${rName}: Good Night Wake Up Triggered. Sleep Duration Logged: ${hours}h ${mins}m.")
-            
-            def hist = state."sleepHistory${roomNum}" ?: []
-            def startMins = state."sleepStartMinsOfDay${roomNum}" ?: 0
-            def todayDate = new Date().format("MM/dd", location.timeZone)
-            hist.add(0, [date: todayDate, duration: "${hours}h ${mins}m", startMins: startMins])
-            if (hist.size() > 7) hist = hist.take(7)
-            state."sleepHistory${roomNum}" = hist
-            
-            state.remove("sleepStartTime${roomNum}")
-            state.remove("sleepStartMinsOfDay${roomNum}")
-        }
+        logInfo("${rName}: Good Night Wake Up Triggered.")
+        
         endRoomGoodNight(roomNum)
         
         if (settings.enableLeadRoomOverride && settings.leadRooms?.contains(roomNum.toString())) {
@@ -892,8 +986,12 @@ def roomSwitchHandler(evt) {
             state.remove("overrideScheduledTime")
             logInfo("GOOD NIGHT OVERRIDE: A Lead Room (${roomNum}) woke up. Canceled evaluation.")
         }
+    } else {
+        // If the state reverted to its original position during the delay window
+        logInfo("${rName}: Switch evaluation completed with no net state change (Accidental flip completely absorbed).")
     }
-    evaluateGlobalMode(evt)
+    
+    evaluateGlobalMode(null)
 }
 
 def evaluateLeadRoomOverride() {
@@ -952,13 +1050,13 @@ def evaluateGlobalMode(evt = null) {
             isNightWindow = (now.time >= nightStart.time || now.time <= nightEnd.time)
         }
         
-        if (txtLogEnable) log.debug "EVAL DEBUG: isNightWindow=${isNightWindow} | currentMode=${currentMode} | targetMode=${targetNightMode}"
+        if (debugLogEnable) log.debug "EVAL DEBUG: isNightWindow=${isNightWindow} | currentMode=${currentMode} | targetMode=${targetNightMode}"
         
         if (isNightWindow && currentMode != targetNightMode) {
             def isAllowedMode = true
             if (allowedNightModes) isAllowedMode = (allowedNightModes as List).contains(currentMode)
             
-            if (txtLogEnable) log.debug "EVAL DEBUG: isAllowedMode=${isAllowedMode}"
+            if (debugLogEnable) log.debug "EVAL DEBUG: isAllowedMode=${isAllowedMode}"
             
             if (isAllowedMode) {
                 def allAsleep = true
@@ -971,7 +1069,7 @@ def evaluateGlobalMode(evt = null) {
                 }
                 if (roomsChecked == 0) allAsleep = false
                 
-                if (txtLogEnable) log.debug "EVAL DEBUG: allAsleep=${allAsleep} (Rooms Checked: ${roomsChecked})"
+                if (debugLogEnable) log.debug "EVAL DEBUG: allAsleep=${allAsleep} (Rooms Checked: ${roomsChecked})"
                 
                 if (allAsleep) {
                     def nDelay = settings.nightModeDelay != null ? settings.nightModeDelay.toInteger() : 60
@@ -1043,49 +1141,60 @@ def evaluateGlobalMode(evt = null) {
 def executeRoomGoodNight(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
     
+    state.remove("morningFadeInActive${roomNum}")
+    unschedule("startMorningAudioFadeInRoom${roomNum}")
+    unschedule("lightFadeCompleteRoom${roomNum}")
     unschedule("turnOffHoldReleaseRoom${roomNum}")
     unschedule("fanOffTwoRoom${roomNum}")
     unschedule("fanOffThreeRoom${roomNum}")
     unschedule("fanPowerOffRoom${roomNum}")
+    unschedule("delayedOffRoom${roomNum}")
 
-    def doWindDown = settings["enableWindDown${roomNum}"]
+    def audioDelayMins = settings["audioStartDelay${roomNum}"] != null ? settings["audioStartDelay${roomNum}"].toInteger() : 8
+    def audioDelaySecs = audioDelayMins * 60
     def lights = settings["roomLights${roomNum}"]
     
-    if (doWindDown) {
-        def durMins = settings["windDownDuration${roomNum}"] ?: 15
-        logInfo("${rName}: Initiating Adaptive Wind Down for ${durMins} minutes.")
-        state."windDownActive${roomNum}" = true
-        state."windDownStep${roomNum}" = 0
-        state."windDownMaxSteps${roomNum}" = durMins
+    // --- SCHEDULE DELAYED SHUT-OFF ---
+    def delaySwitches = settings["delayedOffSwitches${roomNum}"]
+    def delayMins = settings["delayedOffTime${roomNum}"]
+    if (delaySwitches && delayMins) {
+        logInfo("${rName}: Scheduled delayed shut-off for specific switches in ${delayMins} minutes.")
+        runIn(delayMins * 60, "delayedOffRoom${roomNum}")
+    }
+
+    // --- SMOOTH LIGHT FADE (START OF SLEEP) ---
+    def doLightFade = settings["enableLightFade${roomNum}"]
+    def lightFadeMins = settings["lightFadeDuration${roomNum}"]
+
+    if (doLightFade && lightFadeMins && lights) {
+        logInfo("${rName}: Initiating Smooth Light Fade-Out for ${lightFadeMins} minutes.")
+        state."lightFadeActive${roomNum}" = true
         
-        if (lights) {
-            lights.each { lgt ->
-                if (isReadingLightActive(roomNum, lgt.id)) {
-                    logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
-                    return 
-                }
-                if (lgt.hasCommand("setLevel")) {
-                    lgt.setLevel(0, durMins * 60)
-                } else {
-                    lgt.off()
-                }
+        lights.each { lgt ->
+            if (isReadingLightActive(roomNum, lgt.id)) {
+                logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
+                return 
+            }
+            if (lgt.hasCommand("setLevel")) {
+                lgt.setLevel(0, (lightFadeMins * 60).toInteger())
+            } else {
+                lgt.off()
             }
         }
-    } else {
-        if (lights) { 
-            lights.each { lgt ->
-                if (isReadingLightActive(roomNum, lgt.id)) {
-                    logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
-                    return 
-                }
-                if (lgt.hasCommand("setLevel")) {
-                    lgt.setLevel(1)
-                    pauseExecution(400)
-                }
-                 lgt.off()
+        runIn((lightFadeMins * 60) + 5, "lightFadeCompleteRoom${roomNum}")
+    } else if (lights) { 
+        lights.each { lgt ->
+            if (isReadingLightActive(roomNum, lgt.id)) {
+                logInfo("${rName}: Skipping light [${lgt.displayName}] (Reading Mode active).")
+                return 
             }
-            logInfo("${rName}: Lights turned OFF (w/ 1% flashbang protection if applicable).") 
+            if (lgt.hasCommand("setLevel")) {
+                lgt.setLevel(1)
+                pauseExecution(400)
+            }
+             lgt.off()
         }
+        logInfo("${rName}: Lights turned OFF (w/ 1% flashbang protection if applicable).") 
     }
     
     def lightsOn = settings["roomLightsOn${roomNum}"]
@@ -1103,77 +1212,83 @@ def executeRoomGoodNight(roomNum) {
         logInfo("${rName}: Shade contact is open. Closing shade.")
     }
     
-    if (doWindDown) {
-        def startVol = settings["windDownStartVol${roomNum}"] ?: 30
-        def speaker = settings["roomSpeaker${roomNum}"]
-        if (speaker) {
-            speaker.setVolume(startVol)
-            logInfo("${rName}: Setting starting Wind Down volume to ${startVol}%.")
-        }
-        runIn(60, "executeWindDownLoopRoom${roomNum}")
-        executeAudioPlay(roomNum)
-    } else {
-        def speakerPower = settings["roomSpeakerPower${roomNum}"]
-        def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
-        
-        if (settings["roomSpeaker${roomNum}"] || audioType == "switch") {
-            if (speakerPower) {
-                if (speakerPower.hasCommand("refresh")) {
-                    speakerPower.refresh()
-                    logInfo("${rName}: Refreshed speaker power plug state.")
-                    pauseExecution(1000) 
-                }
-                if (speakerPower.currentValue("switch") == "off") {
-                    logInfo("${rName}: Speaker power plug is OFF. Turning ON and waiting 120s before initiating audio play.")
-                     speakerPower.on()
-                    runIn(120, "playDelayedAudioRoom${roomNum}")
+    // --- AUDIO STARTUP ---
+    def speakerPower = settings["roomSpeakerPower${roomNum}"]
+    def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
+    
+    if (settings["roomSpeaker${roomNum}"] || audioType == "switch") {
+        if (speakerPower) {
+            if (speakerPower.hasCommand("refresh")) {
+                speakerPower.refresh()
+                logInfo("${rName}: Refreshed speaker power plug state.")
+                pauseExecution(1000) 
+            }
+            if (speakerPower.currentValue("switch") == "off") {
+                speakerPower.on()
+                def finalWait = Math.max(audioDelaySecs, 120)
+                logInfo("${rName}: Speaker power plug is OFF. Turning ON and waiting ${finalWait}s before initiating audio play.")
+                runIn(finalWait, "playDelayedAudioRoom${roomNum}")
+            } else {
+                if (audioDelaySecs > 0) {
+                    logInfo("${rName}: Delaying audio start by ${audioDelayMins} minutes to allow Voice Butler TTS to finish.")
+                    runIn(audioDelaySecs, "playDelayedAudioRoom${roomNum}")
                 } else {
                     executeAudioPlay(roomNum)
                 }
+            }
+        } else {
+            if (audioDelaySecs > 0) {
+                logInfo("${rName}: Delaying audio start by ${audioDelayMins} minutes to allow Voice Butler TTS to finish.")
+                runIn(audioDelaySecs, "playDelayedAudioRoom${roomNum}")
             } else {
                 executeAudioPlay(roomNum)
-             }
-        }
+            }
+         }
     }
     
     evaluateFans(roomNum)
 }
 
-def executeWindDownLoopRoom1() { windDownStepHandler(1) }
-def executeWindDownLoopRoom2() { windDownStepHandler(2) }
-def executeWindDownLoopRoom3() { windDownStepHandler(3) }
-def executeWindDownLoopRoom4() { windDownStepHandler(4) }
+// --- LIGHT FADE COMPLETE WRAPPERS ---
+def lightFadeCompleteRoom1() { executeLightFadeComplete(1) }
+def lightFadeCompleteRoom2() { executeLightFadeComplete(2) }
+def lightFadeCompleteRoom3() { executeLightFadeComplete(3) }
+def lightFadeCompleteRoom4() { executeLightFadeComplete(4) }
 
-def windDownStepHandler(roomNum) {
-    if (!state."windDownActive${roomNum}") return
-    
-    def step = state."windDownStep${roomNum}" + 1
-    def maxSteps = state."windDownMaxSteps${roomNum}"
-    def endVol = settings["audioVolume${roomNum}"] ?: 15
-    def speaker = settings["roomSpeaker${roomNum}"]
-    
-    if (step >= maxSteps) {
-        state.remove("windDownActive${roomNum}")
-        if (speaker) speaker.setVolume(endVol)
-        def lights = settings["roomLights${roomNum}"]
-        if (lights) {
-            lights.each { lgt ->
-                if (isReadingLightActive(roomNum, lgt.id)) return 
-                if (lgt.currentValue("switch") != "off") lgt.off()
+def executeLightFadeComplete(roomNum) {
+    state.remove("lightFadeActive${roomNum}")
+    def lights = settings["roomLights${roomNum}"]
+    if (lights) {
+        lights.each { lgt ->
+            if (!isReadingLightActive(roomNum, lgt.id) && lgt.currentValue("switch") != "off") {
+                lgt.off()
             }
         }
-        logInfo("Room ${roomNum}: Wind Down Complete. Reached target sleep levels.")
-        return
     }
-    
-    state."windDownStep${roomNum}" = step
-    def startVol = settings["windDownStartVol${roomNum}"] ?: 30
-    def currentVol = startVol - (((startVol - endVol) / maxSteps) * step).toInteger()
-    
-    if (speaker) speaker.setVolume(currentVol)
-    runIn(60, "executeWindDownLoopRoom${roomNum}")
+    logInfo("${settings["roomName${roomNum}"] ?: "Room " + roomNum}: Smooth Light Fade-Out complete. Final OFF sent to ensure states.")
 }
 
+// --- DELAYED SHUT-OFF WRAPPERS ---
+def delayedOffRoom1() { executeDelayedOff(1) }
+def delayedOffRoom2() { executeDelayedOff(2) }
+def delayedOffRoom3() { executeDelayedOff(3) }
+def delayedOffRoom4() { executeDelayedOff(4) }
+
+def executeDelayedOff(roomNum) {
+    def delaySwitches = settings["delayedOffSwitches${roomNum}"]
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    if (delaySwitches) {
+        delaySwitches.each { sw ->
+            if (sw.currentValue("switch") != "off") {
+                sw.off()
+            }
+        }
+        logInfo("${rName}: Executed delayed shut-off for configured specific lights/plugs.")
+    }
+}
+
+// --- AUDIO PLAY & INTERLOCKED FADE LOGIC ---
 def playDelayedAudioRoom1() { executeAudioPlay(1) }
 def playDelayedAudioRoom2() { executeAudioPlay(2) }
 def playDelayedAudioRoom3() { executeAudioPlay(3) }
@@ -1184,20 +1299,32 @@ def executeAudioPlay(roomNum) {
     def audioType = settings["audioSourceType${roomNum}"] ?: "uri"
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
 
+    def doFadeIn = settings["enableAudioFadeIn${roomNum}"]
+    def fadeInMins = settings["audioFadeInDuration${roomNum}"] ?: 0
+    def fadeInStartVol = settings["audioFadeInStartVol${roomNum}"] ?: 1
+    def overrideFadeInUri = settings["audioFadeInUri${roomNum}"]
+    def setVol = settings["audioVolume${roomNum}"]
+
     if (speaker) {
-        if (!state."windDownActive${roomNum}") {
-            def setVol = settings["audioVolume${roomNum}"]
-            if (setVol != null) {
-                 speaker.setVolume(setVol)
-                logInfo("${rName}: Speaker volume forced to ${setVol}%.")
-            }
+        
+        // Handle Target Start Volumes 
+        if (doFadeIn && fadeInMins > 0) {
+            speaker.setVolume(fadeInStartVol)
+            logInfo("${rName}: Speaker volume forced to ${fadeInStartVol}% for Fade-In start.")
+        } else if (setVol != null) {
+            speaker.setVolume(setVol)
+            logInfo("${rName}: Speaker volume forced to ${setVol}%.")
         }
 
-        if (audioType == "uri") {
+        // Initialize Audio Track or Switch
+        if (overrideFadeInUri) {
+            speaker.playTrack(overrideFadeInUri)
+            logInfo("${rName}: Playing Override Fade-In URI (${overrideFadeInUri}).")
+        } else if (audioType == "uri") {
             def trackToPlay = state."nextUri${roomNum}"
             if (trackToPlay) {
                 speaker.playTrack(trackToPlay)
-                 logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
+                logInfo("${rName}: Playing tonight's Sonos URI (${trackToPlay}).")
                 state."lastUri${roomNum}" = trackToPlay
             }
         } else if (audioType == "switch") {
@@ -1208,28 +1335,162 @@ def executeAudioPlay(roomNum) {
                     def sw = settings["audioSwitch${roomNum}_${u}"]
                     if (sw?.id == switchToTurnOnId) {
                         targetSw = sw
-                         break
+                        break
                     }
                 }
                 
                 if (targetSw) {
                     targetSw.on()
-                     logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
+                    logInfo("${rName}: Triggered Sonos Favorite Virtual Switch (${targetSw.displayName}).")
                     state."lastSwitchId${roomNum}" = switchToTurnOnId
                     
-                    if (settings["audioVolume${roomNum}"] != null && !state."windDownActive${roomNum}") {
-                         runIn(30, "applyDelayedVolumeRoom${roomNum}")
+                    if (!doFadeIn && setVol != null) {
+                        runIn(30, "applyDelayedVolumeRoom${roomNum}")
                     }
                 }
             }
         }
         
+        // Initialize Fade In Loop
+        if (doFadeIn && fadeInMins > 0) {
+            state."fadeInActive${roomNum}" = true
+            state."fadeInStep${roomNum}" = 0
+            state."fadeInMaxSteps${roomNum}" = fadeInMins
+            state."fadeInStartVol${roomNum}" = fadeInStartVol
+            state."fadeInTargetVol${roomNum}" = setVol ?: 30
+            
+            logInfo("${rName}: Started Audio Fade-In from ${fadeInStartVol}% to ${state."fadeInTargetVol${roomNum}"}% over ${fadeInMins} minutes.")
+            runIn(60, "startAudioFadeInRoom${roomNum}")
+        }
+        
+        // Initialize Sleep Timer & Fade Out
         def sTimer = settings["audioTimer${roomNum}"]
         if (sTimer) {
-             logInfo("${rName}: Sleep timer set for ${sTimer} minutes.")
-            runIn(sTimer * 60, "stopAudioRoom${roomNum}") 
+            def timerSecs = sTimer * 60
+            def fadeEnabled = settings["enableAudioFade${roomNum}"]
+            def fadeOutMins = settings["audioFadeDuration${roomNum}"] ?: 0
+            
+            if (fadeEnabled && fadeOutMins > 0) {
+                if (fadeOutMins > sTimer) fadeOutMins = sTimer
+                def fadeStartDelaySecs = (sTimer - fadeOutMins) * 60
+                
+                state."fadeActive${roomNum}" = true
+                state."fadeStep${roomNum}" = 0
+                state."fadeMaxSteps${roomNum}" = fadeOutMins
+                state."fadeInitialVol${roomNum}" = setVol ?: 30
+                
+                def minVol = settings["audioFadeMinVol${roomNum}"] != null ? settings["audioFadeMinVol${roomNum}"] : 0
+                
+                if (fadeStartDelaySecs > 0) {
+                    logInfo("${rName}: Sleep timer set for ${sTimer} mins. Fade-out to ${minVol}% will begin in ${sTimer - fadeOutMins} mins.")
+                    runIn(fadeStartDelaySecs, "startAudioFadeRoom${roomNum}")
+                } else {
+                    logInfo("${rName}: Sleep timer set for ${sTimer} mins. Fade-out to ${minVol}% starting immediately.")
+                    startAudioFadeRoom(roomNum)
+                }
+            } else {
+                 logInfo("${rName}: Sleep timer set for ${sTimer} minutes (No fade-out scheduled).")
+            }
+            runIn(timerSecs, "stopAudioRoom${roomNum}") 
         }
     }
+}
+
+// --- FADE IN STEP LOGIC ---
+def startAudioFadeInRoom1() { audioFadeInStepHandler(1) }
+def startAudioFadeInRoom2() { audioFadeInStepHandler(2) }
+def startAudioFadeInRoom3() { audioFadeInStepHandler(3) }
+def startAudioFadeInRoom4() { audioFadeInStepHandler(4) }
+
+def audioFadeInStepHandler(roomNum) {
+    if (!state."fadeInActive${roomNum}") return
+    
+    def step = state."fadeInStep${roomNum}" + 1
+    def maxSteps = state."fadeInMaxSteps${roomNum}" ?: 5
+    def startVol = state."fadeInStartVol${roomNum}" ?: 1
+    def targetVol = state."fadeInTargetVol${roomNum}" ?: 30
+    def speaker = settings["roomSpeaker${roomNum}"]
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    if (step >= maxSteps) {
+        state.remove("fadeInActive${roomNum}")
+        if (speaker) speaker.setVolume(targetVol)
+        logInfo("${rName}: Audio fade-in to ${targetVol}% complete.")
+        return
+    }
+    
+    state."fadeInStep${roomNum}" = step
+    
+    def volRange = targetVol - startVol
+    def currentVol = Math.round(startVol + ((volRange.toDouble() / maxSteps) * step)).toInteger()
+    
+    if (speaker) speaker.setVolume(currentVol)
+    runIn(60, "startAudioFadeInRoom${roomNum}")
+}
+
+// --- MORNING FADE IN STEP LOGIC ---
+def startMorningAudioFadeInRoom1() { morningAudioFadeInStepHandler(1) }
+def startMorningAudioFadeInRoom2() { morningAudioFadeInStepHandler(2) }
+def startMorningAudioFadeInRoom3() { morningAudioFadeInStepHandler(3) }
+def startMorningAudioFadeInRoom4() { morningAudioFadeInStepHandler(4) }
+
+def morningAudioFadeInStepHandler(roomNum) {
+    if (!state."morningFadeInActive${roomNum}") return
+    
+    def step = state."morningFadeInStep${roomNum}" + 1
+    def maxSteps = state."morningFadeInMaxSteps${roomNum}" ?: 5
+    def startVol = state."morningStartVol${roomNum}" ?: 1
+    def targetVol = state."morningTargetVol${roomNum}" ?: 30
+    def speaker = settings["roomSpeaker${roomNum}"]
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    if (step >= maxSteps) {
+        state.remove("morningFadeInActive${roomNum}")
+        if (speaker && speaker.hasCommand("setVolume")) speaker.setVolume(targetVol)
+        logInfo("${rName}: Morning audio ramp-up to ${targetVol}% complete.")
+        return
+    }
+    
+    state."morningFadeInStep${roomNum}" = step
+    
+    def volRange = targetVol - startVol
+    def currentVol = Math.round(startVol + ((volRange.toDouble() / maxSteps) * step)).toInteger()
+    
+    if (speaker && speaker.hasCommand("setVolume")) speaker.setVolume(currentVol)
+    runIn(60, "startMorningAudioFadeInRoom${roomNum}")
+}
+
+// --- FADE OUT STEP LOGIC ---
+def startAudioFadeRoom1() { audioFadeStepHandler(1) }
+def startAudioFadeRoom2() { audioFadeStepHandler(2) }
+def startAudioFadeRoom3() { audioFadeStepHandler(3) }
+def startAudioFadeRoom4() { audioFadeStepHandler(4) }
+
+def audioFadeStepHandler(roomNum) {
+    if (!state."fadeActive${roomNum}") return
+    
+    def step = state."fadeStep${roomNum}" + 1
+    def maxSteps = state."fadeMaxSteps${roomNum}" ?: 15
+    def initialVol = state."fadeInitialVol${roomNum}" ?: 30
+    def minVol = settings["audioFadeMinVol${roomNum}"] != null ? settings["audioFadeMinVol${roomNum}"].toInteger() : 0
+    def speaker = settings["roomSpeaker${roomNum}"]
+    def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    if (step >= maxSteps) {
+        state.remove("fadeActive${roomNum}")
+        if (speaker) speaker.setVolume(minVol)
+        logInfo("${rName}: Audio fade-out to ${minVol}% complete. Waiting for stop command.")
+        return
+    }
+    
+    state."fadeStep${roomNum}" = step
+    
+    // Calculates a smooth step down from initialVol to the chosen minVol
+    def volRange = initialVol - minVol
+    def currentVol = Math.round(initialVol - ((volRange.toDouble() / maxSteps) * step)).toInteger()
+    
+    if (speaker) speaker.setVolume(currentVol)
+    runIn(60, "startAudioFadeRoom${roomNum}")
 }
 
 def stopAudioRoom1() { executeAudioStop(1) }
@@ -1240,6 +1501,10 @@ def stopAudioRoom4() { executeAudioStop(4) }
 def executeAudioStop(roomNum) {
     def speaker = settings["roomSpeaker${roomNum}"]
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
+    
+    state.remove("fadeActive${roomNum}")
+    unschedule("startAudioFadeRoom${roomNum}")
+    
     if (speaker && speaker.hasCommand("stop")) {
         speaker.stop()
         logInfo("${rName}: Sleep timer reached. Audio stopped.")
@@ -1264,14 +1529,21 @@ def executeDelayedVolume(roomNum) {
 
 def endRoomGoodNight(roomNum) {
     def rName = settings["roomName${roomNum}"] ?: "Room ${roomNum}"
-    logInfo("${rName}: Executing Wake-Up routine (shutting down fans and audio).")
+    logInfo("${rName}: Executing Wake-Up routine (shutting down fans and restoring audio).")
     
-    state.remove("windDownActive${roomNum}")
-    unschedule("executeWindDownLoopRoom${roomNum}")
+    state.remove("fadeActive${roomNum}")
+    state.remove("fadeInActive${roomNum}")
+    state.remove("morningFadeInActive${roomNum}")
+    state.remove("lightFadeActive${roomNum}")
+    unschedule("lightFadeCompleteRoom${roomNum}")
+    unschedule("startAudioFadeInRoom${roomNum}")
+    unschedule("startMorningAudioFadeInRoom${roomNum}")
+    unschedule("startAudioFadeRoom${roomNum}")
     unschedule("playDelayedAudioRoom${roomNum}")
     unschedule("stopAudioRoom${roomNum}")
     unschedule("applyDelayedFanSpeedRoom${roomNum}")
     unschedule("applyDelayedVolumeRoom${roomNum}")
+    unschedule("delayedOffRoom${roomNum}")
     state.remove("pendingFanSpeed${roomNum}")
     
     def stdFans = settings["roomFans${roomNum}"]
@@ -1298,7 +1570,53 @@ def endRoomGoodNight(roomNum) {
     }
 
     def speaker = settings["roomSpeaker${roomNum}"]
-    if (speaker && speaker.hasCommand("stop")) speaker.stop()
+    def doMorningAudio = settings["enableMorningAudio${roomNum}"]
+
+    if (speaker) {
+        if (doMorningAudio) {
+            def mUri = settings["morningAudioUri${roomNum}"]
+            def mSwitch = settings["morningAudioSwitch${roomNum}"]
+            def startVol = settings["morningStartVol${roomNum}"] ?: 1
+            def targetVol = settings["morningTargetVol${roomNum}"] ?: 30
+            def duration = settings["morningFadeInDuration${roomNum}"] ?: 5
+            
+            if (speaker.hasCommand("setVolume")) speaker.setVolume(startVol)
+            
+            if (mUri && speaker.hasCommand("playTrack")) {
+                speaker.playTrack(mUri)
+                logInfo("${rName}: Playing Morning URI (${mUri}).")
+            } else if (mSwitch) {
+                mSwitch.on()
+                logInfo("${rName}: Triggered Morning Sonos Favorite (${mSwitch.displayName}).")
+            } else if (speaker.hasCommand("play")) {
+                speaker.play() // Resumes whatever was paused
+            }
+
+            if (duration > 0) {
+                state."morningFadeInActive${roomNum}" = true
+                state."morningFadeInStep${roomNum}" = 0
+                state."morningFadeInMaxSteps${roomNum}" = duration
+                state."morningStartVol${roomNum}" = startVol
+                state."morningTargetVol${roomNum}" = targetVol
+                
+                logInfo("${rName}: Started Morning Audio Ramp-Up from ${startVol}% to ${targetVol}% over ${duration} minutes.")
+                runIn(60, "startMorningAudioFadeInRoom${roomNum}")
+            } else {
+                if (speaker.hasCommand("setVolume")) speaker.setVolume(targetVol)
+            }
+
+        } else {
+            if (speaker.hasCommand("stop")) {
+                speaker.stop()
+            }
+            // Restore volume for daytime use if no morning ramp-up is configured
+            def setVol = settings["audioVolume${roomNum}"] ?: 30
+            if (speaker.hasCommand("setVolume")) {
+                speaker.setVolume(setVol)
+                logInfo("${rName}: Restored speaker volume to ${setVol}% for daytime use.")
+            }
+        }
+    }
     
     def holdRelease = settings["shadeHoldRelease${roomNum}"]
     if (holdRelease) {
