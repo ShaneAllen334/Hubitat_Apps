@@ -26,14 +26,21 @@ def mainPage() {
             
             if (numRooms > 0) {
                 def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
-                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room</th><th style='padding: 8px;'>Environment</th><th style='padding: 8px;'>Verified State</th><th style='padding: 8px;'>Target & Reason</th><th style='padding: 8px;'>Active Locks</th></tr>"
+                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room</th><th style='padding: 8px;'>Environment</th><th style='padding: 8px;'>Verified State</th><th style='padding: 8px;'>Target & Reason</th><th style='padding: 8px;'>Active Locks & Timers</th></tr>"
                 
+                def now = new Date().time
+
                 for (int i = 1; i <= (numRooms as Integer); i++) {
                     def rName = settings["roomName_${i}"] ?: "Room ${i}"
-                    def dir = settings["direction_${i}"] ?: "Unset"
+                    def dirDisplay = ""
+                    if (enableSolarTracking && settings["windowAzimuth_${i}"] != null) {
+                        dirDisplay = "Facing: ${settings["windowAzimuth_${i}"]}°"
+                    } else {
+                        dirDisplay = "Facing: ${settings["direction_${i}"] ?: "Unset"}"
+                    }
                     def blind = settings["blind_${i}"]
                     
-                    def rNameDisplay = "<b>${rName}</b><br><span style='font-size: 11px; color: #555;'>Facing: ${dir}</span>"
+                    def rNameDisplay = "<b>${rName}</b><br><span style='font-size: 11px; color: #555;'>${dirDisplay}</span>"
                     
                     if (!blind) {
                         statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'>${rNameDisplay}</td><td style='padding: 8px; color: #888;'>-</td><td style='padding: 8px; color: #888;'>Not Configured</td><td style='padding: 8px;'>-</td><td style='padding: 8px;'>-</td></tr>"
@@ -55,11 +62,44 @@ def mainPage() {
                     def targetDisplay = "<b>${tState}</b><br><span style='font-size: 11px; color: #555;'>${tReason}</span>"
                     
                     def locks = []
-                    if (state.manualHold?."${i}") locks << "<span style='color: red; font-weight: bold;'>Manual Hold</span>"
+                    if (state.manualHold?."${i}") {
+                        def holdExpiry = state.manualHoldExpireTime?."${i}" ?: 0
+                        if (holdExpiry > now) {
+                            def timeLeftSecs = ((holdExpiry - now) / 1000).toInteger()
+                            def timeLeftMins = (timeLeftSecs / 60).toInteger()
+                            def remSecs = timeLeftSecs % 60
+                            locks << "<span style='color: red; font-weight: bold;'>Manual Hold (${timeLeftMins}m ${remSecs}s)</span>"
+                        } else {
+                            locks << "<span style='color: red; font-weight: bold;'>Manual Hold</span>"
+                        }
+                    }
+                    
                     if (state.windLock?."${i}") locks << "<span style='color: orange; font-weight: bold;'>Storm Shield</span>"
                     if (state.fortressLocked?."${i}") locks << "<span style='color: purple; font-weight: bold;'>Fortress Lock</span>"
                     if (settings["goodNightSwitch_${i}"]?.currentValue("switch") == "on") locks << "<span style='color: darkblue; font-weight: bold;'>Nap Lock</span>"
+                    if (dndSwitch && dndSwitch.currentValue("switch") == "on") locks << "<span style='color: #e83e8c; font-weight: bold;'>DND Lock</span>"
                     
+                    // Anti-Yo-Yo Cooldown Timer
+                    def lastMove = state.lastAutoMoveTime["${i}"] ?: 0
+                    def debounceMillis = (environmentalDebounce != null ? environmentalDebounce.toInteger() : 15) * 60000
+                    if ((now - lastMove) < debounceMillis) {
+                        def timeLeftSecs = ((debounceMillis - (now - lastMove)) / 1000).toInteger()
+                        def timeLeftMins = (timeLeftSecs / 60).toInteger()
+                        def remSecs = timeLeftSecs % 60
+                        locks << "<span style='color: #888; font-size: 11px;'>Cooldown: ${timeLeftMins}m ${remSecs}s</span>"
+                    }
+                    
+                    // Master Timeout / Retry Timer
+                    def cmdStart = state.commandStartTime["${i}"] ?: 0
+                    def timeoutMins = settings["retryTimeoutMinutes"] != null ? settings["retryTimeoutMinutes"].toInteger() : 15
+                    def timeoutMillis = timeoutMins * 60000
+                    if (state.targetState["${i}"] != state.verifiedState["${i}"] && (now - cmdStart) < timeoutMillis && cmdStart > 0 && tReason != "TIMEOUT FAILED") {
+                         def timeLeftSecs = ((timeoutMillis - (now - cmdStart)) / 1000).toInteger()
+                         def timeLeftMins = (timeLeftSecs / 60).toInteger()
+                         def remSecs = timeLeftSecs % 60
+                         locks << "<span style='color: #d35400; font-size: 11px;'>Syncing: ${timeLeftMins}m ${remSecs}s left</span>"
+                    }
+
                     def lockStr = locks ? locks.join("<br>") : "<span style='color: green;'>Clear</span>"
                     
                     statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'>${rNameDisplay}</td><td style='padding: 8px;'>${envDisplay}</td><td style='padding: 8px; color: ${stateColor}; font-weight: bold;'>${vState}</td><td style='padding: 8px;'>${targetDisplay}</td><td style='padding: 8px;'>${lockStr}</td></tr>"
@@ -67,6 +107,9 @@ def mainPage() {
                 statusText += "</table>"
   
                 def globalStatus = (masterEnableSwitch && masterEnableSwitch.currentValue("switch") == "off") ? "<span style='color: red; font-weight: bold;'>PAUSED</span>" : "<span style='color: green; font-weight: bold;'>ACTIVE</span>"
+                if (dndSwitch && dndSwitch.currentValue("switch") == "on") globalStatus += " <span style='color: #e83e8c; font-weight:bold;'>(DND LOCKED)</span>"
+                if (state.preCoolingActive) globalStatus += " <span style='color: #0055aa; font-weight:bold;'>(PRE-COOLING ENGAGED)</span>"
+                
                 def outTemp = outdoorTempSensor ? "${outdoorTempSensor.currentValue('temperature')}°" : "--°"
                 def outLux = outdoorLuxSensor ? "${outdoorLuxSensor.currentValue('illuminance')} lx" : "-- lx"
                 def avgTemp = getAverageIndoorTemp()
@@ -77,13 +120,19 @@ def mainPage() {
                 statusText += "<div style='border-left: 1px solid #ccc; padding-left: 15px;'><b>Outdoor:</b> ${outTemp} | ${outLux}</div>"
                 statusText += "<div style='border-left: 1px solid #ccc; padding-left: 15px;'><b>House Avg:</b> ${avgTemp}°</div>"
                 statusText += "<div style='border-left: 1px solid #ccc; padding-left: 15px;'><b>HVAC:</b> ${hvac}</div>"
+                
+                if (enableSolarTracking && state.currentSunPos) {
+                    statusText += "<div style='border-left: 1px solid #ccc; padding-left: 15px; color: #d35400;'><b>Sun Pos:</b> Az: ${state.currentSunPos.azimuth}° | El: ${state.currentSunPos.elevation}°</div>"
+                }
                 statusText += "</div>"
                 
-                def lifetimeSavings = "\$" + (state.lifetimeSavings ?: 0.00).setScale(2, BigDecimal.ROUND_HALF_UP)
-                def todaySavings = "\$" + (state.todaySavings ?: 0.00).setScale(2, BigDecimal.ROUND_HALF_UP)
+                def lifetimeSavings = "\$" + (state.lifetimeSavings ?: 0.00).toBigDecimal().setScale(2, BigDecimal.ROUND_HALF_UP)
+                def todaySavings = "\$" + (state.todaySavings ?: 0.00).toBigDecimal().setScale(2, BigDecimal.ROUND_HALF_UP)
+                def effDisplay = (enableDynamicROI && state.dynamicEfficiency) ? "${state.dynamicEfficiency} (Self-Tuned)" : "${hvacEfficiency ?: 0.25} (Static)"
                 
                 statusText += "<div style='margin-top: 5px; padding: 10px; background: #e9f5ff; border-radius: 4px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 15px; border: 1px solid #add8e6;'>"
                 statusText += "<div><b>Estimated ROI:</b> <span style='color: #008800;'>Today: ${todaySavings}</span> | <span style='color: #0055aa;'>Total: ${lifetimeSavings}</span></div>"
+                statusText += "<div style='border-left: 1px solid #add8e6; padding-left: 15px;'><b>Active Savings Rate:</b> ${effDisplay} kWh/hr</div>"
                 statusText += "</div>"
 
                 paragraph statusText
@@ -91,10 +140,50 @@ def mainPage() {
                 paragraph "<i>Configure rooms below to see live system status.</i>"
             }
         }
+        
+        if (enableTelemetryTracking) {
+            section("Hardware Health & Telemetry") {
+                def telText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
+                telText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room ID</th><th style='padding: 8px;'>Commands Sent<br><span style='font-size:10px; font-weight:normal;'>(Today / 7D / All)</span></th><th style='padding: 8px;'>Movements<br><span style='font-size:10px; font-weight:normal;'>(Today / 7D / All)</span></th><th style='padding: 8px;'>Errors & Issues<br><span style='font-size:10px; font-weight:normal;'>(Today / 7D / All)</span></th></tr>"
+                
+                for (int i = 1; i <= (numRooms as Integer); i++) {
+                    def tData = state.telemetry?."${i}"
+                    if (!tData || !tData.today) continue
+                    
+                    def cmdsT = tData.today.commands ?: 0; def cmds7 = get7DayMetric(i, "commands"); def cmdsA = tData.overall?.commands ?: 0
+                    def opnT = tData.today.opens ?: 0; def opn7 = get7DayMetric(i, "opens"); def opnA = tData.overall?.opens ?: 0
+                    def clsT = tData.today.closes ?: 0; def cls7 = get7DayMetric(i, "closes"); def clsA = tData.overall?.closes ?: 0
+                    
+                    def retT = tData.today.retries ?: 0; def ret7 = get7DayMetric(i, "retries"); def retA = tData.overall?.retries ?: 0
+                    def wigT = tData.today.wiggles ?: 0; def wig7 = get7DayMetric(i, "wiggles"); def wigA = tData.overall?.wiggles ?: 0
+                    def failT = tData.today.timeouts ?: 0; def fail7 = get7DayMetric(i, "timeouts"); def failA = tData.overall?.timeouts ?: 0
+                    
+                    def rName = settings["roomName_${i}"] ?: "Room ${i}"
+                    
+                    def rowColor = (fail7 > 0) ? "color: #d32f2f; font-weight: bold;" : ((ret7 > 5 || wig7 > 2) ? "color: #e65100; font-weight: bold;" : "color: #333;")
+                    if (failA == 0 && retA == 0 && wigA == 0) rowColor = "color: #666;"
+                    
+                    def cmdsStr = "<b>${cmdsT}</b> / ${cmds7} / ${cmdsA}"
+                    def movesStr = "<span style='color:green;'>Op: <b>${opnT}</b> / ${opn7} / ${opnA}</span><br><span style='color:blue;'>Cl: <b>${clsT}</b> / ${cls7} / ${clsA}</span>"
+                    def errorStr = "Ret: <b>${retT}</b> / ${ret7} / ${retA}<br>Wig: <b>${wigT}</b> / ${wig7} / ${wigA}<br>Fail: <b>${failT}</b> / ${fail7} / ${failA}"
+                    
+                    telText += "<tr style='border-bottom: 1px solid #ddd; ${rowColor}'><td style='padding: 8px; color: black;'><b>${rName}</b></td><td style='padding: 8px;'>${cmdsStr}</td><td style='padding: 8px;'>${movesStr}</td><td style='padding: 8px;'>${errorStr}</td></tr>"
+                }
+                telText += "</table>"
+                paragraph telText
+                input "btnResetTelemetry", "button", title: "🧹 Reset Telemetry Data"
+            }
+        }
     
         section("Application History (Last 20 Events)") {
             if (state.historyLog && state.historyLog.size() > 0) {
-                def logText = state.historyLog.join("<br>")
+                def logText = state.historyLog.collect { entry -> 
+                    def splitIdx = entry.indexOf(']') + 1
+                    if (splitIdx > 0) {
+                        return "<b>${entry.substring(0, splitIdx)}</b> ${entry.substring(splitIdx + 1)}"
+                    } else return entry
+                }.join("<br>")
+                
                 paragraph "<div style='font-size: 13px; font-family: monospace; background-color: #f4f4f4; padding: 10px; border-radius: 5px; border: 1px solid #ccc;'>${logText}</div>"
             } else {
                 paragraph "<i>No history available yet. The log will populate as the app takes action.</i>"
@@ -102,36 +191,44 @@ def mainPage() {
         }
         
         section("Global Settings & Modes") {
-            input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false,
-                description: "The Global Pause. ON = Application Runs. OFF = Application Paused."
-                
+            input "masterEnableSwitch", "capability.switch", title: "Master System Enable Switch", required: false, description: "The Global Pause. ON = Application Runs. OFF = Application Paused."
+            input "dndSwitch", "capability.switch", title: "Global Do Not Disturb (DND) Override Switch", required: false, description: "ON = Close all blinds & lock system. OFF = Resume automation."
             input "numRooms", "number", title: "Number of Rooms to Configure (1-12)", required: true, defaultValue: 1, range: "1..12", submitOnChange: true
-            input "retryTimeoutMinutes", "number", title: "Max Sync Retry Duration (Minutes)", defaultValue: 15, required: true, description: "Maximum time to keep retrying commands before giving up."
-            
-            input "aggregateSensor", "capability.contactSensor", title: "Virtual Contact Sensor (All Blinds Status)", required: false, 
-                description: "Select a Virtual Contact Sensor. Turns 'closed' if ALL blinds are closed. Turns 'open' if ANY blind is open."
-            
+            input "retryTimeoutMinutes", "number", title: "Max Sync Retry Duration (Minutes)", defaultValue: 15, required: true
+            input "manualHoldTimeout", "number", title: "Auto-Release Manual Hold (Minutes, 0 = Never)", defaultValue: 120, required: true
+            input "aggregateSensor", "capability.contactSensor", title: "Virtual Contact Sensor (All Blinds Status)", required: false
             input "masterBlind", "capability.windowShade", title: "Master Bond Device (For 'Open All' / 'Close All')", required: false
             
             input "activeModes", "mode", title: "Master Active Modes (App only runs in these)", multiple: true, required: false
-          
             input "openOnModes", "mode", title: "Modes that trigger Global Open", multiple: true, required: false
             input "closeOnModes", "mode", title: "Modes that trigger Global Close", multiple: true, required: false
             
-            input "btnReleaseAllHolds", "button", title: "Release All Manual Holds Now (And Sync House)"
-            input "btnForceSync", "button", title: "Force System Re-evaluation & Sync Now"
-      
-            input "autoReleaseHoldModes", "mode", title: "Modes that Auto-Release Manual Holds", multiple: true, required: false
+            paragraph "<b>Manual Controls & Overrides</b>"
+            input "btnForceAllOpen", "button", title: "🔼 Force ALL Blinds OPEN (Engage Manual Override)"
+            input "btnForceAllClose", "button", title: "🔽 Force ALL Blinds CLOSE (Engage Manual Override)"
+            input "btnReleaseAllHolds", "button", title: "❌ Release All Manual Holds Now (And Sync House)"
+            input "btnForceSync", "button", title: "🔄 Force System Re-evaluation & Sync Now"
+       
+            input "releaseOnAnyMode", "bool", title: "Release Manual Holds on ANY Mode Change?", defaultValue: false
+            input "autoReleaseHoldModes", "mode", title: "Specific Modes that Auto-Release Manual Holds", multiple: true, required: false
             input "vacationModes", "mode", title: "Vacation Modes (Triggers random open/close presence)", multiple: true, required: false
+        }
+        
+        section("Advanced Features (Toggles)") {
+            input "enableSolarTracking", "bool", title: "Enable Solar Geometry & Azimuth Engine?", defaultValue: false, submitOnChange: true, description: "Calculates precise sun position. Requires window degrees."
+            input "enableTelemetryTracking", "bool", title: "Enable Hardware Telemetry & Health Tracking?", defaultValue: false, submitOnChange: true
+            input "enablePreCooling", "bool", title: "Enable Predictive Weather Pre-Cooling?", defaultValue: false, submitOnChange: true
+            input "enableDynamicROI", "bool", title: "Enable Dynamic / Self-Tuning ROI Engine?", defaultValue: false, submitOnChange: true
         }
         
         section("Time & Solar Settings") {
             input "useSunriseSunset", "bool", title: "Enable Sunrise/Sunset automations?", defaultValue: false, submitOnChange: true
             
             if (useSunriseSunset) {
+                input "releaseHoldSunrise", "bool", title: "Auto-Release Manual Holds at Sunrise?", defaultValue: false
                 input "sunriseOffset", "number", title: "Sunrise Offset (Minutes, +/-)", defaultValue: 0
                 input "sunriseModes", "mode", title: "Modes allowed for Auto-Sunrise Open", multiple: true, required: false
-                
+                input "releaseHoldSunset", "bool", title: "Auto-Release Manual Holds at Sunset?", defaultValue: false
                 input "sunsetOffset", "number", title: "Sunset Offset (Minutes, +/-)", defaultValue: 0
                 input "maxCloseTime", "time", title: "Maximum Evening Close Time", required: false
                 input "sunsetModes", "mode", title: "Modes allowed for Auto-Sunset/Time Close", multiple: true, required: false
@@ -144,11 +241,9 @@ def mainPage() {
         section("Exterior Weather & Master Solar Override") {
             input "windSensor", "capability.sensor", title: "Weather Station / Wind Sensor", required: false
             input "windThreshold", "number", title: "Storm Shield Wind Threshold (mph)", defaultValue: 15
-                
             input "outdoorLuxSensor", "capability.illuminanceMeasurement", title: "Master Outdoor Lux Sensor", required: false
             input "highSolarRadiationThreshold", "number", title: "High Solar Radiation Threshold (Lux)", defaultValue: 10000
-            input "luxHysteresis", "number", title: "Solar Radiation Hysteresis (Deadband Lux)", defaultValue: 500, description: "Lux must drop this far below the threshold before blinds reopen."
-                
+            input "luxHysteresis", "number", title: "Solar Radiation Hysteresis (Deadband Lux)", defaultValue: 500
             input "outdoorTempSensor", "capability.temperatureMeasurement", title: "Outdoor Temperature Sensor", required: false
             input "outdoorHighTempThreshold", "number", title: "Outdoor High Temp Lockout (°)", defaultValue: 92
         }
@@ -156,24 +251,33 @@ def mainPage() {
         section("Environmental Controls & Predictive ROI") {
             input "mainThermostat", "capability.thermostat", title: "Main Thermostat (Syncs blinds with AC/Heat states)", required: false
             
-            input "elecRate", "decimal", title: "Electricity Rate (per kWh)", defaultValue: 0.14, required: true
-            input "hvacEfficiency", "decimal", title: "Est. kWh Saved per Hour of Defense", defaultValue: 0.25, required: true,
-                description: "Average kWh reduction of your HVAC when blinds are blocking sun. Standard is 0.20 to 0.40."
+            if (enablePreCooling) {
+                paragraph "<div style='background:#e8f4f8; padding:8px; border:1px solid #bce8f1; border-radius:4px;'><b>Predictive Pre-Cooling</b><br>Locks down the house early based on the forecast high to trap morning cool air.</div>"
+                input "meteorologistDevice", "capability.sensor", title: "Select Advanced Meteorologist Report Device", required: true
+                input "preCoolingThreshold", "number", title: "Forecast High Threshold (°)", defaultValue: 90, required: true
+                input "preCoolingTime", "time", title: "Time to Evaluate & Engage Defense", required: true
+                paragraph "<hr>"
+            }
             
-            input "environmentalDebounce", "number", title: "Environmental Anti-Yo-Yo Hold Time (Minutes)", defaultValue: 15, 
-                description: "Forces blinds to hold position to prevent constant up/down movements on partly cloudy days."
-            input "tempHysteresis", "decimal", title: "Temperature Hysteresis (Deadband °)", defaultValue: 1.0, description: "Temp must change this much past the threshold to revert states."
-                
+            input "elecRate", "decimal", title: "Electricity Rate (per kWh)", defaultValue: 0.14, required: true
+            input "hvacEfficiency", "decimal", title: "Est. kWh Saved per Hour of Defense", defaultValue: 0.25, required: true
+            
+            if (enableDynamicROI) {
+                paragraph "<div style='background:#e8f8eb; padding:8px; border:1px solid #bce8cf; border-radius:4px;'><b>Self-Tuning ROI Active</b><br>The app will map your actual AC runtime on defended vs. undefended days to calculate your true efficiency.</div>"
+                input "acPowerKW", "decimal", title: "Est. AC Unit Power Draw (kW) (e.g., 3.5)", defaultValue: 3.5, required: true
+                paragraph "<hr>"
+            }
+            
+            input "environmentalDebounce", "number", title: "Environmental Anti-Yo-Yo Hold Time (Minutes)", defaultValue: 15
+            input "tempHysteresis", "decimal", title: "Temperature Hysteresis (Deadband °)", defaultValue: 1.0
             input "activeCoolingDefense", "bool", title: "Active Cooling Defense (Close sun-facing blinds when AC cools)?", defaultValue: true, submitOnChange: true
-                
             input "enableFortressMode", "bool", title: "Enable Unoccupied Fortress Mode?", defaultValue: false, submitOnChange: true
-               
+                
             if (enableFortressMode) {
                 input "fortressAutoReopen", "bool", title: "Auto-Reopen on Motion?", defaultValue: false
             }
             
             input "summerEnergyMode", "bool", title: "Summer Mode (Close shades to block heat)?", defaultValue: false, submitOnChange: true
-            
             if (summerEnergyMode) {
                 input "summerTempThreshold", "number", title: "Summer Indoor Temp Threshold (°)", defaultValue: 75
                 input "summerOutdoorTempThreshold", "number", title: "Summer Outdoor Temp Trigger (Preemptive °)", defaultValue: 82, required: false
@@ -184,7 +288,7 @@ def mainPage() {
             if (winterHeatingMode) {
                 input "winterTempThreshold", "number", title: "Winter Indoor Temp Threshold (Open if below this °)", defaultValue: 68
                 input "winterOutdoorTempThreshold", "number", title: "Winter Outdoor Temp Trigger (Preemptive °)", defaultValue: 45, required: false
-                input "winterMaxOutdoorTemp", "number", title: "Winter Max Outdoor Temp Lockout (°)", defaultValue: 75, required: false, description: "If the outdoor temp is above this, Winter Mode is disabled (prevents heating up the house in summer)."
+                input "winterMaxOutdoorTemp", "number", title: "Winter Max Outdoor Temp Lockout (°)", defaultValue: 75, required: false
                 input "winterAllowedModes", "mode", title: "Modes allowed for Winter Mode", multiple: true, required: false
             }
         }
@@ -214,10 +318,17 @@ def roomPage(params) {
         section("Control Devices") {
             input "blind_${rNum}", "capability.windowShade", title: "Blind / Shade Device (Bond)", required: false
             input "blindSensor_${rNum}", "capability.contactSensor", title: "Blind State Sensor (Manual override detection)", required: false
-            input "direction_${rNum}", "enum", title: "Window Facing Direction", options: ["North", "South", "East", "West"], required: false
+            input "sensorDebounce_${rNum}", "number", title: "Sensor Stabilization Time (Seconds)", defaultValue: 15, required: false, description: "Increase this if ceiling fans or drafts cause false manual overrides."
+            
+            if (enableSolarTracking) {
+                input "windowAzimuth_${rNum}", "number", title: "Window Azimuth Degree (0-360)", required: true, defaultValue: 180
+            } else {
+                input "direction_${rNum}", "enum", title: "Window Facing Direction", options: ["North", "South", "East", "West"], required: false
+            }
         }
         
         section("Physical Buttons / Remotes") {
+            paragraph "<i><b>Button Actions:</b><br>• <b>Push:</b> Toggles blind (Open/Close) & engages Manual Hold.<br>• <b>Hold:</b> Releases Manual Hold & resumes automation.</i>"
             input "roomButton_${rNum}", "capability.pushableButton", title: "Room Button Controller", required: false
             input "buttonNumber_${rNum}", "number", title: "Button Number", defaultValue: 1, required: false
             input "buttonModes_${rNum}", "mode", title: "Allowed Modes for Button", multiple: true, required: false
@@ -263,18 +374,38 @@ def initialize() {
     state.targetReason = state.targetReason ?: [:]
     state.verifiedState = state.verifiedState ?: [:]
     state.manualHold = state.manualHold ?: [:]
+    state.manualHoldExpireTime = state.manualHoldExpireTime ?: [:]
     state.lastAutoMoveTime = state.lastAutoMoveTime ?: [:] 
     state.windLock = state.windLock ?: [:]
     state.fortressLocked = state.fortressLocked ?: [:]
     state.historyLog = state.historyLog ?: []
+    state.telemetry = state.telemetry ?: [:]
     state.roiMinutes = state.roiMinutes ?: 0
     state.commandStartTime = state.commandStartTime ?: [:]
+    state.preCoolingActive = false
+    
+    if (enableSolarTracking && !state.currentSunPos) {
+        state.currentSunPos = calculateSolarPosition()
+    }
+    
+    for (int i = 1; i <= 12; i++) {
+        if (!state.telemetry["${i}"] || !state.telemetry["${i}"].today) {
+            state.telemetry["${i}"] = [
+                today: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+                overall: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+                history: []
+            ]
+        }
+    }
     
     if (useSunriseSunset) {
         scheduleAstro()
         schedule("0 1 0 * * ?", scheduleAstro) 
         if (maxCloseTime) schedule(maxCloseTime, "executeMaxCloseTime")
     }
+    
+    if (enableSolarTracking) schedule("0 0/15 * * * ?", "evaluateSolarChanges")
+    if (enablePreCooling && preCoolingTime) schedule(preCoolingTime, "evaluatePreCooling")
     
     unschedule("calculateROIStep")
     calculateROIStep()
@@ -283,6 +414,11 @@ def initialize() {
     
     subscribe(location, "mode", modeHandler)
     if (mainThermostat) subscribe(mainThermostat, "thermostatOperatingState", hvacHandler)
+    
+    if (dndSwitch) {
+        subscribe(dndSwitch, "switch.on", dndSwitchOnHandler)
+        subscribe(dndSwitch, "switch.off", dndSwitchOffHandler)
+    }
     
     if (windSensor) subscribe(windSensor, "windSpeed", weatherHandler)
     if (outdoorLuxSensor) subscribe(outdoorLuxSensor, "illuminance", weatherHandler)
@@ -310,10 +446,194 @@ def initialize() {
     }
 }
 
+// --- GLOBAL DND HANDLERS ---
+def dndSwitchOnHandler(evt) {
+    addToHistory("GLOBAL: Do Not Disturb engaged. Closing all blinds and locking system.")
+    operateAllShades("close", true, "Global Do Not Disturb Active")
+}
+
+def dndSwitchOffHandler(evt) {
+    addToHistory("GLOBAL: Do Not Disturb released. System resuming normal operations.")
+    if (!isSystemPaused()) runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+}
+
+// --- SOLAR GEOMETRY MATH ---
+def calculateSolarPosition() {
+    def lat = (location.latitude ?: 32.5393).toDouble()
+    def lon = (location.longitude ?: -86.2078).toDouble()
+    
+    Calendar cal = Calendar.getInstance(location.timeZone ?: TimeZone.getDefault())
+    int dayOfYear = cal.get(Calendar.DAY_OF_YEAR)
+    double hour = cal.get(Calendar.HOUR_OF_DAY) + (cal.get(Calendar.MINUTE) / 60.0)
+    
+    double declination = 23.45 * Math.sin(Math.toRadians((360.0 / 365.0) * (dayOfYear + 284.0)))
+    
+    double b = Math.toRadians((360.0 / 365.0) * (dayOfYear - 81.0))
+    double eot = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b)
+    
+    double tzOffsetHours = (location.timeZone?.getOffset(cal.getTimeInMillis()) ?: 0) / 3600000.0
+    double timeOffset = eot + (4.0 * lon) - (60.0 * tzOffsetHours)
+    double tst = hour + (timeOffset / 60.0)
+    
+    double ha = (tst - 12.0) * 15.0
+    
+    double latRad = Math.toRadians(lat)
+    double decRad = Math.toRadians(declination)
+    double haRad = Math.toRadians(ha)
+    
+    double elevationRad = Math.asin(Math.sin(latRad) * Math.sin(decRad) + Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad))
+    double elevation = Math.toDegrees(elevationRad)
+    
+    double azimuthRad = Math.acos((Math.sin(decRad) - Math.sin(elevationRad) * Math.sin(latRad)) / (Math.cos(elevationRad) * Math.cos(latRad)))
+    double azimuth = Math.toDegrees(azimuthRad)
+    
+    if (Double.isNaN(azimuth)) azimuth = 180.0
+    if (ha > 0) azimuth = 360.0 - azimuth
+    
+    return [azimuth: azimuth.toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP), elevation: elevation.toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP)]
+}
+
+def evaluateSolarChanges() {
+    if (isSystemPaused()) return
+    state.currentSunPos = calculateSolarPosition()
+    runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+}
+
+// --- PREDICTIVE WEATHER PRE-COOLING ---
+def evaluatePreCooling() {
+    if (isSystemPaused() || !enablePreCooling || !meteorologistDevice) return
+    
+    def highsAttr = meteorologistDevice.currentValue("highs")
+    def todayHigh = extractFirstNumber(highsAttr)
+    
+    if (todayHigh != null && todayHigh >= (preCoolingThreshold ?: 90)) {
+        state.preCoolingActive = true
+        state.todayForecastHigh = todayHigh
+        addToHistory("PRE-COOLING: Forecast high is ${todayHigh}°. Engaging predictive thermal lockdown early.")
+        runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+    }
+}
+
+def extractFirstNumber(val) {
+    if (val == null) return null
+    if (val instanceof List) return val[0]?.toBigDecimal()
+    def str = val.toString().replaceAll(/[^0-9.,-]/, "")
+    def parts = str.split(",")
+    if (parts.size() > 0 && parts[0].trim() != "") return parts[0].toBigDecimal()
+    return null
+}
+
+// --- DYNAMIC ROI ENGINE ---
+def calculateROIStep() {
+    if (isSystemPaused()) return
+    
+    def rate = settings["elecRate"] != null ? settings["elecRate"].toBigDecimal() : 0.14
+    def staticFactor = settings["hvacEfficiency"] != null ? settings["hvacEfficiency"].toBigDecimal() : 0.25
+    def activeFactor = (enableDynamicROI && state.dynamicEfficiency != null) ? state.dynamicEfficiency : staticFactor
+    def totalDefenseRooms = 0
+    
+    for (int i = 1; i <= (numRooms as Integer); i++) {
+        def reason = state.targetReason?."${i}" ?: ""
+        if (reason.contains("Summer Mode") || reason.contains("Pre-Cooling") || reason.contains("High Solar") || reason.contains("HVAC Active Cooling")) {
+            totalDefenseRooms++
+        }
+    }
+    
+    // Record empirical data for self-tuning
+    if (enableDynamicROI) {
+        def isCooling = mainThermostat?.currentValue("thermostatOperatingState") == "cooling"
+        if (isCooling) state.todayACMinutes = (state.todayACMinutes ?: 0) + 5
+        if (totalDefenseRooms > 0) state.todayDefenseMinutes = (state.todayDefenseMinutes ?: 0) + 5
+        
+        def outTemp = outdoorTempSensor?.currentValue("temperature")?.toBigDecimal() ?: 0.0
+        if (outTemp > (state.todayHighTemp ?: 0.0)) state.todayHighTemp = outTemp
+    }
+    
+    if (totalDefenseRooms > 0) {
+        def earned = (totalDefenseRooms * (activeFactor / 12)) * rate
+        state.todaySavings = (state.todaySavings ?: 0.0) + earned
+        state.lifetimeSavings = (state.lifetimeSavings ?: 0.0) + earned
+    }
+    
+    runIn(300, "calculateROIStep") // Run every 5 minutes
+}
+
+def recalculateDynamicROI() {
+    if (!state.roiHistory || state.roiHistory.size() < 2) return
+    
+    def brackets = [:] 
+    state.roiHistory.each { day ->
+        def bracket = (day.high / 5).toInteger() * 5
+        if (!brackets[bracket]) brackets[bracket] = [defended: [], undefended: []]
+        
+        if (day.defMins > 120) brackets[bracket].defended << day.acMins
+        else if (day.defMins < 60) brackets[bracket].undefended << day.acMins
+    }
+    
+    def totalCalculatedEfficiency = 0.0
+    def validBrackets = 0
+    
+    brackets.each { temp, data ->
+        if (data.defended.size() > 0 && data.undefended.size() > 0) {
+            def avgDef = data.defended.sum() / data.defended.size()
+            def avgUndef = data.undefended.sum() / data.undefended.size()
+            def minsSavedPerDay = avgUndef - avgDef
+            
+            if (minsSavedPerDay > 0) {
+                def actualDefMins = state.roiHistory.findAll { it.defMins > 120 && (it.high / 5).toInteger() * 5 == temp }.defMins.sum() / data.defended.size()
+                def hoursDefended = actualDefMins / 60.0
+                if (hoursDefended > 0) {
+                    def kwhSavedPerDay = (minsSavedPerDay / 60.0) * (settings["acPowerKW"]?.toBigDecimal() ?: 3.5)
+                    def kwhSavedPerHourOfDefense = kwhSavedPerDay / hoursDefended
+                    totalCalculatedEfficiency += kwhSavedPerHourOfDefense
+                    validBrackets++
+                }
+            }
+        }
+    }
+    
+    if (validBrackets > 0) {
+        def newEff = (totalCalculatedEfficiency / validBrackets).setScale(2, BigDecimal.ROUND_HALF_UP)
+        if (newEff > 0.05 && newEff < 2.0) {
+            state.dynamicEfficiency = newEff
+            addToHistory("ROI ENGINE: Self-tuned HVAC efficiency to ${newEff} kWh/hr based on historical AC runtime.")
+        }
+    }
+}
+
+// --- TELEMETRY HELPERS ---
+def logTelemetryEvent(roomNum, eventType) {
+    if (!enableTelemetryTracking) return
+    if (!state.telemetry) state.telemetry = [:]
+    
+    if (!state.telemetry["${roomNum}"] || !state.telemetry["${roomNum}"].today) {
+        state.telemetry["${roomNum}"] = [
+            today: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+            overall: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+            history: []
+        ]
+    }
+    
+    state.telemetry["${roomNum}"].today[eventType] = (state.telemetry["${roomNum}"].today[eventType] ?: 0) + 1
+    state.telemetry["${roomNum}"].overall[eventType] = (state.telemetry["${roomNum}"].overall[eventType] ?: 0) + 1
+}
+
+def get7DayMetric(roomNum, metric) {
+    def tData = state.telemetry?."${roomNum}"
+    if (!tData || !tData.today) return 0
+    def total = (tData.today?."${metric}" ?: 0)
+    if (tData.history) {
+        tData.history.each { dayMap ->
+            total += (dayMap?."${metric}" ?: 0)
+        }
+    }
+    return total
+}
+
 def updateAggregateSensor() {
     if (!aggregateSensor) return
     
-    def anyOpen = false
+    def allOpen = true
     def allClosed = true
     def configuredCount = 0
     
@@ -323,10 +643,12 @@ def updateAggregateSensor() {
             def vState = state.verifiedState?."${i}" ?: state.targetState?."${i}"
             
             if (vState == "open") {
-                anyOpen = true
                 allClosed = false
-            } else if (vState != "closed") {
+            } else if (vState == "closed") {
+                allOpen = false
+            } else {
                 allClosed = false
+                allOpen = false
             }
         }
     }
@@ -338,39 +660,71 @@ def updateAggregateSensor() {
     if (allClosed && currentState != "closed") {
         addToHistory("SYSTEM: All blinds are verified closed. Updating Virtual Aggregate Sensor.")
         if (aggregateSensor.hasCommand("close")) aggregateSensor.close()
-    } else if (anyOpen && currentState != "open") {
-        addToHistory("SYSTEM: One or more blinds are open. Updating Virtual Aggregate Sensor.")
+    } else if (allOpen && currentState != "open") {
+        addToHistory("SYSTEM: All blinds are verified open. Updating Virtual Aggregate Sensor.")
         if (aggregateSensor.hasCommand("open")) aggregateSensor.open()
     }
 }
 
-def calculateROIStep() {
-    if (isSystemPaused()) return
+// --- MANUAL HOLD TIMEOUT ENGINE ---
+def engageManualHold(roomNum) {
+    state.manualHold["${roomNum}"] = true
+    state.fortressLocked["${roomNum}"] = false
     
-    def rate = settings["elecRate"] != null ? settings["elecRate"].toBigDecimal() : 0.14
-    def factor = settings["hvacEfficiency"] != null ? settings["hvacEfficiency"].toBigDecimal() : 0.25
-    def totalDefenseRooms = 0
-    
-    for (int i = 1; i <= (numRooms as Integer); i++) {
-        def reason = state.targetReason?."${i}" ?: ""
-        if (reason.contains("Summer Mode") || reason.contains("Winter Mode") || reason.contains("Fortress") || reason.contains("High Solar Radiation") || reason.contains("HVAC Active Cooling")) {
-            totalDefenseRooms++
+    def timeoutMinutes = settings["manualHoldTimeout"] != null ? settings["manualHoldTimeout"].toInteger() : 120
+    if (timeoutMinutes > 0) {
+        def expireTime = new Date().time + (timeoutMinutes * 60000)
+        state.manualHoldExpireTime["${roomNum}"] = expireTime
+        runIn(timeoutMinutes * 60, "autoReleaseHold", [data: [roomNum: roomNum], overwrite: false])
+    } else {
+        state.manualHoldExpireTime["${roomNum}"] = 0
+    }
+}
+
+def autoReleaseHold(data) {
+    def rNum = data.roomNum
+    if (state.manualHold["${rNum}"]) {
+        def expireTime = state.manualHoldExpireTime["${rNum}"] ?: 0
+        def now = new Date().time
+        if (now >= (expireTime - 5000)) { // 5 second buffer to allow precise firing
+            state.manualHold["${rNum}"] = false
+            state.manualHoldExpireTime["${rNum}"] = 0
+            addToHistory("${getRoomName(rNum)}: Manual Hold auto-released after timeout. Syncing room state.")
+            syncSingleRoom(rNum, true)
         }
     }
-    
-    if (totalDefenseRooms > 0) {
-        def earned = (totalDefenseRooms * (factor / 12)) * rate
-        state.todaySavings = (state.todaySavings ?: 0.0) + earned
-        state.lifetimeSavings = (state.lifetimeSavings ?: 0.0) + earned
-    }
-    
-    runIn(300, "calculateROIStep") // Run every 5 minutes
 }
 
 def midnightReset() {
     state.todaySavings = 0.0
     state.manualHold = [:]
-    if (!isSystemPaused()) runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+    state.manualHoldExpireTime = [:]
+    
+    if (enableDynamicROI && state.todayHighTemp && state.todayACMinutes != null) {
+        if (!state.roiHistory) state.roiHistory = []
+        state.roiHistory.add([high: state.todayHighTemp, acMins: state.todayACMinutes, defMins: state.todayDefenseMinutes ?: 0])
+        if (state.roiHistory.size() > 30) state.roiHistory = state.roiHistory.take(30)
+        recalculateDynamicROI()
+    }
+    
+    state.todayACMinutes = 0
+    state.todayDefenseMinutes = 0
+    state.todayHighTemp = 0.0
+    state.preCoolingActive = false
+    
+    if (enableTelemetryTracking && state.telemetry) {
+        for (int i = 1; i <= 12; i++) {
+            if (state.telemetry["${i}"] && state.telemetry["${i}"].today) {
+                if (!state.telemetry["${i}"].history) state.telemetry["${i}"].history = []
+                def todayCopy = state.telemetry["${i}"].today.clone()
+                state.telemetry["${i}"].history.add(0, todayCopy)
+                if (state.telemetry["${i}"].history.size() > 7) state.telemetry["${i}"].history = state.telemetry["${i}"].history.take(7)
+                state.telemetry["${i}"].today = [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0]
+            }
+        }
+    }
+    
+    if (!isSystemPaused()) runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
 }
 
 def isSystemPaused() {
@@ -381,14 +735,36 @@ def isSystemPaused() {
 def appButtonHandler(btn) {
     if (btn == "btnRefresh") {
         log.info "Dashboard data manually refreshed by user."
+    } else if (btn == "btnForceAllOpen") {
+        for (int i = 1; i <= (numRooms as Integer); i++) {
+            engageManualHold(i)
+        }
+        addToHistory("GLOBAL: 'Force ALL Open' button pressed. Engaging Manual Hold for the entire house.")
+        operateAllShades("open", true, "App Global Force Open (Manual Hold)")
+    } else if (btn == "btnForceAllClose") {
+        for (int i = 1; i <= (numRooms as Integer); i++) {
+            engageManualHold(i)
+        }
+        addToHistory("GLOBAL: 'Force ALL Close' button pressed. Engaging Manual Hold for the entire house.")
+        operateAllShades("close", true, "App Global Force Close (Manual Hold)")
     } else if (btn == "btnReleaseAllHolds") {
         state.manualHold = [:]
+        state.manualHoldExpireTime = [:]
         state.fortressLocked = [:]
         addToHistory("GLOBAL: 'Release All Holds' button pressed. Wiping locks and auto-syncing house.")
-        if (!isSystemPaused()) runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+        if (!isSystemPaused()) runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
     } else if (btn == "btnForceSync") {
         addToHistory("GLOBAL: 'Force Sync' button pressed. Re-evaluating and syncing all rooms.")
-        if (!isSystemPaused()) runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+        if (!isSystemPaused()) runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+    } else if (btn == "btnResetTelemetry") {
+        for (int i = 1; i <= 12; i++) {
+            state.telemetry["${i}"] = [
+                today: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+                overall: [commands: 0, opens: 0, closes: 0, retries: 0, wiggles: 0, timeouts: 0],
+                history: []
+            ]
+        }
+        addToHistory("TELEMETRY: Hardware health data has been manually wiped clean.")
     }
 }
 
@@ -404,7 +780,7 @@ def bootSync() {
             if (bSensor) state.verifiedState["${i}"] = bSensor.currentValue("contact")
             else state.verifiedState["${i}"] = state.targetState["${i}"] ?: "unknown"
         }
-        runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
+        runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: true], overwrite: true])
         runIn(10, "updateAggregateSensor", [overwrite: true])
     }
 }
@@ -434,20 +810,17 @@ def getAverageIndoorTemp() {
             count++
         }
     }
-    return count > 0 ? (totalTemp / count).setScale(1, BigDecimal.ROUND_HALF_UP) : 70.0
+    return count > 0 ? (totalTemp / count).toBigDecimal().setScale(1, BigDecimal.ROUND_HALF_UP) : 70.0
 }
 
 def addToHistory(String msg) {
     if (!state.historyLog) state.historyLog = []
     def tz = location.timeZone ?: TimeZone.getDefault()
     def timestamp = new Date().format("MM/dd HH:mm:ss", tz)
-    state.historyLog.add(0, "<b>[${timestamp}]</b> ${msg}")
     
-    if (state.historyLog.size() > 20) {
-        state.historyLog = state.historyLog.take(20)
-    }
-    def cleanMsg = msg.replaceAll("\\<.*?\\>", "")
-    log.info "HISTORY: [${timestamp}] ${cleanMsg}"
+    state.historyLog.add(0, "[${timestamp}] ${msg}")
+    if (state.historyLog.size() > 20) state.historyLog = state.historyLog.take(20)
+    log.info "HISTORY: [${timestamp}] ${msg}"
 }
 
 def getRoomName(rNum) {
@@ -514,26 +887,46 @@ def weatherHandler(evt) {
                 }
             }
         }
-    }
-    
-    if (eventName == "illuminance" || eventName == "temperature") {
-        runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    } else if (eventName == "illuminance") {
+        def oldVal = state.lastOutLux ?: 0
+        def newVal = evt.value?.toInteger() ?: 0
+        if (Math.abs(newVal - oldVal) >= 200) {
+            state.lastOutLux = newVal
+            runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+        }
+    } else if (eventName == "temperature") {
+        def oldVal = state.lastOutTemp ?: 0.0
+        def newVal = evt.value?.toBigDecimal() ?: 0.0
+        if (Math.abs(newVal - oldVal) >= 0.5) {
+            state.lastOutTemp = newVal
+            runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+        }
     }
 }
 
 def hvacHandler(evt) {
     if (isSystemPaused()) return
-    runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
 }
 
 def luxHandler(evt) {
     if (isSystemPaused()) return
-    runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    def oldVal = state.lastIndLux ?: 0
+    def newVal = evt.value?.toInteger() ?: 0
+    if (Math.abs(newVal - oldVal) >= 200) {
+        state.lastIndLux = newVal
+        runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    }
 }
 
 def tempHandler(evt) {
     if (isSystemPaused()) return
-    runIn(2, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    def oldVal = state.lastIndTemp ?: 0.0
+    def newVal = evt.value?.toBigDecimal() ?: 0.0
+    if (Math.abs(newVal - oldVal) >= 0.5) {
+        state.lastIndTemp = newVal
+        runIn(5, "orchestrateHouseSync", [data: [ignoreDebounce: false], overwrite: true])
+    }
 }
 
 def motionHandler(evt) {
@@ -599,10 +992,14 @@ def buttonPushedHandler(evt) {
         
         if (btn && btn.id == deviceId && btnVal == targetBtn) {
             if (!isButtonAllowed(i)) return
-            addToHistory("${getRoomName(i)}: Physical Button PUSHED. Opening blind and engaging Manual Hold.")
-            state.manualHold["${i}"] = true
-            state.fortressLocked["${i}"] = false
-            singleBlindAction(i, "open", true, "Physical Button Hold", true) 
+            
+            def rName = getRoomName(i)
+            def currentState = state.verifiedState["${i}"] ?: state.targetState["${i}"] ?: "closed"
+            def nextAction = (currentState == "open" || currentState == "opening") ? "close" : "open"
+            
+            addToHistory("${rName}: Physical Button PUSHED. Toggling blind to ${nextAction.toUpperCase()} and engaging Manual Hold.")
+            engageManualHold(i)
+            singleBlindAction(i, nextAction, true, "Physical Button Toggle", true) 
         }
     }
 }
@@ -617,10 +1014,16 @@ def buttonHeldHandler(evt) {
         
         if (btn && btn.id == deviceId && btnVal == targetBtn) {
             if (!isButtonAllowed(i)) return
-            addToHistory("${getRoomName(i)}: Physical Button HELD. Closing blind and engaging Manual Hold.")
-            state.manualHold["${i}"] = true
-            state.fortressLocked["${i}"] = false
-            singleBlindAction(i, "close", true, "Physical Button Hold", true) 
+            
+            def rName = getRoomName(i)
+            if (state.manualHold["${i}"]) {
+                addToHistory("${rName}: Physical Button HELD. Releasing Manual Hold and syncing room state.")
+                state.manualHold["${i}"] = false
+                state.manualHoldExpireTime["${i}"] = 0
+                syncSingleRoom(i, true)
+            } else {
+                addToHistory("${rName}: Physical Button HELD, but no manual hold was active. Ignoring.")
+            }
         }
     }
 }
@@ -628,9 +1031,10 @@ def buttonHeldHandler(evt) {
 def modeHandler(evt) {
     def currentMode = evt.value
     
-    if (autoReleaseHoldModes?.contains(currentMode)) {
+    if (releaseOnAnyMode || autoReleaseHoldModes?.contains(currentMode)) {
         addToHistory("GLOBAL: Mode changed to ${currentMode}. Auto-releasing all manual holds.")
         state.manualHold = [:]
+        state.manualHoldExpireTime = [:]
         state.fortressLocked = [:] 
     }
     
@@ -664,6 +1068,14 @@ def modeHandler(evt) {
 
 def executeSunrise() {
     if (isSystemPaused()) return
+    
+    if (releaseHoldSunrise) {
+        addToHistory("GLOBAL: Sunrise triggered. Auto-releasing all manual holds.")
+        state.manualHold = [:]
+        state.manualHoldExpireTime = [:]
+        state.fortressLocked = [:]
+    }
+    
     if (activeModes && !activeModes.contains(location.mode)) return
     if (sunriseModes && !sunriseModes.contains(location.mode)) return
     if (isExteriorUnsafeToOpen()) return 
@@ -700,6 +1112,14 @@ def runCircadianStep() {
 
 def executeSunset() {
     if (isSystemPaused()) return
+    
+    if (releaseHoldSunset) {
+        addToHistory("GLOBAL: Sunset triggered. Auto-releasing all manual holds.")
+        state.manualHold = [:]
+        state.manualHoldExpireTime = [:]
+        state.fortressLocked = [:]
+    }
+    
     if (activeModes && !activeModes.contains(location.mode)) return
     if (sunsetModes && !sunsetModes.contains(location.mode)) return
     
@@ -737,16 +1157,15 @@ def orchestrateHouseSync(data = null) {
     def allNeedToClose = true
     def eligibleCount = 0
     def allReasons = []
-    def actionRequiredCount = 0 // Tracks if any blind actually needs to physically move
+    def actionRequiredCount = 0 
     
-    // 1. Calculate targets for all rooms without executing
     for (int i = 1; i <= (numRooms as Integer); i++) {
         def roomTarget = determineRoomTarget(i)
         houseTargets[i] = roomTarget
         
         if (settings["blind_${i}"]) {
             if (roomTarget.locked) {
-                allNeedToClose = false // A locked room blocks pure Master commands
+                allNeedToClose = false 
             } else {
                 eligibleCount++
                 if (roomTarget.action != "close") {
@@ -756,26 +1175,20 @@ def orchestrateHouseSync(data = null) {
                     allReasons << roomTarget.reason
                 }
                 
-                // VERIFICATION: Check if the blind is already in the correct physical state
                 def currentState = settings["blindSensor_${i}"]?.currentValue("contact") ?: state.verifiedState["${i}"]
                 def expectedState = (roomTarget.action == "close") ? "closed" : roomTarget.action
                 
                 if (currentState != expectedState || state.targetState["${i}"] != roomTarget.action) {
-                    actionRequiredCount++ // A blind is out of sync and requires action
+                    actionRequiredCount++ 
                 } else if (state.targetReason["${i}"] != roomTarget.reason) {
-                    // State matches, but the environment reason changed (e.g., Nighttime to Summer Mode). Silently update reason.
                     state.targetReason["${i}"] = roomTarget.reason
                 }
             }
         }
     }
     
-    // If no blinds actually need to change state, exit silently to prevent log spam
-    if (actionRequiredCount == 0) {
-        return
-    }
+    if (actionRequiredCount == 0) return
     
-    // 2. Decide Execution Strategy
     if (eligibleCount > 0 && allNeedToClose && masterBlind) {
         def combinedReason = allReasons.join(" / ")
         addToHistory("ORCHESTRATOR: Entire house evaluated to CLOSE. Intercepting and routing to Master Blind.")
@@ -800,33 +1213,52 @@ def determineRoomTarget(roomNum) {
         return target
     }
     
-    if (state.manualHold["${roomNum}"] || state.windLock["${roomNum}"] || state.fortressLocked["${roomNum}"]) {
+    if (state.manualHold["${roomNum}"]) {
         target.locked = true
+        target.reason = "Manual Hold Active"
+        return target
+    }
+    
+    if (state.windLock["${roomNum}"]) {
+        target.locked = true
+        target.reason = "Storm Shield Wind Lock"
+        return target
+    }
+
+    if (dndSwitch && dndSwitch.currentValue("switch") == "on") {
+        target.locked = true
+        target.reason = "Global Do Not Disturb Active"
         return target
     }
     
     def gnSwitch = settings["goodNightSwitch_${roomNum}"]
     if (gnSwitch && gnSwitch.currentValue("switch") == "on") {
         target.locked = true
+        target.reason = "Nap Time/Hard Lock Active"
+        return target
+    }
+    
+    if (state.fortressLocked["${roomNum}"]) {
+        target.locked = true
+        target.reason = "Unoccupied Fortress Lock"
         return target
     }
 
     def currentMode = location.mode
     def isNight = isDarkOut() || isPastMaxCloseTime()
 
-    // 1. Time / Mode Hard Overrides
     if (isNight && (!sunsetModes || sunsetModes.contains(currentMode))) {
         target.action = "close"
         target.reason = "Nighttime Secure"
         return target
     }
+    
     if (closeOnModes?.contains(currentMode)) {
         target.action = "close"
         target.reason = "Global Close Mode"
         return target
     }
 
-    // 2. Evaluate Base Daytime State
     def shouldBeOpen = false
     if (openOnModes?.contains(currentMode) && !isExteriorUnsafeToOpen()) {
         shouldBeOpen = true
@@ -834,7 +1266,6 @@ def determineRoomTarget(roomNum) {
         shouldBeOpen = true
     }
 
-    // 3. Evaluate Environment (Overrides Base State)
     def envTarget = evaluateEnvironmentTarget(roomNum, isNight, currentMode)
     if (envTarget.action) {
         target.action = envTarget.action
@@ -842,60 +1273,97 @@ def determineRoomTarget(roomNum) {
         return target
     }
 
-    // 4. Fallback to Base State
     if (shouldBeOpen) {
         target.action = "open"
         target.reason = "Normal Daytime Condition"
         return target
     }
 
-    // 5. Maintain Current State if no rules match
+    if (isExteriorUnsafeToOpen() && state.targetState["${roomNum}"] != "open") {
+        target.action = "close"
+        target.reason = "Blocked: Exterior conditions unsafe (High Temp or Lux)"
+        return target
+    }
+
     target.action = state.targetState["${roomNum}"] ?: "close" 
     target.reason = state.targetReason["${roomNum}"] ?: "Maintaining State"
-   
     return target
 }
 
 def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
     def target = [action: null, reason: null]
     
-    def dir = settings["direction_${roomNum}"]
-    def dirName = dir ? dir : "these"
+    def isSunFacing = false
+    def dirName = "these"
+    
+    if (enableSolarTracking && state.currentSunPos) {
+        def roomAzimuth = settings["windowAzimuth_${roomNum}"] != null ? settings["windowAzimuth_${roomNum}"].toBigDecimal() : null
+        dirName = roomAzimuth != null ? "${roomAzimuth}°" : "these"
+        
+        if (roomAzimuth != null) {
+            def sunPos = state.currentSunPos
+            if (sunPos.elevation > 0) {
+                def diff = Math.abs(sunPos.azimuth - roomAzimuth)
+                if (diff > 180) diff = 360 - diff
+                if (diff <= 60) {
+                    isSunFacing = true
+                }
+            }
+        }
+    } else {
+        def dir = settings["direction_${roomNum}"]
+        dirName = dir ?: "these"
+        def tz = location.timeZone ?: TimeZone.getDefault()
+        def hour = new Date().format("HH", tz).toInteger()
+        def isMorning = (hour < 12)
+        
+        if (dir == "South") isSunFacing = true
+        if (dir == "East" && isMorning) isSunFacing = true
+        if (dir == "West" && !isMorning) isSunFacing = true
+    }
     
     def tempSensor = settings["tempSensor_${roomNum}"]
     def currentTemp = tempSensor ? (tempSensor.currentValue("temperature")?.toBigDecimal() ?: 70.0) : 70.0
     def outTemp = outdoorTempSensor ? (outdoorTempSensor.currentValue("temperature")?.toBigDecimal() ?: 70.0) : 70.0
     def hvacState = mainThermostat ? (mainThermostat.currentValue("thermostatOperatingState") ?: "idle") : "idle"
     
-    // --- HYSTERESIS VARIABLES ---
     def luxHysteresisOffset = settings["luxHysteresis"] != null ? settings["luxHysteresis"].toInteger() : 500
     def tempHysteresisOffset = settings["tempHysteresis"] != null ? settings["tempHysteresis"].toBigDecimal() : 1.0
     def currentRoomReason = state.targetReason["${roomNum}"] ?: ""
     
-    // --- LUX EVALUATION WITH HYSTERESIS ---
     def outLux = outdoorLuxSensor ? (outdoorLuxSensor.currentValue("illuminance")?.toInteger() ?: 0) : 0
     def highRadiationLimit = settings["highSolarRadiationThreshold"] != null ? settings["highSolarRadiationThreshold"].toInteger() : 10000
     
     def isHighRadiation = false
     if (outdoorLuxSensor) {
         if (currentRoomReason?.startsWith("High Solar")) {
-            // Already blocking sun: require lux to drop BELOW deadband to lift the lock
             isHighRadiation = (outLux >= (highRadiationLimit - luxHysteresisOffset))
         } else {
-            // Not currently blocking: trigger standard limit
             isHighRadiation = (outLux >= highRadiationLimit)
         }
     }
-    
-    def tz = location.timeZone ?: TimeZone.getDefault()
-    def hour = new Date().format("HH", tz).toInteger()
-    def isMorning = (hour < 12)
-    def isSunFacing = false
-    if (dir == "South") isSunFacing = true
-    if (dir == "East" && isMorning) isSunFacing = true
-    if (dir == "West" && !isMorning) isSunFacing = true
 
-    // --- WINTER MODE EVALUATION WITH HYSTERESIS ---
+    if (!isNight && isHighRadiation && isSunFacing) {
+        target.action = "close"
+        target.reason = "High Solar Radiation: Closing ${dirName} blinds to block damage [Lux: ${outLux} >= ${highRadiationLimit}]"
+        return target
+    }
+
+    // Predictive Weather Pre-Cooling Override
+    def isPreCoolingAllowed = enablePreCooling && state.preCoolingActive && summerEnergyMode && !isNight
+    if (isPreCoolingAllowed && isSunFacing) {
+        target.action = "close"
+        target.reason = "Predictive Pre-Cooling: Forecast high is ${state.todayForecastHigh ?: '--'}°, locking down ${dirName} blinds early."
+        return target
+    }
+
+    def coolingDefense = settings["activeCoolingDefense"] != null ? settings["activeCoolingDefense"] : true
+    if (coolingDefense && hvacState == "cooling" && !isNight && isSunFacing) {
+        target.action = "close"
+        target.reason = "HVAC Active Cooling: Closing ${dirName} blinds to assist AC [State: ${hvacState.capitalize()}]"
+        return target
+    }
+
     def maxWinterOut = settings["winterMaxOutdoorTemp"] != null ? settings["winterMaxOutdoorTemp"].toBigDecimal() : 75.0
     def isActuallyWinter = outdoorTempSensor ? (outTemp <= maxWinterOut) : true
     def winterThresh = settings["winterTempThreshold"] != null ? settings["winterTempThreshold"].toBigDecimal() : 68.0
@@ -905,7 +1373,6 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
     def outdoorWinterTrigger = false
     if (winterOutThresh != null) {
         if (currentRoomReason?.startsWith("Winter Mode")) {
-            // Already heating: temp must rise ABOVE deadband to stop
             outdoorWinterTrigger = (outTemp <= (winterOutThresh + tempHysteresisOffset))
         } else {
             outdoorWinterTrigger = (outTemp <= winterOutThresh)
@@ -925,20 +1392,6 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
         }
     }
 
-    if (!isNight && isHighRadiation && isSunFacing) {
-        target.action = "close"
-        target.reason = "High Solar Radiation: Closing ${dirName} blinds because the sun is currently on this side [Lux: ${outLux} >= ${highRadiationLimit}]"
-        return target
-    }
-
-    def coolingDefense = settings["activeCoolingDefense"] != null ? settings["activeCoolingDefense"] : true
-    if (coolingDefense && hvacState == "cooling" && !isNight && isSunFacing) {
-        target.action = "close"
-        target.reason = "HVAC Active Cooling: Closing ${dirName} blinds to block direct sun [State: ${hvacState.capitalize()}]"
-        return target
-    }
-
-    // --- SUMMER MODE EVALUATION WITH HYSTERESIS ---
     def summerThresh = settings["summerTempThreshold"] != null ? settings["summerTempThreshold"].toBigDecimal() : 75.0
     def indoorSummerTrigger = currentTemp >= summerThresh
     def summerOutThresh = settings["summerOutdoorTempThreshold"] != null ? settings["summerOutdoorTempThreshold"].toBigDecimal() : null
@@ -946,7 +1399,6 @@ def evaluateEnvironmentTarget(roomNum, isNight, currentHubMode) {
     def outdoorSummerTrigger = false
     if (summerOutThresh != null) {
         if (currentRoomReason?.startsWith("Summer Mode")) {
-            // Already cooling: temp must drop BELOW deadband to stop
             outdoorSummerTrigger = (outTemp >= (summerOutThresh - tempHysteresisOffset))
         } else {
             outdoorSummerTrigger = (outTemp >= summerOutThresh)
@@ -991,7 +1443,7 @@ def hardLockOnHandler(evt) {
     for (int i = 1; i <= (numRooms as Integer); i++) {
         if (settings["goodNightSwitch_${i}"]?.id == deviceId) {
             addToHistory("${getRoomName(i)}: NAP TIME / HARD-LOCK ENGAGED. Room forced closed.")
-            singleBlindAction(i, "close", true, "Nap Time/Hard Lock", true) 
+            singleBlindAction(i, "close", true, "Nap Time/Hard Lock Active", true) 
         }
     }
 }
@@ -1087,7 +1539,6 @@ def singleBlindAction(roomNum, action, bypassLock = false, reason = "Automated S
 
     state.targetReason["${roomNum}"] = reason
 
-    // --- ANTI-YO-YO DEBOUNCE LOGIC ---
     if (!bypassLock && !ignoreDebounce) {
         def now = new Date().time
         def lastMove = state.lastAutoMoveTime["${roomNum}"] ?: 0
@@ -1113,67 +1564,119 @@ def singleBlindAction(roomNum, action, bypassLock = false, reason = "Automated S
     state.lastAutoMoveTime["${roomNum}"] = new Date().time
     
     addToHistory("${rName}: Executing ${action.toUpperCase()} command. Reason: ${reason}")
+    logTelemetryEvent(roomNum, "commands")
     
     if (action == "open") blind.open() else blind.close()
     
     state.retryCount = 0
-    runIn(30, "verifyAndRetry", [overwrite: true]) 
+    runIn(90, "verifyAndRetry", [overwrite: true]) 
 }
 
+// --- BLIND SENSOR DEBOUNCE HANDLERS ---
 def blindSensorHandler(evt) {
     def deviceId = evt.device.id
-    runIn(8, "evaluateSensorEvent", [data: [deviceId: deviceId], overwrite: false])
-}
-
-def evaluateSensorEvent(data) {
-    def deviceId = data.deviceId
+    def now = new Date().time
     
     for (int i = 1; i <= (numRooms as Integer); i++) {
-        def sensor = settings["blindSensor_${i}"]
-        if (sensor && sensor.id == deviceId) {
-            def actualState = sensor.currentValue("contact")
-            def verified = state.verifiedState["${i}"]
-            def target = state.targetState["${i}"]
-            def rName = getRoomName(i)
-            def expectedState = (target == "close") ? "closed" : target
+        if (settings["blindSensor_${i}"]?.id == deviceId) {
+            
+            // --- Sensor Health & Auto-Bypass Logic ---
+            if (!state.sensorFlapCount) state.sensorFlapCount = [:]
+            if (!state.lastSensorFlapTime) state.lastSensorFlapTime = [:]
+            
+            def lastFlap = state.lastSensorFlapTime["${i}"] ?: 0
+            
+            // If the sensor changes state again within 2 minutes, count it as a flap
+            if ((now - lastFlap) < 120000) { 
+                state.sensorFlapCount["${i}"] = (state.sensorFlapCount["${i}"] ?: 0) + 1
+            } else {
+                // It has been stable for over 2 minutes, reset the health counter
+                state.sensorFlapCount["${i}"] = 1
+            }
+            state.lastSensorFlapTime["${i}"] = now
+            
+            // If it flaps 5 times quickly, it's environmental noise or a hardware failure
+            if (state.sensorFlapCount["${i}"] >= 5) {
+                if (state.sensorFlapCount["${i}"] == 5) {
+                    def rName = getRoomName(i)
+                    addToHistory("SENSOR HEALTH ALERT: ${rName} blind sensor is rapidly flapping. Temporarily bypassing manual hold detection to prevent system lockup.")
+                }
+                // Abort the evaluation. The app will ignore the sensor and rely on target state.
+                return
+            }
+            
+            // --- Configurable Stabilization Timer ---
+            def debounceSecs = settings["sensorDebounce_${i}"] != null ? settings["sensorDebounce_${i}"].toInteger() : 15
+            runIn(debounceSecs, "evalSensor${i}", [overwrite: true])
+        }
+    }
+}
 
-            def now = new Date().time
-            def lastMove = state.lastAutoMoveTime["${i}"] ?: 0
-            
-            if ((now - lastMove) < 90000) {
-                if (actualState == expectedState) {
-                    state.verifiedState["${i}"] = actualState
-                    runIn(2, "updateAggregateSensor", [overwrite: true])
-                }
-                return 
-            }
-            
-            if (actualState == expectedState) {
-                if (state.verifiedState["${i}"] != actualState) {
-                    state.verifiedState["${i}"] = actualState
-                    runIn(2, "updateAggregateSensor", [overwrite: true])
-                }
-                return 
-            }
-            
-            if (verified == "closed" && actualState == "open") {
-                addToHistory("${rName}: Blind was manually opened. Activating Manual Hold.")
-                state.manualHold["${i}"] = true
-                state.fortressLocked["${i}"] = false 
-                state.targetState["${i}"] = "open"
-                state.targetReason["${i}"] = "Manual Physical Override"
-                state.verifiedState["${i}"] = actualState 
-                runIn(2, "updateAggregateSensor", [overwrite: true])
-            } else if (verified == "open" && actualState == "closed") {
-                addToHistory("${rName}: Blind was manually closed. Activating Manual Hold.")
-                state.manualHold["${i}"] = true
-                state.fortressLocked["${i}"] = false
-                state.targetState["${i}"] = "close"
-                state.targetReason["${i}"] = "Manual Physical Override"
-                state.verifiedState["${i}"] = actualState 
+// Fixed routing functions to handle up to 12 rooms with dynamic overwrites cleanly
+def evalSensor1() { evaluateSensorEvent(1) }
+def evalSensor2() { evaluateSensorEvent(2) }
+def evalSensor3() { evaluateSensorEvent(3) }
+def evalSensor4() { evaluateSensorEvent(4) }
+def evalSensor5() { evaluateSensorEvent(5) }
+def evalSensor6() { evaluateSensorEvent(6) }
+def evalSensor7() { evaluateSensorEvent(7) }
+def evalSensor8() { evaluateSensorEvent(8) }
+def evalSensor9() { evaluateSensorEvent(9) }
+def evalSensor10() { evaluateSensorEvent(10) }
+def evalSensor11() { evaluateSensorEvent(11) }
+def evalSensor12() { evaluateSensorEvent(12) }
+
+def evaluateSensorEvent(i) {
+    def sensor = settings["blindSensor_${i}"]
+    if (!sensor) return
+    
+    def actualState = sensor.currentValue("contact")
+    def verified = state.verifiedState["${i}"]
+    def target = state.targetState["${i}"]
+    def rName = getRoomName(i)
+    def expectedState = (target == "close") ? "closed" : target
+
+    def now = new Date().time
+    def lastMove = state.lastAutoMoveTime["${i}"] ?: 0
+    
+    if ((now - lastMove) < 90000) {
+        if (actualState == expectedState) {
+            if (state.verifiedState["${i}"] != actualState) {
+                state.verifiedState["${i}"] = actualState
+                if (actualState == "open") logTelemetryEvent(i, "opens")
+                if (actualState == "closed") logTelemetryEvent(i, "closes")
                 runIn(2, "updateAggregateSensor", [overwrite: true])
             }
         }
+        return 
+    }
+    
+    if (actualState == expectedState) {
+        if (state.verifiedState["${i}"] != actualState) {
+            state.verifiedState["${i}"] = actualState
+            if (actualState == "open") logTelemetryEvent(i, "opens")
+            if (actualState == "closed") logTelemetryEvent(i, "closes")
+            runIn(2, "updateAggregateSensor", [overwrite: true])
+        }
+        return 
+    }
+    
+    if (verified == "closed" && actualState == "open") {
+        logTelemetryEvent(i, "opens")
+        addToHistory("${rName}: Blind was manually opened. Activating Manual Hold.")
+        engageManualHold(i)
+        state.targetState["${i}"] = "open"
+        state.targetReason["${i}"] = "Manual Physical Override"
+        state.verifiedState["${i}"] = actualState 
+        runIn(2, "updateAggregateSensor", [overwrite: true])
+    } else if (verified == "open" && actualState == "closed") {
+        logTelemetryEvent(i, "closes")
+        addToHistory("${rName}: Blind was manually closed. Activating Manual Hold.")
+        engageManualHold(i)
+        state.targetState["${i}"] = "close"
+        state.targetReason["${i}"] = "Manual Physical Override"
+        state.verifiedState["${i}"] = actualState 
+        runIn(2, "updateAggregateSensor", [overwrite: true])
     }
 }
 
@@ -1182,6 +1685,7 @@ def releaseHoldHandler(evt) {
     for (int i = 1; i <= (numRooms as Integer); i++) {
         if (settings["releaseHoldSwitch_${i}"]?.id == deviceId) {
             state.manualHold["${i}"] = false
+            state.manualHoldExpireTime["${i}"] = 0
             addToHistory("${getRoomName(i)}: Manual Hold released by user switch. Syncing room state.")
             syncSingleRoom(i, true)
         }
@@ -1210,7 +1714,6 @@ def triggerRandomBlind() {
     scheduleRandomPresence()
 }
 
-// --- LUXURY WAVE EXECUTION ---
 def executeStaggeredCommand(data) {
     singleBlindAction(data.roomNum, data.action, false, data.reason ?: "Automated Sync", data.ignoreDebounce ?: false)
 }
@@ -1251,7 +1754,7 @@ def operateAllShades(action, force = false, reason = "Global Command") {
         if (action == "open") masterBlind.open() else masterBlind.close()
         
         state.masterRetryCount = 0
-        runIn(60, "verifyMasterAndRetry", [data: [action: action, reason: reason], overwrite: true])
+        runIn(90, "verifyMasterAndRetry", [data: [action: action, reason: reason], overwrite: true])
     } else {
         def delayMultiplier = 0
         
@@ -1261,7 +1764,7 @@ def operateAllShades(action, force = false, reason = "Global Command") {
             delayMultiplier++
         }
         state.retryCount = 0
-        runIn((roomsToCommand.size() * 2) + 60, "verifyAndRetry", [overwrite: true])
+        runIn((roomsToCommand.size() * 2) + 90, "verifyAndRetry", [overwrite: true])
     }
 }
 
@@ -1275,7 +1778,7 @@ def verifyMasterAndRetry(data) {
     
     for (int i = 1; i <= (numRooms as Integer); i++) {
         def target = state.targetState["${i}"]
-        if (!target || state.manualHold["${i}"]) continue
+        if (!target) continue
         
         def blindSensor = settings["blindSensor_${i}"]
         if (blindSensor) {
@@ -1295,7 +1798,7 @@ def verifyMasterAndRetry(data) {
         if (state.masterRetryCount <= 2) {
             addToHistory("GLOBAL: Some blinds failed to sync. Retrying Master ${action.toUpperCase()} command (${state.masterRetryCount + 1}/3).")
             if (action == "open") masterBlind.open() else masterBlind.close()
-            runIn(60, "verifyMasterAndRetry", [data: data, overwrite: true])
+            runIn(90, "verifyMasterAndRetry", [data: data, overwrite: true])
         } else {
             addToHistory("GLOBAL: Master Blind failed after 3 attempts. Falling back to individual shade sync.")
             
@@ -1309,7 +1812,7 @@ def verifyMasterAndRetry(data) {
                 delayMultiplier++
             }
             
-            runIn((delayMultiplier * 2) + 60, "verifyAndRetry", [overwrite: true])
+            runIn((delayMultiplier * 2) + 90, "verifyAndRetry", [overwrite: true])
         }
     } else {
         addToHistory("GLOBAL: Master Blind sync verified successfully.")
@@ -1329,7 +1832,7 @@ def verifyAndRetry() {
     def delayMultiplier = 0
     for (int i = 1; i <= (numRooms as Integer); i++) {
         def target = state.targetState["${i}"]
-        if (!target || state.manualHold["${i}"]) continue
+        if (!target) continue
         
         def blindSensor = settings["blindSensor_${i}"]
         if (blindSensor) {
@@ -1338,7 +1841,6 @@ def verifyAndRetry() {
             
             if (currentState != expectedState) {
                 
-                // 1. Check if we've exceeded the global timeout setting
                 def startTime = state.commandStartTime["${i}"] ?: now
         
                 if ((now - startTime) >= timeoutMillis) {
@@ -1346,20 +1848,21 @@ def verifyAndRetry() {
                         def rName = getRoomName(i)
                         addToHistory("TIMEOUT ERROR: ${rName} failed to reach ${target.toUpperCase()} after ${timeoutMinutes} minutes. Abandoning retries.")
                         state.targetReason["${i}"] = "TIMEOUT FAILED"
+                        logTelemetryEvent(i, "timeouts")
                     }
-                    continue // Skip retrying this specific blind
+                    continue 
                 }
   
                 needsRetry = true 
                 
-                // 2. Only send the command if it's been at least 60s since the last RF blast
                 def lastMove = state.lastAutoMoveTime["${i}"] ?: 0
-      
-                if ((now - lastMove) >= 60000) {
+        
+                if ((now - lastMove) >= 90000) {
                     def delaySec = delayMultiplier * 3 
                     def tReason = state.targetReason["${i}"] ?: "Persistent Retry Sync"
-           
-                    // THIS IS WHERE THE BI-DIRECTIONAL WIGGLE HAPPENS
+            
+                    logTelemetryEvent(i, "retries")
+                    
                     if (target == "open") {
                         runIn(delaySec, "executeWiggleOpen", [data: [roomNum: i, reason: tReason], overwrite: false])
                     } else if (target == "close") {
@@ -1371,13 +1874,12 @@ def verifyAndRetry() {
                 state.verifiedState["${i}"] = currentState
             }
         } else {
-            // DASHBOARD FIX: If no physical sensor is installed, assume the RF command worked to keep the UI clean
             state.verifiedState["${i}"] = target
         }
     }
     
     if (needsRetry) {
-        runIn(60, "verifyAndRetry", [overwrite: true]) 
+        runIn(90, "verifyAndRetry", [overwrite: true]) 
     } else {
         runIn(2, "updateAggregateSensor", [overwrite: true])
     }
@@ -1389,6 +1891,7 @@ def executeWiggleOpen(data) {
     def blind = settings["blind_${rNum}"]
     if (!blind) return
     
+    logTelemetryEvent(rNum, "wiggles")
     addToHistory("${getRoomName(rNum)}: Wiggle maneuver engaged. Forcing CLOSE, then re-issuing OPEN. Reason: ${data.reason}")
     
     if (blind.hasCommand("close")) blind.close()
@@ -1407,6 +1910,7 @@ def executeWiggleClose(data) {
     def blind = settings["blind_${rNum}"]
     if (!blind) return
     
+    logTelemetryEvent(rNum, "wiggles")
     addToHistory("${getRoomName(rNum)}: Wiggle maneuver engaged. Forcing OPEN, then re-issuing CLOSE. Reason: ${data.reason}")
     
     if (blind.hasCommand("open")) blind.open()
