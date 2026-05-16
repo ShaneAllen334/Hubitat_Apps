@@ -11,6 +11,7 @@ definition(
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
+    iconX3Url: "",
     singleThreaded: true
 )
 
@@ -75,8 +76,12 @@ def mainPage() {
                             def dishPwr = 0.0
                             try { dishPwr = (dish.currentValue("power") ?: 0.0) as Float } catch(e) {}
                             def dThresh = (settings["dishwasherThreshold_${i}"] ?: 15) as Float
+                            def debounceMins = (settings["dishwasherDebounce_${i}"] ?: 5) as Long
+                            def lastActive = state."dishLastActive_${i}" ?: 0
+                            def isDebouncing = (dishPwr <= dThresh) && ((new Date().time - lastActive) < (debounceMins * 60000))
                             
                             if (dishPwr > dThresh) activeAcoustics << "Dishwasher (${dishPwr}W): +${settings["dishwasherBoost_${i}"] ?: 4}"
+                            else if (isDebouncing) activeAcoustics << "Dishwasher (Cycle Paused): +${settings["dishwasherBoost_${i}"] ?: 4}"
                             else activeAcoustics << "Dishwasher (Idle)"
                         }
                         
@@ -89,7 +94,8 @@ def mainPage() {
                         def ap = settings["airPurifier_${i}"]
                         if (ap) {
                             if (ap.currentValue("switch") == "on") {
-                                def sickModeOn = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                                def sickSwitches = [settings["sickModeSwitch_${i}"]].flatten().findAll{it}
+                                def sickModeOn = sickSwitches.any { it.currentValue("switch") == "on" }
                                 def modeTag = sickModeOn ? " (Sick Mode)" : ""
                                 activeAcoustics << "Purifier (ON)${modeTag}: +${settings["airPurifierBoost_${i}"] ?: 2}"
                             }
@@ -236,15 +242,6 @@ def mainPage() {
             input "enforceGlobalAppLimits", "bool", title: "Enforce House-Wide Application Limits", defaultValue: false, description: "If enabled, time spent on restricted apps is combined across all TVs. (e.g., 30 mins of YouTube on TV 1 + 30 mins on TV 2 = 60 mins total towards the limit)."
             input "globalGuestSwitch", "capability.switch", title: "Global Guest Mode Switch (Limit Bypass)", required: false, description: "When this switch is ON, all TV and Application Time Limits are temporarily ignored, allowing unrestricted viewing for house guests."
         }
-
-        section("Safety & Security Interruption (Smart Pause & Auto-Mute)", hideable: true, hidden: true) {
-            input "enableSafetyMute", "bool", title: "Enable Security/Doorbell Interruption", defaultValue: false, submitOnChange: true, description: "Automatically pauses or mutes any active TV when a monitored safety contact opens or a doorbell is pressed, ensuring you hear important activity."
-            if (enableSafetyMute) {
-                input "muteContacts", "capability.contactSensor", title: "Safety Contacts", multiple: true, required: false, description: "If any of these doors/windows open while a TV is on, the TV will instantly pause or mute. It restores when closed."
-                input "doorbellButtons", "capability.pushableButton", title: "Doorbell Buttons", multiple: true, required: false, description: "If these doorbells are pressed, active TVs will instantly pause or mute to ensure you hear the chime."
-                input "doorbellMuteTime", "number", title: "Doorbell Interruption Duration (Seconds)", defaultValue: 60, required: true, description: "How long to keep the TVs paused/muted after a doorbell is pressed before automatically resuming."
-            }
-        }
         
         section("Severe Weather & Emergency Override", hideable: true, hidden: true) {
             input "enableWeatherAlert", "bool", title: "Enable Severe Weather Overrides", defaultValue: false, submitOnChange: true, description: "Forces configured TVs to power on and tune to a specific broadcast channel or streaming app during a severe weather alert."
@@ -309,6 +306,15 @@ def tvPage(params) {
             }
         }
         
+        section("Safety & Security Interruption (Smart Pause & Auto-Mute)", hideable: true, hidden: true) {
+            input "enableSafetyMute_${tNum}", "bool", title: "Enable Security/Doorbell Interruption", defaultValue: false, submitOnChange: true, description: "Automatically pauses or mutes this specific TV when a monitored safety contact opens or a doorbell is pressed."
+            if (settings["enableSafetyMute_${tNum}"]) {
+                input "muteContacts_${tNum}", "capability.contactSensor", title: "Safety Contacts", multiple: true, required: false, description: "If any of these doors/windows open while this TV is on, the TV will instantly pause or mute. It restores when closed."
+                input "doorbellButtons_${tNum}", "capability.pushableButton", title: "Doorbell Buttons", multiple: true, required: false, description: "If these doorbells are pressed, this TV will instantly pause or mute to ensure you hear the chime."
+                input "doorbellMuteTime_${tNum}", "number", title: "Doorbell Interruption Duration (Seconds)", defaultValue: 60, required: true, description: "How long to keep the TV paused/muted after a doorbell is pressed before automatically resuming."
+            }
+        }
+
         section("Application & TV Time Limits", hideable: true, hidden: true) {
             input "enableTimeLimits_${tNum}", "bool", title: "Enable Time Limits", defaultValue: false, submitOnChange: true, description: "Limit screen time per TV or individual applications."
             if (settings["enableTimeLimits_${tNum}"]) {
@@ -543,6 +549,7 @@ def tvPage(params) {
                 input "dishwasher_${tNum}", "capability.powerMeter", title: "Dishwasher Power Monitor", required: false, description: "Select the smart plug monitoring the dishwasher's power."
                 if (settings["dishwasher_${tNum}"]) {
                     input "dishwasherThreshold_${tNum}", "number", title: "Active Power Threshold (Watts)", defaultValue: 15, required: true, description: "The dishwasher is considered 'running' when its power draw goes above this number."
+                    input "dishwasherDebounce_${tNum}", "number", title: "Idle Debounce (Minutes)", defaultValue: 5, required: true, description: "Wait this long after power drops below threshold before removing the volume boost. Dishwashers often drop to 0W during drain/fill cycles."
                     input "dishwasherBoost_${tNum}", "number", title: "Dishwasher Volume Boost (Units)", defaultValue: 4, description: "How many volume units to increase when the dishwasher is running."
                 }
                 
@@ -551,7 +558,7 @@ def tvPage(params) {
                 
                 input "airPurifier_${tNum}", "capability.switch", title: "Air Purifier Switch / Power State", required: false, submitOnChange: true, description: "Select the air purifier switch to monitor."
                 if (settings["airPurifier_${tNum}"]) {
-                    input "sickModeSwitch_${tNum}", "capability.switch", title: "Sick Mode / Air Quality Override Switch", required: false, description: "When ON, the system will refuse to turn off this air purifier even if it is listed in the 'FORCE OFF' appliances above, prioritizing air scrubbing over acoustics."
+                    input "sickModeSwitch_${tNum}", "capability.switch", title: "Sick Mode / Air Quality Override Switches", multiple: true, required: false, description: "Select up to 3 virtual switches. When any are ON, the system will refuse to turn off this air purifier even if it is listed in the 'FORCE OFF' appliances above, prioritizing air scrubbing over acoustics."
                 }
                 input "airPurifierBoost_${tNum}", "number", title: "Air Purifier Volume Boost (Units)", defaultValue: 2, description: "How many volume units to increase when the air purifier is running."
                 
@@ -701,24 +708,26 @@ def initialize() {
     }
     if (needsPolling) schedule("0 * * * * ?", "pollThermostats") 
     
-    if (settings["enableSafetyMute"]) {
-        if (muteContacts) subscribe(muteContacts, "contact", contactHandler)
-        if (doorbellButtons) subscribe(doorbellButtons, "pushed", buttonHandler)
-    }
-    
     if (settings["enableWeatherAlert"] && weatherSwitch) {
         subscribe(weatherSwitch, "switch", weatherSwitchHandler)
     }
+
+    subscribe(location, "voiceButlerTvCmd", "voiceButlerCmdHandler")
     
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def isAvr = settings["isAvrOnly_${i}"]
         def tv = getPrimaryDevice(i)
+        def plug = settings["tvPlug_${i}"]
         
         if (tv) {
             subscribe(tv, "switch", tvPowerEvaluator)
             subscribe(tv, "power", tvPowerEvaluator)
             subscribe(tv, "mediaInputSource", tvAppHandler)
             if (!isAvr) subscribe(tv, "application", tvAppHandler)
+        }
+        
+        if (plug) {
+            subscribe(plug, "switch", tvPowerEvaluator)
         }
         
         if (settings["enableMotionTimeout_${i}"] && settings["motionSensor_${i}"]) {
@@ -740,6 +749,38 @@ def initialize() {
         if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]) {
             subscribe(settings["cozyOvercast_${i}"], "switch", cozyOvercastHandler)
         }
+        
+        if (settings["enableSafetyMute_${i}"]) {
+            if (settings["muteContacts_${i}"]) subscribe(settings["muteContacts_${i}"], "contact", contactHandler)
+            if (settings["doorbellButtons_${i}"]) subscribe(settings["doorbellButtons_${i}"], "pushed", buttonHandler)
+        }
+    }
+    
+    runIn(2, "syncToVoiceButler", [overwrite: true])
+}
+
+// --- Universal Async Device Command Dispatcher ---
+
+def asyncDeviceCommand(data) {
+    def tvNum = data.tvNum
+    def settingName = data.settingName
+    def command = data.command
+    def value1 = data.value1
+    def value2 = data.value2
+    def targetId = data.targetId
+
+    def devices = settings[settingName]
+    def dev = null
+    if (devices instanceof List) {
+        dev = devices.find { it.id == targetId }
+    } else if (devices?.id == targetId) {
+        dev = devices
+    }
+
+    if (dev) {
+        if (value2 != null) dev."$command"(value1, value2)
+        else if (value1 != null) dev."$command"(value1)
+        else dev."$command"()
     }
 }
 
@@ -833,6 +874,44 @@ def rokuLaunchHandler(response, data) {
     if (response.hasError()) log.warn "Roku Launch Error: HTTP ${response.status}"
 }
 
+// --- Event Handlers ---
+
+def cozyOvercastHandler(evt) {
+    if (isSystemPaused()) return
+    def deviceId = evt.device.id
+    def isOn = evt.value == "on"
+
+    for (int i = 1; i <= (numTVs as Integer); i++) {
+        if (settings["enableCozyMode_${i}"] && settings["cozyOvercast_${i}"]?.id == deviceId) {
+            def tv = getPrimaryDevice(i)
+            if (isTvActuallyOn(tv, i)) {
+                if (isOn && !state.cozyLightsActivatedByTv["${i}"]) {
+                    def targetLevel = settings["cozyLevel_${i}"] ?: 50
+                    def ctVarName = settings["cozyCTVar_${i}"]
+                    def targetCT = null
+
+                    if (ctVarName) {
+                        def hubVar = getGlobalVar(ctVarName)
+                        if (hubVar != null && hubVar.value != null) targetCT = hubVar.value.toInteger()
+                    }
+
+                    addToHistory("${getTvName(i)}: Weather became overcast. Activating Cozy Mode dynamically.")
+                    def cozyLights = settings["cozyLights_${i}"]
+                    if (cozyLights) {
+                        cozyLights.eachWithIndex { bulb, idx ->
+                            if (targetCT != null && bulb.hasCommand("setColorTemperature")) {
+                                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "setColorTemperature", value1: targetCT, value2: targetLevel, targetId: bulb.id], overwrite: false])
+                            } else {
+                                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "setLevel", value1: targetLevel, targetId: bulb.id], overwrite: false])
+                            }
+                        }
+                    }
+                    state.cozyLightsActivatedByTv["${i}"] = true
+                }
+            }
+        }
+    }
+}
 
 def extendSwitchHandler(evt) {
     def isOn = evt.value == "on"
@@ -848,6 +927,7 @@ def extendSwitchHandler(evt) {
             runIn(30, "turnOffExtendSwitch", [data: [tvNum: i]])
         }
     }
+    syncToVoiceButler()
 }
 
 def turnOffExtendSwitch(data) {
@@ -885,6 +965,8 @@ def enforceLimitAction(i, limitType) {
         addToHistory("${getTvName(i)}: Time Limit Reached. Powering OFF.")
         issuePowerCommand(i, "off", 1)
     }
+
+    sendLocationEvent(name: "voiceButlerTvAlert", value: "limit_reached", data: getTvName(i), isStateChange: true)
 }
 
 // --- BMS Integrity Engines ---
@@ -1023,10 +1105,11 @@ def restoreState(i, prefix) {
         if (conflictActive) {
             addToHistory("${getTvName(i)}: Macro Light snap-back bypassed (Automation Override is ON).")
         } else {
-            lightsOff.each { 
-                if (cap.lightsOff[it.id] == "on") {
-                    it.on()
-                    pauseExecution(300)
+            def delayIdx = 0
+            lightsOff.each { dev -> 
+                if (cap.lightsOff[dev.id] == "on") {
+                    runInMillis(delayIdx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOff_${i}", command: "on", targetId: dev.id], overwrite: false])
+                    delayIdx++
                 }
             }
         }
@@ -1034,33 +1117,30 @@ def restoreState(i, prefix) {
     
     def lightsOn = settings["${prefix}LightsOn_${i}"]
     if (lightsOn && cap.lightsOn) {
-        lightsOn.each { 
-            def stored = cap.lightsOn[it.id]
+        lightsOn.eachWithIndex { dev, idx -> 
+            def stored = cap.lightsOn[dev.id]
             if (stored?.switch == "off") {
-                it.off()
-            } else if (stored?.level != null && it.hasCommand("setLevel")) {
-                it.setLevel(stored.level)
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOn_${i}", command: "off", targetId: dev.id], overwrite: false])
+            } else if (stored?.level != null && dev.hasCommand("setLevel")) {
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOn_${i}", command: "setLevel", value1: stored.level, targetId: dev.id], overwrite: false])
             }
-            pauseExecution(300)
         }
     }
     
     def shades = settings["${prefix}Shades_${i}"]
     if (shades && cap.shades) {
-        shades.each { 
-            if (cap.shades[it.id] == "open" || cap.shades[it.id] == "partially open") {
-                it.open()
-                pauseExecution(300)
+        shades.eachWithIndex { dev, idx -> 
+            if (cap.shades[dev.id] == "open" || cap.shades[dev.id] == "partially open") {
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}Shades_${i}", command: "open", targetId: dev.id], overwrite: false])
             }
         }
     }
     
     def fans = settings["${prefix}Fans_${i}"]
     if (fans && cap.fans) {
-        fans.each { 
-            if (cap.fans[it.id]) {
-                it.setSpeed(cap.fans[it.id])
-                pauseExecution(300)
+        fans.eachWithIndex { dev, idx -> 
+            if (cap.fans[dev.id]) {
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}Fans_${i}", command: "setSpeed", value1: cap.fans[dev.id], targetId: dev.id], overwrite: false])
             }
         }
     }
@@ -1147,9 +1227,8 @@ def executeMacroEnvironment(i, prefix) {
     
     def lightsOff = settings["${prefix}LightsOff_${i}"]
     if (lightsOff) { 
-        lightsOff.each { 
-            it.off()
-            pauseExecution(300)
+        lightsOff.eachWithIndex { dev, idx -> 
+            runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOff_${i}", command: "off", targetId: dev.id], overwrite: false])
         }
         actions << "Lights Off" 
     }
@@ -1157,28 +1236,28 @@ def executeMacroEnvironment(i, prefix) {
     def lightsOn = settings["${prefix}LightsOn_${i}"]
     if (lightsOn) {
         def lvl = settings["${prefix}LightsLevel_${i}"]
-        lightsOn.each { 
-            if (lvl != null && it.hasCommand("setLevel")) it.setLevel(lvl)
-            else it.on()
-            pauseExecution(300)
+        lightsOn.eachWithIndex { dev, idx -> 
+            if (lvl != null && dev.hasCommand("setLevel")) {
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOn_${i}", command: "setLevel", value1: lvl, targetId: dev.id], overwrite: false])
+            } else {
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}LightsOn_${i}", command: "on", targetId: dev.id], overwrite: false])
+            }
         }
         actions << "Ambiance Lights Set"
     }
     
     def shades = settings["${prefix}Shades_${i}"]
     if (shades) { 
-        shades.each { 
-            it.close()
-            pauseExecution(300)
+        shades.eachWithIndex { dev, idx -> 
+            runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}Shades_${i}", command: "close", targetId: dev.id], overwrite: false])
         }
         actions << "Shades Closed" 
     }
     
     def locks = settings["${prefix}Locks_${i}"]
     if (locks) { 
-        locks.each { 
-            it.lock()
-            pauseExecution(300)
+        locks.eachWithIndex { dev, idx -> 
+            runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}Locks_${i}", command: "lock", targetId: dev.id], overwrite: false])
         }
         actions << "Doors Locked" 
     }
@@ -1186,9 +1265,8 @@ def executeMacroEnvironment(i, prefix) {
     def fans = settings["${prefix}Fans_${i}"]
     def fanSpeed = settings["${prefix}FanSpeed_${i}"]
     if (fans && fanSpeed) { 
-        fans.each { 
-            it.setSpeed(fanSpeed)
-            pauseExecution(300)
+        fans.eachWithIndex { dev, idx -> 
+            runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "${prefix}Fans_${i}", command: "setSpeed", value1: fanSpeed, targetId: dev.id], overwrite: false])
         }
         actions << "Fans Set" 
     }
@@ -1291,15 +1369,8 @@ def executeMediaAction(data) {
     if (source == "macro" && prefix) {
         def targetVol = settings["${prefix}Vol_${i}"]
         if (targetVol != null) {
-            def audioDev = getAudioDevice(i)
             def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
-            def isAbsolute = audioProtocol in ["Network AVR / Absolute (SetLevel 0-100)", "Onkyo / Pioneer Protocol", "Denon / Marantz", "Yamaha", "Onkyo / Pioneer", "Sony", "Generic / Other"]
-            
-            if (isAbsolute || (!audioDev.hasCommand("volumeUp") && audioDev.hasCommand("setLevel"))) {
-                audioDev.setLevel(targetVol)
-            } else {
-                adjustVolumeRelative(audioDev, targetVol, "up", audioProtocol)
-            }
+            adjustVolumeRelative(i, targetVol, "up", audioProtocol)
             addToHistory("${getTvName(i)}: Macro volume command processed.")
         }
     }
@@ -1403,6 +1474,9 @@ def refreshTVs() {
 }
 
 def isTvActuallyOn(tv, i) {
+    def plug = settings["tvPlug_${i}"]
+    if (plug && plug.currentValue("switch") == "off") return false
+
     if (!tv) return false
     def sw = tv.currentValue("switch")
     def pwr = tv.currentValue("power")
@@ -1439,7 +1513,9 @@ def tvPowerEvaluator(evt) {
     
     for (int i = 1; i <= (numTVs as Integer); i++) {
         def primary = getPrimaryDevice(i)
-        if (primary?.id == deviceId) {
+        def plug = settings["tvPlug_${i}"]
+        
+        if (primary?.id == deviceId || plug?.id == deviceId) {
             def tvName = getTvName(i)
             def isTrulyOn = isTvActuallyOn(primary, i)
             def lastEvaluatedState = state.evaluatedPowerState["${i}"] ?: false
@@ -1484,12 +1560,13 @@ def tvPowerEvaluator(evt) {
                 if (settings["enableAcousticMgmt_${i}"]) {
                     def noiseSwitches = settings["tvNoiseSwitches_${i}"]
                     if (noiseSwitches) {
-                        def isSickMode = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                        def sickSwitches = [settings["sickModeSwitch_${i}"]].flatten().findAll{it}
+                        def sickModeOn = sickSwitches.any { it.currentValue("switch") == "on" }
                         def apId = settings["airPurifier_${i}"]?.id
                         
                         def activeNoise = noiseSwitches.findAll { 
                             if (it.currentValue("switch") != "on") return false
-                            if (isSickMode && apId && it.id == apId) {
+                            if (sickModeOn && apId && it.id == apId) {
                                 addToHistory("${tvName}: Sick Mode is ON. Allowing high-performance air filtration to continue running.")
                                 return false
                             }
@@ -1497,9 +1574,8 @@ def tvPowerEvaluator(evt) {
                         }
                         if (activeNoise) {
                             addToHistory("${tvName}: Background noise detected. Turning OFF: ${activeNoise.join(', ')}")
-                            activeNoise.each { 
-                                it.off()
-                                pauseExecution(300)
+                            activeNoise.eachWithIndex { dev, idx -> 
+                                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvNoiseSwitches_${i}", command: "off", targetId: dev.id], overwrite: false])
                             } 
                             state.noiseSwitchesPaused["${i}"] = activeNoise.collect { it.id }
                         } else {
@@ -1543,16 +1619,17 @@ def tvPowerEvaluator(evt) {
 
                             if (targetCT != null) {
                                 addToHistory("${tvName}: Cozy Mode conditions met. Setting accent lights to ${targetLevel}% and ${targetCT}K.")
-                                cozyLights.each { bulb ->
-                                    if (bulb.hasCommand("setColorTemperature")) bulb.setColorTemperature(targetCT, targetLevel)
-                                    else bulb.setLevel(targetLevel)
-                                    pauseExecution(300)
+                                cozyLights.eachWithIndex { bulb, idx ->
+                                    if (bulb.hasCommand("setColorTemperature")) {
+                                        runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "setColorTemperature", value1: targetCT, value2: targetLevel, targetId: bulb.id], overwrite: false])
+                                    } else {
+                                        runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "setLevel", value1: targetLevel, targetId: bulb.id], overwrite: false])
+                                    }
                                 }
                             } else {
                                 addToHistory("${tvName}: Cozy Mode conditions met. Setting accent lights to ${targetLevel}%.")
-                                cozyLights.each { 
-                                    it.setLevel(targetLevel)
-                                    pauseExecution(300)
+                                cozyLights.eachWithIndex { bulb, idx -> 
+                                    runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "setLevel", value1: targetLevel, targetId: bulb.id], overwrite: false])
                                 }
                             }
                             
@@ -1589,10 +1666,9 @@ def tvPowerEvaluator(evt) {
                 if (settings["enableVolumeMgmt_${i}"]) {
                     def reduceClicks = settings["shutdownVolumeReduction_${i}"]
                     if (reduceClicks && reduceClicks > 0) {
-                         def audioDev = getAudioDevice(i)
                         def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
                         addToHistory("${tvName}: Tapering volume down by ${reduceClicks} clicks for quiet startup.")
-                        adjustVolumeRelative(audioDev, reduceClicks, "down", audioProtocol)
+                        adjustVolumeRelative(i, reduceClicks, "down", audioProtocol)
                      }
                 }
 
@@ -1603,9 +1679,8 @@ def tvPowerEvaluator(evt) {
                          def toRestore = noiseSwitches.findAll { pausedIds.contains(it.id) }
                         if (toRestore) {
                              addToHistory("${tvName}: Restoring background appliances: ${toRestore.join(', ')}")
-                             toRestore.each { 
-                                it.on()
-                                pauseExecution(300)
+                             toRestore.eachWithIndex { dev, idx -> 
+                                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvNoiseSwitches_${i}", command: "on", targetId: dev.id], overwrite: false])
                             } 
                         }
                          state.noiseSwitchesPaused["${i}"] = []
@@ -1631,9 +1706,8 @@ def tvPowerEvaluator(evt) {
                             
                             if (isBlindClosed && timeOk) {
                                  addToHistory("${tvName}: Conditions met. Restoring lights.")
-                                 lights.each { 
-                                     it.on()
-                                     pauseExecution(300)
+                                 lights.eachWithIndex { dev, idx -> 
+                                     runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvLights_${i}", command: "on", targetId: dev.id], overwrite: false])
                                  } 
                             }
                         }
@@ -1644,9 +1718,8 @@ def tvPowerEvaluator(evt) {
                     def cozyLights = settings["cozyLights_${i}"]
                     if (cozyLights) {
                         addToHistory("${tvName}: TV shutting down. Turning OFF Cozy Mode lights.")
-                        cozyLights.each { 
-                            it.off()
-                            pauseExecution(300)
+                        cozyLights.eachWithIndex { dev, idx -> 
+                            runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "cozyLights_${i}", command: "off", targetId: dev.id], overwrite: false])
                         }
                     }
                     state.cozyLightsActivatedByTv["${i}"] = false
@@ -1673,6 +1746,7 @@ def tvPowerEvaluator(evt) {
             }
         }
     }
+    syncToVoiceButler()
 }
 
 // --- Smart Acoustic Management Engine ---
@@ -1693,6 +1767,10 @@ def acousticDeviceHandler(evt) {
         
         if (isMatch) evaluateAcoustics(i)
     }
+}
+
+def triggerAcousticEval(data) {
+    evaluateAcoustics(data.tvNum)
 }
 
 def evaluateAcoustics(i) {
@@ -1738,8 +1816,18 @@ def evaluateAcoustics(i) {
         def dishPwr = 0.0
         try { dishPwr = (dish.currentValue("power") ?: 0.0) as Float } catch(e) {}
         def dThresh = (settings["dishwasherThreshold_${i}"] ?: 15) as Float
+        def debounceMins = (settings["dishwasherDebounce_${i}"] ?: 5) as Long
+        
         if (dishPwr > dThresh) {
+            state."dishLastActive_${i}" = new Date().time
             maxBoost = Math.max(maxBoost, (settings["dishwasherBoost_${i}"] ?: 4) as Integer)
+        } else {
+            def lastActive = state."dishLastActive_${i}" ?: 0
+            if ((new Date().time - lastActive) < (debounceMins * 60000)) {
+                maxBoost = Math.max(maxBoost, (settings["dishwasherBoost_${i}"] ?: 4) as Integer)
+                // Schedule re-evaluation to remove boost once debounce expires
+                runIn((debounceMins * 60), "triggerAcousticEval", [data: [tvNum: i], overwrite: false])
+            }
         }
     }
     
@@ -1762,7 +1850,6 @@ def evaluateAcoustics(i) {
     def diff = maxBoost - currentBoost
     
     if (diff != 0) {
-        def audioDev = getAudioDevice(i)
         def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
         def direction = diff > 0 ? "up" : "down"
         def amount = Math.abs(diff)
@@ -1770,14 +1857,15 @@ def evaluateAcoustics(i) {
         def action = direction == "up" ? "Boosting" : "Reducing"
         addToHistory("${getTvName(i)}: Smart Acoustic adjustment. ${action} volume by ${amount} units. (New Maximum Requirement: ${maxBoost})")
         
-        adjustVolumeRelative(audioDev, amount, direction, audioProtocol)
+        adjustVolumeRelative(i, amount, direction, audioProtocol)
         state.currentVolumeBoost["${i}"] = maxBoost
     }
 }
 
 // --- Volume Normalization Engine ---
 
-def adjustVolumeRelative(audioDevice, amount, direction, protocol = "") {
+def adjustVolumeRelative(i, amount, direction, protocol = "") {
+    def audioDevice = getAudioDevice(i)
     if (!audioDevice) return
     
     def isAbsolute = protocol in ["Network AVR / Absolute (SetLevel 0-100)", "Onkyo / Pioneer Protocol", "Denon / Marantz", "Yamaha", "Onkyo / Pioneer", "Sony", "Generic / Other"]
@@ -1796,13 +1884,11 @@ def adjustVolumeRelative(audioDevice, amount, direction, protocol = "") {
         return
     }
     
+    def settingName = settings["isAvrOnly_${i}"] ? "avr_${i}" : (settings["tvAudio_${i}"] ? "tvAudio_${i}" : "tv_${i}")
+
     for (int j = 0; j < amount; j++) {
-        if (direction == "up") {
-            if (audioDevice.hasCommand("volumeUp")) audioDevice.volumeUp()
-        } else {
-            if (audioDevice.hasCommand("volumeDown")) audioDevice.volumeDown()
-        }
-        pauseExecution(300) 
+        def cmd = direction == "up" ? "volumeUp" : "volumeDown"
+        runInMillis(j * 400, "asyncDeviceCommand", [data: [tvNum: i, settingName: settingName, command: cmd, targetId: audioDevice.id], overwrite: false])
     }
 }
 
@@ -1815,9 +1901,8 @@ def delayedLightTurnOff(data) {
     if (lights) {
         def activeLights = lights.findAll { it.currentValue("switch") == "on" }
         if (activeLights) {
-            activeLights.each { 
-                it.off()
-                pauseExecution(300)
+            activeLights.eachWithIndex { dev, idx -> 
+                runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvLights_${i}", command: "off", targetId: dev.id], overwrite: false])
             }
         }
     }
@@ -1866,8 +1951,7 @@ def executeSweeper(i, isPeriodic) {
             }
             
             if (canTurnOff) {
-                light.off()
-                pauseExecution(300)
+                runInMillis(300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "sweepLight_${i}_${l}", command: "off", targetId: light.id], overwrite: false])
                 sweptDevices << light.displayName
             } else {
                 bypassedDevices << light.displayName
@@ -1895,9 +1979,8 @@ def evaluateRoomLights(i) {
                 def activeLights = lights.findAll { it.currentValue("switch") == "on" }
                 if (activeLights) {
                     addToHistory("${getTvName(i)}: Room Evaluation - Forcing lights OFF.")
-                    activeLights.each { 
-                        it.off()
-                        pauseExecution(300)
+                    activeLights.eachWithIndex { dev, idx -> 
+                        runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvLights_${i}", command: "off", targetId: dev.id], overwrite: false])
                     }
                     state.lightsPausedByTv["${i}"] = true
                     actionTaken = true
@@ -1908,12 +1991,13 @@ def evaluateRoomLights(i) {
         if (settings["enableAcousticMgmt_${i}"]) {
             def noiseSwitches = settings["tvNoiseSwitches_${i}"]
             if (noiseSwitches) {
-                def isSickMode = settings["sickModeSwitch_${i}"]?.currentValue("switch") == "on"
+                def sickSwitches = [settings["sickModeSwitch_${i}"]].flatten().findAll{it}
+                def sickModeOn = sickSwitches.any { it.currentValue("switch") == "on" }
                 def apId = settings["airPurifier_${i}"]?.id
                 
                 def activeNoise = noiseSwitches.findAll { 
                     if (it.currentValue("switch") != "on") return false
-                    if (isSickMode && apId && it.id == apId) {
+                    if (sickModeOn && apId && it.id == apId) {
                         addToHistory("${getTvName(i)}: Room Evaluation bypassed for Air Purifier due to active Sick Mode.")
                         return false
                     }
@@ -1921,9 +2005,8 @@ def evaluateRoomLights(i) {
                 }
                 if (activeNoise) {
                     addToHistory("${getTvName(i)}: Room Evaluation - Forcing background appliances OFF.")
-                    activeNoise.each { 
-                        it.off()
-                        pauseExecution(300)
+                    activeNoise.eachWithIndex { dev, idx -> 
+                        runInMillis(idx * 300, "asyncDeviceCommand", [data: [tvNum: i, settingName: "tvNoiseSwitches_${i}", command: "off", targetId: dev.id], overwrite: false])
                     }
                     
                     def existingPaused = state.noiseSwitchesPaused["${i}"] ?: []
@@ -1947,6 +2030,58 @@ def evaluateRoomLights(i) {
     } else {
         addToHistory("${getTvName(i)}: Room Evaluation ignored (TV not active).")
     }
+}
+
+def syncToVoiceButler() {
+    def payload = [:]
+    def tvCount = settings.numTVs ? settings.numTVs as Integer : 0
+    for (int i = 1; i <= tvCount; i++) {
+        def tv = getPrimaryDevice(i)
+        if (tv) {
+            def isOn = isTvActuallyOn(tv, i)
+            def currentApp = "Unknown"
+            if (isOn) {
+                if (settings["isAvrOnly_${i}"]) {
+                    def rawInput = tv.currentValue("mediaInputSource") ?: "Unknown"
+                    currentApp = getMappedAppName(i, rawInput)
+                } else {
+                    currentApp = tv.currentValue("application") ?: "Unknown"
+                }
+            } else {
+                currentApp = "Screen Off"
+            }
+            
+            def watchMins = state.watchTimeToday?."${i}" ?: 0
+            def maxTv = settings["tvMaxLimitMins_${i}"] ?: 0
+            def ext = state.tvTimeExtended?."${i}" ?: 0
+            
+            def limitedApps = settings["appLimitList_${i}"] ?: []
+            def appLimit = settings["appLimitMins_${i}"] ?: 0
+            def currentAppMins = 0
+            if (limitedApps.contains(currentApp)) {
+                currentAppMins = settings["enforceGlobalAppLimits"] ? (state.globalAppTimeWatched?."${currentApp}" ?: 0) : (state.appTimeWatched?."${i}"?."${currentApp}" ?: 0)
+            }
+
+            // Force all numbers to Integers and strings to Strings to ensure clean JSON parsing on the other side
+            payload["${i}"] = [
+                name: (settings["tvName_${i}"] ?: "TV ${i}").toString(),
+                isOn: isOn,
+                app: currentApp.toString(),
+                watchMins: watchMins.toInteger(),
+                maxTv: maxTv.toInteger(),
+                ext: ext.toInteger(),
+                appLimit: appLimit.toInteger(),
+                currentAppMins: currentAppMins.toInteger(),
+                isAppLimited: limitedApps.contains(currentApp)
+            ]
+        }
+    }
+    
+    // CRITICAL FIX: Explicitly convert the JSON to a String before sending the event
+    def jsonString = new groovy.json.JsonBuilder(payload).toString()
+    
+    sendLocationEvent(name: "tvManagerSync", value: jsonString, isStateChange: true)
+    if (settings.enableDebug) log.debug "TV MANAGER: Synced Live Dashboard data to Voice Butler."
 }
 
 def trackUsageStep() {
@@ -2029,7 +2164,23 @@ def trackUsageStep() {
             }
         }
     }
+    syncToVoiceButler()
     runIn(300, "trackUsageStep") 
+}
+
+def voiceButlerCmdHandler(evt) {
+    def cmd = evt.value
+    def idx = evt.data
+    if (cmd == "off") {
+        issuePowerCommand(idx, "off", 1)
+        addToHistory("VOICE BUTLER: Remote shutdown command received for TV ${idx}.")
+        runIn(2, "syncToVoiceButler")
+    } else if (cmd == "extend") {
+        if (!state.tvTimeExtended) state.tvTimeExtended = [:]
+        state.tvTimeExtended["${idx}"] = (state.tvTimeExtended["${idx}"] ?: 0) + 30
+        addToHistory("VOICE BUTLER: Remote time extension (+30m) received for TV ${idx}.")
+        syncToVoiceButler()
+    }
 }
 
 def midnightReset() {
@@ -2039,6 +2190,7 @@ def midnightReset() {
     state.appTimeWatched = [:]
     state.globalAppTimeWatched = [:] 
     state.tvTimeExtended = [:]
+    syncToVoiceButler()
 }
 
 def getMappedAppName(i, rawName) {
@@ -2065,6 +2217,7 @@ def tvAppHandler(evt) {
                 addToHistory("${getTvName(i)}: Content/Input changed to [${appName}].")
                 state.lastAppLogged["${i}"] = appName
                 if (settings["tvType_${i}"] == "Roku TV" && getRokuIp(i)) pollRokuTelemetry(i)
+                syncToVoiceButler()
             }
         }
     }
@@ -2159,7 +2312,7 @@ def weatherSwitchHandler(evt) {
                 } else {
                     state.tvWasOffBeforeWeather["${i}"] = false
                     if (target || (!settings["isAvrOnly_${i}"] && appSwitch)) {
-                        runIn(4, "executeMediaAction", [data: [tvNum: i, channel: target, source: "weather"], overwrite: false])
+                        runInMillis(4000, "executeMediaAction", [data: [tvNum: i, channel: target, source: "weather"], overwrite: false])
                     }
                 }
              }
@@ -2196,7 +2349,7 @@ def executeSetChannel(data) {
             else if (tv.hasCommand("keyPress")) tv.keyPress("InputTuner")
             else if (tv.hasCommand("setInputSource")) tv.setInputSource("TV")
         }
-        runIn(6, "finalizeSetChannel", [data: [tvNum: i, channel: data.channel], overwrite: false])
+        runInMillis(6000, "finalizeSetChannel", [data: [tvNum: i, channel: data.channel], overwrite: false])
     }
 }
 
@@ -2218,48 +2371,73 @@ def finalizeSetChannel(data) {
 }
 
 def contactHandler(evt) {
-    if (isSystemPaused() || !settings["enableSafetyMute"]) return
-    if (evt.value == "open") interruptActiveTVs("pause")
-    else if (evt.value == "closed") interruptActiveTVs("play")
+    if (isSystemPaused()) return
+    def deviceId = evt.device.id
+    def action = evt.value == "open" ? "pause" : "play"
+    
+    for (int i = 1; i <= (numTVs as Integer); i++) {
+        if (settings["enableSafetyMute_${i}"] && settings["muteContacts_${i}"]?.any { it.id == deviceId }) {
+            interruptTV(i, action)
+        }
+    }
 }
 
 def buttonHandler(evt) {
-    if (isSystemPaused() || !settings["enableSafetyMute"]) return
-    interruptActiveTVs("pause")
-    def muteTime = settings["doorbellMuteTime"] ?: 60
-    runIn(muteTime as Integer, "interruptActiveTVs", [data: [action: "play"], overwrite: true])
-}
-
-def interruptActiveTVs(actionOrMap) {
-    def act = (actionOrMap instanceof String) ? actionOrMap : actionOrMap.action
+    if (isSystemPaused()) return
+    def deviceId = evt.device.id
     
     for (int i = 1; i <= (numTVs as Integer); i++) {
-        def tv = getPrimaryDevice(i)
-        if (isTvActuallyOn(tv, i)) {
-            def tvType = settings["tvType_${i}"]
-            def currentApp = tv.currentValue("application")
-            
-            if (tvType == "Roku TV") {
-                if (currentApp == "Antenna TV") {
-                    if (tv.currentValue("liveTvPauseActive") == "true") {
-                        if (act == "pause" && tv.hasCommand("pause")) tv.pause()
-                        else if (act == "play" && tv.hasCommand("play")) tv.play()
-                    } else {
-                        def audioDevice = getAudioDevice(i)
-                        if (act == "pause" && audioDevice.hasCommand("mute")) audioDevice.mute()
-                        else if (act == "play" && audioDevice.hasCommand("unmute")) audioDevice.unmute()
-                    }
-                } else {
-                    if (act == "pause" && tv.hasCommand("pause")) tv.pause()
-                    else if (act == "play" && tv.hasCommand("play")) tv.play()
-                }
-                pauseExecution(300)
-            } else {
+        if (settings["enableSafetyMute_${i}"] && settings["doorbellButtons_${i}"]?.any { it.id == deviceId }) {
+            interruptTV(i, "pause")
+            def muteTime = settings["doorbellMuteTime_${i}"] ?: 60
+            runIn(muteTime as Integer, "restoreDoorbellTV", [data: [tvNum: i], overwrite: false])
+        }
+    }
+}
+
+def restoreDoorbellTV(data) {
+    interruptTV(data.tvNum, "play")
+}
+
+def interruptTV(i, act) {
+    def tv = getPrimaryDevice(i)
+    
+    if (isTvActuallyOn(tv, i)) {
+        def tvType = settings["tvType_${i}"]
+        def currentApp = tv.currentValue("application")
+        
+        if (tvType == "Roku TV") {
+            if (currentApp == "Antenna TV" && tv.currentValue("liveTvPauseActive") != "true") {
                 def audioDevice = getAudioDevice(i)
-                if (act == "pause" && audioDevice.hasCommand("mute")) audioDevice.mute()
-                else if (act == "play" && audioDevice.hasCommand("unmute")) audioDevice.unmute()
-                pauseExecution(300)
+                if (act == "pause") {
+                    if (audioDevice.hasCommand("mute")) audioDevice.mute()
+                    else if (audioDevice.hasCommand("setMute")) audioDevice.setMute(true)
+                } else if (act == "play") {
+                    if (audioDevice.hasCommand("unmute")) audioDevice.unmute()
+                    else if (audioDevice.hasCommand("setMute")) audioDevice.setMute(false)
+                    else if (audioDevice.hasCommand("mute")) audioDevice.mute() // IR Toggle Fallback
+                }
+            } else {
+                if (act == "play") {
+                    if (tv.hasCommand("keyPress")) tv.keyPress("Play")
+                    else if (tv.hasCommand("play")) tv.play()
+                } else if (act == "pause") {
+                    if (tv.hasCommand("pause")) tv.pause()
+                    else if (tv.hasCommand("keyPress")) tv.keyPress("Play")
+                }
             }
+            pauseExecution(300)
+        } else {
+            def audioDevice = getAudioDevice(i)
+            if (act == "pause") {
+                if (audioDevice.hasCommand("mute")) audioDevice.mute()
+                else if (audioDevice.hasCommand("setMute")) audioDevice.setMute(true)
+            } else if (act == "play") {
+                if (audioDevice.hasCommand("unmute")) audioDevice.unmute()
+                else if (audioDevice.hasCommand("setMute")) audioDevice.setMute(false)
+                else if (audioDevice.hasCommand("mute")) audioDevice.mute() // IR Toggle Fallback
+            }
+            pauseExecution(300)
         }
     }
 }
@@ -2393,11 +2571,13 @@ def appButtonHandler(btn) {
         if (!state.tvTimeExtended) state.tvTimeExtended = [:]
         state.tvTimeExtended["${tNum}"] = (state.tvTimeExtended["${tNum}"] ?: 0) + 30
         addToHistory("${getTvName(tNum)}: Time limit extended by 30 minutes.")
+        syncToVoiceButler()
     } else if (btn?.startsWith("extend1hrBtn_")) {
         def tNum = btn.split("_")[1] as Integer
         if (!state.tvTimeExtended) state.tvTimeExtended = [:]
         state.tvTimeExtended["${tNum}"] = (state.tvTimeExtended["${tNum}"] ?: 0) + 60
         addToHistory("${getTvName(tNum)}: Time limit extended by 1 hour.")
+        syncToVoiceButler()
     }
 }
 
@@ -2421,20 +2601,18 @@ def stopMorningRoutineTest(i) {
 def testHvacBoost(i, isRunning) {
     def tv = settings["tv_${i}"]
     if (isTvActuallyOn(tv, i)) {
-        def audioDevice = settings["tvAudio_${i}"] ?: tv
+        def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
         def boostAmount = settings["hvacVolumeBoost_${i}"] ?: 3
         def tvName = getTvName(i)
         
         if (isRunning && !state.hvacVolumeBoosted["${i}"]) {
             addToHistory("${tvName}: TEST HVAC started. Boosting volume by ${boostAmount} ticks.")
             state.hvacVolumeBoosted["${i}"] = true
-            def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
-            adjustVolumeRelative(audioDevice, boostAmount, "up", audioProtocol)
+            adjustVolumeRelative(i, boostAmount, "up", audioProtocol)
         } else if (!isRunning && state.hvacVolumeBoosted["${i}"]) {
             addToHistory("${tvName}: TEST HVAC stopped. Reducing volume by ${boostAmount} ticks.")
             state.hvacVolumeBoosted["${i}"] = false
-            def audioProtocol = settings["isAvrOnly_${i}"] ? settings["avrType_${i}"] : settings["audioType_${i}"]
-            adjustVolumeRelative(audioDevice, boostAmount, "down", audioProtocol)
+            adjustVolumeRelative(i, boostAmount, "down", audioProtocol)
         } else {
             addToHistory("${tvName}: TEST HVAC ignored (already in requested state).")
         }
