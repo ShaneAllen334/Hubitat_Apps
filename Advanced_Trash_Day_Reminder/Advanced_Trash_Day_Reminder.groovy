@@ -23,118 +23,35 @@ def mainPage() {
         
         section("<b>Live System Dashboard</b>") {
             checkSensorHealth()
-            
-            def statusExplanation = getHumanReadableStatus()
-            paragraph "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff;'><b>System Status:</b> ${statusExplanation}</div>"
-
-            def nPickup = state.nextPickupStr ?: "Not Calculated"
-            
-            def isRecycleWeek = checkRecyclingWeek()
-            def recycleStr = isRecycleWeek ? "<b style='color:#2980b9;'>YES (Trash + Recycling)</b>" : "No (Trash Only)"
-            
-            def physicalBinState = "<b>At House</b>"
-            if (state.binStatus == "curb_full") physicalBinState = "<b style='color:#e67e22;'>At Curb (Awaiting Truck)</b>"
-            else if (state.binStatus == "curb_emptied") physicalBinState = "<b style='color:#27ae60;'>At Curb (Emptied, Awaiting Return)</b>"
-            else if (state.binStatus == "curb_missed") physicalBinState = "<b style='color:#c0392b;'>At Curb (MISSED PICKUP)</b>"
-            
-            def tStatus = (state.isNagging || (trashSwitch && trashSwitch.currentValue("switch") == "on")) ? "<b style='color:red;'>PENDING</b>" : "<b style='color:green;'>CLEAR</b>"
-            
-            def holidayStatus = "Normal Schedule"
-            if (state.autoHolidayTriggered) holidayStatus = "<b style='color:#2980b9;'>AUTOMATED (+1 Day Shift)</b>"
-            else if (state.holidayShift) holidayStatus = "<b style='color:#8e44ad;'>MANUAL OVERRIDE (+1 Day Shift)</b>"
-            
-            def schedMode = state.predictiveActive ? "<b style='color:#8e44ad;'>Predictive (AI Calibrated)</b>" : "Static (User Defined)"
-            
-            def battLvl = binMultiSensor ? binMultiSensor.currentValue("battery") : null
-            def battDisplay = battLvl != null ? (battLvl <= 15 ? "<b style='color:red;'>${battLvl}% (LOW)</b>" : "${battLvl}%") : "N/A"
-
-            def sensorHealthStr = state.isSensorDead ? "<b style='color:red;'>OFFLINE (Dumb Fallback Mode Active)</b>" : "<b style='color:green;'>ONLINE & TRACKING</b>"
-
-            def fillDisplay = "${getFillPct()}% (${state.lidOpens ?: 0} of ${settings.estimatedMaxOpens ?: 8} bags)"
-            if (getFillPct() >= 100) fillDisplay = "<b style='color:red;'>100% (FULL)</b>"
-
-            def ecoScore = getEcoScoreBadge()
-
-            def missedStr = "N/A (On Time)"
-            if (state.binStatus == "curb_missed" && state.missedTime) {
-                long hrsMissed = (now() - state.missedTime) / 3600000
-                missedStr = "<b style='color:red;'>ACTIVE - Missed by ${hrsMissed} hours</b>"
-            } else if (state.lastMissedDuration) {
-                missedStr = "Last cycle was late by ${state.lastMissedDuration} hours."
-            }
-            
-            // Financial Math
-            def refundStr = calculateRefundOwed()
-            
-            def avgPutOut = getAverageTimeStr("historyPutOut")
-            def avgEmptied = getAverageTimeStr("historyEmptied")
-            def avgReturned = getAverageTimeStr("historyReturned")
-            
-            def baselineStatus = (state.activeAxis && state.baselineValue != null) ? "<b style='color:green;'>Calibrated (${state.activeAxis.toUpperCase()}: ${state.baselineValue})</b>" : "<b style='color:red;'>Requires Calibration</b>"
-
-            def hygStatus = state.hygieneStatus ?: "Clean ✨"
-            int daysWashed = state.lastWashed ? ((now() - state.lastWashed) / 86400000) as Integer : 0
-            def maxT = state.maxTempSinceWash ?: "N/A"
-
-            input "btnRefreshData", "button", title: "🔄 Refresh Dashboard Data"
-
-            def dashHTML = """
-            <style>
-                .dash-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                .dash-table th, .dash-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-                .dash-table th { background-color: #343a40; color: white; }
-                .dash-hl { background-color: #f8f9fa; font-weight:bold; text-align: left !important; padding-left: 15px !important; width: 35%; }
-                .dash-val { text-align: left !important; padding-left: 15px !important; }
-                .dash-sub { background-color: #e9ecef; font-weight: bold; }
-            </style>
-            <table class="dash-table">
-                <thead><tr><th>Metric</th><th colspan="3">Current Value</th></tr></thead>
-                <tbody>
-                    <tr><td colspan="4" class="dash-sub">Schedule & Status</td></tr>
-                    <tr><td class="dash-hl">Next Collection Target</td><td colspan="3" class="dash-val" style="font-size:16px;"><b>${nPickup}</b></td></tr>
-                    <tr><td class="dash-hl">Includes Recycling?</td><td colspan="3" class="dash-val">${recycleStr}</td></tr>
-                    <tr><td class="dash-hl">Scheduling Mode</td><td colspan="3" class="dash-val">${schedMode}</td></tr>
-                    <tr><td class="dash-hl">Task Status</td><td colspan="3" class="dash-val">${tStatus}</td></tr>
-                    
-                    <tr><td colspan="4" class="dash-sub">Utility Audit & Financial Failsafe</td></tr>
-                    <tr><td class="dash-hl">Current Tracker Status</td><td colspan="3" class="dash-val">${missedStr}</td></tr>
-                    <tr><td class="dash-hl">Total Time Missed (Lifetime)</td><td colspan="3" class="dash-val">${state.lifetimeMissedHours ?: 0} Hours</td></tr>
-                    <tr><td class="dash-hl">Prorated Refund Owed</td><td colspan="3" class="dash-val" style="color:red; font-size:16px;"><b>\$${refundStr}</b></td></tr>
-                    
-                    <tr><td colspan="4" class="dash-sub">Hygiene & Environmental Impact</td></tr>
-                    <tr><td class="dash-hl">Household Waste Rating</td><td colspan="3" class="dash-val" style="font-size:16px;">${ecoScore}</td></tr>
-                    <tr><td class="dash-hl">Estimated Current Fullness</td><td colspan="3" class="dash-val">${fillDisplay}</td></tr>
-                    <tr><td class="dash-hl">Current Hygiene Status</td><td colspan="3" class="dash-val"><b>${hygStatus}</b></td></tr>
-                    <tr><td class="dash-hl">Time Since Sanitized</td><td colspan="3" class="dash-val">${daysWashed} Days (Peak Temp: ${maxT}°F)</td></tr>
-                    
-                    <tr><td colspan="4" class="dash-sub">Physical Hardware Telemetry</td></tr>
-                    <tr><td class="dash-hl">Hardware Connection</td><td colspan="3" class="dash-val">${sensorHealthStr}</td></tr>
-                    <tr><td class="dash-hl">Physical Bin Location</td><td colspan="3" class="dash-val">${physicalBinState}</td></tr>
-                    <tr><td class="dash-hl">Sensor Battery</td><td colspan="3" class="dash-val"><b>${battDisplay}</b></td></tr>
-                    <tr><td class="dash-hl">Spatial Calibration</td><td colspan="3" class="dash-val">${baselineStatus}</td></tr>
-                </tbody>
-            </table>
-            """
+            def dashHTML = getDashHTML()
             paragraph dashHTML
             
-            paragraph "<div style='font-size:13px; color:#555;'><b>Manual System Overrides</b></div>"
+            paragraph "<div style='font-size:13px; color:#555; margin-top: 15px;'><b>Manual System Overrides</b></div>"
+            input "btnRefreshData", "button", title: "🔄 Refresh Dashboard Data"
             input "btnSetHouse", "button", title: "Set Bin: At House"
             input "btnSetCurbFull", "button", title: "Set Bin: At Curb (Full)"
             input "btnSetCurbEmptied", "button", title: "Set Bin: At Curb (Emptied)"
             input "btnSetMissed", "button", title: "Set Bin: Missed Pickup"
             
             paragraph "<br>"
-            input "btnCalibrate", "button", title: "Calibrate Spatial Baseline (Close Lid First)"
+            input "btnCreateChild", "button", title: "🖥️ Create Dashboard Virtual Device"
+            input "btnCalibrate", "button", title: "📐 Calibrate Spatial Baseline (Close Lid First)"
+            input "btnResetAI", "button", title: "🧠 Reset Predictive AI History"
             input "btnResetFinance", "button", title: "💳 Reset Financial Audit Ledger to \$0.00"
             input "btnHoliday", "button", title: state.holidayShift ? "Cancel Manual Holiday Shift" : "Force Manual Holiday Shift (+1 Day)"
         }
         
-        section("<b>Utility Financial Auditor</b>") {
+        section("<b>Butler Telemetry Integration</b>", hideable: true, hidden: false) {
+            paragraph "<i>Broadcast status updates and alerts directly to the Advanced Voice Butler.</i>"
+            input "sendToButler", "bool", title: "Enable Voice Butler Telemetry?", defaultValue: true, submitOnChange: true
+        }
+        
+        section("<b>Utility Financial Auditor</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'>Enter your quarterly waste management cost. The app will calculate prorated refunds for missed collection days.</div>"
             input "quarterlyCost", "decimal", title: "Quarterly Trash Bill Cost (\$)", description: "e.g., 90.00", required: false, submitOnChange: true
         }
 
-        section("<b>Predictive AI Scheduling & Recycling</b>") {
+        section("<b>Predictive AI Scheduling & Recycling</b>", hideable: true, hidden: true) {
             input "usePredictiveTiming", "bool", title: "Enable Predictive Smart Schedule", defaultValue: true, submitOnChange: true
             
             input "enableRecycling", "bool", title: "Enable Bi-Weekly Recycling Logic", defaultValue: false, submitOnChange: true
@@ -144,7 +61,7 @@ def mainPage() {
             }
         }
 
-        section("<b>Automated Physical Tracking (Samsung Multi-Sensor)</b>") {
+        section("<b>Automated Physical Tracking (Samsung Sensor)</b>", hideable: true, hidden: true) {
             input "binMultiSensor", "capability.threeAxis", title: "Samsung Multipurpose Sensor", required: true
             
             input "drivewaySurface", "enum", title: "Driveway Surface Profile", options: ["Smooth Pavement", "Mixed / Patchy", "Fine Gravel", "Chunky / Rough Gravel", "Custom (Manual Overrides)"], defaultValue: "Smooth Pavement", required: true, submitOnChange: true
@@ -154,16 +71,24 @@ def mainPage() {
                 input "lidOpenThreshold", "number", title: "Lid Open Tilt Threshold", defaultValue: 600, required: true
             }
             input "estimatedMaxOpens", "number", title: "Bag Capacity (Opens to Full)", defaultValue: 8, required: true
+        }
+        
+        section("<b>Severe Weather Failsafes</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:13px; color:#555;'>Virtual switches to suppress false tracking events during extreme weather.</div>"
+            input "swTornado", "capability.switch", title: "Tornado Warning/Alarm Switch", required: false
+            input "swThunderstorm", "capability.switch", title: "Thunderstorm Warning/Alarm Switch", required: false
+            input "swRain", "capability.switch", title: "Raining Switch", required: false
+            input "swSprinkle", "capability.switch", title: "Sprinkling Switch", required: false
             
-            input "enableFallenBin", "bool", title: "Enable Severe Weather Failsafe (Fallen Bin Alerts)", defaultValue: true, submitOnChange: true
+            input "enableFallenBin", "bool", title: "Enable Fallen Bin Alerts", defaultValue: true, submitOnChange: true
             if (enableFallenBin) {
-                input "rainSensor", "capability.waterSensor", title: "Optional: Rain Sensor (Weather Verification)", required: false
-                input "weatherStation", "capability.sensor", title: "Optional: Weather Station (Wind Verification)", required: false
+                input "rainSensor", "capability.waterSensor", title: "Optional: Hardware Rain Sensor", required: false
+                input "weatherStation", "capability.sensor", title: "Optional: Weather Station (Wind)", required: false
                 input "windThreshold", "number", title: "Severe Wind Threshold (Speed)", defaultValue: 15, required: false
             }
         }
 
-        section("<b>HOA Compliance (Return Nag)</b>") {
+        section("<b>HOA Compliance (Return Nag)</b>", hideable: true, hidden: true) {
             input "enableHoaNag", "bool", title: "Enable HOA Return Nag", defaultValue: false, submitOnChange: true
             if (enableHoaNag) {
                 input "hoaNagTime", "number", title: "Hours to wait after truck dumps before nagging:", defaultValue: 4, required: true
@@ -171,34 +96,34 @@ def mainPage() {
             }
         }
 
-        section("<b>Automated Holiday Tracking</b>") {
+        section("<b>Automated Holiday Tracking</b>", hideable: true, hidden: true) {
             input "autoHoliday", "bool", title: "Enable Automatic Holiday Shifting", defaultValue: true, submitOnChange: true
             if (autoHoliday) {
                 input "selectedHolidays", "enum", title: "Recognized Waste Management Holidays", options: ["New Year's Day", "Memorial Day", "Independence Day", "Labor Day", "Thanksgiving", "Christmas"], multiple: true, required: true, defaultValue: ["New Year's Day", "Memorial Day", "Independence Day", "Labor Day", "Thanksgiving", "Christmas"]
             }
         }
 
-        section("<b>Collection Schedule & Offset</b>") {
+        section("<b>Collection Schedule & Offset</b>", hideable: true, hidden: true) {
             input "trashDays", "enum", title: "Trash Collection Day(s)", options: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], multiple: true, required: true, submitOnChange: true
             input "pickupTime", "time", title: "Baseline Estimated Time (Used if Predictive is off)", required: true, submitOnChange: true
             input "reminderOffset", "decimal", title: "Reminder Offset (Hours before pickup)", required: true, defaultValue: 12.0, submitOnChange: true
         }
 
-        section("<b>Acknowledgment & Nags</b>") {
+        section("<b>Acknowledgment & Nags</b>", hideable: true, hidden: true) {
             input "trashSwitch", "capability.switch", title: "Trash Status Switch", required: false
             input "enableNag", "bool", title: "Nag every hour until acknowledged?", defaultValue: false
         }
         
-        section("<b>Operating Modes (Granular Restrictions)</b>") {
+        section("<b>Operating Modes (Granular Restrictions)</b>", hideable: true, hidden: true) {
             input "pushModes", "mode", title: "Modes allowing Push Notifications", multiple: true, required: false
             input "audioModes", "mode", title: "Modes allowing Audio/Zooz Announcements", multiple: true, required: false
             input "nagModes", "mode", title: "Modes allowing Hourly Nags", multiple: true, required: false
-            input "trackingModes", "mode", title: "Modes allowing Physical Tracking (The Raccoon Filter)", multiple: true, required: false
+            input "trackingModes", "mode", title: "Modes allowing Physical Tracking", multiple: true, required: false
         }
 
-        section("<b>Audio Announcements & Notifications</b>") {
+        section("<b>Audio Announcements & Notifications</b>", hideable: true, hidden: true) {
             input "notifyDevice", "capability.notification", title: "Push Notification Devices", required: false, multiple: true
-            input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers", multiple: true, required: false
+            input "ttsSpeakers", "capability.speechSynthesis", title: "Smart Speakers (Fallback if Butler disabled)", multiple: true, required: false
             
             input "ttsReminderText", "text", title: "Standard Reminder Text", defaultValue: "Reminder, it is time to take the trash out to the road."
             input "ttsEmptiedText", "text", title: "Bin Emptied Text", defaultValue: "The garbage truck has emptied your bin."
@@ -213,23 +138,7 @@ def mainPage() {
             }
         }
 
-        section("<b>Global Audio Room Mapping</b>") {
-            input "audioMotionTimeout", "number", title: "Audio Motion Timeout (Minutes)", defaultValue: 5
-            input "alwaysOnRoom", "enum", title: "Select ONE room to ALWAYS announce (Ignores motion)", options: ["1": "Room 1", "2": "Room 2", "3": "Room 3", "4": "Room 4", "5": "Room 5", "6": "Room 6", "7": "Room 7"], required: false
-            
-            input "room1Speaker", "capability.actuator", title: "Room 1 Speaker/Chime(s)", required: false, multiple: true
-            input "room1Motion", "capability.motionSensor", title: "Room 1 Motion Sensor(s)", required: false, multiple: true
-            input "room2Speaker", "capability.actuator", title: "Room 2 Speaker/Chime(s)", required: false, multiple: true
-            input "room2Motion", "capability.motionSensor", title: "Room 2 Motion Sensor(s)", required: false, multiple: true
-            input "room3Speaker", "capability.actuator", title: "Room 3 Speaker/Chime(s)", required: false, multiple: true
-            input "room3Motion", "capability.motionSensor", title: "Room 3 Motion Sensor(s)", required: false, multiple: true
-            input "room4Speaker", "capability.actuator", title: "Room 4 Speaker/Chime(s)", required: false, multiple: true
-            input "room4Motion", "capability.motionSensor", title: "Room 4 Motion Sensor(s)", required: false, multiple: true
-            input "room5Speaker", "capability.actuator", title: "Room 5 Speaker/Chime(s)", required: false, multiple: true
-            input "room5Motion", "capability.motionSensor", title: "Room 5 Motion Sensor(s)", required: false, multiple: true
-        }
-
-        section("<b>Recent Action History</b>") {
+        section("<b>Recent Action History</b>", hideable: true, hidden: true) {
             input "txtEnable", "bool", title: "Enable Description Text Logging", defaultValue: true
             if (state.actionHistory) {
                 def historyStr = state.actionHistory.join("<br>")
@@ -256,17 +165,14 @@ def initialize() {
     if (!state.maxTempSinceWash) state.maxTempSinceWash = 70
     if (state.isSensorDead == null) state.isSensorDead = false
     if (!state.lifetimeMissedHours) state.lifetimeMissedHours = 0.0
+    if (state.queuedReminderTime == null) state.queuedReminderTime = null
     
     if (!state.historyPutOut) state.historyPutOut = []
     if (!state.historyEmptied) state.historyEmptied = []
     if (!state.historyReturned) state.historyReturned = []
     if (!state.historyFullness) state.historyFullness = []
     
-    if (settings.room1Motion) subscribe(settings.room1Motion, "motion.active", "room1MotionHandler")
-    if (settings.room2Motion) subscribe(settings.room2Motion, "motion.active", "room2MotionHandler")
-    if (settings.room3Motion) subscribe(settings.room3Motion, "motion.active", "room3MotionHandler")
-    if (settings.room4Motion) subscribe(settings.room4Motion, "motion.active", "room4MotionHandler")
-    if (settings.room5Motion) subscribe(settings.room5Motion, "motion.active", "room5MotionHandler")
+    subscribe(location, "mode", modeChangeHandler)
     
     if (trashSwitch) subscribe(trashSwitch, "switch.off", ackHandler)
     
@@ -282,6 +188,7 @@ def initialize() {
     updateSchedule()
     updateHygiene()
     checkSensorHealth()
+    pushChildUpdate()
     logAction("App Initialized.")
 }
 
@@ -313,20 +220,158 @@ def appButtonHandler(btn) {
     } else if (btn == "btnResetFinance") {
         state.lifetimeMissedHours = 0.0
         logAction("FINANCIAL AUDIT: Ledger reset to \$0.00.")
-    } else if (btn == "btnRecalculate") {
+    } else if (btn == "btnResetAI") {
+        state.historyEmptied = []
+        state.predictiveActive = false
         updateSchedule()
+        logAction("SYSTEM OVERRIDE: Predictive AI History Cleared. Resetting to baseline schedule.")
     } else if (btn == "btnHoliday") {
         state.holidayShift = !state.holidayShift
         logAction("MANUAL: Holiday Shift " + (state.holidayShift ? "Activated" : "Deactivated"))
         updateSchedule()
     } else if (btn == "btnCalibrate") {
         calibrateSpatialBaseline()
-    } else if (btn == "btnMarkWashed") {
-        state.lastWashed = now()
-        state.maxTempSinceWash = binMultiSensor?.currentValue("temperature") ?: 70
-        state.hygieneStatus = "Clean ✨"
-        logAction("SYSTEM: Bin marked as washed and sanitized. Timers reset.")
-    } 
+    } else if (btn == "btnCreateChild") {
+        def childDev = getChildDevice("trash_dash_${app.id}")
+        if (!childDev) {
+            try {
+                childDev = addChildDevice("hubitat", "Virtual Device", "trash_dash_${app.id}", null, [name: "Trash Dashboard", label: "Trash Dashboard Tile"])
+                logAction("SYSTEM: Virtual Dashboard Device Created successfully.")
+            } catch (e) {
+                log.error "Failed to create child device. ${e}"
+            }
+        } else {
+            logAction("SYSTEM: Virtual Dashboard Device already exists.")
+        }
+    }
+    pushChildUpdate()
+}
+
+// ------------------------------------------------------------------------------
+// BUTLER TELEMETRY & NOTIFICATION ENGINE
+// ------------------------------------------------------------------------------
+
+def sendAlert(msg, forceButlerStash = false) {
+    // 1. Push Notifications
+    if (notifyDevice && isPushAllowed()) {
+        notifyDevice*.deviceNotification(msg)
+    } else if (!isPushAllowed()) {
+        logInfo("Skipping Push Notification: Current mode restricts push alerts.")
+    }
+    
+    // 2. Butler Integration vs Fallback TTS
+    if (settings.sendToButler) {
+        def stashPayload = forceButlerStash ? msg.toLowerCase() : ""
+        sendLocationEvent(name: "voiceButlerMsg", value: "trash", descriptionText: msg, data: stashPayload, isStateChange: true)
+        logInfo("Telemetry sent to Voice Butler: ${msg}")
+    } else {
+        if (ttsSpeakers) playTTS(ttsSpeakers, msg)
+    }
+}
+
+def syncButlerDashboard() {
+    if (settings.sendToButler) {
+        def payload = [
+            status: getHumanReadableStatus(),
+            fill: getFillPct(),
+            hygiene: state.hygieneStatus ?: "Clean ✨",
+            nextPickup: state.nextPickupStr ?: "Calculating..."
+        ]
+        sendLocationEvent(name: "voiceButlerTrashSync", value: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
+    }
+}
+
+// ------------------------------------------------------------------------------
+// DASHBOARD & CHILD DEVICE ENGINE
+// ------------------------------------------------------------------------------
+
+def pushChildUpdate() {
+    def childDev = getChildDevice("trash_dash_${app.id}")
+    if (childDev) {
+        def html = getDashHTML()
+        childDev.sendEvent(name: "htmlTile", value: html, descriptionText: "Updated Dashboard HTML")
+    }
+    syncButlerDashboard() // Keep the Voice Butler perfectly in sync!
+}
+
+String getDashHTML() {
+    def statusExplanation = getHumanReadableStatus()
+    def nPickup = state.nextPickupStr ?: "Not Calculated"
+    def isRecycleWeek = checkRecyclingWeek()
+    def recycleStr = isRecycleWeek ? "<b style='color:#2980b9;'>YES (Trash + Recycling)</b>" : "No (Trash Only)"
+    
+    def physicalBinState = "<b>At House</b>"
+    if (state.binStatus == "curb_full") physicalBinState = "<b style='color:#e67e22;'>At Curb (Awaiting Truck)</b>"
+    else if (state.binStatus == "curb_emptied") physicalBinState = "<b style='color:#27ae60;'>At Curb (Emptied, Awaiting Return)</b>"
+    else if (state.binStatus == "curb_missed") physicalBinState = "<b style='color:#c0392b;'>At Curb (MISSED PICKUP)</b>"
+    
+    def tStatus = (state.isNagging || (trashSwitch && trashSwitch.currentValue("switch") == "on")) ? "<b style='color:red;'>PENDING</b>" : "<b style='color:green;'>CLEAR</b>"
+    
+    def qAlertStr = "None"
+    if (state.queuedReminderTime && state.queuedReminderTime > now()) {
+        int minsLeft = Math.round((state.queuedReminderTime - now()) / 60000.0) as Integer
+        qAlertStr = "<b style='color:#e67e22;'>Pending (${minsLeft} mins)</b>"
+    }
+    
+    def schedMode = state.predictiveActive ? "<b style='color:#8e44ad;'>Predictive (AI Calibrated)</b>" : "Static (User Defined)"
+    def battLvl = binMultiSensor ? binMultiSensor.currentValue("battery") : null
+    def battDisplay = battLvl != null ? (battLvl <= 15 ? "<b style='color:red;'>${battLvl}% (LOW)</b>" : "${battLvl}%") : "N/A"
+    def sensorHealthStr = state.isSensorDead ? "<b style='color:red;'>OFFLINE (Fallback Active)</b>" : "<b style='color:green;'>ONLINE & TRACKING</b>"
+    def fillDisplay = "${getFillPct()}% (${state.lidOpens ?: 0} of ${settings.estimatedMaxOpens ?: 8} bags)"
+    if (getFillPct() >= 100) fillDisplay = "<b style='color:red;'>100% (FULL)</b>"
+    def ecoScore = getEcoScoreBadge()
+    
+    def missedStr = "N/A (On Time)"
+    if (state.binStatus == "curb_missed" && state.missedTime) {
+        long hrsMissed = (now() - state.missedTime) / 3600000
+        missedStr = "<b style='color:red;'>ACTIVE - Missed by ${hrsMissed} hours</b>"
+    } else if (state.lastMissedDuration) {
+        missedStr = "Last cycle was late by ${state.lastMissedDuration} hours."
+    }
+    
+    def refundStr = calculateRefundOwed()
+    def baselineStatus = (state.activeAxis && state.baselineValue != null) ? "<b style='color:green;'>Calibrated (${state.activeAxis.toUpperCase()}: ${state.baselineValue})</b>" : "<b style='color:red;'>Requires Calibration</b>"
+    def hygStatus = state.hygieneStatus ?: "Clean ✨"
+    int daysWashed = state.lastWashed ? ((now() - state.lastWashed) / 86400000) as Integer : 0
+    def maxT = state.maxTempSinceWash ?: "N/A"
+
+    return """
+    <style>
+        .dash-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-family: sans-serif; background: #fff;}
+        .dash-table th, .dash-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        .dash-table th { background-color: #343a40; color: white; }
+        .dash-hl { background-color: #f8f9fa; font-weight:bold; text-align: left !important; padding-left: 15px !important; width: 40%; }
+        .dash-val { text-align: left !important; padding-left: 15px !important; }
+        .dash-sub { background-color: #e9ecef; font-weight: bold; }
+    </style>
+    <div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff; margin-bottom: 10px; font-family: sans-serif;'><b>System Status:</b> ${statusExplanation}</div>
+    <table class="dash-table">
+        <thead><tr><th>Metric</th><th colspan="3">Current Value</th></tr></thead>
+        <tbody>
+            <tr><td colspan="4" class="dash-sub">Schedule & Status</td></tr>
+            <tr><td class="dash-hl">Next Collection Target</td><td colspan="3" class="dash-val" style="font-size:16px;"><b>${nPickup}</b></td></tr>
+            <tr><td class="dash-hl">Includes Recycling?</td><td colspan="3" class="dash-val">${recycleStr}</td></tr>
+            <tr><td class="dash-hl">Scheduling Mode</td><td colspan="3" class="dash-val">${schedMode}</td></tr>
+            <tr><td class="dash-hl">Task Status</td><td colspan="3" class="dash-val">${tStatus}</td></tr>
+            <tr><td class="dash-hl">Queued Audio Reminder</td><td colspan="3" class="dash-val">${qAlertStr}</td></tr>
+            
+            <tr><td colspan="4" class="dash-sub">Utility Audit & Financial Failsafe</td></tr>
+            <tr><td class="dash-hl">Current Tracker Status</td><td colspan="3" class="dash-val">${missedStr}</td></tr>
+            <tr><td class="dash-hl">Total Time Missed (Lifetime)</td><td colspan="3" class="dash-val">${state.lifetimeMissedHours ?: 0} Hours</td></tr>
+            <tr><td class="dash-hl">Prorated Refund Owed</td><td colspan="3" class="dash-val" style="color:red; font-size:16px;"><b>\$${refundStr}</b></td></tr>
+            
+            <tr><td colspan="4" class="dash-sub">Hygiene & Environmental Impact</td></tr>
+            <tr><td class="dash-hl">Household Waste Rating</td><td colspan="3" class="dash-val" style="font-size:16px;">${ecoScore}</td></tr>
+            <tr><td class="dash-hl">Estimated Current Fullness</td><td colspan="3" class="dash-val">${fillDisplay}</td></tr>
+            <tr><td class="dash-hl">Current Hygiene Status</td><td colspan="3" class="dash-val"><b>${hygStatus}</b></td></tr>
+            
+            <tr><td colspan="4" class="dash-sub">Physical Hardware Telemetry</td></tr>
+            <tr><td class="dash-hl">Hardware Connection</td><td colspan="3" class="dash-val">${sensorHealthStr}</td></tr>
+            <tr><td class="dash-hl">Physical Bin Location</td><td colspan="3" class="dash-val">${physicalBinState}</td></tr>
+            <tr><td class="dash-hl">Sensor Battery</td><td colspan="3" class="dash-val"><b>${battDisplay}</b></td></tr>
+        </tbody>
+    </table>
+    """
 }
 
 // ------------------------------------------------------------------------------
@@ -356,8 +401,7 @@ def hoaNagHandler() {
     if (state.binStatus == "curb_emptied") {
         logAction("HOA COMPLIANCE: Sending return nag.")
         def msg = settings.ttsHoaText ?: "The garbage truck has collected the trash. Please return the bin to the house."
-        sendAlert("HOA ALERT: " + msg)
-        if (ttsSpeakers) playTTS(ttsSpeakers, msg)
+        sendAlert(msg, false)
         if (zoozChimes && zoozSoundReturned != null) playZoozChime(zoozSoundReturned)
     }
 }
@@ -422,10 +466,18 @@ def updateHygiene() {
     long daysSince = state.lastWashed ? ((now() - state.lastWashed) / 86400000) as Integer : 0
     int maxT = state.maxTempSinceWash ?: 70
     String status = "Clean ✨"
+    
     if (daysSince > 30 || (maxT > 90 && daysSince > 14)) status = "Bio-Hazard ☣️"
     else if (daysSince > 21 || (maxT > 85 && daysSince > 10)) status = "Gross 🤢"
     else if (daysSince > 14 || (maxT > 80 && daysSince > 7)) status = "Needs Washing 🧽"
+    
+    // Proactive Alerting to Butler
+    if (status != state.hygieneStatus && (status == "Bio-Hazard ☣️" || status == "Gross 🤢")) {
+        sendAlert("Maintenance alert. Your exterior waste bin has reached a hygiene level of ${status.replaceAll(/[^a-zA-Z -]/, '')}. Please sanitize it soon.", true)
+    }
+    
     state.hygieneStatus = status
+    pushChildUpdate()
 }
 
 def recordTelemetryTime(String stateKey) {
@@ -468,6 +520,33 @@ String getEcoScoreBadge() {
 // STRICT ONE-WAY STATE MACHINE & TRUE 3D TRACKING
 // ------------------------------------------------------------------------------
 
+boolean isWithinAllowedTransitWindow() {
+    if (state.binStatus == "curb_missed") return true
+    if (!state.nextPickupMs) return true 
+    
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def nowCal = Calendar.getInstance(tz)
+    nowCal.setTime(new Date())
+    
+    def pickupCal = Calendar.getInstance(tz)
+    pickupCal.setTime(new Date(state.nextPickupMs as Long))
+    
+    nowCal.set(Calendar.HOUR_OF_DAY, 0)
+    nowCal.set(Calendar.MINUTE, 0)
+    nowCal.set(Calendar.SECOND, 0)
+    nowCal.set(Calendar.MILLISECOND, 0)
+    
+    pickupCal.set(Calendar.HOUR_OF_DAY, 0)
+    pickupCal.set(Calendar.MINUTE, 0)
+    pickupCal.set(Calendar.SECOND, 0)
+    pickupCal.set(Calendar.MILLISECOND, 0)
+    
+    long diffMillis = nowCal.getTimeInMillis() - pickupCal.getTimeInMillis()
+    long diffDays = diffMillis / 86400000 // Milliseconds in a day
+    
+    return (diffDays >= -1 && diffDays <= 1)
+}
+
 def calibrateSpatialBaseline() {
     if (!binMultiSensor) return
     def xyz = binMultiSensor.currentValue("threeAxis")
@@ -481,6 +560,7 @@ def calibrateSpatialBaseline() {
         state.baselineZ = xyz.z as Integer
         state.isSensorDead = false 
         logAction("SYSTEM: 3D Calibration complete. Locked to global [${dominantAxis.toUpperCase()}] axis for Truck Dumps.")
+        pushChildUpdate()
     }
 }
 
@@ -564,6 +644,14 @@ def binMoveInactiveHandler(evt) {
 
     if (!state.motionStartTime) return
     
+    // Check Weather Failsafe Overrides First
+    boolean severeSwitch = (swTornado?.currentValue("switch") == "on" || swThunderstorm?.currentValue("switch") == "on")
+    if (severeSwitch) {
+        logAction("WEATHER OVERRIDE: Severe Weather (Tornado/Storm) switch active. Suppressing physical tracking event.")
+        state.motionStartTime = null
+        return
+    }
+    
     long durationMs = now() - state.motionStartTime
     long durationSec = durationMs / 1000
     
@@ -574,7 +662,7 @@ def binMoveInactiveHandler(evt) {
     
     int maxTilt = state.maxRelativeDevDuringMotion ?: 0
     
-    // Determine start and end states to identify if the lid was corrected during the walk
+    // Determine start and end states
     boolean isCurrentlyFlipped = false
     boolean startedFlipped = false
     def xyz = binMultiSensor.currentValue("threeAxis")
@@ -592,18 +680,21 @@ def binMoveInactiveHandler(evt) {
     }
     
     boolean lidWasClosedDuringMotion = (startedFlipped && !isCurrentlyFlipped)
-    
     state.motionStartTime = null 
     
     logAction("Motion Event Ended: Duration: ${durationSec}s | Max Relative Tilt: ${maxTilt} | Flipped: ${isCurrentlyFlipped}")
     
-    // If it ended up flipped (lid fully open), it's either a dump or rummaging, NEVER a completed transit.
+    // If it ended up flipped (lid fully open)
     if (isCurrentlyFlipped) {
-        // We still track it as a toss if the motion was fast enough
         if (maxTilt >= lidThresh && isTrackingAllowed()) {
             int opens = (state.lidOpens ?: 0) + 1
             state.lidOpens = opens
             logAction("Action Processed: Trash Toss (Lid Flipped & Left Open). Capacity updated to (${opens}).")
+            
+            // Proactive Butler Full Alert
+            if (getFillPct() >= 100) sendAlert("Warning, the exterior trash bin is now at maximum capacity.", true)
+            
+            pushChildUpdate()
         }
         return
     }
@@ -613,6 +704,8 @@ def binMoveInactiveHandler(evt) {
     if (durationSec >= reqTransitTime && maxTilt >= reqTransitTilt) {
         if (maxTilt < lidThresh) {
             isValidTransit = true // Smooth roll, lid stayed shut
+        } else if (!state.wasFlippedDuringMotion) {
+            isValidTransit = true // OVERRIDE: Violent G-force spike (bump) detected, but lid gravity never inverted.
         } else if (lidWasClosedDuringMotion) {
             isValidTransit = true // OVERRIDE: They closed a stuck lid and walked it back
         } else if (state.binStatus == "curb_emptied" && durationSec >= 20) {
@@ -630,12 +723,17 @@ def binMoveInactiveHandler(evt) {
         return
     }
 
-    // Process Lid Open SECOND. A fast, brief motion with high tilt is someone flipping the lid open.
+    // Process Lid Open SECOND. 
     if (maxTilt >= lidThresh) {
         if (isTrackingAllowed()) {
             int opens = (state.lidOpens ?: 0) + 1
             state.lidOpens = opens
             logAction("Action Processed: Trash Toss (Lid Flipped). Capacity updated to (${opens}).")
+            
+            // Proactive Butler Full Alert
+            if (getFillPct() >= 100) sendAlert("Warning, the exterior trash bin is now at maximum capacity.", true)
+            
+            pushChildUpdate()
         } else {
             logAction("Action Processed: Trash Toss detected, but ignored (Raccoon Filter).")
         }
@@ -651,30 +749,42 @@ def fallenBinCheck() {
     
     int curDom = xyz[state.activeAxis] as Integer
     
+    // Check Weather Failsafes
+    boolean severeSwitch = (swTornado?.currentValue("switch") == "on" || swThunderstorm?.currentValue("switch") == "on")
+    boolean wetSwitch = (swRain?.currentValue("switch") == "on" || swSprinkle?.currentValue("switch") == "on")
+    boolean isRaining = wetSwitch || (rainSensor && rainSensor.currentValue("water") == "wet")
+    def wSpeed = weatherStation ? weatherStation.currentValue("windSpeed") : 0
+    boolean isWindy = wSpeed && wSpeed.toBigDecimal() >= (settings.windThreshold ?: 15)
+    
+    if (severeSwitch) {
+        logAction("WEATHER OVERRIDE: Severe weather active. Suppressing Fallen Bin alerts completely.")
+        return
+    }
+
     // If the dominant axis is reading near 0, gravity is pulling sideways (It fell over 90 degrees)
     if (Math.abs(curDom) < 400 && !state.isCurrentlyDumped) {
         
-        // FIX: If it's empty at the curb, suppress all fallen alerts. Trucks leave them askew constantly.
         if (state.binStatus == "curb_emptied") {
             logAction("BIN ALERT: Bin is sideways, but alert suppressed (Bin is Empty at Curb).")
             return
         }
 
-        boolean isRaining = rainSensor && rainSensor.currentValue("water") == "wet"
-        def wSpeed = weatherStation ? weatherStation.currentValue("windSpeed") : 0
-        boolean isWindy = wSpeed && wSpeed.toBigDecimal() >= (settings.windThreshold ?: 15)
-
         if (isRaining || isWindy) {
             logAction("SEVERE WEATHER ALERT: Bin has fallen over! (Wind/Rain verified)")
-            sendAlert("SEVERE WEATHER ALERT: Your outdoor trash bin was knocked over by the weather.")
+            sendAlert("SEVERE WEATHER ALERT: Your outdoor trash bin was knocked over by the weather.", false)
         } else {
             logAction("BIN ALERT: Bin orientation abnormal. (Weather is calm. Check for animals, an open lid, or mishap)")
-            sendAlert("BIN ALERT: Your outdoor trash bin is sideways or open. The weather is calm, so check for animals or mishaps.")
+            sendAlert("BIN ALERT: Your outdoor trash bin is sideways or open. The weather is calm, so check for animals or mishaps.", false)
         }
     }
 }
 
 def processTruckDump() {
+    if (!isWithinAllowedTransitWindow()) {
+        logAction("AUTOMATION BLOCKED: Truck dump ignored. Outside of permitted schedule window and not marked as missed.")
+        return
+    }
+
     logAction("AUTOMATION: 180-Degree Flip Detected. Trash Dumped!")
     
     if (state.binStatus == "curb_missed" && state.missedTime) {
@@ -682,7 +792,7 @@ def processTruckDump() {
         state.lastMissedDuration = hrsLate
         def oldMissed = state.lifetimeMissedHours ?: 0.0
         state.lifetimeMissedHours = oldMissed + hrsLate
-        sendAlert("FINANCIAL TRACKER: Your missed trash was finally collected ${hrsLate} hours late. Ledger updated.")
+        sendAlert("FINANCIAL TRACKER: Your missed trash was finally collected ${hrsLate} hours late. Ledger updated.", true)
         state.missedTime = null
     }
     
@@ -704,31 +814,38 @@ def processTruckDump() {
     updateSchedule()
     
     def msg = ttsEmptiedText ?: "The garbage truck has emptied your bin!"
-    sendAlert(msg)
-    if (ttsSpeakers && ttsEmptiedText) playTTS(ttsSpeakers, ttsEmptiedText)
+    sendAlert(msg, false)
     if (zoozChimes && zoozSoundEmptied != null) playZoozChime(zoozSoundEmptied)
+    pushChildUpdate()
 }
 
 def processValidTransit() {
     if (state.binStatus == "house") {
+        if (!isWithinAllowedTransitWindow()) {
+            logAction("AUTOMATION BLOCKED: Transit to curb ignored. Outside of permitted schedule window and not marked as missed.")
+            return
+        }
+        
         logAction("AUTOMATION: Bin taken to curb.")
         recordTelemetryTime("historyPutOut")
         
         if (trashSwitch && trashSwitch.currentValue("switch") != "off") trashSwitch.off()
         state.isNagging = false
-        state.binStatus = "curb_full" 
+        state.queuedReminderTime = null
+        unschedule("playQueuedReminder")
         
-        sendAlert("Trash movement detected. Logged at curb.")
+        state.binStatus = "curb_full" 
+        // No spoken alert needed when taken to the curb
+        pushChildUpdate()
     }
     else if (state.binStatus == "curb_full") {
         logAction("AUTOMATION: Bin shifted at curb. Ignored to prevent false return state.")
     }
     else if (state.binStatus == "curb_emptied" || state.binStatus == "curb_missed") {
         
-        // DEBOUNCE LOGIC: Prevent instant return immediately after being emptied
         if (state.binStatus == "curb_emptied" && state.lastDumpTime) {
             long msSinceDump = now() - state.lastDumpTime
-            if (msSinceDump < 120000) { // 120 seconds (2 minutes)
+            if (msSinceDump < 120000) { 
                 long secLeft = 120 - (msSinceDump / 1000)
                 logAction("AUTOMATION: Transit ignored. Debounce cooldown active (${secLeft}s remaining).")
                 return
@@ -742,9 +859,9 @@ def processValidTransit() {
         unschedule("hoaNagHandler")
         
         def msg = ttsReturnedText ?: "The trash bin has been returned to the house."
-        sendAlert(msg)
-        if (ttsSpeakers && ttsReturnedText) playTTS(ttsSpeakers, ttsReturnedText)
+        sendAlert(msg, false)
         if (zoozChimes && zoozSoundReturned != null) playZoozChime(zoozSoundReturned)
+        pushChildUpdate()
     }
 }
 
@@ -752,7 +869,10 @@ def ackHandler(evt) {
     if (state.isNagging) {
         state.isNagging = false
         state.binStatus = "curb_full"
+        state.queuedReminderTime = null
+        unschedule("playQueuedReminder")
         logAction("System Acknowledged: Switch turned OFF.")
+        pushChildUpdate()
     }
 }
 
@@ -782,24 +902,20 @@ boolean isHolidayShiftRequired(Calendar targetPickup) {
         def ny = Calendar.getInstance(tz); ny.set(year, Calendar.JANUARY, 1, 0, 0, 0); ny.set(Calendar.MILLISECOND, 0)
         holidayDates << ny
     }
-    
     if (validHolidays.contains("Memorial Day")) {
         def mem = Calendar.getInstance(tz); mem.set(year, Calendar.MAY, 31, 0, 0, 0); mem.set(Calendar.MILLISECOND, 0)
         while(mem.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) { mem.add(Calendar.DAY_OF_MONTH, -1) }
         holidayDates << mem
     }
-    
     if (validHolidays.contains("Independence Day")) {
         def ind = Calendar.getInstance(tz); ind.set(year, Calendar.JULY, 4, 0, 0, 0); ind.set(Calendar.MILLISECOND, 0)
         holidayDates << ind
     }
-    
     if (validHolidays.contains("Labor Day")) {
         def lab = Calendar.getInstance(tz); lab.set(year, Calendar.SEPTEMBER, 1, 0, 0, 0); lab.set(Calendar.MILLISECOND, 0)
         while(lab.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) { lab.add(Calendar.DAY_OF_MONTH, 1) }
         holidayDates << lab
     }
-    
     if (validHolidays.contains("Thanksgiving")) {
         def tg = Calendar.getInstance(tz); tg.set(year, Calendar.NOVEMBER, 1, 0, 0, 0); tg.set(Calendar.MILLISECOND, 0)
         int thursdays = 0
@@ -809,7 +925,6 @@ boolean isHolidayShiftRequired(Calendar targetPickup) {
         }
         holidayDates << tg
     }
-    
     if (validHolidays.contains("Christmas")) {
         def xmas = Calendar.getInstance(tz); xmas.set(year, Calendar.DECEMBER, 25, 0, 0, 0); xmas.set(Calendar.MILLISECOND, 0)
         holidayDates << xmas
@@ -915,6 +1030,7 @@ def updateSchedule() {
         
         def resetDate = new Date(nextPickupMs + 7200000) 
         runOnce(resetDate, "autoResetHandler", [overwrite: true])
+        pushChildUpdate()
         
     } catch (e) {
         log.error "Schedule Calculation Error: ${e}"
@@ -928,6 +1044,7 @@ def triggerReminder() {
         logAction("Reminder skipped: Bin was already taken out early.")
         if (trashSwitch && trashSwitch.currentValue("switch") != "off") trashSwitch.off()
         state.isNagging = false
+        pushChildUpdate()
         return
     }
 
@@ -944,9 +1061,10 @@ def triggerReminder() {
         finalMsg = settings.ttsRecycleText ?: "Reminder, it is time to take the trash and the recycling out to the road."
     }
     
-    sendAlert(finalMsg)
-    if (ttsSpeakers) playTTS(ttsSpeakers, finalMsg)
+    // Pass false to not stash this reminder (it announces globally via Butler)
+    sendAlert(finalMsg, false)
     if (zoozChimes && zoozSoundReminder != null) playZoozChime(zoozSoundReminder)
+    pushChildUpdate()
 }
 
 def nagCheck() {
@@ -958,7 +1076,7 @@ def nagCheck() {
             def tz = location.timeZone ?: TimeZone.getDefault()
             def todayStr = new Date().format("yyyy-MM-dd", tz)
             if (state.lastBatteryWarningDate != todayStr) {
-                sendAlert("WARNING: Your outdoor trash bin sensor battery is very low (${batt}%).")
+                sendAlert("WARNING: Your outdoor trash bin sensor battery is very low (${batt}%).", true)
                 logAction("Sent daily low battery warning.")
                 state.lastBatteryWarningDate = todayStr
             }
@@ -985,9 +1103,9 @@ def nagCheck() {
         finalMsg = settings.ttsRecycleText ?: "Don't forget the trash and the recycling!"
     }
     
-    sendAlert("NAG: " + finalMsg)
-    if (ttsSpeakers) playTTS(ttsSpeakers, "Nag. " + finalMsg)
+    sendAlert("NAG: " + finalMsg, false)
     if (zoozChimes && zoozSoundReminder != null) playZoozChime(zoozSoundReminder)
+    pushChildUpdate()
 }
 
 def autoResetHandler() {
@@ -998,7 +1116,7 @@ def autoResetHandler() {
         state.binStatus = "curb_missed"
         state.missedTime = now()
         logAction("ALERT: Missed Pickup detected.")
-        sendAlert("ALERT: The garbage truck missed your scheduled pickup!")
+        sendAlert("ALERT: The garbage truck missed your scheduled pickup!", true)
     } else {
         state.binStatus = "house" 
         state.lidOpens = 0
@@ -1012,14 +1130,44 @@ def autoResetHandler() {
 }
 
 // ------------------------------------------------------------------------------
-// AUDIO & 1-TO-1 MOTION HELPER ENGINE
+// NO-APP AUDIO & 1-TO-1 MOTION HELPER ENGINE (Fallback)
 // ------------------------------------------------------------------------------
+// Kept for backward compatibility if the Butler toggle is off
 
 def room1MotionHandler(evt) { state.lastMotionRoom1 = now() }
 def room2MotionHandler(evt) { state.lastMotionRoom2 = now() }
 def room3MotionHandler(evt) { state.lastMotionRoom3 = now() }
 def room4MotionHandler(evt) { state.lastMotionRoom4 = now() }
 def room5MotionHandler(evt) { state.lastMotionRoom5 = now() }
+
+def modeChangeHandler(evt) {
+    if (isAudioAllowed() && state.isNagging) {
+        logAction("AUTOMATION: Mode became unrestricted. Queuing delayed audio reminder for 30 minutes.")
+        state.queuedReminderTime = now() + 1800000 
+        runIn(1800, "playQueuedReminder", [overwrite: true])
+        pushChildUpdate()
+    } else if (!isAudioAllowed()) {
+        unschedule("playQueuedReminder")
+        state.queuedReminderTime = null
+        pushChildUpdate()
+    }
+}
+
+def playQueuedReminder() {
+    state.queuedReminderTime = null 
+    if (state.isNagging && state.binStatus != "curb_full" && state.binStatus != "curb_missed") {
+        logAction("AUTOMATION: Executing delayed mode-change audio announcement.")
+        String finalMsg = ttsReminderText ?: "Reminder, it is time to take the trash out to the road."
+        if (checkRecyclingWeek()) {
+            finalMsg = settings.ttsRecycleText ?: "Reminder, it is time to take the trash and the recycling out to the road."
+        }
+        sendAlert(finalMsg, false)
+        if (zoozChimes && zoozSoundReminder != null) playZoozChime(zoozSoundReminder)
+    } else {
+        logAction("AUTOMATION: Delayed reminder skipped. Trash was already handled.")
+    }
+    pushChildUpdate()
+}
 
 def isSpeakerMotionActive(speaker) {
     boolean isMapped = false
@@ -1113,14 +1261,6 @@ def playZoozChime(soundNum, forcePlay = false) {
         } else {
             logInfo("Skipping Zooz Chime on ${chime.displayName}: No recent motion.")
         }
-    }
-}
-
-def sendAlert(msg) {
-    if (notifyDevice && isPushAllowed()) {
-        notifyDevice*.deviceNotification(msg)
-    } else if (!isPushAllowed()) {
-        logInfo("Skipping Push Notification: Current mode restricts push alerts.")
     }
 }
 
