@@ -7,7 +7,7 @@ definition(
     name: "Advanced Shower Monitor",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Monitors up to 4 showers with Volumetric Tracking, Financial Cost Analytics, and Grace-Period Smoothing.",
+    description: "Monitors up to 4 showers with Volumetric Tracking, Financial Cost Analytics, Grace-Period Smoothing, and Post-Shower Switch Management.",
     category: "Green Living",
     iconUrl: "",
     iconX2Url: ""
@@ -91,7 +91,6 @@ def mainPage() {
             input "activeModes", "mode", title: "Active Modes (App only runs in these)", multiple: true, required: false
         }
 
-        // --- NEW: Data Management Section ---
         section("Data Management") {
             input "clearDataBtn", "button", title: "Clear All Shower & Financial Data", width: 4
             paragraph "<i>Clicking the button above will instantly wipe the Financial Analytics and Application History logs. This is useful for clearing out test data.</i>"
@@ -108,7 +107,10 @@ def mainPage() {
                 input "outMotion_${i}", "capability.motionSensor", title: "Out of Shower Motion Sensor (Optional)", required: false,
                     description: "If motion is detected here during the grace period, the shower session ends immediately."
                 
-                input "light_${i}", "capability.switch", title: "Bathroom Light to Flash", required: false
+                input "guestSwitch_${i}", "capability.switch", title: "Guest Override Switch (Optional)", required: false,
+                    description: "If this switch is ON, this shower will be ignored and tracking is disabled."
+
+                input "light_${i}", "capability.switch", title: "Bathroom Light to Flash / Manage", required: false
                 input "statusSwitch_${i}", "capability.switch", title: "Virtual Status Switch (Turns ON when shower is active)", required: false, description: "Use this to tell other apps (like Motion Lighting) that a shower is running."
                 
                 input "flowRate_${i}", "decimal", title: "Showerhead Flow Rate (GPM)", defaultValue: 2.5, required: true,
@@ -132,7 +134,6 @@ def mainPage() {
     }
 }
 
-// --- NEW: Button Handler ---
 def appButtonHandler(btn) {
     if (btn == "clearDataBtn") {
         state.historyLog = []
@@ -165,6 +166,7 @@ def initialize() {
         state["showerActive_${i}"] = state["showerActive_${i}"] ?: false
         state["showerStatus_${i}"] = state["showerStatus_${i}"] ?: "Idle"
         state["sessionLog_${i}"] = state["sessionLog_${i}"] ?: []
+        state["postShowerPhase_${i}"] = false
     }
 }
 
@@ -191,21 +193,25 @@ def warnTierOne1() { triggerFlash(1, 1) }
 def warnTierTwo1() { triggerFlash(1, 2) }
 def warnTierThree1() { triggerFlash(1, 3) }
 def endShower1() { terminateShower(1) }
+def checkPostShowerLight1() { verifyAndTurnOffLight(1) }
 
 def warnTierOne2() { triggerFlash(2, 1) }
 def warnTierTwo2() { triggerFlash(2, 2) }
 def warnTierThree2() { triggerFlash(2, 3) }
 def endShower2() { terminateShower(2) }
+def checkPostShowerLight2() { verifyAndTurnOffLight(2) }
 
 def warnTierOne3() { triggerFlash(3, 1) }
 def warnTierTwo3() { triggerFlash(3, 2) }
 def warnTierThree3() { triggerFlash(3, 3) }
 def endShower3() { terminateShower(3) }
+def checkPostShowerLight3() { verifyAndTurnOffLight(3) }
 
 def warnTierOne4() { triggerFlash(4, 1) }
 def warnTierTwo4() { triggerFlash(4, 2) }
 def warnTierThree4() { triggerFlash(4, 3) }
 def endShower4() { terminateShower(4) }
+def checkPostShowerLight4() { verifyAndTurnOffLight(4) }
 
 // --- SYSTEM CHECKS ---
 def isSystemPaused() {
@@ -220,24 +226,32 @@ def isModeAllowed() {
 // --- CORE LOGIC ---
 def handleMotion(showerId, motionState) {
     def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
+    
+    // Quick hardware exit: check Guest Switch override first
+    if (settings["guestSwitch_${showerId}"]?.currentValue("switch") == "on") return
+
     def grace = settings["gracePeriod_${showerId}"] ?: 2
     def lockout = settings["lockoutPeriod_${showerId}"] ?: 2
     
     if (motionState == "active") {
         unschedule("endShower${showerId}")
+        
+        // Cancel post-shower auto-off phase if they get back in
+        state["postShowerPhase_${showerId}"] = false
+        unschedule("checkPostShowerLight${showerId}")
+
         if (!state["showerActive_${showerId}"]) {
             if (isSystemPaused() || !isModeAllowed()) return
             
             def lastEndTime = state["showerEndTime_${showerId}"] ?: 0
-            if (new Date().time - lastEndTime < (lockout * 60 * 1000)) {
-                log.debug "${sName}: Motion ignored due to ${lockout}-minute post-shower lockout."
-                return
-            }
+            if (new Date().time - lastEndTime < (lockout * 60 * 1000)) return
 
+            // Execute start rapidly
             state["showerActive_${showerId}"] = true
             settings["statusSwitch_${showerId}"]?.on()
             state["showerStartTime_${showerId}"] = new Date().time
             state["showerStatus_${showerId}"] = "Active (Timers Running)"
+            
             addToHistory("${sName}: Shower started.")
             runIn((settings["warn1_${showerId}"] ?: 5) * 60, "warnTierOne${showerId}", [overwrite: true])
             runIn((settings["warn2_${showerId}"] ?: 8) * 60, "warnTierTwo${showerId}", [overwrite: true])
@@ -245,20 +259,37 @@ def handleMotion(showerId, motionState) {
         } else {
             state["showerStatus_${showerId}"] = "Active (Timers Running)"
         }
-    } else if (state["showerActive_${showerId}"]) {
-        state["showerStatus_${showerId}"] = "Grace Period"
-        state["showerInactiveTime_${showerId}"] = new Date().time 
-        addToHistory("${sName}: Motion stopped. Grace period active.")
-        runIn(grace * 60, "endShower${showerId}", [overwrite: true])
+    } else { // inactive
+        if (state["showerActive_${showerId}"]) {
+            state["showerStatus_${showerId}"] = "Grace Period"
+            state["showerInactiveTime_${showerId}"] = new Date().time 
+            addToHistory("${sName}: Motion stopped. Grace period active.")
+            runIn(grace * 60, "endShower${showerId}", [overwrite: true])
+        } else if (state["postShowerPhase_${showerId}"]) {
+            // Reset 5 minute timer since motion just stopped again
+            runIn(300, "checkPostShowerLight${showerId}", [overwrite: true])
+        }
     }
 }
 
 def handleOutMotion(showerId, motionState) {
-    if (motionState == "active" && state["showerStatus_${showerId}"] == "Grace Period") {
-        def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
-        addToHistory("${sName}: Presence outside shower detected. Terminating session.")
-        unschedule("endShower${showerId}")
-        terminateShower(showerId, true)
+    if (motionState == "active") {
+        if (state["showerStatus_${showerId}"] == "Grace Period") {
+            def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
+            addToHistory("${sName}: Presence outside shower detected. Terminating session.")
+            unschedule("endShower${showerId}")
+            terminateShower(showerId, true)
+        }
+        
+        if (state["postShowerPhase_${showerId}"]) {
+            // Motion detected, suspend the auto-off timer
+            unschedule("checkPostShowerLight${showerId}")
+        }
+    } else { // inactive
+        if (state["postShowerPhase_${showerId}"]) {
+            // Out-sensor motion stopped, restart 5 minute auto-off clock
+            runIn(300, "checkPostShowerLight${showerId}", [overwrite: true])
+        }
     }
 }
 
@@ -300,12 +331,48 @@ def terminateShower(showerId, earlyTerminate = false) {
     state["showerActive_${showerId}"] = false
     settings["statusSwitch_${showerId}"]?.off()
     state["showerStatus_${showerId}"] = "Idle"
-    
     state["showerEndTime_${showerId}"] = new Date().time
     
     unschedule("warnTierOne${showerId}")
     unschedule("warnTierTwo${showerId}")
     unschedule("warnTierThree${showerId}")
+
+    // --- Post-Shower Management ---
+    state["postShowerPhase_${showerId}"] = true
+    def light = settings["light_${showerId}"]
+    if (light && light.hasCommand("refresh")) {
+        light.refresh() // Initial refresh immediately after shower end
+    }
+    // Kick off the initial 5-minute standby clock
+    runIn(300, "checkPostShowerLight${showerId}", [overwrite: true])
+}
+
+def verifyAndTurnOffLight(showerId) {
+    if (!state["postShowerPhase_${showerId}"]) return 
+    
+    def pMotion = settings["motion_${showerId}"]
+    def sMotion = settings["outMotion_${showerId}"]
+    
+    def pActive = pMotion ? pMotion.currentValue("motion") == "active" : false
+    def sActive = sMotion ? sMotion.currentValue("motion") == "active" : false
+    
+    if (!pActive && !sActive) {
+        def light = settings["light_${showerId}"]
+        if (light) {
+            light.off()
+            if (light.hasCommand("refresh")) {
+                // Buffer the refresh command to ensure the off command processes fully on the physical switch
+                runInMillis(2000, "refreshLight", [data: [showerId: showerId]]) 
+            }
+            def sName = settings["showerName_${showerId}"] ?: "Shower ${showerId}"
+            addToHistory("${sName}: No motion for 5 mins post-shower. Light OFF & Refreshed.")
+        }
+        state["postShowerPhase_${showerId}"] = false // Cleanup phase
+    }
+}
+
+def refreshLight(data) {
+    settings["light_${data.showerId}"]?.refresh()
 }
 
 def triggerFlash(showerId, flashes) {
@@ -314,21 +381,28 @@ def triggerFlash(showerId, flashes) {
     if (!light) return
 
     addToHistory("${settings["showerName_${showerId}"]} warning. Flashing ${flashes}x.")
+    
+    // Capture initial state to ensure it restores correctly
+    def initialState = light.currentValue("switch") ?: "on"
+
+    // Slowed down blink routine to 3-second cycles to give the network time to process commands
     for (int i = 0; i < flashes; i++) {
-        runInMillis(i * 2000, "turnLightOff", [data: [showerId: showerId], overwrite: false])
-        runInMillis((i * 2000) + 1000, "turnLightOn", [data: [showerId: showerId], overwrite: false])
+        runInMillis((i * 3000) + 500, "turnLightOff", [data: [showerId: showerId], overwrite: false])
+        runInMillis((i * 3000) + 2000, "turnLightOn", [data: [showerId: showerId], overwrite: false])
     }
     
-    runInMillis((flashes * 2000) + 1000, "refreshLight", [data: [showerId: showerId], overwrite: false])
+    // Send a final state enforcement safely after the sequence ends
+    runInMillis((flashes * 3000) + 1500, "restoreLightState", [data: [showerId: showerId, targetState: initialState], overwrite: false])
 }
 
 def turnLightOff(data) { settings["light_${data.showerId}"]?.off() }
 def turnLightOn(data) { settings["light_${data.showerId}"]?.on() }
 
-def refreshLight(data) { 
-    try {
-        settings["light_${data.showerId}"]?.refresh() 
-    } catch (e) {
-        log.debug "Device does not support the refresh command"
+def restoreLightState(data) {
+    def light = settings["light_${data.showerId}"]
+    if (data.targetState == "off") {
+        light?.off()
+    } else {
+        light?.on()
     }
 }
