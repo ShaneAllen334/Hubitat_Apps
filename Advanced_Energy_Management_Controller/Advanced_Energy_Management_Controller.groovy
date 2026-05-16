@@ -1,1571 +1,1021 @@
 /**
- * Advanced Energy Management Controller
+ * Advanced Game Room High Score Announcer
+ *
+ * Author: ShaneAllen
  */
 definition(
-    name: "Advanced Energy Management Controller",
+    name: "Advanced Game Room High Score Announcer",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "An eye-opening energy dashboard that tracks cost, detects power spikes, and warns of creeping averages indicating hardware failure.",
-    category: "Green Living",
+    description: "Monitors game room switches and announces dynamic overall/weekly high scores. Features Top 3 tracking, Weekly Chase Games, quiet hours, Guest Mode, and dedicated machine child devices.",
+    category: "Convenience",
     iconUrl: "",
-    iconX2Url: ""
+    iconX2Url: "",
+    oauth: true
 )
 
 preferences {
     page(name: "mainPage")
-    page(name: "clearDataPage")
-    page(name: "maintenancePage")
-    page(name: "doResetPage")
+    page(name: "gamePage")
+}
+
+mappings {
+    path("/log") { action: [GET: "serveScoreForm"] }
+    path("/submit") { action: [GET: "handleScoreSubmit", POST: "handleScoreSubmit"] }
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Energy Management Core", install: true, uninstall: true) {
-        
-        section("Dashboard Actions", hideable: true, hidden: true) {
-            href(name: "refreshPage", title: "🔄 Refresh Data", page: "mainPage")
-            href(name: "maintenancePage", title: "🛠️ Hardware Maintenance Reset", description: "Clear health warnings after servicing an appliance.", page: "maintenancePage")
-            href(name: "clearDataPage", title: "🗑️ Clear All Data", description: "Reset all history, baselines, and counters.", page: "clearDataPage")
+    if (!state.accessToken) {
+        try {
+            createAccessToken()
+        } catch (e) {
+            log.error "OAuth is not enabled. Please enable OAuth in the App Code page."
         }
+    }
+    
+    ensureStateMaps()
 
-        section("Live Financial & Health Dashboard") {
-            def kwhRate = settings["costPerKwh"]?.toString()?.toDouble() ?: 0.13
-            def statusText = "<b>Appliance Status & Analytics</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>State (Reason)</th><th style='padding: 8px;'>Current Power</th><th style='padding: 8px;'>7-Day Cost</th><th style='padding: 8px;'>Health Status</th></tr>"
+    dynamicPage(name: "mainPage", title: "Game Room Configuration", install: true, uninstall: true) {
+        
+        section("Live High Score Dashboard") {
+            paragraph "<i>Below is a real-time view of your machines and the #1 champions for the <b>last game played</b> on each.</i>"
+            input "btnRefresh", "button", title: "🔄 Refresh Data Dashboard"
             
-            def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
+            def statusText = "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Active Leaderboard</h4>"
+            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Machine (Pwr State)</th><th style='padding: 8px;'>Active Game/Table</th><th style='padding: 8px;'>#1 Overall</th><th style='padding: 8px;'>#1 Weekly</th></tr>"
             
-            appliances.each { key, name ->
-                def sw = settings["${key}Switch"]
-                def pMeter = settings["${key}Power"]
-                def eMeter = settings["${key}Energy"]
-                
-                if (pMeter && eMeter) {
-                    def currentPower = pMeter.currentValue('power')?.toString()?.toDouble() ?: 0.0
-                    def currentEnergy = eMeter.currentValue('energy')?.toString()?.toDouble() ?: 0.0
+            def numG = settings.numGames ?: 0
+            if (numG > 0) {
+                for (int i = 1; i <= (numG as Integer); i++) {
+                    def gName = settings["gameName_${i}"] ?: "Machine ${i}"
+                    def gSwitch = settings["gameSwitch_${i}"]
                     
-                    // Switch State & Context
-                    def switchState = sw ? (sw.currentValue("switch") == "on" ? "<span style='color: green; font-weight: bold;'>ON</span>" : "<span style='color: red; font-weight: bold;'>OFF</span>") : "<span style='color: gray;'>N/A</span>"
-                    def contextMsg = state["${key}_context"] ?: "Normal"
-                    def stateDisplay = "${switchState}<br><span style='font-size: 10px; color: gray;'>${contextMsg}</span>"
-
-                    // Cost Math
-                    def baselineEnergy = state["${key}_startEnergy"] ?: currentEnergy
-                    def usedKwh = currentEnergy - baselineEnergy
-                    if (usedKwh < 0) usedKwh = 0 
-                    def estCost = usedKwh * kwhRate
-                    def costStr = String.format("\$%.2f", estCost.toDouble())
-                    
-                    // Health Check & Compressor Status
-                    def health = "<span style='color: green;'>GOOD</span>"
-                    def struggle = state["${key}_struggleCount"] ?: 0
-                    
-                    if (state["${key}_learningPhaseComplete"] != true) {
-                        health = "<span style='color: #8a6d3b;'>LEARNING BASELINE</span>"
-                    } else {
-                        if (state["${key}_creepWarning"]) health = "<span style='color: orange;'>CREEPING WATTS</span>"
-                        if (struggle >= 3 && struggle < 6) health = "<span style='color: orange;'>CLEAN COILS</span>"
-                        if (struggle >= 6) health = "<span style='color: red;'>STRUGGLING</span>"
-                        if (state["${key}_spikeWarning"]) health = "<span style='color: red;'>SPIKE DETECTED</span>"
-                        if (state["${key}_tempWarningActive"]) health = "<span style='color: red;'>HIGH TEMP ALERT</span>"
-                        if (state["${key}_tempCreepWarning"]) health = "<span style='color: orange;'>TEMP CREEPING</span>"
+                    def pwrState = "<span style='color: #7f8c8d;'>OFF</span>"
+                    if (gSwitch) {
+                        pwrState = gSwitch.currentValue("switch") == "on" ? "<span style='color: #27ae60; font-weight: bold;'>ON</span>" : "<span style='color: #7f8c8d;'>OFF</span>"
                     }
                     
-                    def powerColor = currentPower > 10 ? "blue" : "black"
+                    def isMulti = settings["gameType_${i}"] == "Multi-Game (Arcade/Pinball)"
+                    def mStats = state.gameStats["${i}"]
                     
-                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px;'>${stateDisplay}</td><td style='padding: 8px; color: ${powerColor};'>${currentPower} W</td><td style='padding: 8px; color: red;'>${costStr}</td><td style='padding: 8px; font-weight: bold;'>${health}</td></tr>"
+                    def activeGame = gName
+                    if (isMulti && mStats?.lastPlayed && mStats.lastPlayed != "Machine ${i}") {
+                        activeGame = mStats.lastPlayed
+                    }
+                    
+                    def gScores = mStats?.scores?."${activeGame}"
+                    
+                    def allList = gScores?.overall ?: []
+                    def weekList = gScores?.weekly ?: []
+                    
+                    def allUser = allList.size() > 0 ? allList[0].user : "N/A"
+                    def allScore = allList.size() > 0 ? allList[0].score : 0L
+                    def allFmt = "<b>${formatScore(allScore)}</b> <span style='color: #555;'>(by ${allUser})</span>"
+                    
+                    def weekUser = weekList.size() > 0 ? weekList[0].user : "N/A"
+                    def weekScore = weekList.size() > 0 ? weekList[0].score : 0L
+                    def weekFmt = "<b>${formatScore(weekScore)}</b> <span style='color: #555;'>(by ${weekUser})</span>"
+                    
+                    def displayGame = isMulti ? "<span style='color: #2980b9; font-weight: bold;'>${activeGame}</span>" : "<span style='color: #7f8c8d;'><i>(Single Game)</i></span>"
+                    
+                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${gName}</b> [${pwrState}]</td><td style='padding: 8px;'>${displayGame}</td><td style='padding: 8px;'>${allFmt}</td><td style='padding: 8px;'>${weekFmt}</td></tr>"
                 }
+            } else {
+                statusText += "<tr><td colspan='4' style='padding: 8px; text-align: center; color: #7f8c8d;'><i>No machines configured yet.</i></td></tr>"
             }
-            statusText += "</table>"
-            
-            // Active Cycles & Usage (7-Day)
-            statusText += "<b>Active Cycles & Usage Stats</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #f4f8ff; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #dbeaff; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>State</th><th style='padding: 8px;'>Last Run</th><th style='padding: 8px;'>7-Day Runs</th></tr>"
-            
-            def cycleAppliances = ["hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
-            
-            cycleAppliances.each { key, name ->
-                def isRunning = state["${key}_isRunning"] ? "<span style='color: blue; font-weight: bold;'>RUNNING</span>" : "<span style='color: gray;'>IDLE</span>"
-                if (state["${key}_startPending"]) isRunning = "<span style='color: #8a6d3b; font-weight: bold;'>STARTING...</span>"
-                if (state["${key}_stopPending"]) isRunning = "<span style='color: orange; font-weight: bold;'>PAUSED</span>"
-                
-                def lastRunStr = "N/A"
-                if (state["${key}_isRunning"] && state["${key}_cycleStartTime"]) {
-                    def currentRunMs = now() - state["${key}_cycleStartTime"]
-                    def currentRunMins = Math.round(currentRunMs / 60000.0)
-                    lastRunStr = "Running (${currentRunMins} min)"
-                } else if (state["${key}_lastRunLengthMins"]) {
-                    lastRunStr = "${Math.round(state["${key}_lastRunLengthMins"].toString().toDouble())} min"
-                }
-                
-                def runCount = state["${key}_7DayRunCount"] ?: 0
-                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px;'>${isRunning}</td><td style='padding: 8px;'>${lastRunStr}</td><td style='padding: 8px;'>${runCount}</td></tr>"
-            }
-            statusText += "</table>"
-
-            // Compressor Cycle Stats (7-Day & Today)
-            statusText += "<b>Compressor Cycle Stats</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcf8e3; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #faebcc; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>State</th><th style='padding: 8px;'>Avg Cycle</th><th style='padding: 8px;'>Runs (Today/7D)</th><th style='padding: 8px;'>Temps (Room Avg / Out Max)</th></tr>"
-            
-            def compressorAppliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer"]
-            
-            compressorAppliances.each { key, name ->
-                def isRunning = state["${key}_isRunning"] ? "<span style='color: #d58512; font-weight: bold;'>COOLING</span>" : "<span style='color: gray;'>IDLE</span>"
-                if (state["${key}_startPending"]) isRunning = "<span style='color: #8a6d3b; font-weight: bold;'>STARTING...</span>"
-                if (state["${key}_stopPending"]) isRunning = "<span style='color: #d58512; font-weight: bold;'>COOLING</span>"
-                
-                def runCount7D = state["${key}_7DayRunCount"] ?: 0
-                def runCountToday = state["${key}_todayRunCount"] ?: 0
-                def totalMins = state["${key}_7DayTotalCycleMins"] ?: 0.0
-                def avgCycleStr = runCount7D > 0 ? "${Math.round(totalMins / runCount7D)} min" : "N/A"
-             
-                def rTempAvg = state["${key}_dailyAvgRoomTemp"]
-                def oTempMax = state["${key}_dailyMaxOutsideTemp"]
-                
-                def roomStr = (rTempAvg && rTempAvg != 0.0) ? "${Math.round(rTempAvg?.toString()?.toDouble())}°" : "--"
-                def outStr = (oTempMax && oTempMax != -100.0) ? "${Math.round(oTempMax?.toString()?.toDouble())}°" : "--"
-                
-                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px;'>${isRunning}</td><td style='padding: 8px;'>${avgCycleStr}</td><td style='padding: 8px;'>${runCountToday} / ${runCount7D}</td><td style='padding: 8px;'>${roomStr} / ${outStr}</td></tr>"
-            }
-            statusText += "</table>"
-            
-            // Baseline Diagnostics & Learning Progress
-            statusText += "<b>Baseline Diagnostics & Learning Progress</b><br>"
-            statusText += "<p style='font-size: 11px; color: #555; margin-top: 0px;'>Displays the locked healthy baseline for each appliance compared to its current average performance. Alignment indicates how far the appliance has deviated from its baseline, warning of creeping averages before hardware fails.</p>"
-            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fdfdfd; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #e0e0e0; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>Learning Status</th><th style='padding: 8px;'>Baseline (Power / Cycle)</th><th style='padding: 8px;'>Current (Power / Cycle)</th><th style='padding: 8px;'>Alignment</th></tr>"
-
-            appliances.each { key, name ->
-                def pMeter = settings["${key}Power"]
-                if (pMeter) {
-                    def isLearned = state["${key}_learningPhaseComplete"]
-                    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
-                    def startTime = state["${key}_learningStartTime"] ?: now()
-                    def elapsedMs = now() - startTime
-                    def elapsedDays = elapsedMs / 86400000.0
-                    def daysRemaining = learningDays - elapsedDays
-                    if (daysRemaining < 0) daysRemaining = 0
-
-                    def learningStr = ""
-                    if (isLearned) {
-                        learningStr = "<span style='color: green; font-weight: bold;'>✅ Locked</span>"
-                    } else {
-                        learningStr = "<span style='color: #8a6d3b;'>Learning: ${String.format("%.1f", elapsedDays.toDouble())} / ${learningDays} d<br><span style='font-size: 10px;'>(${String.format("%.1f", daysRemaining.toDouble())} days left)</span></span>"
-                    }
-
-                    def basePwr = state["${key}_baselineAvg"] ? "${Math.round(state["${key}_baselineAvg"].toString().toDouble())}W" : "--"
-                    def currPwr = state["${key}_avgPower"] ? "${Math.round(state["${key}_avgPower"].toString().toDouble())}W" : "--"
-
-                    def baseCycle = state["${key}_baselineCycleMins"] ? "${Math.round(state["${key}_baselineCycleMins"].toString().toDouble())}m" : "--"
-                    def runCount7D = state["${key}_7DayRunCount"] ?: 0
-                    def totalMins = state["${key}_7DayTotalCycleMins"] ?: 0.0
-                    def currCycle = runCount7D > 0 ? "${Math.round(totalMins / runCount7D)}m" : "--"
-
-                    // Hide Cycle metrics for non-compressor units to keep it clean
-                    if (key != "refrigerator" && key != "chestFreezer") {
-                        baseCycle = "N/A"
-                        currCycle = "N/A"
-                    }
-
-                    def alignment = "<span style='color: gray;'>Calibrating...</span>"
-                    if (isLearned) {
-                        def bPwrVal = state["${key}_baselineAvg"]?.toString()?.toDouble() ?: 0.0
-                        def cPwrVal = state["${key}_avgPower"]?.toString()?.toDouble() ?: 0.0
-                        def pwrHealth = "Good"
-                        def pwrColor = "green"
-                        
-                        if (bPwrVal > 0) {
-                            def variance = ((cPwrVal - bPwrVal) / bPwrVal) * 100
-                            if (variance > 20) { pwrHealth = "Creeping"; pwrColor = "orange" }
-                            else if (variance < -20) { pwrHealth = "Below Normal"; pwrColor = "blue" }
-                        }
-
-                        if (key == "refrigerator" || key == "chestFreezer") {
-                            def bCycVal = state["${key}_baselineCycleMins"]?.toString()?.toDouble() ?: 0.0
-                            def cCycVal = runCount7D > 0 ? (totalMins / runCount7D) : 0.0
-                            def cycHealth = "Good"
-                            def cycColor = "green"
-                            
-                            if (bCycVal > 0) {
-                                 def variance = ((cCycVal - bCycVal) / bCycVal) * 100
-                                 if (variance > 30) { cycHealth = "Struggling"; cycColor = "red" }
-                                 else if (variance > 15) { cycHealth = "Elevated"; cycColor = "orange" }
-                            }
-                            alignment = "<span style='color: ${pwrColor};'>Pwr: ${pwrHealth}</span><br><span style='color: ${cycColor};'>Cyc: ${cycHealth}</span>"
-                        } else {
-                            alignment = "<span style='color: ${pwrColor}; font-weight:bold;'>${pwrHealth}</span>"
-                        }
-                    }
-
-                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px;'>${learningStr}</td><td style='padding: 8px;'>${basePwr} / ${baseCycle}</td><td style='padding: 8px;'>${currPwr} / ${currCycle}</td><td style='padding: 8px;'>${alignment}</td></tr>"
-                }
-            }
-            statusText += "</table>"
-            
-            // ROI Table for Scheduled Savings & Maintenance
-            statusText += "<b>Financial Savings (ROI)</b><br><table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #eef9f0; border: 1px solid #ccc; margin-bottom: 15px;'>"
-            statusText += "<tr style='background-color: #dcedc8; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Appliance</th><th style='padding: 8px;'>Sch. Savings</th><th style='padding: 8px;'>Maint. Savings</th><th style='padding: 8px;'>Total (7D)</th></tr>"
-            
-            def totalSavings = 0.0
-            appliances.each { key, name ->
-                def schSavings = state["${key}_roiSavings"] ?: 0.0
-                def maintSavings = state["${key}_maintRoiSavings"] ?: 0.0
-                def appTotal = schSavings + maintSavings
-                totalSavings += appTotal
-                
-                statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${name}</b></td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", schSavings.toDouble())}</td><td style='padding: 8px; color: green;'>\$${String.format("%.2f", maintSavings.toDouble())}</td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", appTotal.toDouble())}</td></tr>"
-            }
-            statusText += "<tr style='background-color: #c5e1a5;'><td style='padding: 8px;' colspan='3'><b>Total Saved</b></td><td style='padding: 8px; color: green; font-weight: bold;'>\$${String.format("%.2f", totalSavings.toDouble())}</td></tr>"
             statusText += "</table>"
             
             paragraph statusText
         }
 
-        section("Global Core Settings", hideable: true, hidden: true) {
-            input "enableVoiceButler", "bool", title: "Enable Advanced Voice Butler Integration?", defaultValue: true, submitOnChange: true, description: "Sends health alerts and cycle completions to the Butler for smart-routing."
-            input "costPerKwh", "decimal", title: "Electricity Cost (\$ per kWh)", required: true, defaultValue: 0.13, description: "Your default rate is \$0.13."
-            input "enableMaintenanceRoi", "bool", title: "Track ROI for Maintenance (Coil Cleaning, etc.)?", defaultValue: true, required: false, description: "Calculates savings when an appliance runs more efficiently after a health reset."
-            input "learningCurveDays", "number", title: "Baseline Learning Period (Days)", defaultValue: 7, required: true, description: "Number of days the app will monitor to learn what a 'normal' baseline looks like before alerting you."
+        section("Weekly Chase Game (Room Occupied Trigger)") {
+            paragraph "<i>Select a virtual switch that turns ON when the game room is occupied. The app will automatically select a random 'Chase Game' for the week and announce it BEFORE announcing the rest of the booting arcades.</i>"
+            
+            if (state.currentChaseGame) {
+                def cg = state.currentChaseGame
+                paragraph "<div style='padding: 10px; background: #2c3e50; color: #ecf0f1; border-radius: 5px; border-left: 4px solid #f1c40f;'><b>🏆 Current Weekly Chase Game:</b> ${cg.gameName}<br><b>Score to Beat:</b> ${formatScore(cg.topScore)} (by ${cg.topUser})</div>"
+            }
+            
+            input "occupiedSwitch", "capability.switch", title: "Game Room Occupied Switch", required: false
+            
+            def defChaseMsg = "Welcome to the Game Room! This week's Chase Game is %game%. The score to beat is %allScore% by %allUser%!"
+            input "chaseGameMsg", "text", title: "Chase Game Announcement", defaultValue: defChaseMsg, required: true
+            
+            input "btnForceChase", "button", title: "🎲 Force Select New Chase Game", description: "Randomly pick a new Chase Game from the database right now."
         }
 
-        section("Appliance Scheduling & Shutdown", hideable: true, hidden: true) {
-            input "scheduleStart", "time", title: "Time to turn appliances OFF", required: false
-            input "scheduleEnd", "time", title: "Time to turn appliances ON", required: false
-            input "safeShutdownThreshold", "decimal", title: "Safe Shutdown Power Threshold (Watts)", defaultValue: 15.0, required: true, description: "Appliance stays on if drawing more than this."
-            paragraph "Note: Refrigerator and Chest Freezer are permanently excluded from time-based schedule shutdowns."
-        }
-        
-        section("Manual Override Button", hideable: true, hidden: true) {
-            input "overrideButton", "capability.pushableButton", title: "Override Button(s)", required: false, multiple: true
-            input "legacyOverrideButton", "capability.button", title: "Legacy Button Devices (Use this if your button didn't show in the list above)", required: false, multiple: true
-            input "buttonNumber", "text", title: "Button Number(s) (Comma separated, e.g., 1, 2)", defaultValue: "1", required: false, description: "Leave blank to allow all buttons on the device."
-            input "buttonAction", "enum", title: "Button Action(s)", options: ["pushed", "held", "doubleTapped", "released", "tapped", "multiTapped"], defaultValue: "pushed", required: false, multiple: true
-            input "overrideModes", "mode", title: "Only allow override in specific modes?", required: false, multiple: true
-        }
-        
-        section("Refrigerator", hideable: true, hidden: true) {
-            input "refrigeratorSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "refrigeratorPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "refrigeratorEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "refrigeratorTemp", "capability.temperatureMeasurement", title: "Internal Temperature Sensor", required: false
-            input "refrigeratorRoomTemp", "capability.temperatureMeasurement", title: "Room Temperature Sensor", required: false
-            input "refrigeratorOutsideTemp", "capability.temperatureMeasurement", title: "Outside Air Temperature Sensor", required: false
-            input "refrigeratorTempThreshold", "decimal", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 42.0, required: false
-            input "refrigeratorSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 800.0, required: false
-            input "refrigeratorRunWatts", "decimal", title: "Compressor Running Threshold (Watts)", defaultValue: 80.0, required: false, description: "Watts required to consider the compressor 'running'."
-            input "refrigeratorStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "refrigeratorDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
-            input "refrigeratorMaintenanceHours", "decimal", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000.0, required: false
+        section("Dashboard Integration (Global Leaderboard Tile)", hideable: true, hidden: true) {
+            paragraph "<i>Push a consolidated HTML leaderboard of ALL machines to a virtual device. (Individual machine devices can be created in the machine setup pages below).</i>"
+            input "leaderboardDevice", "capability.actuator", title: "Target Virtual Device", required: false
+            input "leaderboardAttribute", "text", title: "Target Attribute Name", defaultValue: "leaderboardTile", required: true
+            input "leaderboardType", "enum", title: "Leaderboard Data Type", options: ["Overall Champions", "Weekly Champions", "Both"], defaultValue: "Overall Champions", required: true
             
-            paragraph "Active Protection: If this switch is ever turned OFF manually or by another app, it will be instantly forced back ON. (Mode-based shutdown has been disabled for safety)."
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "refrigeratorAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "refrigeratorAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "refrigeratorAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "refrigeratorPushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "refrigeratorPushEvents", "enum", title: "Send these events to Push:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-
-            input "refrigeratorTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "refrigeratorTtsEvents", "enum", title: "Send these events to TTS:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-
-            input "refrigeratorAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "refrigeratorAudioEvents", "enum", title: "Play track for these events:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-            input "refrigeratorAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
-        }
-     
-        section("Chest Freezer", hideable: true, hidden: true) {
-            input "chestFreezerSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "chestFreezerPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "chestFreezerEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "chestFreezerTemp", "capability.temperatureMeasurement", title: "Internal Temperature Sensor", required: false
-            input "chestFreezerRoomTemp", "capability.temperatureMeasurement", title: "Room Temperature Sensor", required: false
-            input "chestFreezerOutsideTemp", "capability.temperatureMeasurement", title: "Outside Air Temperature Sensor", required: false
-            input "chestFreezerTempThreshold", "decimal", title: "Max Internal Temperature Alert Threshold (°F/°C)", defaultValue: 15.0, required: false
-            input "chestFreezerSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 800.0, required: false
-            input "chestFreezerRunWatts", "decimal", title: "Compressor Running Threshold (Watts)", defaultValue: 80.0, required: false, description: "Watts required to consider the compressor 'running'."
-            input "chestFreezerStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "chestFreezerDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cooling cycle complete."
-            input "chestFreezerMaintenanceHours", "decimal", title: "Maintenance Alert Interval (Total Run Hours)", defaultValue: 2000.0, required: false
-            
-            paragraph "Active Protection: If this switch is ever turned OFF manually or by another app, it will be instantly forced back ON. (Mode-based shutdown has been disabled for safety)."
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "chestFreezerAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "chestFreezerAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "chestFreezerAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "chestFreezerPushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "chestFreezerPushEvents", "enum", title: "Send these events to Push:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-
-            input "chestFreezerTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "chestFreezerTtsEvents", "enum", title: "Send these events to TTS:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-
-            input "chestFreezerAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "chestFreezerAudioEvents", "enum", title: "Play track for these events:", options: ["temp": "Temperature Alerts", "spike": "Power Spikes", "health": "Health & Maintenance", "protection": "Protection Force-ON"], multiple: true, required: false
-            input "chestFreezerAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
-        }
-     
-        section("Hot Water Heater", hideable: true, hidden: true) {
-            input "hotWaterHeaterSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "hotWaterHeaterPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "hotWaterHeaterEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "hotWaterHeaterSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 6000.0, required: false
-            input "hotWaterHeaterRunWatts", "decimal", title: "Heating Threshold (Watts)", defaultValue: 1000.0, required: false
-            input "hotWaterHeaterStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "hotWaterHeaterDebounce", "decimal", title: "Heating Pause/Debounce Time (Minutes)", defaultValue: 5.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
-            
-            paragraph "Mode-Based Power Control"
-            input "hotWaterHeaterTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
-            input "hotWaterHeaterTurnOnModes", "mode", title: "Turn ON switch when entering these modes:", required: false, multiple: true
-            
-            paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
-            input "hotWaterHeaterEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "hotWaterHeaterCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
-            
-            paragraph "Auto-Off Settings"
-            input "hotWaterHeaterAutoOff", "bool", title: "Turn OFF switch automatically when heating cycle finishes?", defaultValue: false, required: false
-            input "hotWaterHeaterAutoOffModes", "mode", title: "Only Auto-Off during these modes? (Leave blank for all)", required: false, multiple: true
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "hotWaterHeaterAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "hotWaterHeaterAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "hotWaterHeaterAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "hotWaterHeaterPushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "hotWaterHeaterPushEvents", "enum", title: "Send these events to Push:", options: ["cycle": "Heating Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "hotWaterHeaterTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "hotWaterHeaterTtsEvents", "enum", title: "Send these events to TTS:", options: ["cycle": "Heating Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "hotWaterHeaterAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "hotWaterHeaterAudioEvents", "enum", title: "Play track for these events:", options: ["cycle": "Heating Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-            input "hotWaterHeaterAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
+            input "btnUpdateTile", "button", title: "🔄 Force Update All Tiles"
         }
 
-        section("Washer / Dryer Combo", hideable: true, hidden: true) {
-            input "washerDryerSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "washerDryerPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "washerDryerEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "washerDryerSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 3000.0, required: false
-            input "washerDryerRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 20.0, required: false
-            input "washerDryerStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "washerDryerDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
-            
-            paragraph "Mode-Based Power Control"
-            input "washerDryerTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
-            input "washerDryerTurnOnModes", "mode", title: "Turn ON switch when entering these modes:", required: false, multiple: true
-            
-            paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
-            input "washerDryerEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "washerDryerCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
-            
-            paragraph "Auto-Off Settings"
-            input "washerDryerAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
-            input "washerDryerAutoOffModes", "mode", title: "Only Auto-Off during these modes? (Leave blank for all)", required: false, multiple: true
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "washerDryerAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "washerDryerAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "washerDryerAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "washerDryerPushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "washerDryerPushEvents", "enum", title: "Send these events to Push:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "washerDryerTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "washerDryerTtsEvents", "enum", title: "Send these events to TTS:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "washerDryerAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "washerDryerAudioEvents", "enum", title: "Play track for these events:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-            input "washerDryerAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
-        }
-        
-        section("Dishwasher", hideable: true, hidden: true) {
-            input "dishwasherSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "dishwasherPower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "dishwasherEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "dishwasherSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 1800.0, required: false
-            input "dishwasherRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 15.0, required: false
-            input "dishwasherStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "dishwasherDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 15.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
-            
-            paragraph "Mode-Based Power Control"
-            input "dishwasherTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
-            input "dishwasherTurnOnModes", "mode", title: "Turn ON switch when entering these modes:", required: false, multiple: true
-            
-            paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
-            input "dishwasherEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "dishwasherCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
-            
-            paragraph "Auto-Off Settings"
-            input "dishwasherAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
-            input "dishwasherAutoOffModes", "mode", title: "Only Auto-Off during these modes? (Leave blank for all)", required: false, multiple: true
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "dishwasherAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "dishwasherAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "dishwasherAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "dishwasherPushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "dishwasherPushEvents", "enum", title: "Send these events to Push:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "dishwasherTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "dishwasherTtsEvents", "enum", title: "Send these events to TTS:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "dishwasherAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "dishwasherAudioEvents", "enum", title: "Play track for these events:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-            input "dishwasherAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
-        }
-        
-        section("Microwave", hideable: true, hidden: true) {
-            input "microwaveSwitch", "capability.switch", title: "Appliance Switch", required: false
-            input "microwavePower", "capability.powerMeter", title: "Power Meter (Watts)", required: false
-            input "microwaveEnergy", "capability.energyMeter", title: "Energy Meter (kWh)", required: false
-            input "microwaveSpike", "decimal", title: "Spike Warning Threshold (Watts)", defaultValue: 2000.0, required: false
-            input "microwaveRunWatts", "decimal", title: "Cycle Running Threshold (Watts)", defaultValue: 15.0, required: false
-            input "microwaveStartDelay", "decimal", title: "Cycle Start Delay (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long above the running threshold before logging a cycle."
-            input "microwaveDebounce", "decimal", title: "Cycle Pause/Debounce Time (Minutes)", defaultValue: 1.0, required: false, description: "Wait this long after power drops before declaring cycle complete."
-            
-            paragraph "Mode-Based Power Control"
-            input "microwaveTurnOffModes", "mode", title: "Turn OFF switch when entering these modes:", required: false, multiple: true
-            input "microwaveTurnOnModes", "mode", title: "Turn ON switch when entering these modes:", required: false, multiple: true
-            
-            paragraph "⚠️ Cool Down / Dry Out Protection\nHigh-heat or water-based appliances need time after running to dissipate heat and run internal moisture-reduction fans. Cutting power immediately after a cycle can cause mold growth or overheat internal components. Adjust this duration carefully."
-            input "microwaveEnableCoolDown", "bool", title: "Enable Post-Cycle Cool Down/Dry Out?", defaultValue: true, required: false
-            input "microwaveCoolDownMins", "decimal", title: "Cool Down Duration (Minutes)", defaultValue: 120.0, required: false
-            
-            paragraph "Auto-Off Settings"
-            input "microwaveAutoOff", "bool", title: "Turn OFF switch automatically when cycle finishes?", defaultValue: false, required: false
-            input "microwaveAutoOffModes", "mode", title: "Only Auto-Off during these modes? (Leave blank for all)", required: false, multiple: true
-            
-            paragraph "Alert Gatekeeping (Time & Modes)"
-            input "microwaveAlertModes", "mode", title: "Only send alerts during these modes? (Leave blank for all)", required: false, multiple: true
-            input "microwaveAlertStartTime", "time", title: "Only send alerts after this time?", required: false
-            input "microwaveAlertEndTime", "time", title: "Only send alerts before this time?", required: false
-            
-            paragraph "Granular Device Alerts"
-            input "microwavePushNotification", "capability.notification", title: "Push Notification Device", required: false, multiple: true
-            input "microwavePushEvents", "enum", title: "Send these events to Push:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "microwaveTtsDevice", "capability.speechSynthesis", title: "Sonos / TTS Device", required: false, multiple: true
-            input "microwaveTtsEvents", "enum", title: "Send these events to TTS:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-
-            input "microwaveAudioDevice", "capability.audioNotification", title: "Zooz / Audio Siren Device", required: false, multiple: true
-            input "microwaveAudioEvents", "enum", title: "Play track for these events:", options: ["cycle": "Cycle Complete", "spike": "Power Spikes", "health": "Health & Maintenance"], multiple: true, required: false
-            input "microwaveAudioTrack", "number", title: "Audio Track Number (For Sirens/Chimes)", defaultValue: 1, required: false
-        }
-    }
-}
-
-def maintenancePage() {
-    dynamicPage(name: "maintenancePage", title: "Hardware Maintenance", install: false, uninstall: false) {
-        def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
-        
-        section("Reset Appliance Health") {
-            paragraph "Select an appliance to immediately reset its health warnings (e.g., 'Clean Coils', 'Creeping Watts', 'High Temp'). This will recalculate baselines but will keep your 7-Day run counts and financial savings intact."
-            appliances.each { key, name ->
-                href(name: "reset_${key}", title: "🛠️ Reset ${name}", description: "Clear all health & maintenance warnings for this appliance.", page: "doResetPage", params: [applianceKey: key, applianceName: name])
+        section("External Web Logging (Player Portal)") {
+            if (state.accessToken) {
+                def localUrl = "${getFullLocalApiServerUrl()}/log?access_token=${state.accessToken}"
+                def cloudUrl = "${getFullApiServerUrl()}/log?access_token=${state.accessToken}"
+                
+                paragraph "<b>Local Network Link:</b><br><a href='${localUrl}' target='_blank' style='font-size: 12px; word-break: break-all;'>${localUrl}</a>"
+                paragraph "<b>Cloud/Remote Link:</b><br><a href='${cloudUrl}' target='_blank' style='font-size: 12px; word-break: break-all;'>${cloudUrl}</a>"
+            } else {
+                paragraph "<span style='color:red'><b>OAuth not enabled!</b> You must enable OAuth in the Hubitat App Code editor, then open this app again.</span>"
             }
         }
-    }
-}
-
-def doResetPage(params) {
-    if (params?.applianceKey) {
-        def key = params.applianceKey
-        def name = params.applianceName
         
-        // Clear Warning States
-        state.remove("${key}_struggleCount")
-        state.remove("${key}_creepWarning")
-        state.remove("${key}_spikeWarning")
-        state.remove("${key}_spikePending")
-        state.remove("${key}_tempWarningActive")
-        state.remove("${key}_tempCreepWarning")
-        state.remove("${key}_totalRunHours")
-    
-        // Clear Learning States
-        state.remove("${key}_learningCyclesCount")
-        state.remove("${key}_learningCyclesTotalMins")
-        state.remove("${key}_learningRoomTempTotal")
-        state.remove("${key}_learningOutsideTempTotal")
-        state.remove("${key}_baselineRoomTemp")
-        state.remove("${key}_baselineOutsideTemp")
-        
-        // Reset Day-Based Learning Clock
-        state["${key}_learningStartTime"] = now()
-        state["${key}_learningPhaseComplete"] = false
+        section("Global Audio Settings & Restrictions") {
+            input "masterEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch", required: false, description: "If selected, the app will ONLY function when this switch is ON."
+            input "guestModeSwitch", "capability.switch", title: "Guest Mode Switch", required: false, description: "When ON, standard 'Powering up' announcements and Chase Games are skipped to keep the room quiet. New High Score alerts will still play."
+            input "requireInternet", "bool", title: "Require Internet for TTS?", defaultValue: true, description: "If ON, the app runs a lightning-fast ping to check connectivity. If offline, it silently drops announcements to prevent cloud-TTS log errors."
+            
+            // --- UPDATED CHIME SETTINGS ---
+            input "enableChime", "bool", title: "Enable Pre-Speech 'Throat Clear' Chime?", defaultValue: false, submitOnChange: true
+            if (enableChime) {
+                input "chimeUrl", "text", title: "Chime Audio File URL (MP3/WAV)", description: "e.g., http://127.0.0.1:8080/local/chime.mp3", required: true
+                input "chimeDuration", "number", title: "Chime Duration (Seconds)", defaultValue: 2, required: true
+            }
 
-        // Capture inefficient state before reset for ROI tracking
-        if (state["${key}_baselineAvg"] && state["${key}_avgPower"]) {
-            def currentAvg = state["${key}_avgPower"].toString().toDouble()
-            def baseline = state["${key}_baselineAvg"].toString().toDouble()
-            if (currentAvg > baseline) {
-                state["${key}_inefficientPowerMark"] = currentAvg
+            input "ttsSpeaker", "capability.speechSynthesis", title: "Game Room Speaker(s)", multiple: true, required: true
+            input "ttsVolume", "number", title: "Announcement Default Volume (0-100)", required: false
+            input "enableWakeupPad", "bool", title: "Enable Speaker Wake-Up Padding?", defaultValue: false
+            
+            paragraph "<b>Mode Restrictions</b>"
+            input "allowedModes", "mode", title: "Allowed House Modes", multiple: true, required: false, description: "Only allow TTS announcements if the house is in one of these modes."
+            
+            paragraph "<b>Quiet Hours Threshold</b>"
+            input "quietHoursStart", "time", title: "Quiet Hours Start Time", required: false
+            input "quietHoursEnd", "time", title: "Quiet Hours End Time", required: false
+            input "quietVolume", "number", title: "Quiet Hours Target Volume (0-100)", required: false, description: "Forces the speaker to this lower volume during the configured hours."
+        }
+
+        section("Machine Configuration") {
+            input "numGames", "number", title: "Number of Machines (1-20)", required: true, defaultValue: 1, range: "1..20", submitOnChange: true
+        }
+
+        if ((settings.numGames ?: 0) > 0) {
+            for (int i = 1; i <= (settings.numGames as Integer); i++) {
+                section("${settings["gameName_${i}"] ?: "Machine ${i}"}", hideable: true, hidden: true) { 
+                    href(name: "gameHref${i}", page: "gamePage", params: [gameNum: i], title: "Configure ${settings["gameName_${i}"] ?: "Machine ${i}"}") 
+                }
+            }
+        }
+        
+        section("Automated Weekly Resets", hideable: true, hidden: true) {
+            input "enableAutoReset", "bool", title: "Enable Automated Weekly Reset?", defaultValue: false, submitOnChange: true
+            if (enableAutoReset) {
+                input "resetDay", "enum", title: "Reset Day", options: ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"], defaultValue: "SUN", required: true
+                input "resetTime", "time", title: "Reset Time", required: true
             }
         }
 
-        // Recalibrate Baselines
-        state.remove("${key}_baselineAvg")
-        state.remove("${key}_idlePowerAvg")
-        state.remove("${key}_baselineCycleMins")
-        state.remove("${key}_baselineTemp")
+        section("System History & Manual Override", hideable: true, hidden: true) {
+            if (state.historyLog && state.historyLog.size() > 0) {
+                def histHtml = "<div style='max-height: 250px; overflow-y: auto; background-color: #f4f4f4; border: 1px solid #ccc; padding: 10px; font-family: monospace; font-size: 12px; line-height: 1.4;'>"
+                state.historyLog.each { logEntry ->
+                    histHtml += "<div style='margin-bottom: 6px; border-bottom: 1px dashed #ddd; padding-bottom: 6px;'>${logEntry}</div>"
+                }
+                histHtml += "</div>"
+                paragraph histHtml
+            } else {
+                paragraph "<i>No history logged yet.</i>"
+            }
+            input "btnResetWeekly", "button", title: "⚠️ Force Reset ALL Weekly Scores Now"
+        }
+    }
+}
+
+def gamePage(params) {
+    def gNum = params?.gameNum ?: state.currentGame ?: 1
+    state.currentGame = gNum
+    
+    dynamicPage(name: "gamePage", title: "Machine Setup", install: false, uninstall: false, previousPage: "mainPage") {
+        section("Hardware & Identification") {
+            input "gameName_${gNum}", "text", title: "Machine Name", defaultValue: "Arcade Cabinet", required: true, submitOnChange: true
+            input "gameType_${gNum}", "enum", title: "Machine Type", options: ["Single Game (e.g. Pop A Shot)", "Multi-Game (Arcade/Pinball)"], defaultValue: "Single Game (e.g. Pop A Shot)", required: true, submitOnChange: true
+            input "gameSwitch_${gNum}", "capability.switch", title: "Power Switch / Trigger", required: true
+        }
         
-        state["${key}_context"] = "Maintenance Reset"
-        
-        log.info "Maintenance reset performed for ${name}. Restarting learning phase."
-        
-        dynamicPage(name: "doResetPage", title: "${name} Reset Complete", nextPage: "mainPage") {
-            section() {
-                paragraph "✅ The health and maintenance warnings for your ${name} have been successfully cleared.\n\nThe system has refreshed the baselines and will begin monitoring its normal operations anew over the next ${settings["learningCurveDays"] ?: 7} days to learn a fresh baseline."
+        section("Dedicated Child Device") {
+            paragraph "<i>Create a virtual device dedicated entirely to this machine. The app will automatically push this machine's Top 3 HTML leaderboard to the child device so you can display it on a dashboard.</i>"
+            input "btnCreateChild_${gNum}", "button", title: "➕ Create High Score Child Device"
+            
+            def childDni = "gameAnnouncer-${app.id}-m${gNum}"
+            if (getChildDevice(childDni)) {
+                paragraph "<span style='color: #27ae60;'><b>Child Device Exists:</b> ${settings["gameName_${gNum}"] ?: "Machine ${gNum}"} Leaderboard</span>"
             }
         }
-    } else {
-        dynamicPage(name: "doResetPage", title: "Error", nextPage: "mainPage") {
-            section() { paragraph "Appliance not found. Please try again." }
-        }
-    }
-}
-
-def clearDataPage() {
-    clearAllData()
-    dynamicPage(name: "clearDataPage", title: "Data Successfully Cleared", nextPage: "mainPage") {
-        section() {
-            paragraph "All stored baselines, historical run times, health statuses, and ROI savings have been permanently deleted.\n\nThe system has been re-initialized and is pulling fresh starting points for your hardware."
-        }
-    }
-}
-
-def clearAllData() {
-    def appliances = ["refrigerator", "chestFreezer", "hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    
-    appliances.each { key ->
-        state.remove("${key}_startEnergy")
-        state.remove("${key}_avgPower")
-        state.remove("${key}_idlePowerAvg")
-        state.remove("${key}_roiSavings")
-        state.remove("${key}_maintRoiSavings") 
-        state.remove("${key}_inefficientPowerMark") 
-        state.remove("${key}_totalRunHours")
-        state.remove("${key}_struggleCount")
-        state.remove("${key}_7DayRunCount")
-        state.remove("${key}_todayRunCount")
-        state.remove("${key}_7DayTotalCycleMins")
-        state.remove("${key}_lastRunLengthMins")
-        state.remove("${key}_stopPending")
-        state.remove("${key}_startPending")
-        state.remove("${key}_tentativeStartTime")
-        state.remove("${key}_baselineAvg")
-        state.remove("${key}_baselineCycleMins")
-        state.remove("${key}_creepWarning")
-        state.remove("${key}_spikeWarning")
-        state.remove("${key}_spikePending")
-        state.remove("${key}_isRunning")
-        state.remove("${key}_cycleStartTime")
-        state.remove("${key}_cycleEndTime")
-        state.remove("${key}_offTimeStart")
-        state.remove("${key}_context")
-        state.remove("${key}_avgTemp")
-        state.remove("${key}_baselineTemp")
-        state.remove("${key}_tempWarningActive")
-        state.remove("${key}_tempCreepWarning")
-        state.remove("${key}_dailyAvgRoomTemp")
-        state.remove("${key}_dailyMaxOutsideTemp")
         
-        // Clear Learning States
-        state.remove("${key}_learningCyclesCount")
-        state.remove("${key}_learningCyclesTotalMins")
-        state.remove("${key}_learningRoomTempTotal")
-        state.remove("${key}_learningOutsideTempTotal")
-        state.remove("${key}_baselineRoomTemp")
-        state.remove("${key}_baselineOutsideTemp")
-        state.remove("${key}_learningStartTime")
-        state.remove("${key}_learningPhaseComplete")
+        section("Database Management") {
+            input "btnWipeMachine_${gNum}", "button", title: "🗑️ Wipe Database for ${settings["gameName_${gNum}"] ?: "This Machine"}"
+        }
+        
+        section("Custom Announcement") {
+            paragraph "<i>Variables:</i><br>• <b>%machine%</b> - Hardware Name<br>• <b>%game%</b> - Specific Game Name<br>• <b>%allUser%</b> - #1 Overall Champ<br>• <b>%allScore%</b> - #1 Overall Score<br>• <b>%weekUser%</b> - #1 Weekly Champ<br>• <b>%weekScore%</b> - #1 Weekly Score"
+            
+            def defaultMsg = "The last game played on %machine% was %game%. The overall high score is %allScore%, held by %allUser%. This week's current leader is %weekUser% with a score of %weekScore%."
+            input "customMsg_${gNum}", "text", title: "TTS Announcement String", required: true, defaultValue: defaultMsg
+            input "btnTestGame_${gNum}", "button", title: "▶️ Test Announcement Audio"
+        }
     }
-    
-    log.info "All Energy Management Controller data has been reset by the user."
+}
+
+def installed() {
+    log.info "Game Room Announcer Installed."
     initialize()
 }
 
-def installed() { initialize() }
-def updated() { unsubscribe(); unschedule(); initialize() }
+def updated() {
+    log.info "Game Room Announcer Updated."
+    unsubscribe()
+    unschedule()
+    
+    def numG = settings.numGames ?: 0
+    if (numG > 0 && state.gameStats) {
+        for (int i = 1; i <= (numG as Integer); i++) {
+            def gName = settings["gameName_${i}"] ?: "Machine ${i}"
+            def mStats = state.gameStats["${i}"]
+            
+            if (mStats) {
+                if (mStats.lastPlayed == "Machine ${i}") mStats.lastPlayed = gName
+                if (mStats.scores && mStats.scores["Machine ${i}"] && gName != "Machine ${i}") {
+                    mStats.scores[gName] = mStats.scores["Machine ${i}"]
+                    mStats.scores.remove("Machine ${i}")
+                }
+            }
+        }
+    }
+    
+    initialize()
+    updateLeaderboardTile()
+}
+
+def ensureStateMaps() {
+    if (state.historyLog == null) state.historyLog = []
+    if (atomicState.ttsQueue == null) atomicState.ttsQueue = []
+    if (atomicState.isSpeaking == null) atomicState.isSpeaking = false
+    if (state.gameStats == null) state.gameStats = [:]
+}
 
 def initialize() {
-    def appliances = ["refrigerator", "chestFreezer", "hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
+    ensureStateMaps()
     
-    appliances.each { key ->
-        def pMeter = settings["${key}Power"]
-        def eMeter = settings["${key}Energy"]
-        def sw = settings["${key}Switch"]
-        
-        if (!state["${key}_startEnergy"] && eMeter) {
-            state["${key}_startEnergy"] = eMeter.currentValue("energy")?.toString()?.toDouble() ?: 0.0
-        }
-        if (!state["${key}_avgPower"]) state["${key}_avgPower"] = 0.0
-        if (!state["${key}_idlePowerAvg"]) state["${key}_idlePowerAvg"] = 0.0
-        if (!state["${key}_roiSavings"]) state["${key}_roiSavings"] = 0.0
-        if (!state["${key}_maintRoiSavings"]) state["${key}_maintRoiSavings"] = 0.0
-        if (!state["${key}_totalRunHours"]) state["${key}_totalRunHours"] = 0.0
-        if (!state["${key}_struggleCount"]) state["${key}_struggleCount"] = 0
-        if (!state["${key}_7DayRunCount"]) state["${key}_7DayRunCount"] = 0
-        if (!state["${key}_todayRunCount"]) state["${key}_todayRunCount"] = 0
-        if (!state["${key}_7DayTotalCycleMins"]) state["${key}_7DayTotalCycleMins"] = 0.0
-        if (!state["${key}_lastRunLengthMins"]) state["${key}_lastRunLengthMins"] = 0.0
-        if (!state["${key}_context"]) state["${key}_context"] = "Normal"
-        if (!state["${key}_cycleEndTime"]) state["${key}_cycleEndTime"] = 0
-        
-        // Day-Based Learning Initialization
-        if (!state["${key}_learningStartTime"]) state["${key}_learningStartTime"] = now()
-        if (state["${key}_learningPhaseComplete"] == null) state["${key}_learningPhaseComplete"] = false
-        
-        // Force-fetch current temperatures on startup instead of waiting for events
-        if (state["${key}_dailyAvgRoomTemp"] == null || state["${key}_dailyAvgRoomTemp"] == 0.0) {
-            def rSens = settings["${key}RoomTemp"]
-            state["${key}_dailyAvgRoomTemp"] = rSens ? (rSens.currentValue("temperature")?.toString()?.toDouble() ?: 0.0) : 0.0
-        }
-        if (state["${key}_dailyMaxOutsideTemp"] == null || state["${key}_dailyMaxOutsideTemp"] == -100.0) {
-            def oSens = settings["${key}OutsideTemp"]
-            state["${key}_dailyMaxOutsideTemp"] = oSens ? (oSens.currentValue("temperature")?.toString()?.toDouble() ?: -100.0) : -100.0
-        }
-        
-        state["${key}_stopPending"] = false
-        state["${key}_startPending"] = false
-        state["${key}_spikePending"] = false
-        
-        if (pMeter) subscribe(pMeter, "power", powerHandler)
-        if (sw) subscribe(sw, "switch", universalSwitchHandler)
-    }
-
-    // Always-On Protection for Critical Hardware
-    if (settings["refrigeratorSwitch"]) {
-        subscribe(settings["refrigeratorSwitch"], "switch", alwaysOnProtectionHandler)
-    }
-    if (settings["chestFreezerSwitch"]) {
-        subscribe(settings["chestFreezerSwitch"], "switch", alwaysOnProtectionHandler)
+    if (occupiedSwitch) {
+        subscribe(occupiedSwitch, "switch.on", occupiedOnHandler)
     }
     
-    // Internal Temperature Subscriptions
-    if (settings["refrigeratorTemp"]) {
-        subscribe(settings["refrigeratorTemp"], "temperature", tempHandler)
-    }
-    if (settings["chestFreezerTemp"]) {
-        subscribe(settings["chestFreezerTemp"], "temperature", tempHandler)
-    }
-    
-    // External/Environmental Temperature Subscriptions
-    if (settings["refrigeratorRoomTemp"]) subscribe(settings["refrigeratorRoomTemp"], "temperature", roomTempHandler)
-    if (settings["refrigeratorOutsideTemp"]) subscribe(settings["refrigeratorOutsideTemp"], "temperature", outsideTempHandler)
-    if (settings["chestFreezerRoomTemp"]) subscribe(settings["chestFreezerRoomTemp"], "temperature", roomTempHandler)
-    if (settings["chestFreezerOutsideTemp"]) subscribe(settings["chestFreezerOutsideTemp"], "temperature", outsideTempHandler)
-    
-    // Scheduling
-    if (scheduleStart) schedule(scheduleStart, triggerTurnOff)
-    if (scheduleEnd) schedule(scheduleEnd, triggerTurnOn)
-    
-    // Per-Appliance Mode Tracking 
-    subscribe(location, "mode", modeChangeHandler)
-    
-    // Multi-Button / Multi-Action Override
-    def allOverrideButtons = []
-    if (overrideButton) allOverrideButtons += overrideButton
-    if (legacyOverrideButton) allOverrideButtons += legacyOverrideButton
-
-    if (allOverrideButtons) {
-        def actions = buttonAction ?: ["pushed"]
-        if (!(actions instanceof List)) actions = [actions]
-        
-        actions.each { action ->
-            subscribe(allOverrideButtons, action, buttonHandler)
-            // Support for legacy ST event formats
-            subscribe(allOverrideButtons, "button.${action}", buttonHandler)
-        }
-    }
-    
-    schedule("0 0 0 * * ?", resetDailyCounters)
-    schedule("0 5 0 ? * SUN", resetWeeklyCounters)
-    schedule("0 0 2 * * ?", dailyHealthCheck) 
-    
-    // --- VOICE BUTLER SYNC ---
-    runEvery5Minutes("syncApplianceHealthToButler")
-    syncApplianceHealthToButler()
-}
-
-def roomTempHandler(evt) {
-    def deviceId = evt.device.id
-    def currentTemp = evt.value.toString().toDouble()
-    def targets = ["refrigerator", "chestFreezer"]
-    
-    targets.each { key ->
-        if (settings["${key}RoomTemp"]?.id == deviceId) {
-            def avg = state["${key}_dailyAvgRoomTemp"]?.toString()?.toDouble() ?: 0.0
-            if (avg == 0.0) {
-                  state["${key}_dailyAvgRoomTemp"] = currentTemp
-            } else {
-                state["${key}_dailyAvgRoomTemp"] = (avg * 0.95) + (currentTemp * 0.05)
-            }
-        }
-    }
-}
-
-def outsideTempHandler(evt) {
-    def deviceId = evt.device.id
-    def currentTemp = evt.value.toString().toDouble()
-    def targets = ["refrigerator", "chestFreezer"]
-  
-    targets.each { key ->
-        if (settings["${key}OutsideTemp"]?.id == deviceId) {
-            def currentMax = state["${key}_dailyMaxOutsideTemp"]?.toString()?.toDouble() ?: -100.0
-            if (currentTemp > currentMax) {
-                state["${key}_dailyMaxOutsideTemp"] = currentTemp
-            }
-        }
-    }
-}
-
-def resetDailyCounters() {
-    def appliances = ["refrigerator", "chestFreezer", "hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    appliances.each { key ->
-        state["${key}_todayRunCount"] = 0
-        
-        // Reset max outside temp to current value (if sensor exists) or default -100
-        def outSensor = settings["${key}OutsideTemp"]
-        state["${key}_dailyMaxOutsideTemp"] = outSensor ? (outSensor.currentValue("temperature")?.toString()?.toDouble() ?: -100.0) : -100.0
-        
-        // Let room temp continue rolling average, or snap it to current to start fresh for the day
-        def roomSensor = settings["${key}RoomTemp"]
-        if (roomSensor) {
-            state["${key}_dailyAvgRoomTemp"] = roomSensor.currentValue("temperature")?.toString()?.toDouble() ?: 0.0
-        }
-    }
-}
-
-def universalSwitchHandler(evt) {
-    def deviceId = evt.device.id
-    def evtValue = evt.value
-    def isPhysical = evt.isPhysical()
-    
-    def appliances = ["refrigerator", "chestFreezer", "hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    appliances.each { key ->
-        if (settings["${key}Switch"]?.id == deviceId) {
-            if (state["${key}_systemActionPending"]) {
-                state["${key}_systemActionPending"] = false
-            } else {
-                state["${key}_context"] = isPhysical ? "Physical Switch" : "External App / Manual"
-            }
-        }
-    }
-}
-
-def tempHandler(evt) {
-    def deviceId = evt.device.id
-    def currentTemp = evt.value.toString().toDouble()
-    def targets = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer"]
-    
-    targets.each { key, name ->
-        if (settings["${key}Temp"]?.id == deviceId) {
+    def numG = settings.numGames ?: 0
+    if (numG > 0) {
+        for (int i = 1; i <= (numG as Integer); i++) {
+            def sw = settings["gameSwitch_${i}"]
+            if (sw) subscribe(sw, "switch.on", switchOnHandler)
             
-            // 1. Cross-Threshold Warning
-            def threshold = settings["${key}TempThreshold"]?.toString()?.toDouble()
-            if (threshold != null && currentTemp >= threshold) {
-                if (!state["${key}_tempWarningActive"]) {
-                    sendAlert("🚨 ${name} TEMPERATURE ALERT: Current temp is ${currentTemp}°, which exceeds the safe threshold of ${threshold}°!", key, "temp")
-                    state["${key}_tempWarningActive"] = true
-                }
-            } else if (threshold != null && currentTemp < (threshold - 1.0)) {
-                state["${key}_tempWarningActive"] = false
-            }
-            
-            // 2. Gradual Creeping Warning
-            def avgTemp = state["${key}_avgTemp"]?.toString()?.toDouble() ?: currentTemp
-            def baselineTemp = state["${key}_baselineTemp"]?.toString()?.toDouble() ?: avgTemp
-            
-            // Update slow moving average
-            state["${key}_avgTemp"] = (avgTemp * 0.95) + (currentTemp * 0.05)
-            
-            if (currentTemp > (baselineTemp + 5.0)) {
-                if (!state["${key}_tempCreepWarning"]) {
-                    sendAlert("⚠️ ${name} TEMPERATURE CREEP: Baseline is ${Math.round(baselineTemp)}°, but average is creeping up (currently ${currentTemp}°). Check door seal or condenser coils.", key, "temp")
-                    state["${key}_tempCreepWarning"] = true
-                }
-            } else if (currentTemp <= (baselineTemp + 2.0)) {
-                state["${key}_tempCreepWarning"] = false
-            }
-        }
-    }
-}
-
-def alwaysOnProtectionHandler(evt) {
-    if (evt.value == "off") {
-        def deviceId = evt.device.id
-        
-        if (settings["refrigeratorSwitch"]?.id == deviceId) {
-            log.warn "Protection Triggered: Refrigerator turned off. Forcing ON."
-            state["refrigerator_systemActionPending"] = true
-            state["refrigerator_context"] = "Protection Force-ON"
-            executeSwitchCommandAndRefresh(settings["refrigeratorSwitch"], "on")
-            sendAlert("🚨 CRITICAL PROTECTION: Your Refrigerator switch was turned OFF! The system has automatically forced it back ON to prevent food spoilage.", "refrigerator", "protection")
-        } else if (settings["chestFreezerSwitch"]?.id == deviceId) {
-            log.warn "Protection Triggered: Chest Freezer turned off. Forcing ON."
-            state["chestFreezer_systemActionPending"] = true
-            state["chestFreezer_context"] = "Protection Force-ON"
-            executeSwitchCommandAndRefresh(settings["chestFreezerSwitch"], "on")
-            sendAlert("🚨 CRITICAL PROTECTION: Your Chest Freezer switch was turned OFF! The system has automatically forced it back ON to prevent food spoilage.", "chestFreezer", "protection")
-        }
-    }
-}
-
-def modeChangeHandler(evt) {
-    def newMode = evt.value
-    // Refrigerator and Chest Freezer explicitly excluded from mode changes here
-    def appliances = ["hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    def kwhRate = settings["costPerKwh"]?.toString()?.toDouble() ?: 0.13
-    
-    def actionCount = 0 // Track how many actual commands we send to stagger them
-    
-    appliances.each { key ->
-        def offModes = settings["${key}TurnOffModes"]
-        def onModes = settings["${key}TurnOnModes"]
-        def sw = settings["${key}Switch"]
-        
-        if (sw) {
-            // Process Turn ON logic first
-            if (onModes && onModes.contains(newMode)) {
-                if (sw.currentValue("switch") != "on") {
-                    if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
-                    actionCount++
-                    
-                    state["${key}_systemActionPending"] = true
-                    state["${key}_context"] = "Mode Restore"
-                    executeSwitchCommandAndRefresh(sw, "on")
-                    
-                    if (state["${key}_offTimeStart"]) {
-                        def offTimeMs = now() - state["${key}_offTimeStart"]
-                        def offTimeHours = offTimeMs / 3600000.0
-                        def idleAvgPower = state["${key}_idlePowerAvg"]?.toString()?.toDouble() ?: 0.0
-                        def savingsThisCycle = (idleAvgPower / 1000.0) * offTimeHours * kwhRate
-                        state["${key}_roiSavings"] = (state["${key}_roiSavings"] ?: 0.0) + savingsThisCycle
-                        state["${key}_offTimeStart"] = null
-                    }
-                    log.info "${key} turned ON due to mode changing to ${newMode}"
-                }
-            } 
-            // Then process Turn OFF logic
-            else if (offModes && offModes.contains(newMode)) {
-                if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
-                actionCount++
-                executeApplianceShutdown(key)
-            }
-        }
-    }
-}
-
-// Dedicated retry wrappers for delayed mode shutdown 
-def retryModeShutdown_hotWaterHeater() { executeApplianceShutdown("hotWaterHeater") }
-def retryModeShutdown_washerDryer()    { executeApplianceShutdown("washerDryer") }
-def retryModeShutdown_dishwasher()     { executeApplianceShutdown("dishwasher") }
-def retryModeShutdown_microwave()      { executeApplianceShutdown("microwave") }
-
-// Dedicated cool-down completion wrappers
-def endCoolDownShutdown_hotWaterHeater() { finalizeShutdown("hotWaterHeater") }
-def endCoolDownShutdown_washerDryer()    { finalizeShutdown("washerDryer") }
-def endCoolDownShutdown_dishwasher()     { finalizeShutdown("dishwasher") }
-def endCoolDownShutdown_microwave()      { finalizeShutdown("microwave") }
-
-
-def executeApplianceShutdown(key) {
-    def sw = settings["${key}Switch"]
-    def pMeter = settings["${key}Power"]
-    def safeThreshold = settings["safeShutdownThreshold"]?.toString()?.toDouble() ?: 15.0
-    def allowCoolDown = settings["${key}EnableCoolDown"] != false // Default to true
-    
-    def coolDownMins = settings["${key}CoolDownMins"]?.toString()?.toDouble() ?: 120.0
-    
-    // Verify we are still in a mode that dictates shutdown before proceeding
-    if (sw && settings["${key}TurnOffModes"]?.contains(location.mode)) {
-        def currentPower = pMeter ? (pMeter.currentValue('power')?.toString()?.toDouble() ?: 0.0) : 0.0
-        
-        // CONDITION 1: Appliance is actively running right now
-        if (currentPower > safeThreshold || state["${key}_isRunning"]) {
-            log.info "${key} is actively running (${currentPower}W). Delaying Mode Shutdown."
-            state["${key}_context"] = "Delayed Shutdown (Running)"
-            runIn(900.toInteger(), "retryModeShutdown_${key}".toString()) // Check again in 15 minutes
-        } 
-        else {
-            // CONDITION 2: Appliance is off, but recently finished a cycle (and Cool Down is enabled)
-            def lastRunEndMs = state["${key}_cycleEndTime"] ?: 0
-            def timeSinceLastRunMs = now() - lastRunEndMs
-            def thirtyMinsMs = 30 * 60000
-            
-            if (allowCoolDown && timeSinceLastRunMs < thirtyMinsMs) {
-                // Calculate how much of the cool down is remaining based on when the cycle ended
-                def coolDownWindowMs = Math.round(coolDownMins * 60000.0)
-                def remainingCoolDownMs = coolDownWindowMs - timeSinceLastRunMs
-                
-                if (remainingCoolDownMs > 0) {
-                    def remainingCoolDownSecs = Math.round(remainingCoolDownMs / 1000.0).toInteger()
-                    def remainingCoolDownMinsCalc = Math.round(remainingCoolDownSecs / 60.0)
-                    
-                    log.info "${key} recently ran. Applying Cool Down period. Postponing shutdown for ${remainingCoolDownMinsCalc} minutes."
-                    state["${key}_context"] = "Cooling Down (${remainingCoolDownMinsCalc}m remaining)"
-                    
-                    runIn(remainingCoolDownSecs, "endCoolDownShutdown_${key}".toString())
-                } else {
-                    finalizeShutdown(key)
-                }
-            }
-            // CONDITION 3: Appliance is completely safe to kill now
-            else {
-                finalizeShutdown(key)
-            }
-        }
-    }
-}
-
-def finalizeShutdown(key) {
-    def sw = settings["${key}Switch"]
-    // Final check that we are still in an "off" mode before killing power
-    if (sw && settings["${key}TurnOffModes"]?.contains(location.mode)) {
-         if (sw.currentValue("switch") != "off") {
-            state["${key}_systemActionPending"] = true
-            state["${key}_context"] = "Mode Shutdown"
-            executeSwitchCommandAndRefresh(sw, "off")
-            state["${key}_offTimeStart"] = now()
-            log.info "${key} turned OFF via Mode Shutdown."
-        }
-    }
-}
-
-
-def buttonHandler(evt) {
-    if (overrideModes && !overrideModes.contains(location.mode)) return
-    
-    def btnNumberStr = "1"
-    if (evt.name == "button") {
-        btnNumberStr = evt.jsonData?.buttonNumber?.toString() ?: "1"
-    } else {
-        btnNumberStr = evt.value?.toString() ?: "1"
-    }
-    
-    // If the user specified button numbers, strictly enforce them. If left completely blank, allow any button.
-    if (settings.buttonNumber) {
-        def allowedNumbers = settings.buttonNumber.toString().split(",").collect { it.trim() }
-        if (!allowedNumbers.contains(btnNumberStr)) return
-    }
-    
-    log.info "Override activated by button ${btnNumberStr} (${evt.name})! Turning all appliances ON for 2 hours."
-    def appliances = ["hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    appliances.each { key ->
-        state["${key}_context"] = "Manual Override"
-    }
-    
-    triggerTurnOn()
-    
-    runIn(7200.toInteger(), endOverrideAndCheckSchedule)
-}
-
-def endOverrideAndCheckSchedule() {
-    def currTime = now()
-    def start = timeToday(scheduleStart).time
-    def end = timeToday(scheduleEnd).time
-    
-    if (currTime >= start && currTime < end) {
-        triggerTurnOff()
-    }
-}
-
-def triggerTurnOff() {
-    def appliances = ["hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    def safeThreshold = settings["safeShutdownThreshold"]?.toString()?.toDouble() ?: 15.0
-    def needsRetry = false
-    def actionCount = 0
-    
-    appliances.each { key ->
-        def sw = settings["${key}Switch"]
-        def pMeter = settings["${key}Power"]
-        
-        if (sw) {
-            def currentPower = pMeter ? (pMeter.currentValue('power')?.toString()?.toDouble() ?: 0.0) : 0.0
-            
-            if (currentPower > safeThreshold) {
-                log.info "${key} is currently running (${currentPower}W). Delaying schedule shutdown."
-                needsRetry = true
-            } else {
-                if (sw.currentValue("switch") != "off") {
-                    if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
-                    actionCount++
-                    
-                    state["${key}_systemActionPending"] = true
-                    state["${key}_context"] = "Scheduled Shutdown"
-                    executeSwitchCommandAndRefresh(sw, "off")
-                    state["${key}_offTimeStart"] = now()
-                }
+            if (!state.gameStats["${i}"]) {
+                state.gameStats["${i}"] = [lastPlayed: null, scores: [:]]
             }
         }
     }
     
-    if (needsRetry) {
-        runIn(900.toInteger(), "triggerTurnOff") 
-    }
-}
-
-def triggerTurnOn() {
-    def appliances = ["hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    def kwhRate = settings["costPerKwh"]?.toString()?.toDouble() ?: 0.13
-    def actionCount = 0
-    
-    appliances.each { key ->
-        def sw = settings["${key}Switch"]
-        if (sw) {
-            // Check state before firing to avoid redundant ON commands
-            if (sw.currentValue("switch") != "on") { 
-                if (actionCount > 0) pauseExecution(1000.toInteger()) // Prevent mesh flooding
-                actionCount++
-                
-                state["${key}_systemActionPending"] = true
-                if (state["${key}_context"] != "Manual Override") {
-                    state["${key}_context"] = "Scheduled Restore"
-                }
-                executeSwitchCommandAndRefresh(sw, "on")
-                
-                if (state["${key}_offTimeStart"]) {
-                    def offTimeMs = now() - state["${key}_offTimeStart"]
-                    def offTimeHours = offTimeMs / 3600000.0
-                    def idleAvgPower = state["${key}_idlePowerAvg"]?.toString()?.toDouble() ?: 0.0
-                    
-                    def savingsThisCycle = (idleAvgPower / 1000.0) * offTimeHours * kwhRate
-                    state["${key}_roiSavings"] = (state["${key}_roiSavings"] ?: 0.0) + savingsThisCycle
-                    state["${key}_offTimeStart"] = null
-                }
-            }
-        }
-    }
-}
-
-def powerHandler(evt) {
-    def meterId = evt.device.id
-    def currentPower = evt.value.toString().toDouble()
-    def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
-    
-    appliances.each { key, name ->
-        if (settings["${key}Power"]?.id == meterId) {
-            
-            // 1. Spike Detection (60 Second Delay)
-            def spikeThreshold = settings["${key}Spike"]?.toString()?.toDouble() ?: 5000.0
-            if (currentPower > spikeThreshold) {
-                if (!state["${key}_spikePending"]) {
-                    state["${key}_spikePending"] = true
-                    runIn(60.toInteger(), "confirmSpike_${key}".toString())
-                }
-            } else if (currentPower < (spikeThreshold * 0.8)) {
-                state["${key}_spikePending"] = false
-                state["${key}_spikeWarning"] = false 
-                unschedule("confirmSpike_${key}".toString())
-            }
-            
-            // 2. State Tracking with Start Delay & Debounced Cycle Completion 
-            def runThreshold = settings["${key}RunWatts"]?.toString()?.toDouble() ?: 15.0
-            def isCurrentlyRunning = (currentPower > runThreshold)
-            def wasRunning = state["${key}_isRunning"] ?: false
-            
-            // --- Learn Idle Power ---
-            // If the appliance is below the run threshold but actually drawing some power (ignoring 0.0W when physically off)
-            if (!isCurrentlyRunning && currentPower > 0.0) {
-                def currentIdle = state["${key}_idlePowerAvg"]?.toString()?.toDouble() ?: currentPower
-                if (currentIdle == 0.0) {
-                     state["${key}_idlePowerAvg"] = currentPower
-                } else {
-                    state["${key}_idlePowerAvg"] = (currentIdle * 0.95) + (currentPower * 0.05)
-                }
-            }
-            // -----------------------------
-            
-            if (isCurrentlyRunning) {
-                // Cancel any pending stop/completion countdowns because we surged back over threshold
-                if (state["${key}_stopPending"]) {
-                    state["${key}_stopPending"] = false
-                    unschedule("checkCycleComplete_${key}".toString())
-                }
-                
-                // If we are not fully "running" and haven't started a delayed confirmation yet
-                if (!wasRunning && !state["${key}_startPending"]) {
-                    state["${key}_startPending"] = true
-                    state["${key}_tentativeStartTime"] = now()
-                    
-                    def startDelayMins = settings["${key}StartDelay"]?.toString()?.toDouble() ?: 1.0
-                    def startDelaySecs = Math.round(startDelayMins * 60.0).toInteger()
-             
-                    if (startDelaySecs > 0) {
-                        runIn(startDelaySecs, "confirmCycleStart_${key}".toString())
-                    } else {
-                        startCycle(key) // Immediate start if user set delay to 0
-                    }
-                }
-            } else {
-                // Dropped below threshold
-                
-                // If we were just waiting to start, it was a false spike (e.g., fridge door opened)
-                if (state["${key}_startPending"]) {
-                    state["${key}_startPending"] = false
-                    unschedule("confirmCycleStart_${key}".toString())
-                    state.remove("${key}_tentativeStartTime")
-                }
-                
-                // If we were officially running, start the debounce/pause countdown for completion
-                if (wasRunning && !state["${key}_stopPending"]) {
-                    state["${key}_stopPending"] = true
-                    
-                    def debounceMins = settings["${key}Debounce"]?.toString()?.toDouble() ?: 15.0
-                    def debounceSecs = Math.round(debounceMins * 60.0).toInteger()
-                    runIn(debounceSecs, "checkCycleComplete_${key}".toString())
-                }
-            }
-            
-            // 3. Power Averaging
-            if (currentPower > 10) {
-                def currentAvg = state["${key}_avgPower"]?.toString()?.toDouble() ?: currentPower
-                state["${key}_avgPower"] = (currentAvg * 0.95) + (currentPower * 0.05)
-            }
-        }
-    }
-}
-
-// Dedicated cycle start confirmation methods for each appliance
-def confirmCycleStart_refrigerator() { startCycle("refrigerator") }
-def confirmCycleStart_chestFreezer() { startCycle("chestFreezer") }
-def confirmCycleStart_hotWaterHeater() { startCycle("hotWaterHeater") }
-def confirmCycleStart_washerDryer()  { startCycle("washerDryer") }
-def confirmCycleStart_dishwasher()   { startCycle("dishwasher") }
-def confirmCycleStart_microwave()    { startCycle("microwave") }
-
-def startCycle(key) {
-    if (state["${key}_startPending"]) {
-        state["${key}_startPending"] = false
-        state["${key}_isRunning"] = true
-        // Log the start time accurately from when it first crossed the threshold
-        state["${key}_cycleStartTime"] = state["${key}_tentativeStartTime"] ?: now()
-    }
-}
-
-// Dedicated spike confirmation methods for each appliance
-def confirmSpike_refrigerator() { executeSpikeAlert("refrigerator", "Refrigerator") }
-def confirmSpike_chestFreezer() { executeSpikeAlert("chestFreezer", "Chest Freezer") }
-def confirmSpike_hotWaterHeater() { executeSpikeAlert("hotWaterHeater", "Hot Water Heater") }
-def confirmSpike_washerDryer()  { executeSpikeAlert("washerDryer", "Washer/Dryer") }
-def confirmSpike_dishwasher()   { executeSpikeAlert("dishwasher", "Dishwasher") }
-def confirmSpike_microwave()    { executeSpikeAlert("microwave", "Microwave") }
-
-def executeSpikeAlert(key, name) {
-    if (state["${key}_spikePending"]) {
-        state["${key}_spikePending"] = false
-        if (!state["${key}_spikeWarning"]) {
-            state["${key}_spikeWarning"] = true
-            sendAlert("⚡ ${name} power spike has persisted for over 60 seconds! Check for failing components.", key, "spike")
-        }
-    }
-}
-
-// Separate methods to ensure safe execution in the SmartThings/Hubitat architecture without runIn overwrites
-def checkCycleComplete_refrigerator() { finishCycle("refrigerator", "Refrigerator") }
-def checkCycleComplete_chestFreezer() { finishCycle("chestFreezer", "Chest Freezer") }
-def checkCycleComplete_hotWaterHeater() { finishCycle("hotWaterHeater", "Hot Water Heater") }
-def checkCycleComplete_washerDryer()  { finishCycle("washerDryer", "Washer/Dryer") }
-def checkCycleComplete_dishwasher()   { finishCycle("dishwasher", "Dishwasher") }
-def checkCycleComplete_microwave()    { finishCycle("microwave", "Microwave") }
-
-def finishCycle(key, name) {
-    if (state["${key}_stopPending"] && state["${key}_isRunning"]) {
-        state["${key}_isRunning"] = false
-        state["${key}_stopPending"] = false
-        
-        // Track exact moment cycle finished for cool down logic
-        state["${key}_cycleEndTime"] = now()
-        
-        if (state["${key}_cycleStartTime"]) {
-            def debounceMins = settings["${key}Debounce"]?.toString()?.toDouble() ?: 15.0
-            def debounceMs = Math.round(debounceMins * 60000.0)
-            
-            // Subtract the dynamic debounce window from the total run time for accuracy
-            def cycleDurationMs = now() - state["${key}_cycleStartTime"] - debounceMs 
-            if (cycleDurationMs < 0) cycleDurationMs = 0
-            
-            def cycleDurationHours = cycleDurationMs / 3600000.0
-            def cycleDurationMins = cycleDurationMs / 60000.0
-            
-            // Log final cycle stats
-            state["${key}_lastRunLengthMins"] = cycleDurationMins
-            state["${key}_7DayRunCount"] = (state["${key}_7DayRunCount"] ?: 0) + 1
-            state["${key}_todayRunCount"] = (state["${key}_todayRunCount"] ?: 0) + 1
-            state["${key}_7DayTotalCycleMins"] = (state["${key}_7DayTotalCycleMins"] ?: 0.0) + cycleDurationMins
-            
-            state["${key}_totalRunHours"] = (state["${key}_totalRunHours"] ?: 0.0) + cycleDurationHours
-            
-            if (cycleDurationMins > 1) {
-                def liveMsg = "✅ Your ${name} cycle is complete! (Ran for ${Math.round(cycleDurationMins)} mins)"
-                def stashMsg = "the ${name} completed a cycle"
-                
-                if (key == "dishwasher") {
-                    def dishMsgs = [
-                        "The dishwasher has finished its cycle. The dishes are now clean.",
-                        "The dishwashing cycle is complete. You may unload the clean dishes at your convenience.",
-                        "Your dishwasher has successfully completed its cleaning cycle.",
-                        "The dishes are clean and ready to be put away.",
-                        "The dishwasher has stopped running. The cycle is finished.",
-                        "The kitchen dishwasher has completed its wash cycle.",
-                        "All dishes have been washed and the dishwasher is now idle.",
-                        "The dishwasher cycle has ended. The dishes are sparkling clean.",
-                        "The cleaning cycle for the dishwasher is now complete.",
-                        "Your dishes are done washing."
-                    ]
-                    liveMsg = dishMsgs[new Random().nextInt(dishMsgs.size())]
-                    stashMsg = "the dishwasher finished running"
-                } else if (key == "washerDryer") {
-                    def washMsgs = [
-                        "The laundry cycle has finished. Please check the washer or dryer.",
-                        "The laundry has completed its cycle.",
-                        "Your clothes are done. The laundry cycle is complete.",
-                        "The washing machine or dryer has finished its run.",
-                        "The laundry is ready to be folded or moved.",
-                        "The laundry cycle has concluded.",
-                        "Your laundry is done processing.",
-                        "The washer dryer combo has finished running.",
-                        "Attention, the laundry cycle is now complete.",
-                        "The clothes are finished washing or drying."
-                    ]
-                    liveMsg = washMsgs[new Random().nextInt(washMsgs.size())]
-                    stashMsg = "the laundry finished its cycle"
-                }
-
-                // Send the generated message and its stashed inbox variant
-                sendAlert(liveMsg, key, "cycle", stashMsg)
-            }
-            
-            if (key == "refrigerator" || key == "chestFreezer") {
-                trackCompressorHealth(key, name, cycleDurationMins)
-            }
-            
-            // Handle Auto-Off Feature
-            if (settings["${key}AutoOff"]) {
-                def allowedModes = settings["${key}AutoOffModes"]
-                
-                // Proceed if no modes are restricted OR if the current mode matches an allowed mode
-                if (!allowedModes || allowedModes.contains(location.mode)) {
-                    // Trigger mode shutdown check, which will respect the Cool Down toggle!
-                    executeApplianceShutdown(key)
-                } else {
-                    log.info "${name} cycle finished, but Auto-Off was skipped due to mode restrictions."
-                }
-            }
-        }
-    }
-}
-
-def trackCompressorHealth(key, name, cycleDurationMins) {
-    if (cycleDurationMins < 5) return
-    
-    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
-    def learningPeriodMs = learningDays * 86400000
-
-    // 1. DAY-BASED LEARNING PHASE
-    if (state["${key}_learningPhaseComplete"] != true) {
-        def elapsedMs = now() - (state["${key}_learningStartTime"] ?: now())
-
-        if (elapsedMs < learningPeriodMs) {
-            state["${key}_learningCyclesCount"] = (state["${key}_learningCyclesCount"] ?: 0) + 1
-            state["${key}_learningCyclesTotalMins"] = (state["${key}_learningCyclesTotalMins"] ?: 0.0) + cycleDurationMins
-            
-            // Accumulate temperatures to establish environmental baselines
-            def rTemp = state["${key}_dailyAvgRoomTemp"]?.toString()?.toDouble() ?: 70.0
-            def oTemp = state["${key}_dailyMaxOutsideTemp"]?.toString()?.toDouble() ?: 70.0
-            
-            state["${key}_learningRoomTempTotal"] = (state["${key}_learningRoomTempTotal"] ?: 0.0) + rTemp
-            state["${key}_learningOutsideTempTotal"] = (state["${key}_learningOutsideTempTotal"] ?: 0.0) + oTemp
-            
-            def elapsedDays = String.format("%.1f", (elapsedMs / 86400000.0))
-            log.info "${name} is learning (${elapsedDays}/${learningDays} days elapsed)..."
-            return // Exit early; no alerts during the learning phase
-        } else {
-            // Lock in the final baselines once the phase is complete
-            def count = state["${key}_learningCyclesCount"] ?: 1 // Prevent div by zero
-            state["${key}_baselineCycleMins"] = (state["${key}_learningCyclesTotalMins"] ?: cycleDurationMins) / count
-            state["${key}_baselineRoomTemp"] = (state["${key}_learningRoomTempTotal"] ?: 70.0) / count
-            state["${key}_baselineOutsideTemp"] = (state["${key}_learningOutsideTempTotal"] ?: 70.0) / count
-            
-            state["${key}_learningPhaseComplete"] = true
-            
-            log.info "${name} completed learning phase. Locked Baselines -> Cycle: ${state["${key}_baselineCycleMins"]} min | Room Temp: ${state["${key}_baselineRoomTemp"]}° | Out Temp: ${state["${key}_baselineOutsideTemp"]}°"
-        }
-    }
-
-    // 2. MONITORING PHASE (After learning is complete)
-    def baselineDuration = state["${key}_baselineCycleMins"]?.toString()?.toDouble() ?: cycleDurationMins
-    def baselineRoomTemp = state["${key}_baselineRoomTemp"]?.toString()?.toDouble() ?: 70.0
-    def baselineOutTemp  = state["${key}_baselineOutsideTemp"]?.toString()?.toDouble() ?: 70.0
-    
-    def currentRoomTemp = state["${key}_dailyAvgRoomTemp"]?.toString()?.toDouble() ?: baselineRoomTemp
-    def currentOutTemp  = state["${key}_dailyMaxOutsideTemp"]?.toString()?.toDouble() ?: baselineOutTemp
-
-    // 3. TEMPERATURE COMPENSATION
-    def roomTempDelta = currentRoomTemp - baselineRoomTemp
-    if (roomTempDelta < 0) roomTempDelta = 0.0 // Don't shrink expected times drastically, just accommodate heat stress
-
-    def outTempDelta = currentOutTemp - baselineOutTemp
-    if (outTempDelta < 0) outTempDelta = 0.0
-
-    // Add 3% extra run time allowance per degree of room heat, and 1% per degree of outside heat
-    def expectedDuration = baselineDuration * (1.0 + (roomTempDelta * 0.03) + (outTempDelta * 0.01))
-
-    // 4. HEALTH EVALUATION
-    if (cycleDurationMins > (expectedDuration * 1.30)) {
-        state["${key}_struggleCount"] = (state["${key}_struggleCount"] ?: 0) + 1
-        
-        if (state["${key}_struggleCount"] == 3) {
-            sendAlert("🧹 ${name} Maintenance: Compressor is running 30% longer than its temperature-adjusted normal. Please clean the condenser coils and check airflow to prevent failure.", key, "health")
-        } else if (state["${key}_struggleCount"] >= 7) {
-            sendAlert("⚠️ ${name} CRITICAL Warning: Unit is severely struggling to cool despite temperature adjustments. Hardware failure may be imminent.", key, "health")
-            state["${key}_struggleCount"] = 0 
-        }
-    } else {
-        // Run time is normal. Gently roll the baseline to account for slow seasonal shifts.
-        state["${key}_baselineCycleMins"] = (baselineDuration * 0.99) + (cycleDurationMins * 0.01)
-        if (state["${key}_struggleCount"] > 0) {
-            state["${key}_struggleCount"] = state["${key}_struggleCount"] - 1
-        }
-    }
-}
-
-def dailyHealthCheck() {
-    def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
-    def kwhRate = settings["costPerKwh"]?.toString()?.toDouble() ?: 0.13
-    def allowMaintRoi = settings["enableMaintenanceRoi"] != false // Defaults to true
-    def learningDays = settings["learningCurveDays"]?.toString()?.toInteger() ?: 7
-    def learningPeriodMs = learningDays * 86400000
-
-    appliances.each { key, name ->
-        // Graduate non-compressor appliances out of the learning phase so they display properly in the UI
-        if (key != "refrigerator" && key != "chestFreezer") {
-            if (state["${key}_learningPhaseComplete"] != true) {
-                def elapsedMs = now() - (state["${key}_learningStartTime"] ?: now())
-                if (elapsedMs >= learningPeriodMs) {
-                    state["${key}_learningPhaseComplete"] = true
-                    log.info "${name} learning phase complete."
-                }
-            }
-        }
-    
-        def avgPower = state["${key}_avgPower"]?.toString()?.toDouble() ?: 0.0
-        
-        // --- NEW ROI CALCULATION FOR MAINTENANCE SAVINGS ---
-        if (allowMaintRoi && state["${key}_inefficientPowerMark"]) {
-            def badWatts = state["${key}_inefficientPowerMark"].toString().toDouble()
-            if (avgPower < badWatts && avgPower > 0) {
-                def savedKw = (badWatts - avgPower) / 1000.0
-                
-                // Estimate daily run hours (use 7-day average if available, otherwise assume 24h standby)
-                def totalWeeklyMins = state["${key}_7DayTotalCycleMins"]?.toString()?.toDouble() ?: 0.0
-                def dailyRunHours = totalWeeklyMins > 0 ? (totalWeeklyMins / 7.0 / 60.0) : 24.0
-                
-                def dailySavings = savedKw * dailyRunHours * kwhRate
-                state["${key}_maintRoiSavings"] = (state["${key}_maintRoiSavings"] ?: 0.0) + dailySavings
-            } else if (avgPower >= badWatts) {
-                // If it creeps back up to the bad mark, stop calculating savings until the next reset
-                state.remove("${key}_inefficientPowerMark")
-            }
-        }
-        
-        // Existing creep warning logic
-        def baselineAvg = state["${key}_baselineAvg"]?.toString()?.toDouble() ?: avgPower
-        
-        if (baselineAvg == 0.0) {
-            state["${key}_baselineAvg"] = avgPower
-        } else {
-            if (avgPower > (baselineAvg * 1.20)) {
-                state["${key}_creepWarning"] = true
-                sendAlert("⚠️ ${name} average power is creeping up (${Math.round(avgPower)}W vs baseline ${Math.round(baselineAvg)}W). A motor/vent check is recommended.", key, "health")
-            } else {
-                state["${key}_creepWarning"] = false
-                state["${key}_baselineAvg"] = (baselineAvg * 0.98) + (avgPower * 0.02)
-            }
-        }
-        
-        // Temperature Daily Recalibration for Compressor units
-        if (key == "refrigerator" || key == "chestFreezer") {
-            def totalHours = state["${key}_totalRunHours"]?.toString()?.toDouble() ?: 0.0
-            def maintenanceInterval = settings["${key}MaintenanceHours"]?.toString()?.toDouble() ?: 2000.0
-            
-            if (totalHours > maintenanceInterval) {
-                sendAlert("🔧 Routine Maintenance: Your ${name} has reached ${Math.round(totalHours)} run hours. Consider scheduling a preventative maintenance check.", key, "health")
-                settings["${key}MaintenanceHours"] = maintenanceInterval + 2000.0 
-            }
-            
-            // Adjust temp baseline daily 
-            if (state["${key}_avgTemp"]) {
-                def currentAvgTemp = state["${key}_avgTemp"].toString().toDouble()
-                def tempBaseline = state["${key}_baselineTemp"]?.toString()?.toDouble() ?: currentAvgTemp
-                state["${key}_baselineTemp"] = (tempBaseline * 0.90) + (currentAvgTemp * 0.10)
-            }
-        }
-    }
-}
-
-def resetWeeklyCounters() {
-    def appliances = ["refrigerator", "chestFreezer", "hotWaterHeater", "washerDryer", "dishwasher", "microwave"]
-    appliances.each { key ->
-        def eMeter = settings["${key}Energy"]
-        if (eMeter) {
-            state["${key}_startEnergy"] = eMeter.currentValue("energy")?.toString()?.toDouble() ?: 0.0
-        }
-        state["${key}_roiSavings"] = 0.0
-        state["${key}_maintRoiSavings"] = 0.0
-        state["${key}_7DayRunCount"] = 0
-        state["${key}_7DayTotalCycleMins"] = 0.0
-    }
-}
-
-def sendAlert(msg, key, alertType, stashMsg = null) {
-    // --- VOICE BUTLER INTEGRATION (MOVED TO TOP) ---
-    // Sends to Butler FIRST, so it can stash the message overnight even if local alerts are muted!
-    if (settings.enableVoiceButler) {
-        // Only send standard "cycle" completions to the Butler if it is the Laundry or Dishwasher.
-        // ALWAYS send health, temperature, and power spike alerts for all appliances.
-        if (alertType != "cycle" || key == "dishwasher" || key == "washerDryer") {
-            def defaultStash = stashMsg ?: "there was a ${alertType} alert regarding the ${key}"
-            sendLocationEvent(name: "voiceButlerMsg", value: "energy", data: defaultStash, descriptionText: msg, isStateChange: true)
-        }
-    }
-
-    // 1. Time & Mode Gatekeeping (Per Appliance Local Alerts)
-    def aModes = settings["${key}AlertModes"]
-    if (aModes && !aModes.contains(location.mode)) return
-    
-    def aStart = settings["${key}AlertStartTime"]
-    def aEnd = settings["${key}AlertEndTime"]
-    
-    if (aStart && aEnd) {
-        def currTime = now()
-        def start = timeToday(aStart).time
-        def end = timeToday(aEnd).time
-        
-        if (start <= end) {
-            if (currTime < start || currTime > end) return
-        } else {
-            // Handles wrap-around midnight
-            if (currTime < start && currTime > end) return
-        }
-    }
-
-    // 2. Fetch specific notification targets and allowed events for this appliance
-    def pushDev = settings["${key}PushNotification"]
-    def pushEvents = settings["${key}PushEvents"] ?: []
-    
-    def ttsDev = settings["${key}TtsDevice"]
-    def ttsEvents = settings["${key}TtsEvents"] ?: []
-    
-    def audioDev = settings["${key}AudioDevice"]
-    def audioEvents = settings["${key}AudioEvents"] ?: []
-    def audioTrack = settings["${key}AudioTrack"]?.toString() ?: "1"
-
-    // 3. Execute Allowed Local Notifications
-    if (pushDev && pushEvents.contains(alertType)) {
-        pushDev.deviceNotification(msg)
-    }
-    
-    if (ttsDev && ttsEvents.contains(alertType)) {
-        ttsDev.speak(msg)
-    }
-    
-    if (audioDev && audioEvents.contains(alertType)) {
-        playZoozSound(audioDev, audioTrack)
-    }
-}
-
-def playZoozSound(devices, sound) {
-    if (!devices || sound == null) return
-    def soundInt = Math.round(sound.toString().toDouble()).toInteger() // Extremely safe integer cast
-    
-    // Handle single device or list of devices
-    def devList = devices instanceof List ? devices : [devices]
-    
-    devList.eachWithIndex { dev, index ->
-        // Add a 1000ms (1 second) delay before subsequent devices to prevent Z-Wave mesh flooding
-        if (index > 0) {
-            pauseExecution(1000.toInteger())
-        }
-
+    if (settings.enableAutoReset && settings.resetTime && settings.resetDay) {
         try {
-            if (dev.hasCommand("playSound")) {
-                dev.playSound(soundInt)
-            } else if (dev.hasCommand("playTrack")) {
-                dev.playTrack(sound.toString())
-            } else if (dev.hasCommand("chime")) {
-                dev.chime(soundInt)
-            } else {
-                log.warn "Advanced Energy Management Controller: Device ${dev.displayName} does not support standard sound commands (playSound, playTrack, or chime)."
-            }
+            def scheduleTime = toDateTime(settings.resetTime)
+            def h = scheduleTime.hours
+            def m = scheduleTime.minutes
+            def cronStr = "0 ${m} ${h} ? * ${settings.resetDay}"
+            schedule(cronStr, "clearWeeklyScores")
+            log.info "Automated Weekly Reset Scheduled for ${settings.resetDay} at ${h}:${m}"
         } catch (e) {
-            log.error "Failed to play audio on ${dev.displayName}: ${e}"
+            log.error "Failed to schedule automated reset: ${e}"
         }
     }
 }
 
-def executeSwitchCommandAndRefresh(sw, action) {
-    if (!sw) return
-    
-    if (action == "on") {
-        sw.on()
-    } else if (action == "off") {
-        sw.off()
-    }
-    
-    // Give the device time to physically actuate the relay and the mesh time to process the state change
-    pauseExecution(1500.toInteger())
-    
-    // Safely check if the device driver supports the Refresh capability before calling it
-    if (sw.hasCommand("refresh")) {
-        sw.refresh()
+// --- UTILITIES & NUMBER FORMATTING ---
+def formatScore(val) {
+    if (val == null) return "0"
+    try {
+        return String.format("%,d", val as Long)
+    } catch(e) {
+        return val.toString()
     }
 }
 
-def syncApplianceHealthToButler() {
-    if (!settings.enableVoiceButler) return
-    def payload = []
-    def appliances = ["refrigerator": "Refrigerator", "chestFreezer": "Chest Freezer", "hotWaterHeater": "Hot Water Heater", "washerDryer": "Washer/Dryer", "dishwasher": "Dishwasher", "microwave": "Microwave"]
+def checkInternetStatus() {
+    def isOnline = false
+    try {
+        httpGet([uri: "http://clients3.google.com/generate_204", timeout: 2]) { resp ->
+            isOnline = true
+        }
+    } catch (e) {
+        isOnline = false
+    }
+    return isOnline
+}
+
+def updateTop3(list, user, score) {
+    if (!list) list = []
+    list << [user: user, score: score as Long]
+    list = list.sort { a, b -> (b.score as Long) <=> (a.score as Long) }
     
-    appliances.each { key, name ->
-        if (settings["${key}Power"]) {
-            def isRunning = state["${key}_isRunning"]
-            def stateStr = isRunning ? "RUNNING" : "IDLE"
-            if (key == "refrigerator" || key == "chestFreezer") {
-                stateStr = isRunning ? "COOLING" : "IDLE"
+    def uniqueUsers = []
+    def result = []
+    list.each { entry ->
+        if (!uniqueUsers.contains(entry.user)) {
+            uniqueUsers << entry.user
+            result << entry
+        }
+    }
+    return result.take(3)
+}
+
+// --- CHASE GAME LOGIC ---
+def selectNewChaseGame() {
+    def eligibleGames = []
+    state.gameStats?.each { gNum, mStats ->
+        def isMulti = settings["gameType_${gNum}"] == "Multi-Game (Arcade/Pinball)"
+        def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+        
+        mStats.scores?.each { gameName, gScores ->
+            if (gScores.overall && gScores.overall.size() > 0) {
+                def displayName = isMulti ? gameName : mName
+                eligibleGames << [gNum: gNum, gameName: displayName, topScore: gScores.overall[0].score as Long, topUser: gScores.overall[0].user]
             }
-            if (state["${key}_startPending"]) stateStr = "STARTING..."
-            if (state["${key}_stopPending"]) stateStr = "PAUSED"
+        }
+    }
+    
+    if (eligibleGames.size() > 0) {
+        def pick = eligibleGames[new Random().nextInt(eligibleGames.size())]
+        state.currentChaseGame = pick
+        state.chaseWeekOfYear = Calendar.getInstance(location.timeZone).get(Calendar.WEEK_OF_YEAR)
+        addToHistory("SYSTEM: Selected new Weekly Chase Game: ${pick.gameName}")
+    } else {
+        log.info "Could not select Chase Game - no games have overall scores logged yet."
+        state.currentChaseGame = null
+    }
+}
+
+def occupiedOnHandler(evt) {
+    if (settings.masterEnableSwitch && settings.masterEnableSwitch.currentValue("switch") != "on") return
+    
+    if (settings.guestModeSwitch && settings.guestModeSwitch.currentValue("switch") == "on") {
+        log.debug "Guest Mode is ON. Suppressing Chase Game announcement."
+        return
+    }
+    
+    if (settings.allowedModes) {
+        def modes = [settings.allowedModes].flatten().findAll{it}
+        if (!modes.contains(location.mode)) return
+    }
+    
+    runIn(2, "executeOccupiedChaseGame")
+}
+
+def executeOccupiedChaseGame() {
+    ensureStateMaps()
+    def currentWeek = Calendar.getInstance(location.timeZone).get(Calendar.WEEK_OF_YEAR)
+    
+    if (!state.currentChaseGame || state.chaseWeekOfYear != currentWeek) {
+        selectNewChaseGame()
+    }
+    
+    if (state.currentChaseGame) {
+        def cg = state.currentChaseGame
+        def rawMsg = settings.chaseGameMsg ?: "Welcome to the Game Room! This week's Chase Game is %game%. The score to beat is %allScore% by %allUser%!"
+        def finalMsg = rawMsg.replace("%game%", cg.gameName)
+                             .replace("%allUser%", cg.topUser.toString())
+                             .replace("%allScore%", formatScore(cg.topScore))
+        
+        addToHistory("CHASE GAME: Queuing Chase Game to FRONT of queue: ${cg.gameName}")
+        
+        def q = atomicState.ttsQueue ?: []
+        q.add(0, finalMsg) 
+        atomicState.ttsQueue = q
+        
+        if (!atomicState.isSpeaking) {
+            processQueue()
+        }
+    }
+}
+
+// --- HTML TILE ENGINE ---
+def buildTop3Html(gScores, type) {
+    def html = ""
+    if (type == "Overall Champions" || type == "Both") {
+        html += "<div style='margin-bottom: 5px;'><span style='color: #aaa; font-size: 11px; text-transform: uppercase;'>Overall Top 3</span><br>"
+        if (gScores?.overall && gScores.overall.size() > 0) {
+            gScores.overall.eachWithIndex { entry, idx ->
+                def medal = idx == 0 ? "🥇" : (idx == 1 ? "🥈" : "🥉")
+                html += "<div style='font-size: 12px;'>${medal} <span style='color: #2ecc71; font-weight: bold;'>${formatScore(entry.score)}</span> <span style='color: #888;'>(${entry.user})</span></div>"
+            }
+        } else {
+            html += "<div style='font-size: 12px; color: #7f8c8d;'>No records</div>"
+        }
+        html += "</div>"
+    }
+    
+    if (type == "Weekly Champions" || type == "Both") {
+        html += "<div><span style='color: #aaa; font-size: 11px; text-transform: uppercase;'>Weekly Top 3</span><br>"
+        if (gScores?.weekly && gScores.weekly.size() > 0) {
+            gScores.weekly.eachWithIndex { entry, idx ->
+                def medal = idx == 0 ? "🥇" : (idx == 1 ? "🥈" : "🥉")
+                html += "<div style='font-size: 12px;'>${medal} <span style='color: #e67e22; font-weight: bold;'>${formatScore(entry.score)}</span> <span style='color: #888;'>(${entry.user})</span></div>"
+            }
+        } else {
+            html += "<div style='font-size: 12px; color: #7f8c8d;'>No records</div>"
+        }
+        html += "</div>"
+    }
+    return html
+}
+
+def updateLeaderboardTile() {
+    def type = settings.leaderboardType ?: "Overall Champions"
+    def attrName = settings.leaderboardAttribute ?: "leaderboardTile"
+
+    if (leaderboardDevice && attrName) {
+        def globalHtml = "<div style='font-family: sans-serif; font-size: 13px; color: #e0e0e0; background-color: #1a1a1a; padding: 12px; border-radius: 8px; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); border: 1px solid #333;'>"
+        globalHtml += "<div style='text-align: center; color: #f1c40f; font-weight: bold; margin-bottom: 8px; border-bottom: 2px solid #444; padding-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;'>🏆 Arcade Leaderboard 🏆</div>"
+        
+        def hasData = false
+        state.gameStats?.each { gNum, mStats ->
+            def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+            def isMulti = settings["gameType_${gNum}"] == "Multi-Game (Arcade/Pinball)"
             
-            def health = "GOOD"
-            def struggle = state["${key}_struggleCount"] ?: 0
-            if (state["${key}_learningPhaseComplete"] != true) {
-                health = "LEARNING"
+            def activeGame = mName
+            if (isMulti && mStats?.lastPlayed && mStats.lastPlayed != "Machine ${gNum}") {
+                activeGame = mStats.lastPlayed
+            }
+            
+            def gScores = mStats?.scores?."${activeGame}"
+            
+            if (gScores && ((gScores.overall && gScores.overall.size() > 0) || (gScores.weekly && gScores.weekly.size() > 0))) {
+                hasData = true
+                globalHtml += "<div style='margin-bottom: 8px; padding: 6px; background-color: #252525; border-radius: 4px; border-left: 4px solid #3498db;'>"
+                globalHtml += "<div style='color: #3498db; font-weight: bold; margin-bottom: 3px;'>${activeGame}</div>"
+                globalHtml += buildTop3Html(gScores, type)
+                globalHtml += "</div>"
+            }
+        }
+        if (!hasData) globalHtml += "<div style='text-align: center; color: #7f8c8d; padding: 15px 0; font-style: italic;'>No scores logged yet.</div>"
+        globalHtml += "</div>"
+        
+        try {
+            leaderboardDevice.sendEvent(name: attrName, value: globalHtml, isStateChange: true)
+        } catch (e) {
+            log.error "Failed to push global leaderboard HTML tile: ${e}"
+        }
+    }
+    
+    state.gameStats?.each { gNum, mStats ->
+        def childDni = "gameAnnouncer-${app.id}-m${gNum}"
+        def child = getChildDevice(childDni)
+        
+        if (child) {
+            def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+            def isMulti = settings["gameType_${gNum}"] == "Multi-Game (Arcade/Pinball)"
+            
+            def activeGame = mName
+            if (isMulti && mStats?.lastPlayed && mStats.lastPlayed != "Machine ${gNum}") {
+                activeGame = mStats.lastPlayed
+            }
+            
+            def gScores = mStats?.scores?."${activeGame}"
+            
+            def childHtml = "<div style='font-family: sans-serif; font-size: 13px; color: #e0e0e0; background-color: #1a1a1a; padding: 12px; border-radius: 8px; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); border: 1px solid #333;'>"
+            childHtml += "<div style='text-align: center; color: #3498db; font-weight: bold; margin-bottom: 8px; border-bottom: 2px solid #444; padding-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;'>${activeGame}</div>"
+            
+            if (gScores && ((gScores.overall && gScores.overall.size() > 0) || (gScores.weekly && gScores.weekly.size() > 0))) {
+                childHtml += buildTop3Html(gScores, type)
             } else {
-                if (state["${key}_creepWarning"]) health = "CREEPING WATTS"
-                if (struggle >= 3 && struggle < 6) health = "CLEAN COILS"
-                if (struggle >= 6) health = "STRUGGLING"
-                if (state["${key}_spikeWarning"]) health = "SPIKE DETECTED"
-                if (state["${key}_tempWarningActive"]) health = "HIGH TEMP"
-                if (state["${key}_tempCreepWarning"]) health = "TEMP CREEPING"
+                childHtml += "<div style='text-align: center; color: #7f8c8d; padding: 15px 0; font-style: italic;'>No scores logged yet.</div>"
             }
+            childHtml += "</div>"
             
-            payload << [
-                name: name,
-                state: stateStr,
-                health: health
+            try {
+                child.sendEvent(name: "leaderboardTile", value: childHtml, isStateChange: true)
+            } catch (e) {
+                log.error "Failed to push child leaderboard HTML tile: ${e}"
+            }
+        }
+    }
+}
+
+// --- UPDATED WEB ENDPOINT LOGIC (FIXED ICONS) ---
+def serveScoreForm() {
+    def optionsHtml = ""
+    def multiGameMap = [:]
+    
+    def numG = settings.numGames ?: 0
+    if (numG > 0) {
+        for (int i = 1; i <= (numG as Integer); i++) {
+            def gName = settings["gameName_${i}"] ?: "Machine ${i}"
+            def isMulti = settings["gameType_${i}"] == "Multi-Game (Arcade/Pinball)"
+            optionsHtml += "<option value='${i}'>${gName}</option>"
+            multiGameMap["${i}"] = isMulti
+        }
+    } else {
+        optionsHtml = "<option value=''>No Machines Configured</option>"
+    }
+
+    def multiMapJson = new groovy.json.JsonBuilder(multiGameMap).toString()
+    
+    def statsMap = [:]
+    state.gameStats?.each { gNum, mStats ->
+        def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+        statsMap[mName] = [:]
+        mStats.scores?.each { gameName, gScores ->
+            statsMap[mName][gameName] = [
+                overall: gScores.overall ?: [],
+                weekly: gScores.weekly ?: []
             ]
         }
     }
-    if (payload.size() > 0) {
-        sendLocationEvent(name: "voiceButlerApplianceSync", value: groovy.json.JsonOutput.toJson(payload), isStateChange: true)
+    def statsJson = new groovy.json.JsonBuilder(statsMap).toString()
+
+    def html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>Arcade Portal</title>
+        <style>
+            :root { --primary: #27ae60; --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #3498db; }
+            body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, sans-serif; padding: 15px; margin: 0; }
+            .container { max-width: 500px; margin: 0 auto; background: var(--card); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #333; overflow: hidden; }
+            
+            .tabs { display: flex; background: #252525; border-bottom: 1px solid #333; }
+            .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 14px; color: #777; transition: 0.3s; }
+            .tab.active { color: var(--primary); border-bottom: 3px solid var(--primary); background: #1e1e1e; }
+            
+            .content { padding: 20px; }
+            .page { display: none; }
+            .page.active { display: block; }
+
+            h2 { margin-top: 0; color: var(--primary); text-transform: uppercase; letter-spacing: 2px; text-align: center; font-size: 20px; }
+            label { display: block; margin-bottom: 5px; font-size: 14px; color: #aaa; text-align: left;}
+            select, input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 16px; box-sizing: border-box; }
+            input[type='submit'] { background: var(--primary); border: none; font-weight: bold; cursor: pointer; text-transform: uppercase; margin-top: 10px;}
+            
+            .machine-item { background: #252525; margin-bottom: 10px; border-radius: 6px; border: 1px solid #333; overflow: hidden; }
+            .machine-header { padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; background: #2a2a2a; }
+            .machine-header:hover { background: #333; }
+            .game-list { display: none; padding: 10px; border-top: 1px solid #333; background: #1e1e1e; }
+            .game-item { padding: 10px; border-bottom: 1px solid #333; }
+            .game-item:last-child { border-bottom: none; }
+            .game-title { color: var(--accent); font-weight: bold; margin-bottom: 5px; display: block; }
+            .score-row { display: flex; justify-content: space-between; font-size: 13px; color: #ccc; margin-bottom: 3px;}
+            .score-val { color: var(--primary); font-weight: bold; }
+            
+            #subGameContainer { display: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('logPage', this)">Log Score</div>
+                <div class="tab" onclick="switchTab('recordsPage', this)">Records</div>
+            </div>
+            
+            <div class="content">
+                <div id="logPage" class="page active">
+                    <h2>Submit Entry</h2>
+                    <form action="submit" method="GET">
+                        <input type="hidden" name="access_token" value="${state.accessToken}" />
+                        <label>Select Machine</label>
+                        <select id="gNum" name="gNum" required onchange="checkMachineType()">
+                            ${optionsHtml}
+                        </select>
+                        <div id="subGameContainer">
+                            <label>Game / Table Name</label>
+                            <input type="text" id="subGame" name="subGame" placeholder="e.g., Pac-Man or Addams Family" />
+                        </div>
+                        <label>Player Initials</label>
+                        <input type="text" id="player" name="player" placeholder="SHN" required maxlength="10" />
+                        <label>Final Score</label>
+                        <input type="number" id="score" name="score" placeholder="0" required />
+                        <input type="submit" value="Save Record" />
+                    </form>
+                </div>
+
+                <div id="recordsPage" class="page">
+                    <h2>Hall of Fame</h2>
+                    <div id="machineList"></div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const multiMap = ${multiMapJson};
+            const statsData = ${statsJson};
+
+            function switchTab(pageId, el) {
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.getElementById(pageId).classList.add('active');
+                el.classList.add('active');
+                if(pageId === 'recordsPage') renderRecords();
+            }
+
+            function checkMachineType() {
+                const sel = document.getElementById("gNum").value;
+                const container = document.getElementById("subGameContainer");
+                document.getElementById("subGame").required = !!multiMap[sel];
+                container.style.display = multiMap[sel] ? "block" : "none";
+            }
+
+            function renderRecords() {
+                const list = document.getElementById("machineList");
+                list.innerHTML = "";
+                
+                Object.keys(statsData).forEach(mName => {
+                    const games = statsData[mName];
+                    let gameHtml = "";
+                    
+                    Object.keys(games).forEach(gName => {
+                        const s = games[gName];
+                        const overall = s.overall.length ? `\${s.overall[0].score.toLocaleString()} (\${s.overall[0].user})` : "---";
+                        const weekly = s.weekly.length ? `\${s.weekly[0].score.toLocaleString()} (\${s.weekly[0].user})` : "---";
+                        
+                        gameHtml += `
+                            <div class="game-item">
+                                <span class="game-title">\${gName}</span>
+                                <div class="score-row"><span>Overall #1:</span> <span class="score-val">\${overall}</span></div>
+                                <div class="score-row"><span>Weekly #1:</span> <span class="score-val" style="color:#e67e22">\${weekly}</span></div>
+                            </div>`;
+                    });
+
+                    if(!gameHtml) gameHtml = "<div style='padding:15px; color:#666; font-style:italic;'>No scores recorded yet.</div>";
+
+                    const div = document.createElement("div");
+                    div.className = "machine-item";
+                    div.innerHTML = `
+                        <div class="machine-header" onclick="toggleMachine(this)">
+                            <span>\${mName}</span>
+                            <span class="arrow">&#9662;</span>
+                        </div>
+                        <div class="game-list">\${gameHtml}</div>`;
+                    list.appendChild(div);
+                });
+            }
+
+            function toggleMachine(el) {
+                const list = el.nextElementSibling;
+                const arrow = el.querySelector(".arrow");
+                const isOpen = list.style.display === "block";
+                list.style.display = isOpen ? "none" : "block";
+                arrow.innerHTML = isOpen ? "&#9662;" : "&#9652;";
+            }
+
+            window.onload = checkMachineType;
+        </script>
+    </body>
+    </html>
+    """
+    // Explicitly setting UTF-8 in the render call
+    render contentType: "text/html; charset=UTF-8", data: html, status: 200
+}
+
+def handleScoreSubmit() {
+    def gNum = params.gNum?.toString()
+    def subGameRaw = params.subGame?.trim()
+    def player = params.player?.trim()
+    def score = params.score != null ? params.score.toLong() : null
+    def html = ""
+
+    if (!gNum || !player || score == null) {
+        html = generateResultHtml("Error", "Missing required fields.", false)
+        render contentType: "text/html; charset=UTF-8", data: html, status: 400
+        return
     }
+
+    def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+    def isMulti = settings["gameType_${gNum}"] == "Multi-Game (Arcade/Pinball)"
+    def activeGameName = isMulti && subGameRaw ? subGameRaw : mName
+
+    def mStats = state.gameStats[gNum] ?: [lastPlayed: activeGameName, scores: [:]]
+    def gScores = mStats.scores[activeGameName] ?: [overall: [], weekly: []]
+
+    def currentOverallTop = gScores.overall.size() > 0 ? (gScores.overall[0].score as Long) : 0L
+    def currentWeeklyTop = gScores.weekly.size() > 0 ? (gScores.weekly[0].score as Long) : 0L
+
+    def beatOverallTop = false
+    def beatWeeklyTop = false
+    def msgList = []
+
+    if (score > currentOverallTop) {
+        beatOverallTop = true
+        msgList << "New #1 Overall High Score!"
+    }
+    
+    if (score > currentWeeklyTop) {
+        beatWeeklyTop = true
+        if (!beatOverallTop) msgList << "New #1 Weekly High Score!"
+    }
+
+    gScores.overall = updateTop3(gScores.overall, player, score)
+    gScores.weekly = updateTop3(gScores.weekly, player, score)
+
+    mStats.lastPlayed = activeGameName
+    mStats.scores[activeGameName] = gScores
+    state.gameStats[gNum] = mStats
+
+    if (beatOverallTop || beatWeeklyTop) {
+        addToHistory("WEB PORTAL: [${mName} - ${activeGameName}] ${player} logged score of ${formatScore(score)}. (${msgList.join(', ')})")
+        updateLeaderboardTile() 
+        
+        def cg = state.currentChaseGame
+        def displayCGName = isMulti ? activeGameName : mName
+        
+        if (cg && cg.gameName == displayCGName && score > (cg.topScore as Long)) {
+            cg.topScore = score
+            cg.topUser = player
+            state.currentChaseGame = cg
+        }
+
+        def sw = settings["gameSwitch_${gNum}"]
+        if (sw && sw.currentValue("switch") == "on") {
+            def alertMsg = "Alert! ${player} just logged a massive new score of ${formatScore(score)} on ${activeGameName}. ${msgList.join(' ')}"
+            def q = atomicState.ttsQueue ?: []
+            q.add(alertMsg)
+            atomicState.ttsQueue = q
+            if (!atomicState.isSpeaking) processQueue()
+        }
+
+        html = generateResultHtml("Score Saved!", "Congratulations ${player}! Your score of ${formatScore(score)} on ${activeGameName} has been recorded.", true)
+    } else {
+        addToHistory("WEB PORTAL: [${mName} - ${activeGameName}] ${player} logged ${formatScore(score)}, placing in the Top 3 or lower.")
+        updateLeaderboardTile()
+        html = generateResultHtml("Score Logged", "Good try ${player}, your score of ${formatScore(score)} has been saved to the database.", true)
+    }
+
+    render contentType: "text/html; charset=UTF-8", data: html, status: 200
+}
+
+def generateResultHtml(title, message, success) {
+    def color = success ? "#27ae60" : "#c0392b"
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>${title}</title>
+        <style>
+            body { background: #121212; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; padding: 20px; text-align: center; }
+            .container { max-width: 400px; margin: 50px auto; background: #1e1e1e; padding: 30px 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #333; }
+            h2 { margin-top: 0; color: ${color}; }
+            p { font-size: 16px; color: #ccc; margin-bottom: 30px;}
+            a { display: inline-block; padding: 12px 24px; background: #333; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold; border: 1px solid #555; transition: 0.3s;}
+            a:hover { background: #444; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>${title}</h2>
+            <p>${message}</p>
+            <a href="log?access_token=${state.accessToken}">Back to Portal</a>
+        </div>
+    </body>
+    </html>
+    """
+}
+
+// --- CORE EVENT HANDLER ---
+def switchOnHandler(evt) {
+    if (settings.masterEnableSwitch && settings.masterEnableSwitch.currentValue("switch") != "on") return
+    
+    if (settings.guestModeSwitch && settings.guestModeSwitch.currentValue("switch") == "on") {
+        log.debug "Guest Mode is ON. Suppressing machine power-up announcement."
+        return
+    }
+    
+    ensureStateMaps()
+    def deviceId = evt.device.id
+    
+    if (settings.allowedModes) {
+        def modes = [settings.allowedModes].flatten().findAll{it}
+        if (!modes.contains(location.mode)) {
+            log.debug "TTS Announcement blocked. Current mode '${location.mode}' is not in allowed modes."
+            return
+        }
+    }
+    
+    def numG = settings.numGames ?: 0
+    for (int i = 1; i <= (numG as Integer); i++) {
+        if (settings["gameSwitch_${i}"]?.id == deviceId) {
+            def delay = (i * 3) + 2
+            runIn(delay, "queueAnnouncementTask", [data: [gameNum: i], overwrite: false])
+            return
+        }
+    }
+}
+
+def queueAnnouncementTask(data) {
+    queueAnnouncement(data.gameNum as Integer)
+}
+
+def queueAnnouncement(int gNum) {
+    ensureStateMaps()
+    
+    def mName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+    def isMulti = settings["gameType_${gNum}"] == "Multi-Game (Arcade/Pinball)"
+    def mStats = state.gameStats["${gNum}"]
+    
+    def activeGameName = mName
+    if (isMulti && mStats?.lastPlayed && mStats.lastPlayed != "Machine ${gNum}") {
+        activeGameName = mStats.lastPlayed
+    }
+    
+    def gScores = mStats?.scores?."${activeGameName}"
+    
+    def allList = gScores?.overall ?: []
+    def weekList = gScores?.weekly ?: []
+    
+    def allUser = allList.size() > 0 ? allList[0].user : "Nobody"
+    def allScore = allList.size() > 0 ? allList[0].score : 0L
+    def weekUser = weekList.size() > 0 ? weekList[0].user : "Nobody"
+    def weekScore = weekList.size() > 0 ? weekList[0].score : 0L
+    
+    def rawMsg = settings["customMsg_${gNum}"] ?: "The last game played on %machine% was %game%. The overall high score is %allScore%, held by %allUser%. This week's current leader is %weekUser% with a score of %weekScore%."
+    
+    def finalMsg = rawMsg.replace("%machine%", mName.toString())
+                         .replace("%game%", activeGameName.toString())
+                         .replace("%allUser%", allUser.toString())
+                         .replace("%allScore%", formatScore(allScore))
+                         .replace("%weekUser%", weekUser.toString())
+                         .replace("%weekScore%", formatScore(weekScore))
+    
+    addToHistory("QUEUED: [${mName}] - '${finalMsg}'")
+    
+    def q = atomicState.ttsQueue ?: []
+    q.add(finalMsg)
+    atomicState.ttsQueue = q
+    
+    if (!atomicState.isSpeaking) {
+        processQueue()
+    }
+}
+
+// --- UPDATED TTS QUEUE ENGINE ---
+def processQueue() {
+    ensureStateMaps()
+    
+    def q = atomicState.ttsQueue ?: []
+    if (q.size() > 0) {
+        if (settings.requireInternet && !checkInternetStatus()) {
+            log.warn "No internet connection detected. Emptying TTS queue to prevent errors."
+            atomicState.ttsQueue = []
+            atomicState.isSpeaking = false
+            return
+        }
+        
+        atomicState.isSpeaking = true
+        def msgToSpeak = q[0]
+        
+        q = q.drop(1)
+        atomicState.ttsQueue = q
+        
+        speakMessage(msgToSpeak)
+        
+        // Account for chime duration plus the announcement length in the queue timing
+        def cDuration = settings.chimeDuration != null ? settings.chimeDuration as Integer : 2
+        def chimeDelay = (settings.enableChime && settings.chimeUrl) ? cDuration : 0
+        def delay = Math.max(5, (msgToSpeak.length() / 10).toInteger() + 2) + chimeDelay
+        
+        runIn(delay, "processQueue", [overwrite: true])
+        
+    } else {
+        atomicState.isSpeaking = false
+    }
+}
+
+def speakMessage(String msg) {
+    if (!ttsSpeaker) return
+    def speakers = ttsSpeaker instanceof List ? ttsSpeaker : [ttsSpeaker]
+    
+    def safeMsg = msg.replace("&", "and")
+    def finalMsg = safeMsg
+    if (settings.enableWakeupPad) {
+        finalMsg = ", , , " + safeMsg
+    }
+    
+    speakers.each { spk ->
+        try {
+            def currentVol = spk.currentValue("volume")
+            def targetVol = settings.ttsVolume != null ? (settings.ttsVolume as Integer) : currentVol
+            
+            // Apply Quiet Hours logic
+            if (settings.quietHoursStart && settings.quietHoursEnd && settings.quietVolume != null) {
+                try {
+                    if (timeOfDayIsBetween(toDateTime(settings.quietHoursStart), toDateTime(settings.quietHoursEnd), new Date(), location.timeZone)) {
+                        targetVol = settings.quietVolume as Integer
+                        log.debug "Quiet Hours active. Throttling volume to ${targetVol}%"
+                    }
+                } catch(e) { log.error "Quiet Hours check failed: ${e}" }
+            }
+            
+            if (targetVol != null) {
+                spk.setVolume(targetVol)
+                pauseExecution(800)
+            }
+            
+            // --- UPDATED CHIME EXECUTION (2-SECOND FIX) ---
+            if (settings.enableChime && settings.chimeUrl && spk.hasCommand("playTrack")) {
+                try {
+                    spk.playTrack(settings.chimeUrl)
+                    def cDuration = settings.chimeDuration != null ? settings.chimeDuration as Integer : 2
+                    // Pause for the exact duration of the file plus a 200ms breath
+                    pauseExecution((cDuration * 1000) + 200)
+                } catch (ce) {
+                    log.error "Announcer TTS Error playing chime on ${spk.displayName}: ${ce}"
+                }
+            }
+            
+            spk.speak(finalMsg)
+            
+            try {
+                if (spk.hasCommand("play")) spk.play()
+            } catch (ex) {}
+            
+            if (currentVol != null && targetVol != null && currentVol != targetVol) {
+                def delay = Math.max(5, (finalMsg.length() / 10).toInteger() + 3)
+                // runIn(delay, "restoreVolumeTask", [data: [speakerId: spk.id, oldVol: currentVol], overwrite: false])
+            }
+        } catch (e) {
+            log.error "Announcer TTS Error sending to ${spk.displayName}: ${e}"
+        }
+    }
+}
+
+def restoreVolumeTask(data) {
+    def id = data.speakerId
+    def vol = data.oldVol
+    def speakers = ttsSpeaker instanceof List ? ttsSpeaker : [ttsSpeaker]
+    def spk = speakers.find { it.id == id }
+    if (spk && vol != null) {
+        spk.setVolume(vol as Integer)
+    }
+}
+
+// --- BUTTON ACTIONS ---
+def appButtonHandler(btn) {
+    ensureStateMaps()
+    
+    if (btn == "btnRefresh") {
+        log.info "Dashboard Refresh Triggered."
+    } else if (btn == "btnUpdateTile") {
+        updateLeaderboardTile()
+    } else if (btn == "btnForceChase") {
+        selectNewChaseGame()
+    } else if (btn.startsWith("btnCreateChild_")) {
+        def gNum = btn.split("_")[1]
+        def gName = settings["gameName_${gNum}"] ?: "Machine ${gNum}"
+        def childDni = "gameAnnouncer-${app.id}-m${gNum}"
+        def existing = getChildDevice(childDni)
+        
+        if (!existing) {
+            try {
+                addChildDevice("hubitat", "Virtual Omni Sensor", childDni, null, [name: "${gName} Leaderboard", label: "${gName} Leaderboard"])
+                log.info "Created child device: ${gName} Leaderboard"
+                updateLeaderboardTile()
+            } catch (e) {
+                log.error "Error creating child device: ${e}"
+            }
+        } else {
+            log.warn "Child device already exists for ${gName}."
+        }
+    } else if (btn.startsWith("btnTestGame_")) {
+        def gNum = btn.split("_")[1].toInteger()
+        queueAnnouncement(gNum)
+    } else if (btn == "btnResetWeekly") {
+        clearWeeklyScores()
+    } else if (btn.startsWith("btnWipeMachine_")) {
+        def gNum = btn.split("_")[1]
+        state.gameStats.remove(gNum)
+        addToHistory("SYSTEM: Database completely wiped for Machine ${gNum}.")
+        updateLeaderboardTile()
+    }
+}
+
+def clearWeeklyScores() {
+    state.gameStats?.each { gNum, mStats ->
+        mStats.scores?.each { gameName, gScores ->
+            gScores.weekly = []
+        }
+    }
+    addToHistory("SYSTEM: All Weekly Scores have been wiped via automated or manual reset.")
+    selectNewChaseGame() 
+    updateLeaderboardTile()
+    log.info "All weekly scores cleared."
+}
+
+def addToHistory(String msg) {
+    ensureStateMaps()
+    def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
+    state.historyLog.add(0, "[${timestamp}] ${msg}")
+    if (state.historyLog.size() > 20) state.historyLog = state.historyLog.take(20)
+    log.info "ANNOUNCER HISTORY: [${timestamp}] ${msg}"
 }
