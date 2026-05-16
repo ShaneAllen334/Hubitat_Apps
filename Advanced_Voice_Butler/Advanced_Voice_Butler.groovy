@@ -1522,8 +1522,9 @@ def executeRoutedTTS(String msg, String mode, indoorVol, outdoorVol, int priorit
 
     if (allTargetSpeakers.size() > 0) {
         allTargetSpeakers.each { item ->
-            enqueueTTS(item.spk, msg, item.vol, priority, fastTrack)
-            played = true
+            // FIX: Capture if the TTS engine actually accepted the message
+            def queued = enqueueTTS(item.spk, msg, item.vol, priority, fastTrack)
+            if (queued) played = true
         }
     }
     return played
@@ -2271,7 +2272,7 @@ def getWeatherReport(wDevice, String contextKey = "global", boolean isTest = fal
 
 // --- TTS ENGINE & PRIORITY QUEUE ---
 def enqueueTTS(speakerInput, msg, originalVol, priority, fastTrack = false) {
-    if (!speakerInput) return
+    if (!speakerInput) return false // Return false if no speaker was provided
     
     def isMuted = false
     def muteReason = ""
@@ -2282,13 +2283,17 @@ def enqueueTTS(speakerInput, msg, originalVol, priority, fastTrack = false) {
 
     if (isMuted) {
         if (settings.enableDebug) log.debug "TTS Suppressed (${muteReason}). Skipped Message: '${msg}'"
-        return
+        return false // Return false if the house is muted
     }
     
     def speakers = speakerInput instanceof List ? speakerInput : [speakerInput]
     def speakerIds = speakers.collect { it?.id }
 
-    if (state.ttsQueue.any { it.msg == msg }) return
+    if (state.ttsQueue.any { it.msg == msg }) return false
+
+    // --- THE FIX: Record the speech transcript to the dashboard ---
+    logSpeech(msg)
+    // --------------------------------------------------------------
 
     state.ttsQueue.add([
         id: java.util.UUID.randomUUID().toString(),
@@ -2301,6 +2306,8 @@ def enqueueTTS(speakerInput, msg, originalVol, priority, fastTrack = false) {
     ])
     state.ttsQueue = state.ttsQueue.sort { it.priority }
     processQueue()
+    
+    return true // Successfully queued!
 }
 
 def processQueue() {
@@ -4413,17 +4420,22 @@ def testGoogleIntegration() {
 }
 
 def addToHistory(String msg) {
-    ensureStateMaps()
+    // Keeps system events (like portal clicks) in Hubitat's native log, but removes them from the visual dashboard
     def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
+    def cleanMsg = msg.replaceAll("\\<.*?\\>", "")
+    log.info "SYSTEM: [${timestamp}] ${cleanMsg}"
+}
+
+def logSpeech(String msg) {
+    // This explicitly adds ONLY spoken text to the app's visual dashboard history log
+    if (!state.historyLog) state.historyLog = []
+    def timestamp = new Date().format("h:mm a", location.timeZone)
+    def cleanMsg = msg.replaceAll("\\<.*?\\>", "").trim() // Strips any hidden SSML voice tags
     
-    // Hubitat Quirks Fix: Extract list, modify, and push back to force a database commit
-    def currentLog = state.historyLog ?: []
-    currentLog.add(0, "[${timestamp}] ${msg}")
-    if (currentLog.size() > 30) currentLog = currentLog.take(30)
-    state.historyLog = currentLog
+    state.historyLog.add(0, "<span style='color: #888; font-size: 11px;'>[${timestamp}]</span> <b>🗣️ \"${cleanMsg}\"</b>")
+    if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
     
-    // Mirror to Hubitat's native Logs tab so it's always visible!
-    log.info "Voice Butler History: ${msg}"
+    log.info "SPEECH TRANSCRIPT: ${cleanMsg}"
 }
 
 def checkInternetConnection() {
@@ -7076,8 +7088,14 @@ def crossAppMessageHandler(evt) {
         def targetVol = settings.crossAppVolume != null ? settings.crossAppVolume : settings.globalVolume
         def rMode = settings.crossAppRoutingMode ?: "Global Indoor Speaker Only"
         
-        executeRoutedTTS(applyDynamicVars(finalMsg), rMode, settings.globalVolume, targetVol, 2)
-        addToHistory("CROSS-APP (${sourceName}): Live dispatch announcement executed: '${liveMsg}'")
+        // FIX: Corrected volume parameter order and capture the boolean success response
+        def played = executeRoutedTTS(applyDynamicVars(finalMsg), rMode, targetVol, settings.outdoorVolume, 2)
+        
+        if (played) {
+            addToHistory("CROSS-APP (${sourceName}): Routed live dispatch to speakers: '${liveMsg}'")
+        } else {
+            addToHistory("CROSS-APP (${sourceName}): Message dropped by routing engine (No speakers active for route '${rMode}', or system is muted).")
+        }
     }
 }
 
