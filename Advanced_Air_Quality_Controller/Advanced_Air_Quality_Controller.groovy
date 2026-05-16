@@ -378,7 +378,16 @@ def updated() { logInfo("Updated"); unsubscribe(); unschedule(); initialize() }
 
 def systemEventHandler(evt) {
     // Bundles rapid-fire events from multiple sensor attributes into a single execution
-    runIn(2, "evaluateSystem", [overwrite: true])
+    try {
+        runIn(2, "evaluateSystem", [overwrite: true])
+    } catch (e) {
+        // Suppress rapid-fire scheduler collisions if an identical task block is already registered
+        if (e.toString().contains("ObjectAlreadyExistsException")) {
+            // Safely ignored: The evaluateSystem task is already scheduled and will run
+        } else {
+            log.error "${app.label}: Error executing systemEventHandler: ${e}"
+        }
+    }
 }
 
 def initialize() {
