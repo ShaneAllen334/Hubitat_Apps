@@ -317,7 +317,9 @@ def mainPage() {
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> <b>1) Stepping:</b> Prevents RF fans from missing commands.<br><b>2) Wiggle:</b> Hourly routine to drop the fan one speed and bump it back.<br><b>3) Spin-Down:</b> Delays power relay shutoff until blades stop. <i>(These settings only apply to Multi-Speed fans)</i></div>"
             input "rfStepDelay", "number", title: "Seconds between sequential fan speed steps", required: true, defaultValue: 3
             input "enableWiggle", "bool", title: "Enable Hourly Fan Wiggle (Self-Healing)", defaultValue: true
-            input "relaySpinDown", "number", title: "Seconds to wait before killing power relay (Spin-down delay)", required: true, defaultValue: 15
+            input "relaySpinDown", "number", title: "Standard Spin-Down (Seconds to wait before killing power relay)", required: true, defaultValue: 15
+            input "modeChangeWiggle", "bool", title: "Enable Mode Change Wiggle-to-Off (Bumps fan to Low then Off before killing relay on Night/Away modes to ensure RF sync)", defaultValue: true
+            input "modeChangeSpinDown", "number", title: "Mode Change Spin-Down (Extended seconds to let blades stop before killing relay on Night/Away)", required: true, defaultValue: 60
         }
 
         section("<b>Dynamic Occupancy</b>", hideable: true, hidden: true) {
@@ -329,9 +331,11 @@ def mainPage() {
 
         section("<b>Operating Modes Configuration</b>", hideable: true, hidden: true) {
             input "awayModes", "mode", title: "<b>Away Modes</b> (All fans step to OFF)", multiple: true, required: false
-            input "homeModes", "mode", title: "<b>Active Modes</b> (Home, Morning, Arrival - Uses Room Setpoints)", multiple: true, required: false
+            input "homeModes", "mode", title: "<b>Active Modes</b> (e.g., Home, Daytime - Uses Room Setpoints)", multiple: true, required: false
+            input "morningModes", "mode", title: "<b>Morning Modes</b> (Active Mode + Triggers a 120s delayed RF sync/wiggle if relays are on)", multiple: true, required: false
             input "nightModes", "mode", title: "<b>Good Night Modes</b> (Turns off fans unless GN override is active)", multiple: true, required: false
             input "clearOverrideModes", "mode", title: "<b>Override Reset Modes</b> (Modes that will automatically clear manual overrides. Leave blank to clear on ALL mode changes)", multiple: true, required: false
+            input "enableMorningWiggle", "bool", title: "<b>Enable Morning Mode RF Sync</b> (Forces all RF fans to sync states 120s after morning mode starts)", defaultValue: true
         }
 
         section("<b>Room Fan Configurations</b>", hideable: false, hidden: false) {
@@ -441,6 +445,28 @@ def getWattsForSpeed(speedStr, fanType, minW, maxW) {
     
     def stepWatts = (maxW - minW) / (maxLvl - 1)
     return minW + (stepWatts * (lvl - 1))
+}
+
+// --- DEVICE COMMAND HELPER (PREVENTS HUBITAT RACE CONDITIONS) ---
+def applyDeviceCommand(data) {
+    if (!data || !data.type || !data.room || !data.val) return
+    def rNum = data.room
+    if (data.type == "fan") {
+        def fDev = settings["z${rNum}Fan"]
+        if (fDev) fDev.setSpeed(data.val)
+    } else if (data.type == "power") {
+        def pDev = settings["z${rNum}Power"]
+        if (pDev) {
+            if (data.val == "on") pDev.on()
+            else pDev.off()
+        }
+    } else if (data.type == "simple") {
+        def sDev = settings["z${rNum}SimpleFan"]
+        if (sDev) {
+            if (data.val == "on") sDev.on()
+            else sDev.off()
+        }
+    }
 }
 
 def installed() { logInfo("Installed"); initialize() }
@@ -563,10 +589,10 @@ def buttonHandler(evt) {
                                 pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 if (requestedSpeed == "off") {
                                     setExpectedState(i, "simpleFan", "off")
-                                    sDev.off()
+                                    runInMillis(400, "applyDeviceCommand", [data: [type: "simple", room: i, val: "off"]])
                                 } else {
                                     setExpectedState(i, "simpleFan", "on")
-                                    sDev.on()
+                                    runInMillis(400, "applyDeviceCommand", [data: [type: "simple", room: i, val: "on"]])
                                 }
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "simple"], overwrite: false])
                             }
@@ -583,7 +609,7 @@ def buttonHandler(evt) {
                             if (requestedSpeed != "off" && pDev && pDev.currentValue("switch") != "on") {
                                 pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 setExpectedState(i, "power", "on")
-                                pDev.on()
+                                runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: i, val: "on"]])
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "power"], overwrite: false])
                                 runInMillis(1500, "stepFanTrigger", [data: [room: i], overwrite: false])
                             } else {
@@ -717,6 +743,7 @@ def modeChangeHandler(evt) {
     }
     
     def isNight = nightModes ? (nightModes as List).contains(evt.value) : false
+    def isMorning = morningModes ? (morningModes as List).contains(evt.value) : false
     
     if (!isNight) {
         logAction("Mode transition to ${evt.value}. Enforcing a 10-minute manual override lockout to allow mesh to settle.")
@@ -725,6 +752,11 @@ def modeChangeHandler(evt) {
                 pauseOverrideDetection(i, 600)
             }
         }
+    }
+
+    if (isMorning && settings.enableMorningWiggle != false) {
+        logAction("Morning Mode transition detected. Will evaluate for forced RF fan sync in 120 seconds.")
+        runIn(120, "checkMorningWiggle")
     }
 
     evaluateFans()
@@ -755,8 +787,14 @@ def updateWiggleReset(roomId) {
 
 def pauseOverrideDetection(roomId, seconds = 15) {
     def map = state.ignoreOverridesUntil ?: [:]
-    map[roomId.toString()] = now() + (seconds * 1000)
-    state.ignoreOverridesUntil = map
+    def existing = map[roomId.toString()]
+    def proposed = now() + (seconds * 1000)
+    
+    // Only overwrite if the new pause duration is longer than the current remaining pause
+    if (!existing || proposed > existing.toLong()) {
+        map[roomId.toString()] = proposed
+        state.ignoreOverridesUntil = map
+    }
 }
 
 def isDetectionPaused(roomId) {
@@ -974,6 +1012,7 @@ def evaluateFans() {
     def currentMode = location.mode
     def isAway = awayModes ? (awayModes as List).contains(currentMode) : false
     def isNight = nightModes ? (nightModes as List).contains(currentMode) : false
+    def isMorning = morningModes ? (morningModes as List).contains(currentMode) : false
     def isActive = homeModes ? (homeModes as List).contains(currentMode) : (!isAway && !isNight)
 
     for (int i = 1; i <= 8; i++) {
@@ -1011,8 +1050,8 @@ def evaluateFans() {
                 else if (isNight) {
                     turnRoomOff(i, fanType, zName, "Good Night Mode (Not Isolated)")
                 }
-                // 3. ACTIVE MODE LOGIC
-                else if (isActive && isOccupied) {
+                // 3. ACTIVE/MORNING MODE LOGIC
+                else if ((isActive || isMorning) && isOccupied) {
                     def tDev = settings["z${i}Temp"]
                     def hDev = settings["z${i}Hum"]
                     def setpoint = settings["z${i}Setpoint"]
@@ -1065,14 +1104,14 @@ def evaluateFans() {
                                 logAction("Smart Lighting Needed: Proactively powering ON relay for ${zName}.")
                                 pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 setExpectedState(i, "power", "on")
-                                pDev.on()
+                                runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: i, val: "on"]])
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "power"], overwrite: false])
                             } 
                             else if (!keepOn && pwrState != "off" && fDev.currentValue("speed") == "off") {
                                 logAction("Smart Lighting conditions cleared. Sweeping power relay OFF for ${zName}.")
                                 pauseOverrideDetection(i, 30) // Setup Blind Spot
                                 setExpectedState(i, "power", "off")
-                                pDev.off()
+                                runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: i, val: "off"]])
                                 runIn(5, "refreshSwitch", [data: [room: i, type: "power"], overwrite: false])
                             }
                         }
@@ -1106,18 +1145,45 @@ def turnRoomOff(roomId, fanType, roomName, reason) {
         
         // Skip fan commands if Away/Night and no 24/7 relay requirement, to save network resources
         if (pDev && !alwaysOn && (isAway || isNight)) {
-            if (state["z${roomId}Target"] != "off") {
-                logAction("Mode is ${isAway ? 'Away' : 'Good Night'}. Killing ${roomName} Master Relay directly (skipping fan speed commands to save hub resources).")
-                state["z${roomId}Target"] = "off"
-                updateWiggleReset(roomId)
-                setExpectedState(roomId, "fan", "off")
-            }
             
-            if (pDev.currentValue("switch") != "off") {
-                pauseOverrideDetection(roomId, 30) // Setup Blind Spot
-                setExpectedState(roomId, "power", "off")
-                pDev.off()
-                runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
+            if (settings.modeChangeWiggle != false && fDev) { // Default to true
+                if (state["z${roomId}Target"] != "off" || pDev.currentValue("switch") != "off") {
+                    logAction("Mode is ${isAway ? 'Away' : 'Good Night'}. Executing Wiggle-to-Off for ${roomName} to ensure RF sync before cutting power.")
+                    state["z${roomId}Target"] = "off"
+                    updateWiggleReset(roomId)
+                    
+                    def spinDelay = settings.modeChangeSpinDown != null ? settings.modeChangeSpinDown : 60
+                    pauseOverrideDetection(roomId, spinDelay + 10) 
+                    
+                    if (fanType != "fixed") {
+                        // Wiggle: Low -> Off
+                        runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: "low"]])
+                        runIn(rfStepDelay ?: 3, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: "off"]])
+                        setExpectedState(roomId, "fan", "off")
+                    } else {
+                        // Just send off for fixed fans
+                        runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: "off"]])
+                        setExpectedState(roomId, "fan", "off")
+                    }
+                    
+                    logAction("Scheduling power relay kill for ${roomName} in ${spinDelay} seconds to allow for complete blade spin-down.")
+                    runIn(spinDelay, "killPowerRelay", [data: [room: roomId], overwrite: true])
+                }
+            } else {
+                // Original Behavior if modeChangeWiggle is disabled
+                if (state["z${roomId}Target"] != "off") {
+                    logAction("Mode is ${isAway ? 'Away' : 'Good Night'}. Killing ${roomName} Master Relay directly (skipping fan speed commands to save hub resources).")
+                    state["z${roomId}Target"] = "off"
+                    updateWiggleReset(roomId)
+                    setExpectedState(roomId, "fan", "off")
+                }
+                
+                if (pDev.currentValue("switch") != "off") {
+                    pauseOverrideDetection(roomId, 30) // Setup Blind Spot
+                    setExpectedState(roomId, "power", "off")
+                    runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: roomId, val: "off"]])
+                    runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
+                }
             }
         } else {
             setFanTarget(roomId, fDev, pDev, roomName, "off", reason)
@@ -1128,7 +1194,7 @@ def turnRoomOff(roomId, fanType, roomName, reason) {
             logAction("Stopping ${roomName} simple fan relay. (${reason})")
             pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "off")
-            sDev.off()
+            runInMillis(400, "applyDeviceCommand", [data: [type: "simple", room: roomId, val: "off"]])
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
         }
     }
@@ -1144,7 +1210,7 @@ def evaluateSimpleFan(roomId, switchDevice, roomName, currentTemp, targetSetpoin
             logAction("Starting ${roomName} relay. (${label} Temp: ${currentTemp}°, Target: ${targetSetpoint}°, Delta: +${delta}°)")
             pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "on")
-            switchDevice.on()
+            runInMillis(400, "applyDeviceCommand", [data: [type: "simple", room: roomId, val: "on"]])
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
         }
     } else if (currentTemp <= (targetSetpoint - 0.5)) {
@@ -1152,7 +1218,7 @@ def evaluateSimpleFan(roomId, switchDevice, roomName, currentTemp, targetSetpoin
             logAction("Stopping ${roomName} relay. (Deadband satisfied: ${currentTemp}° <= ${targetSetpoint - 0.5}°)")
             pauseOverrideDetection(roomId, 30) // Setup Blind Spot
             setExpectedState(roomId, "simpleFan", "off")
-            switchDevice.off()
+            runInMillis(400, "applyDeviceCommand", [data: [type: "simple", room: roomId, val: "off"]])
             runIn(5, "refreshSwitch", [data: [room: roomId, type: "simple"], overwrite: false])
         }
     }
@@ -1236,7 +1302,7 @@ def setFanTarget(roomId, fDev, pDev, roomName, newTargetSpeed, reason) {
         logAction("Powering ON ${roomName} relay for active cooling.")
         pauseOverrideDetection(roomId, 30) // Setup Blind Spot
         setExpectedState(roomId, "power", "on")
-        pDev.on()
+        runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: roomId, val: "on"]])
         runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
         runInMillis(1500, "stepFanTrigger", [data: [room: roomId], overwrite: false])
         return
@@ -1276,7 +1342,7 @@ def stepFan(roomId) {
             logAction("Commanding ${settings["z${roomId}Name"]} directly to ${targetSpeed.toUpperCase()}.")
             pauseOverrideDetection(roomId, 60)
             setExpectedState(roomId, "fan", targetSpeed)
-            fDev.setSpeed(targetSpeed)
+            runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: targetSpeed]])
             
             // Re-trigger to check if it reached target or needs power killed
             runIn(rfStepDelay ?: 3, "stepFanTrigger", [data: [room: roomId], overwrite: false])
@@ -1307,7 +1373,7 @@ def stepFan(roomId) {
         logAction("Stepping ${settings["z${roomId}Name"]} UP to ${nextSpeed.toUpperCase()}...")
         pauseOverrideDetection(roomId, 60) // HUGE Blind Spot for sluggish cloud hubs
         setExpectedState(roomId, "fan", nextSpeed)
-        fDev.setSpeed(nextSpeed)
+        runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: nextSpeed]])
         runIn(delay, "stepFanTrigger", [data: [room: roomId], overwrite: false])
     } 
     else if (currentInt > targetInt) {
@@ -1315,7 +1381,7 @@ def stepFan(roomId) {
         logAction("Stepping ${settings["z${roomId}Name"]} DOWN to ${nextSpeed.toUpperCase()}...")
         pauseOverrideDetection(roomId, 60) // HUGE Blind Spot for sluggish cloud hubs
         setExpectedState(roomId, "fan", nextSpeed)
-        fDev.setSpeed(nextSpeed)
+        runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: roomId, val: nextSpeed]])
         runIn(delay, "stepFanTrigger", [data: [room: roomId], overwrite: false])
     } 
     else if (currentInt == 0 && targetInt == 0) {
@@ -1355,9 +1421,66 @@ def killPowerRelay(data) {
         logAction("Spin-down delay complete. No lighting overrides active. Killing power relay for Room ${roomId}.")
         pauseOverrideDetection(roomId, 30) // Setup Blind Spot
         setExpectedState(roomId, "power", "off")
-        pDev.off()
+        runInMillis(400, "applyDeviceCommand", [data: [type: "power", room: roomId, val: "off"]])
         runIn(5, "refreshSwitch", [data: [room: roomId, type: "power"], overwrite: false])
     }
+}
+
+// === NEW MORNING SYNC LOGIC ===
+def checkMorningWiggle() {
+    def anyRelayOn = false
+    for (int i = 1; i <= 8; i++) {
+        if (settings["enableZ${i}"] && settings["z${i}Power"] && settings["z${i}Power"].currentValue("switch") == "on") {
+            anyRelayOn = true
+            break
+        }
+    }
+
+    if (anyRelayOn) {
+        doMorningWiggle()
+    } else {
+        logInfo("Morning RF Sync skipped: No active fan relays detected.")
+    }
+}
+
+def doMorningWiggle() {
+    logAction("Executing Morning RF Fan Sync/Wiggle to ensure accurate states...")
+
+    for (int i = 1; i <= 8; i++) {
+        def rawFanType = settings["z${i}FanType"] ?: "speed3"
+        def fanType = (rawFanType == "speed") ? "speed3" : rawFanType
+
+        if (settings["enableZ${i}"] && fanType.startsWith("speed") && settings["z${i}Fan"]) {
+            def gnSwitch = settings["z${i}GnSwitch"]
+            if (gnSwitch && gnSwitch.currentValue("switch") == "on") continue
+
+            def pDev = settings["z${i}Power"]
+            if (pDev && pDev.currentValue("switch") == "off") continue // Skip if power is cut
+
+            def sMap = getSpeedLevels(fanType)
+            def lMap = getLevelSpeeds(fanType)
+
+            def fDev = settings["z${i}Fan"]
+            def current = fDev.currentValue("speed") ?: "off"
+            def currentInt = sMap[current] != null ? sMap[current] : 0
+            def targetSpeed = state["z${i}Target"] ?: "off"
+
+            if (currentInt > 0) {
+                def dropSpeed = lMap[currentInt - 1]
+                logAction("Morning Sync: Dropping ${settings["z${i}Name"]} to ${dropSpeed.toUpperCase()} temporarily.")
+                pauseOverrideDetection(i, 60)
+                setExpectedState(i, "fan", dropSpeed)
+                runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: i, val: dropSpeed]])
+            } else if (currentInt == 0 && targetSpeed == "off") {
+                logAction("Morning Sync: Bumping ${settings["z${i}Name"]} to LOW to force Bond Bridge reset.")
+                pauseOverrideDetection(i, 60)
+                setExpectedState(i, "fan", "low")
+                runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: i, val: "low"]])
+            }
+        }
+    }
+
+    runIn(10, "restoreWiggleSpeeds")
 }
 
 def doHourlyWiggle() {
@@ -1402,13 +1525,13 @@ def doHourlyWiggle() {
                 logAction("Wiggle: Dropping ${settings["z${i}Name"]} to ${dropSpeed.toUpperCase()} temporarily.")
                 pauseOverrideDetection(i, 60) 
                 setExpectedState(i, "fan", dropSpeed)
-                fDev.setSpeed(dropSpeed)
+                runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: i, val: dropSpeed]])
             } 
             else if (currentInt == 0 && targetSpeed == "off") {
                 logAction("Wiggle: Bumping ${settings["z${i}Name"]} to LOW to force Bond Bridge reset.")
                 pauseOverrideDetection(i, 60) 
                 setExpectedState(i, "fan", "low")
-                fDev.setSpeed("low")
+                runInMillis(400, "applyDeviceCommand", [data: [type: "fan", room: i, val: "low"]])
             }
         }
     }
