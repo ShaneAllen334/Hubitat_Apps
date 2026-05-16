@@ -6,7 +6,7 @@ definition(
     name: "Advanced Rain Detection",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "Multi-sensor weather logic engine featuring VPD, CAPE, Moisture Advection, Astronomical Solar Modeling, Lightning Vectoring, and API Survival Mode.",
+    description: "Multi-sensor weather logic engine featuring VPD, CAPE, Moisture Advection, Astronomical Solar Modeling, Lightning Vectoring, API Survival Mode, and MSLP Calibration.",
     category: "Green Living",
     iconUrl: "",
     iconX2Url: "",
@@ -240,6 +240,7 @@ def mainPage() {
                 def tP = getFloat(sensorTemp, ["temperature", "tempf"])
                 def hP = getFloat(sensorHum, ["humidity"])
                 def pP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
+                if (pP != null) pP += (settings.pressOffset ?: 0.0) // Apply MSLP Offset
                 
                 def t = tP ?: 0.0
                 def h = hP ?: 0.0
@@ -251,6 +252,7 @@ def mainPage() {
                     def tB = getFloat(sensorTempBackup, ["temperature", "tempf"])
                     def hB = getFloat(sensorHumBackup, ["humidity"])
                     def pB = getFloat(sensorPressBackup, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
+                    if (pB != null) pB += (settings.pressOffset ?: 0.0) // Apply MSLP Offset to backup
                     
                     if (tP != null && tB != null) t = (tP + tB) / 2.0
                     else if (tP == null && tB != null) { t = tB; redundancyActive = true }
@@ -284,7 +286,7 @@ def mainPage() {
                     state.lightningHistory.each { if (it.value < recentLightDist) recentLightDist = it.value }
                 }
                 def recentLightDistStr = strikes > 0 ? recentLightDist : "N/A"
-                def lightVector = state.lightningVectorStr ?: "Gathering"
+                def lightVector = state.lightningVectorStr ?: "Gathering Data"
                 
                 def rainDay = getFloat(sensorRainDaily, ["rainDaily", "dailyrainin", "water", "dailyWater"], 0.0)
                 def rainWeek = getFloat(sensorRainWeekly, ["rainWeekly", "weeklyrainin", "weeklyWater"], 0.0)
@@ -353,6 +355,7 @@ def mainPage() {
                 if (sensorLeak || sensorLeak2 || sensorLeak3) {
                     if (state.dewRejectionActive) leakWetStr = "<span style='color:orange; font-weight:bold;'>DEW/IGNORED</span>"
                     else if (state.stuckLeakActive && rawLeakWet) leakWetStr = "<span style='color:orange; font-weight:bold;'>STUCK/IGNORED</span>"
+                    else if (state.leakWetVerifying) leakWetStr = "<span style='color:purple; font-weight:bold;'>VERIFYING (60s Timer)</span>"
                     else if (rawLeakWet) leakWetStr = "<span style='color:blue; font-weight:bold;'>WET</span>"
                     else leakWetStr = "DRY"
                 }
@@ -518,8 +521,6 @@ def mainPage() {
                 }
                 visualWidgets += "</div>"
                 
-                statusText += visualWidgets
-                
                 statusText += "<div style='margin-top: 15px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 15px; border: 1px solid #ccc;'>"
                 
                 def rainSw = switchRaining?.currentValue("switch") == "on" ? "<span style='color:blue; font-weight:bold;'>ON</span>" : "<span style='color:gray;'>OFF</span>"
@@ -605,6 +606,8 @@ def configPage() {
         
         section("<b>Algorithm Tuning & Toggles</b>", hideable: true, hidden: true) {
             paragraph "<i>Enable or disable specific mathematical models to fine-tune the engine's sensitivity to your specific microclimate.</i>"
+            
+            input "pressOffset", "decimal", title: "Barometric MSLP Offset (inHg)", defaultValue: 0.0, description: "Corrects Absolute pressure to Mean Sea Level Pressure. Enter the difference between your raw sensor and the official NWS reading."
             
             input "enableSurvivalMode", "bool", title: "Survival Mode (API Failover)", defaultValue: true, description: "If local sensors die or freeze, the app will hijack the Open-Meteo telemetry stream and run a virtual weather station internally so your automations don't fly blind."
             input "enableAutoCalibration", "bool", title: "Dynamic Auto-Calibration", defaultValue: true, description: "Learns from false positives (Probable triggers with no physical rain). Applies a subtle probability penalty multiplier to adjust to your specific microclimate over time."
@@ -698,6 +701,7 @@ def configPage() {
             paragraph "<i>Configure which devices receive alerts and the specific probability thresholds that trigger them.</i>"
             input "notifyDevices", "capability.notification", title: "Notification Devices", multiple: true, required: false
             input "notifyModes", "mode", title: "Only send notifications in these modes (Leave blank for all)", multiple: true, required: false
+            input "notificationCooldown", "number", title: "Notification Spam Cooldown (Minutes)", required: true, defaultValue: 60, description: "Prevents notification fatigue during on-and-off storms. If conditions bounce back and forth, the app will stay silent for this many minutes UNLESS the weather actively escalates to a worse state (e.g. Sprinkling -> Heavy Rain will always send)."
             input "notifyProbThreshold", "number", title: "Rain Probability Setpoint (%)", required: true, defaultValue: 75, description: "Turns on the 'Rain Probable' switch and sends a notification when calculated probability hits this threshold."
             input "alertDelaySeconds", "number", title: "Alert Delay (Seconds)", required: true, defaultValue: 60, description: "Wait this long before triggering alerts to prevent false alarms from temporary calculation spikes."
             input "notifyOnSprinkle", "bool", title: "Notify when Sprinkling/Snowing starts", defaultValue: true
@@ -1083,11 +1087,14 @@ void appButtonHandler(btn) {
         state.calibrationMultiplier = 1.0
         state.probableStartTime = null
         
+        state.lastNotificationTime = 0
+        state.lastNotificationSeverity = 0
+        
         unschedule("executeProbableAlert")
         state.confidenceScore = 0
         state.confidenceReasoning = "System reset."
         state.smoothedTemp = null
-       
+        
         safeOff(switchSprinkling)
         safeOff(switchRaining)
         safeOff(switchProbable)
@@ -1150,7 +1157,13 @@ def updateHistory(historyName, val, maxAgeMs) {
 def sensorHandler(evt) { stdHandler(evt) }
 def stdHandler(evt) { markActive(); runIn(2, "evaluateWeather") }
 def tempHandler(evt) { updateHistory("tempHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
-def pressureHandler(evt) { updateHistory("pressureHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
+def pressureHandler(evt) { 
+    def raw = 0.0
+    try { raw = evt.value.toString().replaceAll("[^\\d.-]", "").toFloat() } catch(e) {}
+    def cal = raw + (settings.pressOffset ?: 0.0)
+    updateHistory("pressureHistory", cal, 86400000)
+    runIn(2, "evaluateWeather") 
+}
 def luxHandler(evt) { updateHistory("luxHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
 def windHandler(evt) { updateHistory("windHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
 def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 86400000); runIn(2, "evaluateWeather") }
@@ -1306,7 +1319,9 @@ def evaluateWeather() {
     def redundancyActive = false
     def tP = getFloat(sensorTemp, ["temperature", "tempf"])
     def hP = getFloat(sensorHum, ["humidity"])
+    
     def pP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
+    if (pP != null) pP += (settings.pressOffset ?: 0.0) // Apply MSLP offset
     
     def t = tP
     def h = hP
@@ -1316,7 +1331,9 @@ def evaluateWeather() {
     if (settings.enableRedundancy != false) {
         def tB = getFloat(sensorTempBackup, ["temperature", "tempf"])
         def hB = getFloat(sensorHumBackup, ["humidity"])
+        
         def pB = getFloat(sensorPressBackup, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"])
+        if (pB != null) pB += (settings.pressOffset ?: 0.0) // Apply MSLP offset to backup
         
         if (tP != null && tB != null) t = (tP + tB) / 2.0
         else if (tP == null && tB != null) { t = tB; redundancyActive = true }
@@ -1349,7 +1366,8 @@ def evaluateWeather() {
     def tDropAnomaly = metric ? 1.7 : 3.0
     def spreadCrit = metric ? 0.8 : 1.5
     def spreadTight = metric ? 2.2 : 4.0
-    def spreadDew = metric ? 1.7 : 3.0
+    def spreadDew = metric ? 2.5 : 4.5 
+    
     def sTrendConv = metric ? -1.1 : -2.0
     def sTrendRapid = metric ? -1.7 : -3.0
     def tTrendRapid = metric ? -1.7 : -3.0
@@ -1361,7 +1379,8 @@ def evaluateWeather() {
     def pRiseStrong = metric ? 1.0 : 0.03
     def pDropMild = metric ? -0.34 : -0.01
     def pRiseMild = metric ? 0.68 : 0.02
-    def windCalm = metric ? 1.6 : 1.0 
+    
+    def windCalm = metric ? 4.0 : 2.5 
     def windSteady = metric ? 8.0 : 5.0
     def windSpike = metric ? 16.0 : 10.0
     def windHigh = metric ? 24.0 : 15.0
@@ -1413,7 +1432,7 @@ def evaluateWeather() {
     if (dpSpread < 0) dpSpread = 0.0
     state.dewPointSpread = dpSpread
     if (!state.survivalModeActive) updateHistory("spreadHistory", dpSpread, 86400000)
-   
+    
     // Trend & Acceleration Engine
     def pTrendData = getTrendData(state.pressureHistory, 0.25)
     def pAccel = getAccelerationData(state.pressureHistory)
@@ -1479,9 +1498,22 @@ def evaluateWeather() {
     }
     state.stuckLeakActive = stuckLeakActive
     
-    def leakWet = rawLeakWet && !stuckLeakActive
+    // NEW: 60-Second Verification Logic & 3-Sensor Bypass
+    def leakDelayMet = false
+    if (rawLeakWet) {
+        if (wetCountRaw >= 3) {
+            leakDelayMet = true // All 3 sensors wet = instantly bypass 60s delay
+        } else if (state.leakWetStartTime && (now() - state.leakWetStartTime) >= 60000) {
+            leakDelayMet = true // 60 seconds have successfully elapsed
+        } else {
+            runIn(60, "evaluateWeather") // Ensure we re-check exactly when the 60s is up
+        }
+    }
+    state.leakWetVerifying = (rawLeakWet && !leakDelayMet && !stuckLeakActive)
+    
+    def leakWet = rawLeakWet && leakDelayMet && !stuckLeakActive
     def dewRejectionActive = false
-   
+    
     if (leakWet && settings.enableDewRejection != false) {
         def checkLux = sensorLux ? (luxVal < 100) : true
         def checkWind = sensorWind ? (windVal < windCalm) : true
@@ -1747,6 +1779,7 @@ def evaluateWeather() {
         
         if (dewRejectionActive) reasoning << "Leak Sensor ignored (Morning Dew/Frost Detected)"
         if (stuckLeakActive) reasoning << "Leak Sensor ignored (Stuck WET without physical rain gauge confirmation)"
+        if (state.leakWetVerifying) reasoning << "First Drop Sensor is wet. Waiting 60 seconds to verify before triggering."
         if (probability == 0 && r == 0 && !leakWet) reasoning << "Conditions are stable and dry."
     } else {
         probability = 0
@@ -1815,7 +1848,7 @@ def evaluateWeather() {
             state.alertPending = true
             runIn(delaySecs, "executeProbableAlert")
         }
-    } else if (probability < (probThreshold - 15) || isStale || vectorBypass) {
+    } else if (probability < probThreshold || isStale || vectorBypass) {
         if (state.alertPending) {
             logAction("Probability dropped below threshold before delay expired. Alert cancelled.")
             unschedule("executeProbableAlert")
@@ -1899,28 +1932,28 @@ def evaluateWeather() {
             safeOff(switchSprinkling)
             safeOff(switchSnowing)
             safeOn(switchRaining)
-            if (settings.notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%")
+            if (settings.notifyOnRain && !isStale) sendNotification("Weather Update: Heavy Rain detected. Probability: ${Math.round(probability)}%", 3)
             if (settings.audioRaining != null && settings.audioRaining != "") playAudioTrack(settings.audioRaining)
         } 
         else if (targetState == "Sprinkling") {
             safeOff(switchRaining)
             safeOff(switchSnowing)
             safeOn(switchSprinkling)
-            if (settings.notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%")
+            if (settings.notifyOnSprinkle && !isStale) sendNotification("Weather Update: Sprinkling detected. Probability: ${Math.round(probability)}%", 2)
             if (settings.audioSprinkling != null && settings.audioSprinkling != "") playAudioTrack(settings.audioSprinkling)
         } 
         else if (targetState == "Snowing") {
             safeOff(switchRaining)
             safeOff(switchSprinkling)
             safeOn(switchSnowing)
-            if (settings.notifyOnSprinkle && !isStale) sendNotification("Weather Update: Snowing/Freezing Precipitation detected. Probability: ${Math.round(probability)}%")
+            if (settings.notifyOnSprinkle && !isStale) sendNotification("Weather Update: Snowing/Freezing Precipitation detected. Probability: ${Math.round(probability)}%", 2)
             if (settings.audioSprinkling != null && settings.audioSprinkling != "") playAudioTrack(settings.audioSprinkling)
         }
         else if (targetState == "Clear") {
             safeOff(switchRaining)
             safeOff(switchSprinkling)
             safeOff(switchSnowing)
-            if (settings.notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.")
+            if (settings.notifyOnClear && !isStale) sendNotification("Weather Update: Conditions have cleared.", 0)
         }
     }
 
@@ -2002,7 +2035,7 @@ def executeProbableAlert() {
                 logAction("Probability alert silenced: Application has already escalated to ${state.weatherState}.")
             } else {
                 logAction("Probability threshold verified after delay. Triggering alerts.")
-                if (settings.notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(state.rainProbability)}%.")
+                if (settings.notifyDevices) sendNotification("Weather Alert: Rain probability has reached ${Math.round(state.rainProbability)}%.", 1)
                 if (settings.audioProbable != null && settings.audioProbable != "") playAudioTrack(settings.audioProbable)
             }
         }
@@ -2078,14 +2111,26 @@ def safeOff(dev) {
     }
 }
 
-def sendNotification(msg) {
+def sendNotification(msg, severity = 0) {
     if (settings.notifyModes && !settings.notifyModes.contains(location.mode)) {
         logDebug("Notification skipped: Current mode (${location.mode}) is not in allowed notification modes.")
         return
     }
-    if (settings.notifyDevices) {
-        settings.notifyDevices.each { it.deviceNotification(msg) }
-        logAction("Notification Sent: ${msg}")
+    
+    def cooldownMs = (settings.notificationCooldown ?: 60) * 60000
+    def timeSinceLast = now() - (state.lastNotificationTime ?: 0)
+    def lastSeverity = state.lastNotificationSeverity ?: 0
+    
+    // Allow if cooldown expired OR if the weather escalated
+    if (timeSinceLast >= cooldownMs || severity > lastSeverity) {
+        if (settings.notifyDevices) {
+            settings.notifyDevices.each { it.deviceNotification(msg) }
+        }
+        logAction("📱 Notification Sent: ${msg}")
+        state.lastNotificationTime = now()
+        state.lastNotificationSeverity = severity
+    } else {
+        logAction("🔕 Notification Muted (Anti-Spam Active): ${msg}")
     }
 }
 
@@ -2166,7 +2211,7 @@ def playDelayedMissedAlert() {
         
         // Optionally resend a text notification if desired
         if (settings.notifyDevices) {
-            sendNotification("Delayed Alert: Rain probability is currently ${state.rainProbability}%.")
+            sendNotification("Delayed Alert: Rain probability is currently ${state.rainProbability}%.", 1)
         }
     } else {
         logAction("Skipping delayed alert: Weather threat has passed.")
