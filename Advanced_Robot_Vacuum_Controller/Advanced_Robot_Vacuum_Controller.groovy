@@ -444,6 +444,7 @@ void dispatchVacuum(vacDevice, String brand, String type, String target, String 
     try {
         switch(brand) {
             case "Roborock (Community)":
+                // Set Suction via API
                 if (suction) {
                     Map suctionMap = ["quiet": 101, "balanced": 102, "turbo": 103, "max": 104, "off": 105]
                     Integer sCode = suctionMap[suction.toLowerCase()]
@@ -452,12 +453,25 @@ void dispatchVacuum(vacDevice, String brand, String type, String target, String 
                     }
                 }
                 
+                // Set Water via API (Fixes the Method Signature Crash)
+                if (water) {
+                    Map waterMap = ["off": 200, "low": 201, "medium": 202, "high": 203]
+                    Integer wCode = waterMap[water.toLowerCase()]
+                    if (wCode) {
+                        try { vacDevice.execute("set_water_box_custom_mode", "[${wCode}]") } catch(e) { logInfo("Water execute error: ${e}") }
+                    }
+                }
+                
+                // Dispatch Room(s) (Fixes the Array vs String issue)
                 if (type == "room") {
                     try {
-                        if (water) {
-                            vacDevice.appRoomClean(target, water.capitalize())
+                        if (target.contains(",")) {
+                            // Multi-room requires app_segment_clean with array syntax
+                            String arrayTarget = "[${target}]"
+                            vacDevice.execute("app_segment_clean", arrayTarget)
                         } else {
-                            vacDevice.appRoomClean(target)
+                            // Single room
+                            vacDevice.appRoomClean(target.toInteger())
                         }
                     } catch(e) { logInfo("appRoomClean dispatch error: ${e}") }
                 }
@@ -603,6 +617,9 @@ def executePendingDispatch() {
 void evaluateROIPowerState() {
     if (isAppPaused() || settings.smartROISavings == false) return
     if (state.pendingDispatchRooms?.size() > 0) return 
+    
+    // PREVENTS ROI ASSASSINATION: Give the vacuum 3 minutes to leave the dock after a dispatch
+    if (state.lastCleanTime && (now() - state.lastCleanTime) < 180000) return
     
     checkVacuumHealth(vacuum1, dockPlug1, 1)
     checkVacuumHealth(vacuum2, dockPlug2, 2)
