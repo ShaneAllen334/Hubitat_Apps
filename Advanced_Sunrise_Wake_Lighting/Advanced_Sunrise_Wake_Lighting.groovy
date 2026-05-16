@@ -22,7 +22,7 @@ def mainPage() {
         
         section("Live System Dashboard") {
             def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
-            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room</th><th style='padding: 8px;'>Good Night</th><th style='padding: 8px;'>Work/School</th><th style='padding: 8px;'>Wake Status</th></tr>"
+            statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room</th><th style='padding: 8px;'>Good Night</th><th style='padding: 8px;'>Work/School</th><th style='padding: 8px;'>Sick Mode</th><th style='padding: 8px;'>Wake Status</th></tr>"
             
             def configuredRooms = 0
             
@@ -43,6 +43,11 @@ def mainPage() {
                     def activeDayState = activeDaySwitch ? activeDaySwitch.currentValue("switch")?.toUpperCase() : "N/A"
                     def activeDayColor = (activeDayState == "ON") ? "green" : (activeDayState == "OFF" ? "red" : "gray")
                     
+                    // Sick Switch Status
+                    def sickSwitch = settings["r${rNum}_sickSwitch"]
+                    def sickState = sickSwitch ? sickSwitch.currentValue("switch")?.toUpperCase() : "N/A"
+                    def sickColor = (sickState == "ON") ? "red" : (sickState == "OFF" ? "green" : "gray")
+                    
                     def fadeStatus = "WAITING"
                     if (state["r${rNum}_isSnoozing"]) {
                         fadeStatus = "<span style='color: #9c27b0; font-weight: bold;'>SNOOZING</span>"
@@ -58,6 +63,7 @@ def mainPage() {
                     statusText += "<td style='padding: 8px;'><b>${rName}</b><br><span style='font-size: 11px; color: #666;'>Starts at ${timeTxt}</span></td>"
                     statusText += "<td style='padding: 8px; color: ${switchColor}; font-weight: bold;'>${switchState}</td>"
                     statusText += "<td style='padding: 8px; color: ${activeDayColor}; font-weight: bold;'>${activeDayState}</td>"
+                    statusText += "<td style='padding: 8px; color: ${sickColor}; font-weight: bold;'>${sickState}</td>"
                     statusText += "<td style='padding: 8px;'>${fadeStatus}</td>"
                     statusText += "</tr>"
                 }
@@ -113,6 +119,7 @@ def mainPage() {
                     
                     paragraph "<b>Controls & Handoffs</b>"
                     input "r${rNum}_gnSwitch", "capability.switch", title: "Virtual 'Good Night' Switch", required: true, description: "Must be ON for simulation to run. Turning OFF halts the fade."
+                    input "r${rNum}_sickSwitch", "capability.switch", title: "Virtual 'Sick' Switch (Optional)", required: false, description: "If ON, the sunrise lighting will be skipped for this room."
                     input "r${rNum}_sunriseStateSwitch", "capability.switch", title: "Sunrise Active State Switch (To pause Good Night enforcement)", required: false
                     input "r${rNum}_activeDaySwitch", "capability.switch", title: "Work/School Day Switch (Optional)", required: false, description: "If selected, this switch MUST be ON for the sunrise to run."
                     input "r${rNum}_modes", "mode", title: "Active Modes (Optional)", multiple: true, required: false
@@ -209,6 +216,7 @@ def startFadeProcess(rNum) {
     def rName = settings["r${rNum}_name"] ?: "Room ${rNum}"
     def gnSwitch = settings["r${rNum}_gnSwitch"]
     def activeDaySwitch = settings["r${rNum}_activeDaySwitch"]
+    def sickSwitch = settings["r${rNum}_sickSwitch"]
     def modes = settings["r${rNum}_modes"]
     def days = settings["r${rNum}_days"]
     def tz = location.timeZone ?: TimeZone.getDefault()
@@ -232,8 +240,15 @@ def startFadeProcess(rNum) {
         addToHistory("SKIPPED: ${rName} sunrise aborted. Work/School Day switch is OFF.")
         return
     }
+
+    // 4. Check Sick Switch
+    if (sickSwitch && sickSwitch.currentValue("switch") == "on") {
+        log.info "${rName} Sunrise: Skipped. Sick switch is ON."
+        addToHistory("SKIPPED: ${rName} sunrise aborted. Sick mode is active.")
+        return
+    }
     
-    // 4. Check Active Modes
+    // 5. Check Active Modes
     if (modes && !modes.contains(location.mode)) {
         log.info "${rName} Sunrise: Skipped. Hub is not in an active mode."
         return
