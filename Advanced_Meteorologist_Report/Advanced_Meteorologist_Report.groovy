@@ -29,10 +29,31 @@ def mainPage() {
             paragraph "<div style='background-color:#e9ecef; padding:10px; border-radius:5px; border-left:5px solid #007bff;'><b>System Status:</b> ${reportStatus}</div>"
 
             if (localStation) {
-                def lTemp = localStation.currentValue("temperature") ?: "--"
-                def lHum = localStation.currentValue("humidity") ?: "--"
-                def lWind = localStation.currentValue("windSpeed") ?: "--"
+                // Safe extraction to prevent literal "0" from showing as "--"
+                def getAttr = { attrName, defaultVal="--" -> 
+                    def val = localStation.currentValue(attrName)
+                    return val != null ? val : defaultVal
+                }
+
+                // Standard Metrics
+                def lTemp = getAttr("temperature")
+                def lHum = getAttr("humidity")
+                def lWind = getAttr("windSpeed")
                 
+                // Advanced PWS Metrics
+                def lDewPoint = getAttr("dewPoint")
+                def lHeatIndex = getAttr("heatIndex")
+                def lWindChill = getAttr("windChill")
+                def lWindDir = getAttr("windCompass", getAttr("windDirection"))
+                def lWindGust = getAttr("windGust")
+                def lIlluminance = getAttr("illuminance")
+                def lUV = getAttr("ultravioletIndex")
+                def lSolarRad = getAttr("solarRadiation")
+                def lRainRate = getAttr("rainRate", "0")
+                def lRainDaily = getAttr("rainDaily", "0")
+                def lVpd = getAttr("vpd")
+                def lBattery = getAttr("battery", "100")
+
                 def apiTemp = state.apiCurrentTemp ?: "--"
                 def apparentTemp = state.apiApparentTemp ?: "--"
                 def windGust = state.apiWindGust ?: "--"
@@ -40,30 +61,66 @@ def mainPage() {
                 def pollenDisplay = state.pollenIndex ? "${state.pollenIndex} (${state.pollenCategory})" : "Disabled/NA"
                 def moonDisplay = getMoonPhase()
 
+                // The "Weather Channel" Style Dashboard
                 def dashHTML = """
                 <style>
-                    .dash-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                    .dash-table th, .dash-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-                    .dash-table th { background-color: #343a40; color: white; }
-                    .dash-hl { background-color: #f8f9fa; font-weight:bold; text-align: left !important; padding-left: 15px !important; width: 35%; }
-                    .dash-subhead { background-color: #e9ecef; font-weight: bold; text-align: center !important; text-transform: uppercase; font-size: 12px; color: #495057; }
-                    .dash-val { text-align: left !important; padding-left: 15px !important; }
-                    .day-box { font-size: 12px; line-height: 1.4; }
+                    .wc-container { width: 100%; border: 2px solid #0b3b60; border-radius: 6px; overflow: hidden; margin-top: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); font-family: sans-serif; }
+                    .wc-header { background: linear-gradient(90deg, #0b3b60 0%, #1e5a8c 100%); color: white; padding: 12px; text-align: center; font-size: 16px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+                    .wc-table { width: 100%; border-collapse: collapse; background-color: #f4f7f6; }
+                    .wc-table td { border: 1px solid #d1d9e6; padding: 10px; width: 33.33%; text-align: center; vertical-align: middle; }
+                    .wc-label { font-size: 11px; color: #5a6a85; text-transform: uppercase; font-weight: bold; margin-bottom: 4px; }
+                    .wc-value { font-size: 18px; font-weight: bold; color: #0b3b60; }
+                    .wc-val-sm { font-size: 14px; font-weight: bold; color: #e65100; }
+                    .wc-highlight { background-color: #ffffff; }
+                    .wc-macro-header { background-color: #e0e6ed; padding: 8px; text-align: center; font-size: 12px; font-weight: bold; color: #333; }
                 </style>
-                <table class="dash-table">
-                    <thead><tr><th>Metric</th><th>Local (Your Station)</th><th>Macro (API)</th></tr></thead>
-                    <tbody>
-                        <tr><td class="dash-hl">Current Temp</td><td><b>${lTemp}°</b></td><td>${apiTemp}° (Feels: ${apparentTemp}°)</td></tr>
-                        <tr><td class="dash-hl">Humidity / Wind</td><td><b>${lHum}% / ${lWind} mph</b></td><td>Gusts: ${windGust} mph</td></tr>
-                        <tr><td class="dash-hl">Conditions</td><td colspan="2" class="dash-val"><b>${apiCondition}</b></td></tr>
-                        <tr><td class="dash-hl">Pollen / Moon</td><td colspan="2" class="dash-val">🌸 ${pollenDisplay} | 🌔 ${moonDisplay}</td></tr>
-                    </tbody>
-                </table>
+
+                <div class="wc-container">
+                    <div class="wc-header">📡 Live Local Telemetry</div>
+                    <table class="wc-table">
+                        <tbody>
+                            <tr class="wc-highlight">
+                                <td><div class="wc-label">Temperature</div><div class="wc-value">${lTemp}°</div></td>
+                                <td><div class="wc-label">Humidity / Dew</div><div class="wc-value">${lHum}%</div><div class="wc-label">DP: ${lDewPoint}°</div></td>
+                                <td><div class="wc-label">Feels Like</div><div class="wc-value">${(lTemp != "--" && lTemp.toBigDecimal() > 75) ? lHeatIndex : lWindChill}°</div></td>
+                            </tr>
+                            <tr>
+                                <td><div class="wc-label">Wind</div><div class="wc-value">${lWindDir} @ ${lWind} <span style="font-size:12px;">mph</span></div></td>
+                                <td><div class="wc-label">Wind Gusts</div><div class="wc-value">${lWindGust} <span style="font-size:12px;">mph</span></div></td>
+                                <td><div class="wc-label">Barometer/VPD</div><div class="wc-value">${lVpd} <span style="font-size:12px;">kPa</span></div></td>
+                            </tr>
+                            <tr class="wc-highlight">
+                                <td><div class="wc-label">Rain Rate</div><div class="wc-val-sm" style="color:#0277bd;">${lRainRate} in/hr</div></td>
+                                <td><div class="wc-label">Daily Rain</div><div class="wc-val-sm" style="color:#0277bd;">${lRainDaily} in</div></td>
+                                <td><div class="wc-label">Light / Solar</div><div class="wc-value">${lIlluminance} <span style="font-size:10px;">lx</span></div><div class="wc-label">Rad: ${lSolarRad} W/m²</div></td>
+                            </tr>
+                            <tr>
+                                <td><div class="wc-label">UV Index</div><div class="wc-val-sm" style="color:#6a1b9a;">${lUV}</div></td>
+                                <td><div class="wc-label">Station Battery</div><div class="wc-value" style="color:${lBattery.toInteger() < 20 ? 'red' : '#388e3c'};">${lBattery}%</div></td>
+                                <td><div class="wc-label">Status</div><div class="wc-val-sm" style="color:#388e3c;">ONLINE</div></td>
+                            </tr>
+                            <tr><td colspan="3" class="wc-macro-header">Macro Forecast Cross-Reference (API)</td></tr>
+                            <tr class="wc-highlight">
+                                <td><div class="wc-label">Regional Temp</div><div class="wc-value">${apiTemp}°</div></td>
+                                <td><div class="wc-label">Conditions</div><div class="wc-value" style="font-size:14px;">${apiCondition}</div></td>
+                                <td><div class="wc-label">Pollen / Moon</div><div class="wc-val-sm" style="color:#555;">🌸 ${pollenDisplay}<br>🌔 ${moonDisplay}</div></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
                 """
                 paragraph dashHTML
                 
                 if (state.apiDailyDates && state.apiDailyDates.size() > 0) {
-                    def forecastHTML = "<table class='dash-table'><thead><tr><td colspan='7' class='dash-subhead'>7-Day Outlook</td></tr><tr>"
+                    def forecastHTML = """
+                    <style>
+                        .dash-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top:10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                        .dash-table th, .dash-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+                        .dash-table th { background-color: #343a40; color: white; }
+                        .dash-subhead { background-color: #e9ecef; font-weight: bold; text-align: center !important; text-transform: uppercase; font-size: 12px; color: #495057; }
+                        .day-box { font-size: 12px; line-height: 1.4; }
+                    </style>
+                    <table class='dash-table'><thead><tr><td colspan='7' class='dash-subhead'>7-Day Outlook</td></tr><tr>"""
                     state.apiDailyDates.each { dStr -> forecastHTML += "<th>${getDayOfWeek(dStr)}</th>" }
                     forecastHTML += "</tr></thead><tbody><tr>"
                     
@@ -78,9 +135,48 @@ def mainPage() {
                     paragraph forecastHTML
                 }
 
+                // --- NEWS VALIDATION DASHBOARD ---
+                def newsValidationHTML = """
+                <div style='margin-top:20px; display:grid; grid-template-columns: 1fr 1fr; gap:10px;'>
+                    <div style='border:2px solid #5a6a85; border-radius:6px; padding:10px; background:#fdfdfd; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                        <div style='font-weight:bold; color:#0b3b60; border-bottom:1px solid #d1d9e6; padding-bottom:5px; margin-bottom:8px; text-transform:uppercase; font-size:12px;'>📰 Standard Headlines</div>
+                        <ul style='margin:0; padding-left:20px; font-size:14px; color:#333;'>
+                """
+                if (state.newsHeadlines && state.newsHeadlines.size() > 0) {
+                    state.newsHeadlines.each { hl -> newsValidationHTML += "<li style='margin-bottom:6px;'>${hl}</li>" }
+                } else {
+                    newsValidationHTML += "<li>No Standard News Pulled</li>"
+                }
+                
+                newsValidationHTML += """
+                        </ul>
+                    </div>
+                """
+                
+                if (enableKidsDevice) {
+                    newsValidationHTML += """
+                    <div style='border:2px solid #0288d1; border-radius:6px; padding:10px; background:#e1f5fe; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                        <div style='font-weight:bold; color:#01579b; border-bottom:1px solid #81d4fa; padding-bottom:5px; margin-bottom:8px; text-transform:uppercase; font-size:12px;'>🧒 Kids Edition Headlines</div>
+                        <ul style='margin:0; padding-left:20px; font-size:14px; color:#333;'>
+                    """
+                    if (state.kidsNewsHeadlines && state.kidsNewsHeadlines.size() > 0) {
+                        state.kidsNewsHeadlines.each { hl -> newsValidationHTML += "<li style='margin-bottom:6px;'>${hl}</li>" }
+                    } else {
+                        newsValidationHTML += "<li>No Kids News Pulled (Check RSS or API)</li>"
+                    }
+                    newsValidationHTML += "</ul></div>"
+                }
+                newsValidationHTML += "</div>"
+                paragraph newsValidationHTML
+
                 if (state.latestScript) {
-                    paragraph "<b>📝 Latest Script (Dashboard Anchor):</b>"
+                    paragraph "<b>📝 Standard Script Preview:</b>"
                     paragraph "<div style='font-size: 14px; font-style: italic; background-color: #fdfd96; padding: 10px; border-radius: 5px; border: 1px solid #e1e182;'>\"${state.latestScript}\"</div>"
+                }
+
+                if (enableKidsDevice && state.latestKidsScript) {
+                    paragraph "<b>🧒 Kids Edition Script Preview (GenZ):</b>"
+                    paragraph "<div style='font-size: 14px; font-style: italic; background-color: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px solid #90caf9;'>\"${state.latestKidsScript}\"</div>"
                 }
             } else {
                 paragraph "<i>Please select your personal weather station below to populate the dashboard.</i>"
@@ -92,7 +188,7 @@ def mainPage() {
             input "localStation", "capability.temperatureMeasurement", title: "Select Personal Weather Station", required: true, multiple: false
             input "zipCode", "text", title: "Zip Code (Required for Pollen)", required: false
             input "pollingInterval", "enum", title: "Background Sync Interval", options: ["15":"Every 15 Mins", "30":"Every 30 Mins", "60":"Every 1 Hour"], defaultValue: "30"
-            input "reportPersona", "enum", title: "Select Default Dashboard Personality", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional", required: true
+            input "reportPersona", "enum", title: "Select Default Dashboard Personality", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional", required: true
         }
 
         section(title: "<b>2. Morning Report Profile</b>", hideable: true, hidden: true) {
@@ -217,20 +313,20 @@ def mainPage() {
 
         section(title: "<b>6. Outputs & Advanced Devices</b>", hideable: true, hidden: true) {
             paragraph "<b>Audio Announcements</b>"
-            input "ttsPersona", "enum", title: "TTS Audio Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            input "ttsPersona", "enum", title: "TTS Audio Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional"
             input "ttsSpeakers", "capability.speechSynthesis", title: "Standard TTS Speakers", required: false, multiple: true
             input "advAudio", "capability.audioVolume", title: "Advanced Speakers", required: false, multiple: true
             input "advAudioVol", "number", title: "Advanced Speaker Broadcast Volume (1-100)", required: false, range: "1..100"
             
             paragraph "<hr><b>Personalized Push Notifications (Up to 4 Profiles)</b>"
             input "notifyUser1", "capability.notification", title: "User 1 Device(s)", required: false, multiple: true
-            input "personaUser1", "enum", title: "User 1 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            input "personaUser1", "enum", title: "User 1 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional"
             input "notifyUser2", "capability.notification", title: "User 2 Device(s)", required: false, multiple: true
-            input "personaUser2", "enum", title: "User 2 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            input "personaUser2", "enum", title: "User 2 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional"
             input "notifyUser3", "capability.notification", title: "User 3 Device(s)", required: false, multiple: true
-            input "personaUser3", "enum", title: "User 3 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            input "personaUser3", "enum", title: "User 3 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional"
             input "notifyUser4", "capability.notification", title: "User 4 Device(s)", required: false, multiple: true
-            input "personaUser4", "enum", title: "User 4 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"], defaultValue: "Professional"
+            input "personaUser4", "enum", title: "User 4 Persona", options: ["Professional", "Casual", "Technical", "Disgruntled", "GenZ", "Random"], defaultValue: "Professional"
             
             paragraph "<hr><b>Visual Indicators</b>"
             input "visualIndicators", "capability.colorControl", title: "Visual Weather Indicators", required: false, multiple: true
@@ -238,7 +334,7 @@ def mainPage() {
             paragraph "<hr><b>System Actions</b>"
             input "btnTestTTS", "button", title: "🔊 Test Audio Broadcast"
             input "btnTestNotify", "button", title: "📱 Test Push Notifications (All Users)"
-            input "btnCreateDevice", "button", title: "⚙️ Create & Sync Child Device"
+            input "btnCreateDevice", "button", title: "⚙️ Create & Sync Standard Child Device"
         }
 
         section(title: "<b>7. Recent Action History</b>", hideable: true, hidden: true) {
@@ -249,6 +345,47 @@ def mainPage() {
             }
             input "btnClearHistory", "button", title: "Clear History"
         }
+
+        section(title: "<b>8. News Integration</b>", hideable: true, hidden: true) {
+            paragraph "<div style='font-size:12px; color:#555;'><b>Setup Tip:</b> Select a major news network or use a custom RSS feed URL. The app will pull the top 3 headlines.</div>"
+            input "enableNews", "bool", title: "Enable News Headlines", defaultValue: false, submitOnChange: true
+            if (enableNews) {
+                input "newsSource", "enum", title: "Select News Source", options: ["NPR Top Stories", "CNN Top Stories", "Fox News Latest", "BBC News US & Canada", "Custom RSS Link"], defaultValue: "NPR Top Stories", submitOnChange: true
+                if (newsSource == "Custom RSS Link") {
+                    input "newsRssUrl", "text", title: "Custom News RSS Feed URL", required: true
+                }
+                input "newsIncludeMorning", "bool", title: "Read News in Morning Report", defaultValue: true
+                input "newsIncludeEvening", "bool", title: "Read News in Evening Report", defaultValue: false
+            }
+        }
+
+        section(title: "<b>9. 🧒 Kids Edition Report Profile</b>", hideable: true, hidden: false) {
+            paragraph "<i>Customize what is included in the Kids Edition device report. Persona is locked to GenZ.</i>"
+            input "enableKidsDevice", "bool", title: "<b>Enable Kids Version Device</b>", submitOnChange: true, defaultValue: false
+            if (enableKidsDevice) {
+                input "km_includeGreeting", "bool", title: "Kids Morning: Include Greeting", defaultValue: true
+                input "km_includeMicro", "bool", title: "Kids Morning: Include Station Data", defaultValue: true
+                input "km_includeDaily", "bool", title: "Kids Morning: Include Highs/Lows", defaultValue: true
+                input "km_includeFeelsLike", "bool", title: "Kids Morning: Include 'Feels Like' & Wind", defaultValue: true
+                input "km_includeRain", "bool", title: "Kids Morning: Include Rain", defaultValue: true
+                input "km_includeUV", "bool", title: "Kids Morning: Include UV Index", defaultValue: true
+                input "km_includeClothing", "bool", title: "Kids Morning: Include Clothing Advice", defaultValue: true
+                input "km_includePollen", "bool", title: "Kids Morning: Include Pollen", defaultValue: false
+                paragraph "<hr>"
+                input "ke_includeGreeting", "bool", title: "Kids Evening: Include Greeting", defaultValue: true
+                input "ke_includeDaily", "bool", title: "Kids Evening: Include Tomorrow's Forecast", defaultValue: true
+                input "ke_includeRain", "bool", title: "Kids Evening: Include Tomorrow's Rain Amount", defaultValue: true
+                input "ke_includeMoon", "bool", title: "Kids Evening: Include Moon Phase", defaultValue: true
+                paragraph "<hr>"
+                input "kidsNewsIncludeMorning", "bool", title: "Read News in Kids Morning Report", defaultValue: true
+                input "kidsNewsIncludeEvening", "bool", title: "Read News in Kids Evening Report", defaultValue: false
+                input "kidsNewsSource", "enum", title: "Kids News Source", options: ["DOGO News", "Teaching Kids News", "Custom RSS Link"], defaultValue: "DOGO News", submitOnChange: true
+                if (kidsNewsSource == "Custom RSS Link") {
+                    input "kidsNewsRssUrl", "text", title: "Custom Kids News RSS Feed URL", required: true
+                }
+                input "btnCreateKidsDevice", "button", title: "⚙️ Create/Sync Kids Device"
+            }
+        }
     }
 }
 
@@ -257,6 +394,8 @@ def updated() { unsubscribe(); unschedule(); initialize() }
 
 def initialize() {
     createChildDevice()
+    if (enableKidsDevice) createKidsDevice()
+    
     if (!state.actionHistory) state.actionHistory = []
     
     subscribe(location, "mode", modeChangeHandler)
@@ -283,20 +422,21 @@ def appButtonHandler(btn) {
     else if (btn == "btnClearHistory") { state.actionHistory = []; log.info "History cleared." }
     else if (btn == "btnTestTTS") { executeTargetedBroadcast("No Push Notification", true); logAction("Test Audio Broadcast Triggered.") }
     else if (btn == "btnTestNotify") { executeTargetedBroadcast("All Profiles", false); logAction("Test Notify Triggered for All Users.") }
-    else if (btn == "btnCreateDevice") { createChildDevice(); routineSync(); logAction("Child device created.") }
+    else if (btn == "btnCreateDevice") { createChildDevice(); routineSync(); logAction("Standard child device created.") }
+    else if (btn == "btnCreateKidsDevice") { createKidsDevice(); routineSync(); logAction("Kids child device created.") }
 }
 
 // ----------------- HELPER FUNCTIONS -----------------
 
 def getRandomPhrase(List phrases) {
     if (!phrases) return ""
-    return phrases[new Random().nextInt(phrases.size())]
+    return phrases[(Math.random() * phrases.size()).toInteger()]
 }
 
 def checkDays(daysList) {
     if (!daysList) return true 
     def df = new java.text.SimpleDateFormat("EEEE")
-    df.setTimeZone(location.timeZone)
+    df.setTimeZone(location.timeZone ?: TimeZone.getDefault())
     def day = df.format(new Date())
     return daysList.contains(day)
 }
@@ -308,7 +448,7 @@ def checkModes(modesList) {
 
 def checkTime(start, end) {
     if (!start || !end) return true
-    return timeOfDayIsBetween(toDateTime(start), toDateTime(end), new Date(), location.timeZone)
+    return timeOfDayIsBetween(toDateTime(start), toDateTime(end), new Date(), location.timeZone ?: TimeZone.getDefault())
 }
 
 def hasInternet() {
@@ -324,16 +464,32 @@ def hasInternet() {
 def routineSync() {
     if (!hasInternet()) {
         state.apiFailed = true
-        generateScript() 
+        generateScript()
+        if (enableKidsDevice) generateScript(null, true)
         updateChildDevice() 
         return 
     }
     
+    // Check and set the daily random persona
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    def todayStr = new Date().format("yyyy-MM-dd", tz)
+    if (state.currentDateStr != todayStr || !state.dailyPersona) {
+        state.currentDateStr = todayStr
+        def personas = ["Professional", "Casual", "Technical", "Disgruntled", "GenZ"]
+        state.dailyPersona = personas[(Math.random() * personas.size()).toInteger()]
+        logAction("Daily Persona randomized to: ${state.dailyPersona}")
+    }
+
     state.apiFailed = false
     fetchApiData()
     if (infoHistorical) fetchHistoricalData()
     fetchPollenData()
-    generateScript() 
+    fetchNewsData()
+    if (enableKidsDevice) fetchKidsNewsData()
+    
+    generateScript() // Standard
+    if (enableKidsDevice) generateScript(null, true) // Kids
+    
     updateVisualIndicators()
     updateChildDevice()
     logAction("Routine Background Sync Complete.")
@@ -436,9 +592,10 @@ def timeTrigger3Handler() {
 def modeChangeHandler(evt) {
     def newMode = evt.value
     def nowTime = new Date()
+    def tz = location.timeZone ?: TimeZone.getDefault()
 
     if (enableMode1 && triggerMode1 && newMode == triggerMode1) {
-        if (!t1StartTime || !t1EndTime || timeOfDayIsBetween(toDateTime(t1StartTime), toDateTime(t1EndTime), nowTime, location.timeZone)) {
+        if (!t1StartTime || !t1EndTime || timeOfDayIsBetween(toDateTime(t1StartTime), toDateTime(t1EndTime), nowTime, tz)) {
             boolean doAudio = (modeAudio1 != null) ? modeAudio1 : true
             int delay = modeDelay1 ?: 0
             def target = modeNotifyTarget1 ?: "All Profiles"
@@ -453,7 +610,7 @@ def modeChangeHandler(evt) {
     }
     
     if (enableMode2 && triggerMode2 && newMode == triggerMode2) {
-        if (!t2StartTime || !t2EndTime || timeOfDayIsBetween(toDateTime(t2StartTime), toDateTime(t2EndTime), nowTime, location.timeZone)) {
+        if (!t2StartTime || !t2EndTime || timeOfDayIsBetween(toDateTime(t2StartTime), toDateTime(t2EndTime), nowTime, tz)) {
             boolean doAudio = (modeAudio2 != null) ? modeAudio2 : true
             int delay = modeDelay2 ?: 0
             def target = modeNotifyTarget2 ?: "All Profiles"
@@ -523,8 +680,9 @@ def fetchApiData() {
 def fetchHistoricalData() {
     def lat = location.latitude
     def lon = location.longitude
+    def tz = location.timeZone ?: TimeZone.getDefault()
     def dateLastYear = new Date() - 365
-    def dateStr = dateLastYear.format("yyyy-MM-dd", location.timeZone)
+    def dateStr = dateLastYear.format("yyyy-MM-dd", tz)
     def url = "https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateStr}&end_date=${dateStr}&daily=temperature_2m_max&temperature_unit=fahrenheit&timezone=auto"
     
     try {
@@ -557,28 +715,148 @@ def fetchPollenData() {
     } catch (e) { state.pollenIndex = null }
 }
 
+def fetchNewsData() {
+    if (!enableNews) {
+        state.newsHeadlines = null
+        return
+    }
+    
+    def targetUrl = ""
+    if (newsSource == "NPR Top Stories") targetUrl = "https://feeds.npr.org/1001/rss.xml"
+    else if (newsSource == "CNN Top Stories") targetUrl = "http://rss.cnn.com/rss/cnn_topstories.rss"
+    else if (newsSource == "Fox News Latest") targetUrl = "https://moxie.foxnews.com/google-publisher/latest.xml"
+    else if (newsSource == "BBC News US & Canada") targetUrl = "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml"
+    else targetUrl = newsRssUrl
+
+    if (!targetUrl) {
+        state.newsHeadlines = null
+        return
+    }
+
+    try {
+        def params = [
+            uri: targetUrl,
+            timeout: 10,
+            headers: [
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                "Accept": "application/rss+xml, application/xml, text/xml, */*"
+            ]
+        ]
+        httpGet(params) { resp ->
+            if (resp.success && resp.data) {
+                def headlines = []
+                // Robust parsing for different RSS formats (item vs entry)
+                def items = resp.data?.channel?.item ?: resp.data?.item ?: resp.data?.entry
+                if (items) {
+                    int max = items.size() > 3 ? 3 : items.size()
+                    for (int i = 0; i < max; i++) {
+                        def title = items[i].title?.text()?.replaceAll("<[^>]*>", "")?.trim()
+                        if (title) headlines << title
+                    }
+                    state.newsHeadlines = headlines
+                }
+            } else {
+                state.newsHeadlines = ["Unable to fetch news headlines."]
+            }
+        }
+    } catch (e) { 
+        state.newsHeadlines = null 
+        logAction("News Fetch Error: ${e.message}")
+    }
+}
+
+def fetchKidsNewsData() {
+    if (!enableKidsDevice) {
+        state.kidsNewsHeadlines = null
+        return
+    }
+    
+    def targetUrl = ""
+    // ADDED .xml TO DOGO NEWS TO BYPASS ROUTING BLOCKS
+    if (kidsNewsSource == "DOGO News") targetUrl = "https://www.dogonews.com/rss.xml"
+    else if (kidsNewsSource == "Teaching Kids News") targetUrl = "https://teachingkidsnews.com/feed/"
+    else targetUrl = kidsNewsRssUrl
+
+    if (!targetUrl) return
+
+    try {
+        def params = [
+            uri: targetUrl,
+            timeout: 10,
+            headers: [
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                "Accept": "application/rss+xml, application/xml, text/xml, */*"
+            ]
+        ]
+        httpGet(params) { resp ->
+            if (resp.success && resp.data) {
+                def headlines = []
+                // Robust parsing for different RSS formats (item vs entry)
+                def items = resp.data?.channel?.item ?: resp.data?.item ?: resp.data?.entry
+                if (items) {
+                    int max = items.size() > 3 ? 3 : items.size()
+                    for (int i = 0; i < max; i++) {
+                        def title = items[i].title?.text()?.replaceAll("<[^>]*>", "")?.trim()
+                        if (title) headlines << title
+                    }
+                    state.kidsNewsHeadlines = headlines
+                }
+            } else {
+                state.kidsNewsHeadlines = ["Unable to fetch kids news headlines."]
+            }
+        }
+    } catch (e) { 
+        state.kidsNewsHeadlines = null 
+        logAction("Kids News Fetch Error: ${e.message}")
+    }
+}
+
 // ----------------- DYNAMIC SCRIPT GENERATOR -----------------
 
-def generateScript(overridePersona = null) {
+def generateScript(overridePersona = null, isKidsVersion = false) {
     def script = ""
     def nowTime = new Date()
-    def persona = overridePersona ?: (reportPersona ?: "Professional")
+    def tz = location.timeZone ?: TimeZone.getDefault()
     
-    def isMorning = morningStartTime && morningEndTime && timeOfDayIsBetween(toDateTime(morningStartTime), toDateTime(morningEndTime), nowTime, location.timeZone)
-    def isEvening = eveningStartTime && eveningEndTime && timeOfDayIsBetween(toDateTime(eveningStartTime), toDateTime(eveningEndTime), nowTime, location.timeZone)
+    // Resolve the persona to use
+    def persona = overridePersona ?: (reportPersona ?: "Professional")
+    if (isKidsVersion) {
+        persona = "GenZ"
+    } else if (persona == "Random") {
+        persona = state.dailyPersona ?: "Professional"
+    }
+    
+    def isMorning = morningStartTime && morningEndTime && timeOfDayIsBetween(toDateTime(morningStartTime), toDateTime(morningEndTime), nowTime, tz)
+    def isEvening = eveningStartTime && eveningEndTime && timeOfDayIsBetween(toDateTime(eveningStartTime), toDateTime(eveningEndTime), nowTime, tz)
     
     def useGreeting = true; def useMicro = true; def useDaily = true; def useWeekly = false
     def useRain = false; def usePollen = false; def useMoon = false; def useUV = false; def useFeels = false
     def useClothing = false; def activeProfileName = "Standard"
     
     if (isMorning) {
-        useGreeting = m_includeGreeting; useMicro = m_includeMicro; useDaily = m_includeDaily; useWeekly = m_includeWeekly
-        useRain = m_includeRain; usePollen = m_includePollen; useMoon = m_includeMoon; useUV = m_includeUV; useFeels = m_includeFeelsLike
-        useClothing = m_includeClothing; activeProfileName = "Morning"
+        useGreeting = isKidsVersion ? (km_includeGreeting != null ? km_includeGreeting : true) : m_includeGreeting
+        useMicro = isKidsVersion ? (km_includeMicro != null ? km_includeMicro : true) : m_includeMicro
+        useDaily = isKidsVersion ? (km_includeDaily != null ? km_includeDaily : true) : m_includeDaily
+        useFeels = isKidsVersion ? (km_includeFeelsLike != null ? km_includeFeelsLike : true) : m_includeFeelsLike
+        useRain = isKidsVersion ? (km_includeRain != null ? km_includeRain : true) : m_includeRain
+        useUV = isKidsVersion ? (km_includeUV != null ? km_includeUV : true) : m_includeUV
+        usePollen = isKidsVersion ? (km_includePollen != null ? km_includePollen : false) : m_includePollen
+        useClothing = isKidsVersion ? (km_includeClothing != null ? km_includeClothing : false) : m_includeClothing
+        useMoon = false
+        useWeekly = isKidsVersion ? false : m_includeWeekly
+        activeProfileName = "Morning"
     } else if (isEvening) {
-        useGreeting = e_includeGreeting; useMicro = e_includeMicro; useDaily = e_includeDaily; useWeekly = e_includeWeekly
-        useRain = e_includeRain; usePollen = e_includePollen; useMoon = e_includeMoon; useFeels = e_includeFeelsLike
-        useClothing = e_includeClothing; activeProfileName = "Evening"
+        useGreeting = isKidsVersion ? (ke_includeGreeting != null ? ke_includeGreeting : true) : e_includeGreeting
+        useMicro = isKidsVersion ? false : e_includeMicro
+        useDaily = isKidsVersion ? (ke_includeDaily != null ? ke_includeDaily : true) : e_includeDaily
+        useFeels = isKidsVersion ? false : e_includeFeelsLike
+        useRain = isKidsVersion ? (ke_includeRain != null ? ke_includeRain : true) : e_includeRain
+        usePollen = isKidsVersion ? false : e_includePollen
+        useClothing = isKidsVersion ? false : e_includeClothing
+        useMoon = isKidsVersion ? (ke_includeMoon != null ? ke_includeMoon : true) : e_includeMoon
+        useWeekly = isKidsVersion ? false : e_includeWeekly
+        useUV = false
+        activeProfileName = "Evening"
     }
     
     if (state.apiFailed) {
@@ -590,44 +868,101 @@ def generateScript(overridePersona = null) {
     }
     
     if (useGreeting) {
-        def hour = nowTime.format("HH", location.timeZone).toInteger()
+        def hour = nowTime.format("HH", tz).toInteger()
         def greetingWord = "Good evening"
         if (hour >= 4 && hour < 12) greetingWord = "Good morning"
         else if (hour >= 12 && hour < 17) greetingWord = "Good afternoon"
         
         if (persona == "Technical") script += getRandomPhrase(["System initialized. ${greetingWord}. ", "Telemetry active. ${greetingWord}. ", "Beginning atmospheric briefing. ${greetingWord}. "])
         else if (persona == "Disgruntled") script += getRandomPhrase(["Ugh, ${greetingWord.toLowerCase()}. Is it Friday yet? ", "Here we go again. ${greetingWord}. ", "Why am I awake? Anyway, ${greetingWord.toLowerCase()}. "])
-        else if (persona == "GenZ") script += getRandomPhrase(["Yo chat, ${greetingWord.toLowerCase()}. Let's do a quick vibe check on the weather. ", "What's good. ${greetingWord}. ", "Woke up and chose weather. ${greetingWord}. "])
+        else if (persona == "GenZ") script += getRandomPhrase(["Yo chat, ${greetingWord.toLowerCase()}. Let's do a quick vibe check. ", "What's good? ${greetingWord}. Time to touch grass. ", "Woke up and chose weather. ${greetingWord}. "])
         else if (persona == "Casual") script += getRandomPhrase(["Hey there! ${greetingWord} to you! ", "Hi! ${greetingWord}! Let's check the weather. ", "Hope you're having a good day! ${greetingWord}. "])
         else script += getRandomPhrase(["${greetingWord}. ", "Here is your weather update. ${greetingWord}. ", "${greetingWord}. Let's look at the forecast. "])
     }
     
     if (useMicro && localStation) {
-        def lTemp = localStation.currentValue("temperature") ?: "unknown"
-        def lHum = localStation.currentValue("humidity") ?: "unknown"
-        def lWind = localStation.currentValue("windSpeed")
+        // Safe extraction to prevent literal "0" from evaluating to false and breaking TTS
+        def getLocal = { attr, fallback -> 
+            def v = localStation.currentValue(attr)
+            return v != null ? v : fallback
+        }
+
+        def lTemp = getLocal("temperature", "unknown")
+        def lHum = getLocal("humidity", "unknown")
+        def lWind = getLocal("windSpeed", null)
+        def lWindGust = getLocal("windGust", null)
+        def lRainRate = getLocal("rainRate", 0)
+        def lUV = getLocal("ultravioletIndex", 0)
+        def lHeatIndex = getLocal("heatIndex", null)
+        def lWindChill = getLocal("windChill", null)
         
+        // Determine the "Feels Like" locally based on current temp
+        def localFeelsLike = lTemp
+        if (lTemp != "unknown" && lHeatIndex != null && lTemp.toBigDecimal() >= 75) localFeelsLike = lHeatIndex
+        else if (lTemp != "unknown" && lWindChill != null && lTemp.toBigDecimal() <= 50) localFeelsLike = lWindChill
+
         if (persona == "Technical") {
             script += getRandomPhrase([
-                "Local sensor telemetry indicates an ambient temperature of ${lTemp} degrees Fahrenheit with ${lHum} percent relative humidity. ",
-                "Current micro-climate data reads ${lTemp} degrees and ${lHum} percent humidity. ",
-                "On-site thermal metrics show ${lTemp} degrees with a humidity index of ${lHum} percent. "
+                "Local telemetry indicates an ambient temperature of ${lTemp} degrees Fahrenheit with ${lHum} percent relative humidity. ",
+                "Current micro-climate data reads ${lTemp} degrees and ${lHum} percent humidity. "
             ])
-            if (lWind != null && lWind > 5) script += "Anemometer readings show localized wind speeds of ${lWind} miles per hour. "
+            if (useFeels && lTemp != "unknown" && localFeelsLike != null && lTemp != localFeelsLike && Math.abs(lTemp.toBigDecimal() - localFeelsLike.toBigDecimal()) >= 3) {
+                script += "Calculated thermal index registers at ${localFeelsLike} degrees. "
+            }
+            if (useFeels && lWind != null && lWind > 5) {
+                script += "Anemometer readings show baseline wind speeds of ${lWind} miles per hour"
+                if (lWindGust != null && lWindGust > lWind) script += ", with localized gusts peaking at ${lWindGust} miles per hour. "
+                else script += ". "
+            }
+            if (lRainRate.toBigDecimal() > 0) script += "Precipitation sensors are currently detecting a rain rate of ${lRainRate} inches per hour. "
+            if (lUV.toBigDecimal() >= 6) script += "Warning: Local ultraviolet index is currently elevated at ${lUV}. "
+            
         } else if (persona == "Casual") {
             script += getRandomPhrase([
                 "Stepping right outside your door, it's sitting at ${lTemp} degrees, and humidity is around ${lHum} percent. ",
-                "Right now, your porch sensor is reading ${lTemp} degrees with ${lHum} percent humidity. ",
-                "Locally, it's currently ${lTemp} degrees out there with a humidity of ${lHum} percent. "
+                "Right now, your local sensors are reading ${lTemp} degrees with ${lHum} percent humidity. "
             ])
-            if (lWind != null && lWind > 5) script += "We've got a nice little breeze out there at ${lWind} miles per hour. "
-        } else {
+            if (useFeels && lTemp != "unknown" && localFeelsLike != null && lTemp != localFeelsLike && Math.abs(lTemp.toBigDecimal() - localFeelsLike.toBigDecimal()) >= 3) {
+                script += getRandomPhrase(["But honestly, stepping outside it feels more like ${localFeelsLike}. ", "Factoring in the air, it actually feels like ${localFeelsLike} degrees right now. "])
+            }
+            if (useFeels && lWind != null && lWind > 5) {
+                script += "We've got a breeze out there at ${lWind} miles per hour"
+                if (lWindGust != null && lWindGust > lWind) script += ", but watch out for gusts up to ${lWindGust}. "
+                else script += ". "
+            }
+            if (lRainRate.toBigDecimal() > 0) script += "It looks like it's raining right now, coming down at about ${lRainRate} inches an hour. "
+            
+        } else if (persona == "GenZ") {
             script += getRandomPhrase([
-                "Right now at your house, it is currently ${lTemp} degrees with a humidity of ${lHum} percent. ",
-                "Your local sensor indicates it is ${lTemp} degrees and ${lHum} percent humidity. ",
-                "Outside your door, the temperature is ${lTemp} degrees with ${lHum} percent humidity. "
+                "It's literally ${lTemp} degrees right now with ${lHum} percent humidity. ",
+                "Your local setup is giving ${lTemp} degrees and ${lHum} percent humidity. "
             ])
-            if (lWind != null && lWind > 5) script += "Winds are currently blowing at ${lWind} miles per hour. "
+            if (useFeels && lTemp != "unknown" && localFeelsLike != null && lTemp != localFeelsLike && Math.abs(lTemp.toBigDecimal() - localFeelsLike.toBigDecimal()) >= 3) {
+                script += getRandomPhrase(["No cap though, it actually feels like ${localFeelsLike} out there. ", "But realistically it feels more like ${localFeelsLike}. "])
+            }
+            if (useFeels && lWind != null && lWind > 5) {
+                script += "It's pretty breezy at ${lWind} miles per hour"
+                if (lWindGust != null && lWindGust > lWind) script += ", with some crazy gusts hitting ${lWindGust}. "
+                else script += ". "
+            }
+            if (lRainRate.toBigDecimal() > 0) script += "It's literally raining right now at ${lRainRate} inches an hour. Major L. "
+
+        } else {
+            // Professional / Default
+            script += getRandomPhrase([
+                "Right now at your location, it is currently ${lTemp} degrees with a humidity of ${lHum} percent. ",
+                "Your local sensor network indicates it is ${lTemp} degrees and ${lHum} percent humidity. "
+            ])
+            if (useFeels && lTemp != "unknown" && localFeelsLike != null && lTemp != localFeelsLike && Math.abs(lTemp.toBigDecimal() - localFeelsLike.toBigDecimal()) >= 3) {
+                script += "However, it currently feels like ${localFeelsLike} degrees. "
+            }
+            if (useFeels && lWind != null && lWind > 5) {
+                script += "Winds are currently blowing at ${lWind} miles per hour"
+                if (lWindGust != null && lWindGust > lWind) script += ", with occasional gusts reaching ${lWindGust} miles per hour. "
+                else script += ". "
+            }
+            if (lRainRate.toBigDecimal() > 0) script += "Current conditions indicate active rainfall at a rate of ${lRainRate} inches per hour. "
+            if (lUV.toBigDecimal() >= 7) script += "The localized UV index is high, currently sitting at ${lUV}. "
         }
     }
     
@@ -650,6 +985,11 @@ def generateScript(overridePersona = null) {
                     "Expect temperatures to drop to ${tLow} tonight. For tomorrow, we are looking at ${cond} and a high of ${tHigh}. ",
                     "Tonight's low will hit ${tLow}. Tomorrow's outlook calls for ${cond} with a high around ${tHigh}. "
                 ])
+            } else if (persona == "GenZ") {
+                script += getRandomPhrase([
+                    "Tomorrow is looking like ${cond} with a high of ${tHigh}, no cap. We will hit a low of ${tLow} tonight. ",
+                    "Tomorrow's vibe is ${cond} maxing out at ${tHigh} degrees. Expecting it to drop to ${tLow} tonight. "
+                ])
             } else {
                 script += getRandomPhrase([
                     "Overnight, expect temperatures to drop to a low of ${tLow}. Looking ahead to tomorrow, we will see ${cond} with a high of ${tHigh}. ",
@@ -663,6 +1003,11 @@ def generateScript(overridePersona = null) {
                     "Today's overall forecast calls for ${cond} with temperatures reaching ${tHigh}. Tonight, we'll drop to ${tLow}. ",
                     "Moving to the big picture, expect ${cond} today with a peak of ${tHigh}. Tonight's low will be ${tLow}. "
                 ])
+            } else if (persona == "GenZ") {
+                script += getRandomPhrase([
+                    "The aesthetic for today is ${cond} with a max of ${tHigh}. Tonight it'll cool down to ${tLow}. ",
+                    "It's lowkey giving ${cond} today, maxing out at ${tHigh}. Tonight's low is hitting ${tLow}. "
+                ])
             } else {
                 script += getRandomPhrase([
                     "Looking at the broader forecast, expect ${cond} today. We will reach a high of ${tHigh}, and drop to a low of ${tLow} tonight. ",
@@ -675,19 +1020,33 @@ def generateScript(overridePersona = null) {
             int diff = tHigh.toInteger() - state.historyHigh.toInteger()
             if (Math.abs(diff) >= 3) {
                 def dir = diff > 0 ? "warmer" : "colder"
-                script += getRandomPhrase([
-                    "Fun fact! Today's high is ${Math.abs(diff)} degrees ${dir} than this exact date last year. ",
-                    "Looking at historical data, today is actually ${Math.abs(diff)} degrees ${dir} compared to this time last year. "
-                ])
+                if (persona == "GenZ") {
+                    script += getRandomPhrase([
+                        "Crazy lore: today's high is ${Math.abs(diff)} degrees ${dir} than this exact day last year. ",
+                        "Fun fact, today is literally ${Math.abs(diff)} degrees ${dir} than a year ago, fr. "
+                    ])
+                } else {
+                    script += getRandomPhrase([
+                        "Fun fact! Today's high is ${Math.abs(diff)} degrees ${dir} than this exact date last year. ",
+                        "Looking at historical data, today is actually ${Math.abs(diff)} degrees ${dir} compared to this time last year. "
+                    ])
+                }
             }
         }
         
         if (useClothing && tHigh != "unknown") {
             def tempInt = tHigh.toInteger()
-            if (tempInt < 40) script += getRandomPhrase(["It's going to be freezing out there, so definitely grab a heavy coat. ", "Bundle up, a winter coat is necessary today. "])
-            else if (tempInt < 60) script += getRandomPhrase(["It's a bit chilly, so a light jacket or sweater is recommended. ", "You might want to grab a sweater or light jacket before heading out. "])
-            else if (tempInt < 80) script += getRandomPhrase(["It's very comfortable out, short sleeves should be perfectly fine. ", "The temperature is pleasant, a t-shirt will do just fine. "])
-            else script += getRandomPhrase(["It's going to be hot, so dress lightly to stay cool. ", "With the heat today, short sleeves and light clothing are recommended. "])
+            if (persona == "GenZ") {
+                if (tempInt < 40) script += getRandomPhrase(["It's brick outside, definitely wear a heavy coat. ", "Total freeze out there, bundle up. "])
+                else if (tempInt < 60) script += getRandomPhrase(["It's a bit chilly, total hoodie weather. ", "Grab a hoodie or a jacket before you head out. "])
+                else if (tempInt < 80) script += getRandomPhrase(["Fit check: it's perfect for a t-shirt. ", "The vibe is warm, short sleeves are the move. "])
+                else script += getRandomPhrase(["It's going to be cooking today, dress light. ", "Literal heatwave, keep the fit light. "])
+            } else {
+                if (tempInt < 40) script += getRandomPhrase(["It's going to be freezing out there, so definitely grab a heavy coat. ", "Bundle up, a winter coat is necessary today. "])
+                else if (tempInt < 60) script += getRandomPhrase(["It's a bit chilly, so a light jacket or sweater is recommended. ", "You might want to grab a sweater or light jacket before heading out. "])
+                else if (tempInt < 80) script += getRandomPhrase(["It's very comfortable out, short sleeves should be perfectly fine. ", "The temperature is pleasant, a t-shirt will do just fine. "])
+                else script += getRandomPhrase(["It's going to be hot, so dress lightly to stay cool. ", "With the heat today, short sleeves and light clothing are recommended. "])
+            }
         }
         
         if (useFeels && state.apiApparentTemp && state.apiCurrentTemp) {
@@ -700,14 +1059,21 @@ def generateScript(overridePersona = null) {
         }
         
         if (useRain && rainAmt > 0) {
-            script += getRandomPhrase([
-                "Looks like we'll be getting about ${rainAmt} inches of rain ${dayContext.toLowerCase()}. ",
-                "Expect roughly ${rainAmt} inches of precipitation ${dayContext.toLowerCase()}. ",
-                "Keep an umbrella handy, we are tracking ${rainAmt} inches of rain ${dayContext.toLowerCase()}. "
-            ])
+            if (persona == "GenZ") {
+                script += getRandomPhrase([
+                    "Looks like we'll be getting about ${rainAmt} inches of rain ${dayContext.toLowerCase()}. Major L. ",
+                    "Expect roughly ${rainAmt} inches of precipitation ${dayContext.toLowerCase()}, so grab an umbrella. "
+                ])
+            } else {
+                script += getRandomPhrase([
+                    "Looks like we'll be getting about ${rainAmt} inches of rain ${dayContext.toLowerCase()}. ",
+                    "Expect roughly ${rainAmt} inches of precipitation ${dayContext.toLowerCase()}. ",
+                    "Keep an umbrella handy, we are tracking ${rainAmt} inches of rain ${dayContext.toLowerCase()}. "
+                ])
+            }
             
             if (infoPlanning && activeProfileName != "Evening") {
-                def currentHourIndex = new Date().format("HH", location.timeZone).toInteger()
+                def currentHourIndex = new Date().format("HH", tz).toInteger()
                 def dryStartHour = -1
                 def maxDryLength = 0
                 def currentDryLength = 0
@@ -734,10 +1100,14 @@ def generateScript(overridePersona = null) {
                 
                 if (maxDryLength >= 3 && dryStartHour != -1) {
                     def displayHour = dryStartHour > 12 ? "${dryStartHour - 12} PM" : (dryStartHour == 12 ? "12 PM" : "${dryStartHour} AM")
-                    script += getRandomPhrase([
-                        "Even with the rain, it looks like you'll have a nice dry window of about ${maxDryLength} hours starting around ${displayHour}. ",
-                        "If you need to plan outdoor activities, our models show a dry gap of approximately ${maxDryLength} hours beginning at ${displayHour}. "
-                    ])
+                    if (persona == "GenZ") {
+                        script += "There's a solid dry window of about ${maxDryLength} hours starting at ${displayHour} though. "
+                    } else {
+                        script += getRandomPhrase([
+                            "Even with the rain, it looks like you'll have a nice dry window of about ${maxDryLength} hours starting around ${displayHour}. ",
+                            "If you need to plan outdoor activities, our models show a dry gap of approximately ${maxDryLength} hours beginning at ${displayHour}. "
+                        ])
+                    }
                 }
             }
         }
@@ -750,7 +1120,13 @@ def generateScript(overridePersona = null) {
         for (int i = 20; i <= 23; i++) { if(state.apiHourlyClouds.size() > i) { eveningClouds += state.apiHourlyClouds[i]; count++ } }
         def avgClouds = count > 0 ? (eveningClouds / count) : 100
         
-        if (avgClouds < 20) script += getRandomPhrase(["With barely any clouds tonight, it's going to be a perfect evening to step outside and do some stargazing! ", "Expect minimal cloud cover this evening, creating excellent conditions for viewing the night sky. "])
+        if (avgClouds < 20) {
+            if (persona == "GenZ") {
+                script += getRandomPhrase(["Skies are totally clear tonight, massive W for stargazing! ", "No cap, it's a perfect clear night to go look at the stars. "])
+            } else {
+                script += getRandomPhrase(["With barely any clouds tonight, it's going to be a perfect evening to step outside and do some stargazing! ", "Expect minimal cloud cover this evening, creating excellent conditions for viewing the night sky. "])
+            }
+        }
     }
     
     if (usePollen && state.pollenIndex) script += getRandomPhrase(["The pollen count is currently ${state.pollenIndex}, which is considered ${state.pollenCategory}. ", "For allergy trackers, pollen levels are sitting at ${state.pollenIndex} today. "])
@@ -767,9 +1143,41 @@ def generateScript(overridePersona = null) {
         ])
     }
 
-    if (!overridePersona) {
+    if (isKidsVersion) {
+        if (state.kidsNewsHeadlines && state.kidsNewsHeadlines.size() > 0) {
+            boolean appendNews = (activeProfileName == "Morning" && kidsNewsIncludeMorning) || (activeProfileName == "Evening" && kidsNewsIncludeEvening) || (activeProfileName == "Standard")
+            if (appendNews) {
+                script += getRandomPhrase(["Here's the tea from the timeline today. ", "Let's check what's trending right now. "])
+                state.kidsNewsHeadlines.eachWithIndex { hl, idx ->
+                    if (idx == state.kidsNewsHeadlines.size() - 1) {
+                        script += "And finally, ${hl}. "
+                    } else {
+                        script += "${hl}. "
+                    }
+                }
+            }
+        }
+    } else {
+        if (enableNews && state.newsHeadlines && state.newsHeadlines.size() > 0) {
+            boolean appendNews = (activeProfileName == "Morning" && newsIncludeMorning) || (activeProfileName == "Evening" && newsIncludeEvening) || (activeProfileName == "Standard")
+            if (appendNews) {
+                script += getRandomPhrase(["Turning to the news. ", "Here are the top headlines. "])
+                state.newsHeadlines.eachWithIndex { hl, idx ->
+                    if (idx == state.newsHeadlines.size() - 1) {
+                        script += "And finally, ${hl}. "
+                    } else {
+                        script += "${hl}. "
+                    }
+                }
+            }
+        }
+    }
+
+    if (isKidsVersion) {
+        state.latestKidsScript = script
+    } else if (!overridePersona) {
         state.latestScript = script
-        state.lastReportTime = nowTime.format("MM/dd hh:mm a", location.timeZone)
+        state.lastReportTime = nowTime.format("MM/dd hh:mm a", tz)
     }
     
     return script
@@ -777,7 +1185,8 @@ def generateScript(overridePersona = null) {
 
 def getMoonPhase() {
     def date = new Date()
-    int year = date.format("yyyy").toInteger(); int month = date.format("MM").toInteger(); int day = date.format("dd").toInteger()
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    int year = date.format("yyyy", tz).toInteger(); int month = date.format("MM", tz).toInteger(); int day = date.format("dd", tz).toInteger()
     if (month < 3) { year--; month += 12 }
     ++month
     int c = 365.25 * year; int e = 30.6 * month
@@ -797,7 +1206,8 @@ def getDayOfWeek(dateString) { try { return Date.parse("yyyy-MM-dd", dateString)
 def logAction(msg) { 
     if(txtEnable) log.info "${app.label}: ${msg}"
     def h = state.actionHistory ?: []
-    h.add(0, "[${new Date().format("MM/dd hh:mm a", location.timeZone)}] ${msg}")
+    def tz = location.timeZone ?: TimeZone.getDefault()
+    h.add(0, "[${new Date().format("MM/dd hh:mm a", tz)}] ${msg}")
     if(h.size() > 30) h = h[0..29]
     state.actionHistory = h 
 }
@@ -806,9 +1216,19 @@ def createChildDevice() {
     def childNetworkId = "MeteorologistReport_${app.id}"
     def child = getChildDevice(childNetworkId)
     if (!child) {
-        log.info "Creating Meteorologist Report Child Device..."
+        log.info "Creating Standard Meteorologist Report Child Device..."
         try { addChildDevice("ShaneAllen", "Advanced Meteorologist Report Device", childNetworkId, [name: "Advanced Meteorologist Report", isComponent: true]) } 
-        catch (e) { logAction("ERROR: Failed to create child device. Ensure Driver is installed.") }
+        catch (e) { logAction("ERROR: Failed to create standard child device. Ensure Driver is installed.") }
+    }
+}
+
+def createKidsDevice() {
+    def kidsNetworkId = "MeteorologistReport_Kids_${app.id}"
+    def kidsChild = getChildDevice(kidsNetworkId)
+    if (!kidsChild) {
+        log.info "Creating Kids Edition Meteorologist Report Child Device..."
+        try { addChildDevice("ShaneAllen", "Advanced Meteorologist Report Device", kidsNetworkId, [name: "Advanced Meteorologist Report - Kids Edition", isComponent: true]) }
+        catch (e) { logAction("ERROR: Failed to create kids child device. Ensure Driver is installed.") }
     }
 }
 
@@ -829,5 +1249,25 @@ def updateChildDevice() {
             pollen: state.pollenIndex ? "${state.pollenIndex} (${state.pollenCategory})" : "N/A",
             moon: getMoonPhase()
         ])
+    }
+    
+    if (enableKidsDevice) {
+        def kidsNetworkId = "MeteorologistReport_Kids_${app.id}"
+        def kidsChild = getChildDevice(kidsNetworkId)
+        if (kidsChild) {
+            kidsChild.updateTile([
+                script: state.latestKidsScript ?: "Awaiting data...",
+                currentTemp: state.apiCurrentTemp,
+                currentConditions: state.apiConditionDesc,
+                dates: state.apiDailyDates ?: [],
+                highs: state.apiDailyHighs ?: [],
+                lows: state.apiDailyLows ?: [],
+                conditions: state.apiDailyConditions ?: [],
+                rain: state.apiDailyRain ?: [],
+                uv: state.apiDailyUV ?: [],
+                pollen: state.pollenIndex ? "${state.pollenIndex} (${state.pollenCategory})" : "N/A",
+                moon: getMoonPhase()
+            ])
+        }
     }
 }
