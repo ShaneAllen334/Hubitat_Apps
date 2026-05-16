@@ -233,22 +233,88 @@ def mainPage() {
                 input "refreshDashboardBtn", "button", title: "🔄 Refresh Live Data"
             }
             
-            // --- SYSTEM HEALTH & DIAGNOSTIC HEARTBEAT ---
+            def customCSS = """
+            <style>
+                @keyframes pulseRedBar {
+                    0% { background-color: rgba(217, 83, 79, 0.1); box-shadow: 0 0 5px rgba(217, 83, 79, 0.2); }
+                    50% { background-color: rgba(217, 83, 79, 0.85); color: #fff; box-shadow: 0 0 15px rgba(217, 83, 79, 0.9); }
+                    100% { background-color: rgba(217, 83, 79, 0.1); box-shadow: 0 0 5px rgba(217, 83, 79, 0.2); }
+                }
+                @keyframes pulseOrangeBar {
+                    0% { background-color: rgba(240, 173, 78, 0.1); box-shadow: 0 0 5px rgba(240, 173, 78, 0.2); }
+                    50% { background-color: rgba(240, 173, 78, 0.85); color: #000; box-shadow: 0 0 15px rgba(240, 173, 78, 0.9); }
+                    100% { background-color: rgba(240, 173, 78, 0.1); box-shadow: 0 0 5px rgba(240, 173, 78, 0.2); }
+                }
+                .flash-alarm-bar { animation: pulseRedBar 2s infinite; padding: 5px 10px; border-radius: 5px; display: block; margin-top: -2px; margin-bottom: -2px; }
+                .flash-warning-bar { animation: pulseOrangeBar 2s infinite; padding: 5px 10px; border-radius: 5px; display: block; margin-top: -2px; margin-bottom: -2px; }
+                
+                .dna-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px; padding: 15px; border-bottom: 1px solid #eee; }
+                .dna-col { box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-start; }
+                .dna-badge { display: inline-block; padding: 3px 10px; font-weight: bold; border-radius: 12px; font-size: 11px; margin-bottom: 12px; letter-spacing: 0.5px; text-transform: uppercase; align-self: flex-start; max-width: fit-content; }
+                .dna-noaa { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; padding: 12px 15px; }
+                
+                @media (max-width: 600px) {
+                    .dna-grid { grid-template-columns: 1fr; gap: 10px; padding: 10px; }
+                }
+            </style>
+            """
+            paragraph customCSS
+            
             def lastEvalMs = state.lastHeartbeat ?: now()
             def timeSinceEval = Math.round((now() - lastEvalMs) / 1000)
             def isHealthy = timeSinceEval < 120
             def healthDot = isHealthy ? "<span style='color:#5cb85c;'>●</span>" : "<span style='color:#d9534f;'>●</span>"
             def execTime = state.lastEvalDuration ?: 0
             def emiStatus = state.emiActive ? "<span style='color:#f0ad4e; font-weight:bold;'>[⚡ EMI INTERFERENCE LOCK ACTIVE]</span>" : ""
+            def lockStatus = atomicState.matrixLock ? " <span style='color:#d9534f; font-weight:bold;'>[⚠ THREAD LOCKED]</span>" : ""
             
             def healthHtml = """
-            <div style='background-color:#1e1e1e; color:#d4d4d4; padding: 10px; border-radius: 6px; font-family: monospace; font-size: 11px; margin-bottom: 15px;'>
-                <div style='color:#569cd6; font-weight:bold; margin-bottom: 4px;'>${healthDot} SYSTEM DIAGNOSTICS & TELEMETRY ${emiStatus}</div>
-                Last Engine Cycle: <b>${timeSinceEval}s ago</b> | Cycle Compute Time: <b>${execTime}ms</b><br>
-                Telemetry Arrays: Temp[${state.tempHistory?.size()?:0}] Press[${state.pressureHistory?.size()?:0}] Wind[${state.windHistory?.size()?:0}] Light[${state.lightningHistory?.size()?:0}] Prob[${state.probHistory?.size()?:0}]
-            </div>
+            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: #ffffff; border: 1px solid #dcdcdc; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                <thead style='background-color: #f8f9fa; border-bottom: 2px solid #ececec;'>
+                    <tr>
+                        <th colspan='4' style='padding: 10px; text-align: left; color: #333; font-weight: bold;'>${healthDot} System Diagnostics & Telemetry ${emiStatus}${lockStatus}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style='border-bottom: 1px solid #f0f0f0;'>
+                        <td style='padding: 8px 10px; color: #666; width: 20%;'><b>Last Engine Cycle:</b></td>
+                        <td style='padding: 8px 10px; color: #222; width: 30%;'>${timeSinceEval}s ago</td>
+                        <td style='padding: 8px 10px; color: #666; width: 20%;'><b>Compute Time:</b></td>
+                        <td style='padding: 8px 10px; color: #222; width: 30%;'>${execTime}ms</td>
+                    </tr>
+                    <tr>
+                        <td style='padding: 8px 10px; color: #666;'><b>Telemetry Arrays:</b></td>
+                        <td colspan='3' style='padding: 8px 10px; color: #222; font-family: monospace; font-size: 12px;'>
+                            Temp[${state.tempHistory?.size()?:0}] Press[${state.pressureHistory?.size()?:0}] Wind[${state.windHistory?.size()?:0}] Light[${state.lightningHistory?.size()?:0}] Prob[${state.probHistory?.size()?:0}]
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
             """
             paragraph healthHtml
+            
+            if (settings.enableNOAA) {
+                def rawNoaaStr = state.noaaGlobalAlerts ?: "<i>No active national weather alerts for your area at this time.</i>"
+                def noaaUrlTest = state.lastNoaaUrl ?: ""
+                def httpStatusStr = state.noaaLastStatus ?: "Pending first poll..."
+                def httpColor = httpStatusStr.toString().contains("200") ? "#5cb85c" : "#d9534f"
+                
+                def noaaDiag = """
+                <div style='font-size:13px; color:#444; background:#fdfdfd; border: 1px solid #bce8f1; padding: 12px; border-radius: 6px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 4px solid #5bc0de;'>
+                    <b style='color:#31708f; font-size:14px;'>📡 NWS Cloud API Diagnostics</b><br>
+                    <div style='margin-top:8px; display:grid; grid-template-columns: 120px 1fr; gap: 4px;'>
+                        <b>HTTP Status:</b> <span style='color:${httpColor}; font-weight:bold;'>${httpStatusStr}</span>
+                        <b>Last Sync:</b> <span>${state.noaaLastTime ?: 'N/A'}</span>
+                        <b>Target Endpoint:</b> <span><a href='${noaaUrlTest}' target='_blank' style='color:#0275d8; text-decoration:none;'>🔗 Verify JSON Output Directly</a></span>
+                    </div>
+                    <div style='margin-top:10px; padding-top:10px; border-top:1px dashed #ccc;'>
+                        <b>Active NWS Bulletins:</b><br>
+                        <div style='margin-top:5px;'>${rawNoaaStr}</div>
+                    </div>
+                </div>
+                """
+                paragraph noaaDiag
+            }
             
             def isWatchdog = state.watchdogActive ?: false
             def wdHtml = isWatchdog ? "<span style='color:#d9534f; font-weight:bold;'>[🚨 DEFCON WATCHDOG ACTIVE: Overdrive Polling Engaged]</span>" : "<span style='color:#5cb85c;'>[Standard Local Polling]</span>"
@@ -264,7 +330,6 @@ def mainPage() {
             
             paragraph "<div style='font-size:13px; color:#555;'><b>What it does:</b> Runs predictive thermodynamic models for seven severe weather profiles. Features DNA event forensics, gravity-wave detection, structural load physics, and cross-references data with NWS API alerts. ${wdHtml}${cloudHtml}</div>"
             
-            // --- FORENSIC EVENT SUMMARY TABLE ---
             if (state.lastEventReport) {
                 def forensicHtml = """
                 <table style='width:100%; border-collapse: collapse; font-size: 12px; font-family: sans-serif; background-color: #fffcfc; border: 1px solid #d9534f; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>
@@ -285,7 +350,7 @@ def mainPage() {
             if (sensorTemp && sensorHum && sensorPress) {
                 def matrix = state.threatMatrix ?: [:]
                 def noaaMap = state.noaaAlertsMap ?: [:]
-                def hazards = [
+                def baseHazards = [
                     [id: "Tornado", icon: "🌪️"],
                     [id: "Thunderstorm", icon: "⛈️"],
                     [id: "Flood", icon: "🌊"],
@@ -295,7 +360,24 @@ def mainPage() {
                     [id: "FireWeather", icon: "🔥🌲"]
                 ]
                 
-                hazards.each { hazMap ->
+                def sortedHazards = baseHazards.sort { a, b ->
+                    def dataA = matrix[a.id] ?: [prob: 0, state: "Clear"]
+                    def dataB = matrix[b.id] ?: [prob: 0, state: "Clear"]
+                    
+                    def getPri = { s -> 
+                        if (s?.contains("ALARM")) return 2
+                        if (s?.contains("WARNING")) return 1
+                        return 0
+                    }
+                    
+                    def priA = getPri(dataA.state)
+                    def priB = getPri(dataB.state)
+                    
+                    if (priA != priB) return priB <=> priA 
+                    return (dataB.prob as Number) <=> (dataA.prob as Number) 
+                }
+                
+                sortedHazards.each { hazMap ->
                     def haz = hazMap.id
                     def icon = hazMap.icon
                     def data = matrix[haz] ?: [threat: 0, prob: 0, conf: 0, state: "Clear", howWhy: "Gathering sensor data...", mathEx: "Awaiting math cycle...", lastTrig: 0, history: []]
@@ -329,15 +411,22 @@ def mainPage() {
                     histHtml += "</div>"
 
                     def prettyName = haz == 'SevereHeat' ? 'Severe Heat' : (haz == 'FireWeather' ? 'Fire Weather' : haz)
-                    def sectionTitle = "${icon} ${prettyName} DNA &nbsp;|&nbsp; Threat: ${data.threat}% &nbsp;|&nbsp; Conf: ${data.conf}% &nbsp;|&nbsp; State: ${data.state}"
+                    
+                    def animClass = ""
+                    if (data.state.contains("ALARM")) animClass = "flash-alarm-bar"
+                    else if (data.state.contains("WARNING")) animClass = "flash-warning-bar"
+                    
+                    def rawTitle = "${icon} ${prettyName} DNA &nbsp;|&nbsp; Threat: ${data.threat}% &nbsp;|&nbsp; Conf: ${data.conf}% &nbsp;|&nbsp; State: ${data.state}"
+                    def sectionTitle = animClass ? "<div class='${animClass}'>${rawTitle}</div>" : rawTitle
+                    
                     def isHidden = (data.state == "Clear" && noaaStatus == "Clear")
 
                     section("<b>${sectionTitle}</b>", hideable: true, hidden: isHidden) {
                         def dashboardHtml = """
                         <div style="border: 1px solid #e0e0e0; margin-bottom: 5px; border-radius: 8px; background: #ffffff; overflow: hidden; font-family: 'Segoe UI', Tahoma, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                            <div style="display: flex; flex-wrap: wrap; padding: 15px; gap: 15px; border-bottom: 1px solid #eee;">
-                                <div style="flex: 1; min-width: 200px;">
-                                    <div style="display: inline-block; padding: 3px 10px; background: ${headerBg}; color: ${stateColor}; border: 1px solid ${stateColor}; font-weight: bold; border-radius: 12px; font-size: 11px; margin-bottom: 12px; letter-spacing: 0.5px; text-transform: uppercase;">
+                            <div class="dna-grid">
+                                <div class="dna-col">
+                                    <div class="dna-badge" style="background: ${headerBg}; color: ${stateColor}; border: 1px solid ${stateColor};">
                                         LOCAL SYSTEM: ${data.state}
                                     </div>
                                     <div style="margin-bottom: 10px;">
@@ -353,12 +442,12 @@ def mainPage() {
                                         <div style="width: 100%; height: 8px; background: #eaecf0; border-radius: 4px;"><div style="width: ${data.conf}%; height: 100%; background: ${cColor}; border-radius: 4px; transition: width 0.5s ease;"></div></div>
                                     </div>
                                 </div>
-                                <div style="flex: 1.2; min-width: 250px; font-size: 13px; color: #444; background: #f8f9fa; border-radius: 6px; padding: 12px; border-left: 4px solid ${stateColor}; display: flex; flex-direction: column; justify-content: flex-start;">
+                                <div class="dna-col" style="font-size: 13px; color: #444; background: #f8f9fa; border-radius: 6px; padding: 12px; border-left: 4px solid ${stateColor};">
                                     <b style="color:#222; margin-bottom: 6px; font-size: 14px;">Diagnostic Report:</b>
                                     <span style="line-height: 1.4;">${data.howWhy}</span>
                                     ${histHtml}
                                 </div>
-                                <div style="flex: 1.2; min-width: 200px; font-size: 11px; color: #333; background: #eef2f5; border-radius: 6px; padding: 12px; border-left: 4px solid #8e9eab; display: flex; flex-direction: column; justify-content: flex-start; font-family: 'Courier New', Courier, monospace;">
+                                <div class="dna-col" style="font-size: 11px; color: #333; background: #eef2f5; border-radius: 6px; padding: 12px; border-left: 4px solid #8e9eab; font-family: 'Courier New', Courier, monospace;">
                                     <b style="color:#222; margin-bottom: 6px; font-size: 12px; font-family: 'Segoe UI', sans-serif;">Algorithmic Engine:</b>
                                     <span style="line-height: 1.5;">${data.mathEx}</span>
                                 </div>
@@ -366,11 +455,11 @@ def mainPage() {
                         """
                         if (settings.enableNOAA) {
                             dashboardHtml += """
-                            <div style="padding: 12px 15px; background: ${noaaBg}; font-size: 13px; color: #333; display: flex; align-items: center; gap: 15px;">
-                                <div style="padding: 3px 10px; background: #fff; color: ${noaaColor}; border: 1px solid ${noaaColor}; font-weight: bold; border-radius: 12px; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap;">
+                            <div class="dna-noaa" style="background: ${noaaBg}; font-size: 13px; color: #333;">
+                                <div class="dna-badge" style="background: #fff; color: ${noaaColor}; border: 1px solid ${noaaColor}; margin-bottom: 0;">
                                     NOAA: ${noaaStatus}
                                 </div>
-                                <div style="flex: 1;">
+                                <div style="flex: 1 1 200px;">
                                     <b>Official NWS Report:</b> ${noaaRaw}
                                 </div>
                             </div>
@@ -381,7 +470,6 @@ def mainPage() {
                     }
                 }
                 
-                // --- CSS Flexbox Layout for Chart, Table & Radar ---
                 def visualWidgets = "<div style='display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px; align-items: stretch;'>"
                 
                 def dispMode = settings.historyDisplayMode ?: "Chart (Chart.js)"
@@ -418,7 +506,6 @@ def mainPage() {
                     def rho = state.currentAirDensity ?: 1.225
                     def wbgt = state.currentWBGT ?: getFloat(sensorTemp, ["temperature"], 0.0)
                     
-                    // Wind Load UI
                     def windLoadVal = state.currentWindLoad ?: 0.0
                     def windLoadUnit = isMetric() ? "Pascals (Pa)" : "lb/ft² (PSF)"
                     def loadColor = windLoadVal > 20.0 ? "red" : (windLoadVal > 10.0 ? "orange" : "#555")
@@ -446,6 +533,21 @@ def mainPage() {
                 
             } else {
                 paragraph "<i>Primary sensors missing. Click Configuration below to assign devices.</i>"
+            }
+        }
+        
+        if (app.id) {
+            section("<b>DNA Alarm & Notification Testing</b>", hideable: true, hidden: true) {
+                paragraph "<i>Use these buttons to manually trigger the ALARM outputs (TTS, Sound, Push, and a 5-second Siren blip) for each DNA to verify your hardware routing. This forcefully bypasses motion restrictions.</i>"
+                input "testBtnTornado", "button", title: "🌪️ Test Tornado Alarm Outputs"
+                input "testBtnThunderstorm", "button", title: "⛈️ Test Thunderstorm Alarm Outputs"
+                input "testBtnFlood", "button", title: "🌊 Test Flood Alarm Outputs"
+                input "testBtnFreeze", "button", title: "❄️ Test Freeze Alarm Outputs"
+                input "testBtnSevereHeat", "button", title: "🔥 Test Severe Heat Alarm Outputs"
+                input "testBtnTropical", "button", title: "🌀 Test Tropical Alarm Outputs"
+                input "testBtnFireWeather", "button", title: "🔥🌲 Test Fire Weather Alarm Outputs"
+                input "testBtnAllClear", "button", title: "✅ Test Global All-Clear Outputs"
+                input "testBtnStopSirens", "button", title: "🔇 EMERGENCY STOP SIRENS"
             }
         }
 
@@ -513,35 +615,24 @@ def configPage() {
         section("<b>☁️ External Cloud Integration</b>") {
             input "enableNOAA", "bool", title: "Enable NOAA / NWS Forecasts & Alerts", defaultValue: true, submitOnChange: true
             if (enableNOAA) {
-                input "noaaTriggersHardware", "bool", title: "Allow NOAA Alerts to trigger your physical Warning & Alarm switches", defaultValue: false
+                input "noaaTriggersHardware", "bool", title: "Allow NOAA Alerts to hard-trigger your physical Warning & Alarm switches", defaultValue: false
+                input "noaaWeighting", "bool", title: "Apply NOAA Alerts to Local Probability Math", defaultValue: true, description: "Adds +30% (Watch) or +50% (Warning) to your local probability scores, helping tip the scales faster if your local sensors are lagging behind a fast-moving storm front."
+                paragraph "<i><b>NOAA Location Override:</b> If the NWS API isn't returning alerts for your area, your hub's internal GPS coordinates might be slightly off the NWS NDFD grid. Enter your exact NWS decimal coordinates below to force the NWS API connection (e.g., 32.5393 and -86.2078).</i>"
+                input "manualLat", "decimal", title: "Override Latitude (e.g., 32.5393)", required: false
+                input "manualLon", "decimal", title: "Override Longitude (e.g., -86.2078)", required: false
             }
         }
         
         section("<b>Advanced Physics & Calibration Modules</b>") {
-            paragraph "<i>These modules separate a hobbyist weather station from a professional meteorological instrument.</i>"
             input "pressOffset", "decimal", title: "Barometric MSLP Offset (inHg)", defaultValue: 0.0, description: "Crucial for Tropical DNA accuracy. If your elevation pressure reads 29.00 but the airport reports 29.90, enter 0.90 here."
-            
-            // [SCIENCE: WBGT]
-            input "enableWBGT", "bool", title: "Enable Wet-Bulb Globe Temperature (WBGT)", defaultValue: true, description: "Calculates a proxy utilizing Temp, Hum, Wind, and Solar Radiation to measure true heat stress in direct sunlight."
-            
-            // [SCIENCE: KINETIC AIR DENSITY & STRUCTURAL LOAD]
-            input "enableKineticWind", "bool", title: "Enable Kinetic Air Density & Structural Wind Load", defaultValue: true, description: "Tracks the physical mass (kg/m³) of the air and converts raw wind speed into dynamic Structural Load pressure (lb/ft² or Pascals). Applies directly to Tornado/Storm threat arrays."
-            
-            // [SCIENCE: STORM VECTORING]
-            input "enableStormVectoring", "bool", title: "Enable Storm Intercept Vectoring (Approach Velocity)", defaultValue: true, description: "Tracks the distance of lightning strikes over time to calculate approach velocity (MPH) and Estimated Time of Arrival (ETA). Filters out random residential sensor 'ghost' strikes via historical averaging."
-            
-            // [SCIENCE: GRAVITY WAVES]
-            input "enableGravityWave", "bool", title: "Enable Atmospheric Gravity Wave Detection", defaultValue: true, description: "Analyzes micro-oscillations in barometric pressure to detect massive supercell updrafts before they arrive."
-            
-            // [SCIENCE: DRY MICROBURST]
-            input "enableDryMicroburst", "bool", title: "Enable Dry Microburst / Virga Detection", defaultValue: true, description: "Looks for massive Dew Point spreads combined with sudden evaporative cooling (Temp crashes) and Wind Spikes to detect straight-line winds."
-            
-            // [SCIENCE: EMI/EMP GUARD]
-            input "enableEMIGuard", "bool", title: "Enable EMI/EMP Sensor Freeze Guard", defaultValue: true, description: "If a lightning strike occurs within 3 miles and your sensors immediately go stale, the system flags it as Electromagnetic Interference rather than hardware failure, protecting the 'Dying Breath' failover."
-            
-            input "enableEyeOfStorm", "bool", title: "Enable 'Eye of the Storm' Barometric Lock", defaultValue: true, description: "Refuses to clear an active ALARM if barometric pressure is dangerously low (<29.60) and stable."
-            input "enableDyingBreath", "bool", title: "Enable 'Dying Breath' Sensor Failover", defaultValue: true, description: "If local sensors go offline during an ALARM, the system assumes they were destroyed, latches the alarm ON, and fails over to cloud telemetry."
-            
+            input "enableWBGT", "bool", title: "Enable Wet-Bulb Globe Temperature (WBGT)", defaultValue: true
+            input "enableKineticWind", "bool", title: "Enable Kinetic Air Density & Structural Wind Load", defaultValue: true
+            input "enableStormVectoring", "bool", title: "Enable Storm Intercept Vectoring (Approach Velocity)", defaultValue: true
+            input "enableGravityWave", "bool", title: "Enable Atmospheric Gravity Wave Detection", defaultValue: true
+            input "enableDryMicroburst", "bool", title: "Enable Dry Microburst / Virga Detection", defaultValue: true
+            input "enableEMIGuard", "bool", title: "Enable EMI/EMP Sensor Freeze Guard", defaultValue: true
+            input "enableEyeOfStorm", "bool", title: "Enable 'Eye of the Storm' Barometric Lock", defaultValue: true
+            input "enableDyingBreath", "bool", title: "Enable 'Dying Breath' Sensor Failover", defaultValue: true
             input "enableHardwareFilter", "bool", title: "Enable Hardware Anomaly Rejection", defaultValue: true
             input "enableThermalSmoothing", "bool", title: "Thermal Smoothing (Sun-Spike Protection)", defaultValue: true
             input "staleDataTimeout", "number", title: "Stale Data Timeout (Minutes)", defaultValue: 30
@@ -600,6 +691,9 @@ def dnaConfigPage() {
         
         section("<b>✅ Global All-Clear & Stand-Down Sequencer</b>") {
             paragraph "<i>This sequencer waits until EVERY SINGLE hazard in the matrix reads 'Clear', and verifies that pressure has stabilized and winds have died down before officially broadcasting the all-clear.</i>"
+            input "extRainingSwitch", "capability.switch", title: "External Application: Raining Virtual Switch (Optional)", required: false
+            input "extSprinklingSwitch", "capability.switch", title: "External Application: Sprinkling Virtual Switch (Optional)", required: false
+            
             input "globalAllClearNotify", "bool", title: "Send Push Notification for Global All-Clear", defaultValue: true
             input "globalAllClearTTS", "bool", title: "Broadcast TTS for Global All-Clear", defaultValue: true, submitOnChange: true
             if (settings.globalAllClearTTS) input "ttsGlobalAllClear", "text", title: "All-Clear TTS String", required: false, defaultValue: "The severe weather event has concluded. All clear."
@@ -655,13 +749,15 @@ def dnaConfigPage() {
 }
 
 // ==============================================================================
-// INTERNAL LOGIC ENGINE (ULTIMATE EDITION)
+// INTERNAL LOGIC ENGINE
 // ==============================================================================
 
 def installed() { logInfo("Installed"); initialize() }
 def updated() { logInfo("Updated"); unsubscribe(); initialize() }
 
 def initialize() {
+    atomicState.matrixLock = false // UNSTICK THREAD LOCK ON SAVE
+    
     if (!state.actionHistory) state.actionHistory = []
     
     def m = [:]
@@ -678,6 +774,8 @@ def initialize() {
     state.emiActive = false
     state.noaaFailCount = 0
     state.noaaAlertsMap = [:]
+    state.noaaLastStatus = null
+    state.lastNoaaUrl = null
     if (!state.noaaGlobalAlerts) state.noaaGlobalAlerts = "Initializing broadcast listener..."
     
     if (!state.lastHeartbeat) state.lastHeartbeat = now()
@@ -735,23 +833,31 @@ def initialize() {
         pollNOAA()
     }
     
-    runEvery1Minute("evaluateMatrix") 
+    runEvery1Minute("evaluateMatrixWrap") 
     logAction("BMS Advanced Severe Weather Matrix Initialized.")
-    evaluateMatrix()
+    evaluateMatrixWrap()
 }
 
 // === BUTTON HANDLER ===
 void appButtonHandler(btn) {
-    if (btn == "refreshDashboardBtn") return
+    if (btn == "refreshDashboardBtn") {
+        atomicState.matrixLock = false // UNSTICK
+        if (settings.enableNOAA) pollNOAA() // FORCE NWS CLOUD SYNC
+        runIn(3, "evaluateMatrixWrap", [overwrite: true])
+        return
+    }
     if (btn == "createDeviceBtn") { createChildDevice(); return }
     if (btn == "forceEvalBtn") {
-        logAction("MANUAL OVERRIDE: Forcing matrix evaluation.")
-        evaluateMatrix()
+        logAction("MANUAL OVERRIDE: Forcing matrix evaluation. Breaking any active thread locks.")
+        atomicState.matrixLock = false // UNSTICK
+        evaluateMatrixWrap()
+        return
     }
     if (btn == "clearStateBtn") {
         logAction("EMERGENCY RESET: Purging matrix history, records, and internal states.")
         
-        // Nuke the arrays from orbit
+        atomicState.matrixLock = false // UNSTICK
+        
         state.remove("pressureHistory")
         state.remove("tempHistory")
         state.remove("spreadHistory")
@@ -770,7 +876,6 @@ void appButtonHandler(btn) {
         state.watchdogActive = false
         state.survivalModeActive = false
         
-        // Re-initialize the clean arrays
         state.pressureHistory = []
         state.tempHistory = []
         state.spreadHistory = []
@@ -785,7 +890,23 @@ void appButtonHandler(btn) {
         }
         state.threatMatrix = m
         
-        evaluateMatrix()
+        evaluateMatrixWrap()
+        return
+    }
+    
+    if (btn.startsWith("testBtn")) {
+        def haz = btn.replace("testBtn", "")
+        if (haz == "AllClear") {
+            logAction("MANUAL TEST: Global All-Clear Outputs triggered.")
+            if (settings.globalAllClearNotify) sendNotification("🛠️ TEST NOTIFICATION: Weather All-Clear: All severe weather threats have passed.")
+            if (settings.globalAllClearTTS) playAudio("Test alert. " + (settings.ttsGlobalAllClear ?: "The severe weather event has concluded. All clear."), true)
+            if (settings.globalAllClearSound) playSoundFile(settings.urlGlobalAllClear, true)
+        } else if (haz == "StopSirens") {
+            stopAllSirens()
+        } else {
+            testDnaOutputs(haz)
+        }
+        return
     }
 }
 
@@ -830,20 +951,48 @@ def pollNOAA() {
     if (settings.enableNOAA != true) return
     if (state.cloudOffline && state.cloudRetryTime && now() < state.cloudRetryTime) return 
 
-    def lat = location.latitude
-    def lon = location.longitude
-    if (!lat || !lon) return
+    // Retrieve Lat/Lon
+    def latStr = settings.manualLat ? settings.manualLat.toString() : location.latitude?.toString()
+    def lonStr = settings.manualLon ? settings.manualLon.toString() : location.longitude?.toString()
+    
+    // SAFETY CATCH: If user is in the USA but forgot the negative sign on Longitude, flip it automatically
+    if (lonStr && !lonStr.startsWith("-") && latStr && latStr.toFloat() > 0) {
+        if (lonStr.toFloat() > 60.0 && lonStr.toFloat() < 130.0) {
+            lonStr = "-" + lonStr
+            log.warn "Auto-corrected missing negative sign on Longitude to prevent polling NWS for Eastern Hemisphere."
+        }
+    }
+
+    if (!latStr || !lonStr) {
+        log.warn "NOAA Poll aborted: Latitude and Longitude are null."
+        return
+    }
+
+    // Format strictly to 4 decimals to avoid NWS API 400 Bad Request Rejections
+    def cleanLat = String.format("%.4f", latStr.toFloat())
+    def cleanLon = String.format("%.4f", lonStr.toFloat())
+
+    // Save the exact URL to State so we can display it on the dashboard as a clickable debug link
+    state.lastNoaaUrl = "https://api.weather.gov/alerts/active?point=${cleanLat},${cleanLon}"
 
     def params = [
-        uri: "https://api.weather.gov/alerts/active?point=${lat},${lon}",
-        timeout: 10,
-        headers: ["User-Agent": "Hubitat-AdvancedSevereWeatherApp/3.0", "Accept": "application/geo+json"]
+        uri: state.lastNoaaUrl,
+        timeout: 15,
+        headers: [
+            "User-Agent": "Hubitat-SevereWeatherApp/3.5 (mailto:admin@local.host)", 
+            "Accept": "application/geo+json"
+        ]
     ]
     try { asynchttpGet("noaaResponseHandler", params) } catch (e) { log.error "Async HTTP Get failed: ${e}" }
 }
 
 def noaaResponseHandler(response, data) {
+    state.noaaLastTime = new Date().format("MM/dd/yy hh:mm:ss a", location.timeZone)
+    state.noaaLastStatus = response.getStatus()
+    
     if (response.hasError()) {
+        log.warn "NOAA API HTTP Error: ${response.getStatus()} - ${response.getErrorMessage()}"
+        state.noaaGlobalAlerts = "<i><span style='color:#d9534f;'>HTTP Error: ${response.getStatus()} - ${response.getErrorMessage()}</span></i>"
         state.noaaFailCount = (state.noaaFailCount ?: 0) + 1
         if (state.noaaFailCount >= 3) {
             state.cloudOffline = true
@@ -852,10 +1001,33 @@ def noaaResponseHandler(response, data) {
         return
     }
     
+    def rawData = response.data
+    if (!rawData) {
+        state.noaaGlobalAlerts = "<i><span style='color:#d9534f;'>NWS returned an empty payload.</span></i>"
+        return
+    }
+    
+    def json = null
+    try { 
+        // If Hubitat already parsed the JSON into a Map or List, use it directly
+        if (rawData instanceof Map || rawData instanceof List) {
+            json = rawData
+        } else {
+            def textData = rawData.toString().trim()
+            // Hubitat Base64 Encodes non-standard Content-Types (like application/geo+json)
+            if (!textData.startsWith("{") && !textData.startsWith("[")) {
+                textData = new String(textData.decodeBase64())
+            }
+            json = new groovy.json.JsonSlurper().parseText(textData) 
+        }
+    } catch (e) { 
+        log.error "NOAA JSON Parsing Error: ${e}. Raw data preview: ${rawData?.toString()?.take(200)}"
+        state.noaaGlobalAlerts = "<i><span style='color:#d9534f;'>Error parsing NWS JSON response. See logs for details.</span></i>"
+        return 
+    }
+    
     state.cloudOffline = false
     state.noaaFailCount = 0
-    def json = null
-    try { json = response.getJson() } catch (e) { return }
     
     def alerts = json?.features ?: []
     def parsedAlerts = ["Tornado": "Clear", "Thunderstorm": "Clear", "Flood": "Clear", "Freeze": "Clear", "SevereHeat": "Clear", "Tropical": "Clear", "FireWeather": "Clear"]
@@ -864,28 +1036,38 @@ def noaaResponseHandler(response, data) {
     alerts.each { alert ->
         def event = alert.properties?.event ?: ""
         def headline = alert.properties?.headline ?: event
+        def desc = alert.properties?.description ?: headline
         globalAlertsHtml += "<b>${event}</b>: ${headline}<br><br>"
         
-        if (event.contains("Tornado Warning")) parsedAlerts["Tornado"] = "ALARM"
-        else if (event.contains("Tornado Watch") && parsedAlerts["Tornado"] != "ALARM") parsedAlerts["Tornado"] = "WARNING"
-        if (event.contains("Severe Thunderstorm Warning")) parsedAlerts["Thunderstorm"] = "ALARM"
-        else if (event.contains("Severe Thunderstorm Watch") && parsedAlerts["Thunderstorm"] != "ALARM") parsedAlerts["Thunderstorm"] = "WARNING"
-        if (event.contains("Flash Flood") || event.contains("Flood Warning")) parsedAlerts["Flood"] = "ALARM"
-        else if (event.contains("Flood Watch") || event.contains("Flood Advisory")) parsedAlerts["Flood"] = "WARNING"
-        if (event.contains("Freeze Warning") || event.contains("Ice Storm Warning") || event.contains("Winter Storm Warning")) parsedAlerts["Freeze"] = "ALARM"
-        else if (event.contains("Freeze Watch") || event.contains("Frost Advisory") || event.contains("Winter Weather Advisory")) parsedAlerts["Freeze"] = "WARNING"
-        if (event.contains("Excessive Heat Warning")) parsedAlerts["SevereHeat"] = "ALARM"
-        else if (event.contains("Heat Advisory")) parsedAlerts["SevereHeat"] = "WARNING"
-        if (event.contains("Hurricane Warning") || event.contains("Tropical Storm Warning")) parsedAlerts["Tropical"] = "ALARM"
-        else if (event.contains("Hurricane Watch") || event.contains("Tropical Storm Watch")) parsedAlerts["Tropical"] = "WARNING"
-        if (event.contains("Red Flag Warning") || event.contains("Fire Weather Warning")) parsedAlerts["FireWeather"] = "ALARM"
-        else if (event.contains("Fire Weather Watch")) parsedAlerts["FireWeather"] = "WARNING"
+        if (event.contains("Tornado Warning")) { parsedAlerts["Tornado"] = "ALARM"; parsedAlerts["Raw_Tornado"] = desc }
+        else if (event.contains("Tornado Watch") && parsedAlerts["Tornado"] != "ALARM") { parsedAlerts["Tornado"] = "WARNING"; parsedAlerts["Raw_Tornado"] = desc }
+        
+        if (event.contains("Severe Thunderstorm Warning")) { parsedAlerts["Thunderstorm"] = "ALARM"; parsedAlerts["Raw_Thunderstorm"] = desc }
+        else if (event.contains("Severe Thunderstorm Watch") && parsedAlerts["Thunderstorm"] != "ALARM") { parsedAlerts["Thunderstorm"] = "WARNING"; parsedAlerts["Raw_Thunderstorm"] = desc }
+        
+        if (event.contains("Flash Flood") || event.contains("Flood Warning")) { parsedAlerts["Flood"] = "ALARM"; parsedAlerts["Raw_Flood"] = desc }
+        else if (event.contains("Flood Watch") || event.contains("Flood Advisory")) { parsedAlerts["Flood"] = "WARNING"; parsedAlerts["Raw_Flood"] = desc }
+        
+        if (event.contains("Freeze Warning") || event.contains("Ice Storm Warning") || event.contains("Winter Storm Warning")) { parsedAlerts["Freeze"] = "ALARM"; parsedAlerts["Raw_Freeze"] = desc }
+        else if (event.contains("Freeze Watch") || event.contains("Frost Advisory") || event.contains("Winter Weather Advisory")) { parsedAlerts["Freeze"] = "WARNING"; parsedAlerts["Raw_Freeze"] = desc }
+        
+        if (event.contains("Excessive Heat Warning")) { parsedAlerts["SevereHeat"] = "ALARM"; parsedAlerts["Raw_SevereHeat"] = desc }
+        else if (event.contains("Heat Advisory")) { parsedAlerts["SevereHeat"] = "WARNING"; parsedAlerts["Raw_SevereHeat"] = desc }
+        
+        if (event.contains("Hurricane Warning") || event.contains("Tropical Storm Warning")) { parsedAlerts["Tropical"] = "ALARM"; parsedAlerts["Raw_Tropical"] = desc }
+        else if (event.contains("Hurricane Watch") || event.contains("Tropical Storm Watch")) { parsedAlerts["Tropical"] = "WARNING"; parsedAlerts["Raw_Tropical"] = desc }
+        
+        if (event.contains("Red Flag Warning") || event.contains("Fire Weather Warning")) { parsedAlerts["FireWeather"] = "ALARM"; parsedAlerts["Raw_FireWeather"] = desc }
+        else if (event.contains("Fire Weather Watch")) { parsedAlerts["FireWeather"] = "WARNING"; parsedAlerts["Raw_FireWeather"] = desc }
     }
     
-    if (globalAlertsHtml == "") globalAlertsHtml = "<i>No active national weather alerts for your area at this time.</i>"
+    if (globalAlertsHtml == "") {
+        globalAlertsHtml = "<i>No active national weather alerts for your area at this time.</i>"
+    }
+    
     state.noaaGlobalAlerts = globalAlertsHtml
     state.noaaAlertsMap = parsedAlerts
-    evaluateMatrix()
+    evaluateMatrixWrap()
 }
 
 // === HISTORY, PRESENCE, & HEARTBEAT ===
@@ -916,7 +1098,6 @@ def updateHistory(historyName, val, maxAgeMs) {
     def cutoff = now() - maxAgeMs
     hist = hist.findAll { it.time >= cutoff }
     
-    // Memory Bloat Protection (Limit to 288 points = 24 hours at 5m intervals)
     def maxPoints = 288
     if (hist.size() > maxPoints) {
         hist = hist.drop(hist.size() - maxPoints)
@@ -925,19 +1106,20 @@ def updateHistory(historyName, val, maxAgeMs) {
     state."${historyName}" = hist
 }
 
-def stdHandler(evt) { markActive(); runIn(1, "evaluateMatrix") }
-def tempHandler(evt) { updateHistory("tempHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
+// BATCH EVENT HANDLING TO ELIMINATE RACE CONDITIONS
+def stdHandler(evt) { markActive(); runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
+def tempHandler(evt) { updateHistory("tempHistory", evt.value, 3600000); runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
 def pressureHandler(evt) { 
     def raw = 0.0
     try { raw = evt.value.toString().replaceAll("[^\\d.-]", "").toFloat() } catch(e) {}
     def cal = raw + (settings.pressOffset ?: 0.0)
     updateHistory("pressureHistory", cal, 10800000)
-    runIn(1, "evaluateMatrix") 
+    runIn(5, "evaluateMatrixWrap", [overwrite: true]) 
 } 
-def windHandler(evt) { updateHistory("windHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
-def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 3600000); runIn(1, "evaluateMatrix") }
-def lightningHandler(evt) { updateHistory("lightningHistory", evt.value, 1800000); runIn(1, "evaluateMatrix") }
-def luxHandler(evt) { runIn(1, "evaluateMatrix") }
+def windHandler(evt) { updateHistory("windHistory", evt.value, 3600000); runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
+def windDirHandler(evt) { updateHistory("windDirHistory", evt.value, 3600000); runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
+def lightningHandler(evt) { updateHistory("lightningHistory", evt.value, 1800000); runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
+def luxHandler(evt) { runIn(5, "evaluateMatrixWrap", [overwrite: true]) }
 
 // ==============================================================================
 // [SCIENCE: ADVANCED METEOROLOGICAL MATHEMATICS]
@@ -979,7 +1161,7 @@ def getStormVectorData(hist) {
     def timeDiffHr = (newTime - oldTime) / 3600000.0
     if (timeDiffHr <= 0) return [status: "Stalled", speed: 0.0, eta: -1]
     
-    def distDiff = oldDist - newDist // Positive means approaching
+    def distDiff = oldDist - newDist 
     def speedMph = distDiff / timeDiffHr
     
     if (speedMph > 2.0) {
@@ -993,7 +1175,7 @@ def getStormVectorData(hist) {
 
 def detectGravityWaves(hist) {
     if (!hist || hist.size() < 6) return false
-    def cutoff = now() - 1800000 // 30 mins
+    def cutoff = now() - 1800000 
     def recent = hist.findAll { it.time >= cutoff }
     if (recent.size() < 6) return false
     
@@ -1029,7 +1211,7 @@ def calculateAirDensity(tF, rh, pInHg) {
 def calculateWindLoad(rho, windMph) {
     def v_ms = windMph * 0.44704
     def q_Pa = 0.5 * rho * (v_ms * v_ms)
-    return isMetric() ? q_Pa : (q_Pa * 0.0208854) // Returns Pa or PSF
+    return isMetric() ? q_Pa : (q_Pa * 0.0208854) 
 }
 
 def calculateWBGT(tF, rh, windMph, lux) {
@@ -1075,10 +1257,42 @@ def calculateHeatIndex(tF, rh) {
 }
 
 // === THE MATRIX EVALUATOR ===
-def evaluateMatrix() {
+
+// AUTO-HEALING WRAPPER
+def evaluateMatrixWrap() {
+    if (atomicState.matrixLock) {
+        def lockAge = now() - (state.lockTimestamp ?: now())
+        if (lockAge > 60000) {
+            logAction("⚠ THREAD LOCK STUCK for > 60s. Auto-healing and breaking lock.")
+            atomicState.matrixLock = false
+        } else {
+            return // Normal behavior, abort to prevent race condition
+        }
+    }
+    
+    atomicState.matrixLock = true
+    state.lockTimestamp = now()
+    
+    try {
+        evaluateMatrixCore()
+    } catch (e) {
+        log.error "Matrix Logic Execution Halted: ${e}"
+    } finally {
+        atomicState.matrixLock = false
+        state.lockTimestamp = null
+    }
+}
+
+// === LEGACY BRIDGE ===
+// Catches any ghost schedules left in Hubitat's memory from older versions
+def evaluateMatrix() { 
+    logInfo("Caught ghost schedule call. Routing to evaluateMatrixWrap.")
+    evaluateMatrixWrap() 
+}
+
+def evaluateMatrixCore() {
     def evalStart = now() 
     
-    // MIDNIGHT ROLLOVER - Daily Rain pushed to 7-Day History
     def todayStr = new Date().format("yyyy-MM-dd", location.timeZone)
     if (!state.currentDateStr) state.currentDateStr = todayStr
     
@@ -1103,7 +1317,6 @@ def evaluateMatrix() {
     state.isStale = isStale
     state.survivalModeActive = false
     
-    // --- EMI/EMP GUARD & DYING BREATH SENSOR FAILOVER ---
     def wasAlarmActive = state.threatMatrix?.any { k, v -> v.state == "ALARM" || v.state == "ICE ALARM" }
     state.emiActive = false
     
@@ -1121,7 +1334,6 @@ def evaluateMatrix() {
         isStale = false 
     }
     
-    // Fetch Data
     def t = getFloat(sensorTemp, ["temperature", "tempf"], 0.0)
     def h = getFloat(sensorHum, ["humidity"], 0.0)
     def rawP = getFloat(sensorPress, ["pressure", "Baromrelin", "baromrelin", "Baromabsin", "baromabsin", "barometricPressure"], 0.0)
@@ -1163,7 +1375,6 @@ def evaluateMatrix() {
     def wb = calculateWetBulb(t, h)
     state.currentWetBulb = wb
     
-    // Kinetic & Load Physics
     def airDensity = 1.225
     def windLoad = 0.0
     if (settings.enableKineticWind != false) {
@@ -1189,7 +1400,6 @@ def evaluateMatrix() {
         shiftMagnitude = getAngularDiff(oldestDir, windDirVal)
     }
 
-    // Storm Vectoring (ETA)
     def vectorData = getStormVectorData(state.lightningHistory)
     if (settings.enableStormVectoring != false && sensorLightning && strikeCount > 0) {
         if (vectorData.status == "Approaching") state.lightningVectorStr = "Approaching @ ${String.format('%.1f', vectorData.speed)} mph (ETA: ~${String.format('%.0f', vectorData.eta)}m)"
@@ -1199,7 +1409,6 @@ def evaluateMatrix() {
         state.lightningVectorStr = "N/A"
     }
 
-    // INTELLIGENT DEW REJECTION (First Drop Leak Sensors)
     def wetCountRaw = [sensorLeak, sensorLeak2, sensorLeak3].count { it?.currentValue("water") == "wet" }
     def reqWets = settings.leakSensorRequiredCount ? settings.leakSensorRequiredCount.toInteger() : 1
     def rawLeakWet = (wetCountRaw >= reqWets)
@@ -1217,7 +1426,6 @@ def evaluateMatrix() {
     }
     state.stuckLeakActive = stuckLeakActive
     
-    // Dew Rejection filters out morning frost/dew by ensuring wind is calm, lux is low, and spread is tight, unless real rain gauge tips
     def dewRejectionActive = false
     if (rawLeakWet && settings.enableDewRejection != false && r == 0.0) {
         def checkLux = sensorLux ? (luxVal < 100) : true
@@ -1231,10 +1439,9 @@ def evaluateMatrix() {
 
     def debounceMs = (settings.debounceMins ?: 15) * 60000
     def highestProbThisCycle = 0.0
+    def noaaMap = state.noaaAlertsMap ?: [:]
 
-    // --------------------------------------------------------------------------------
     // 1. TORNADO / EXTREME SHEAR DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableTornado != false && !isStale) {
         def tThreat = 0.0
         def tMath = ""
@@ -1282,6 +1489,15 @@ def evaluateMatrix() {
             tMath += "&nbsp;↳ REACTIVE: Kinetic Destructive Wind: +40.0%<br>"
         }
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["Tornado"]) {
+            if (noaaMap["Tornado"] == "WARNING") { 
+                tProb += 30.0; tMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; tWhy = "<b>NOAA ASSIST:</b> A regional NWS Tornado Watch is actively elevating local threat probability. " + tWhy 
+            } else if (noaaMap["Tornado"] == "ALARM") { 
+                tProb += 50.0; tMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; tWhy = "<b>NOAA ASSIST:</b> A regional NWS Tornado Warning is actively elevating local threat probability. " + tWhy 
+            }
+        }
+        
         if (sensorWindDir) tConf += 25
         
         tProb = Math.round(tProb)
@@ -1293,7 +1509,7 @@ def evaluateMatrix() {
         
         if (tProb > highestProbThisCycle) highestProbThisCycle = tProb
         
-        if (tProb > 20) {
+        if (tProb > 20 && !tWhy.contains("NOAA ASSIST")) {
             tWhy = "Probability is ${tProb}%. "
             if (isGravityWave) tWhy += "<b>PROACTIVE THREAT:</b> Pre-storm atmospheric gravity waves detected (supercell proxy). "
             if (pTrendData.rate <= -0.04 && shiftMagnitude >= 45.0) tWhy += "<b>PROACTIVE THREAT:</b> Dangerous synergy of rapidly falling pressure and shifting winds detected. "
@@ -1304,9 +1520,7 @@ def evaluateMatrix() {
         processHazardState("Tornado", tThreat, tProb, tConf, tWhy, tMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 2. THUNDERSTORM DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableThunderstorm != false && !isStale) {
         def tsThreat = 0.0
         def tsMath = ""
@@ -1344,7 +1558,6 @@ def evaluateMatrix() {
             }
         }
         
-        // Storm Vectoring Impact
         if (settings.enableStormVectoring != false && vectorData.status == "Approaching") {
             tsProb += 40.0
             tsMath += "&nbsp;↳ REACTIVE: Storm Core Approaching: +40.0%<br>"
@@ -1364,18 +1577,25 @@ def evaluateMatrix() {
             tsMath += "&nbsp;↳ REACTIVE: Gust Front / Mesohigh Pressure Jump: +40.0%<br>"
         }
         
-        // REACTIVE INSTANT DROP (Leak Sensor)
         if (leakWet) {
             tsProb += 30.0
             tsMath += "&nbsp;↳ REACTIVE: First Drop Leak Sensor: +30.0%<br>"
         }
         
-        // DRY MICROBURST / VIRGA DETECTION
         if (settings.enableDryMicroburst != false && dpSpread >= 25.0 && tTrendData.diff <= -3.0 && wTrendData.diff >= 15.0 && r == 0.0) {
             tsProb += 60.0
             tsThreat = 100.0
             tsMath += "&nbsp;↳ REACTIVE: DRY MICROBURST (Virga Evaporative Cooling): +60.0%<br>"
             tsWhy += "<b>DRY MICROBURST DETECTED:</b> Massive dew point spread + Temp crash + Wind spike with ZERO rain indicates Virga flash-cooling the air column resulting in destructive straight-line downbursts. "
+        }
+        
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["Thunderstorm"]) {
+            if (noaaMap["Thunderstorm"] == "WARNING") { 
+                tsProb += 30.0; tsMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; tsWhy = "<b>NOAA ASSIST:</b> A regional NWS Severe Thunderstorm Watch is elevating local threat probability. " + tsWhy 
+            } else if (noaaMap["Thunderstorm"] == "ALARM") { 
+                tsProb += 50.0; tsMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; tsWhy = "<b>NOAA ASSIST:</b> A regional NWS Severe Thunderstorm Warning is actively elevating local threat probability. " + tsWhy 
+            }
         }
         
         if (sensorWind) tsConf += 30
@@ -1390,7 +1610,7 @@ def evaluateMatrix() {
         
         if (tsProb > highestProbThisCycle) highestProbThisCycle = tsProb
         
-        if (tsProb > 20 && !tsWhy.contains("MICROBURST")) {
+        if (tsProb > 20 && !tsWhy.contains("MICROBURST") && !tsWhy.contains("NOAA ASSIST")) {
             tsWhy = "Probability is ${tsProb}%. "
             if (isGravityWave) tsWhy += "<b>PROACTIVE THREAT:</b> Pre-storm atmospheric gravity waves detected. "
             if (vectorData.status == "Approaching") tsWhy += "<b>STORM VECTORING:</b> Active storm cell approaching sensor. "
@@ -1401,9 +1621,7 @@ def evaluateMatrix() {
         processHazardState("Thunderstorm", tsThreat, tsProb, tsConf, tsWhy, tsMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 3. FLOOD DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableFlood != false && !isStale) {
         def fMath = ""
         def fThreat = (state.currentDayRain / 3.0) * 100.0
@@ -1438,6 +1656,15 @@ def evaluateMatrix() {
         fProb += aCap
         fMath += "&nbsp;↳ Accumulation: +${String.format('%.1f', aCap)}%<br>"
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["Flood"]) {
+            if (noaaMap["Flood"] == "WARNING") { 
+                fProb += 30.0; fMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; fWhy = "<b>NOAA ASSIST:</b> A regional NWS Flood Watch is elevating local threat probability. " + fWhy 
+            } else if (noaaMap["Flood"] == "ALARM") { 
+                fProb += 50.0; fMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; fWhy = "<b>NOAA ASSIST:</b> A regional NWS Flash Flood Warning is actively elevating local threat probability. " + fWhy 
+            }
+        }
+        
         fProb = Math.round(fProb)
         if (fProb > 100) fProb = 100
         fThreat = Math.round(fThreat)
@@ -1446,7 +1673,7 @@ def evaluateMatrix() {
         
         if (fProb > highestProbThisCycle) highestProbThisCycle = fProb
         
-        if (fProb > 0) {
+        if (fProb > 0 && !fWhy.contains("NOAA ASSIST")) {
             fWhy = "Threat intensity is ${fThreat}% based on ${String.format('%.2f', state.currentDayRain)} inches of total daily accumulation. "
             if (state.currentDayRain >= 1.5 && pTrendData.rate <= -0.03) fWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> Ground is already heavily saturated and an incoming low-pressure front is detected. "
             if (r > 0) fWhy += "Probability of flash flooding is ${fProb}% driven by a real-time rain rate of ${String.format('%.2f', r)} in/hr. "
@@ -1455,9 +1682,7 @@ def evaluateMatrix() {
         processHazardState("Flood", fThreat, fProb, fConf, fWhy, fMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 4. FREEZE & ICE DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableFreeze != false && !isStale) {
         def frMath = ""
         def frThreat = 0.0
@@ -1499,6 +1724,15 @@ def evaluateMatrix() {
              frMath += "&nbsp;↳ Trajectory Safe.<br>"
         }
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["Freeze"]) {
+            if (noaaMap["Freeze"] == "WARNING") { 
+                frProb += 30.0; frMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; frWhy = "<b>NOAA ASSIST:</b> NWS Freeze/Winter Storm Watch is elevating local threat probability. " + frWhy 
+            } else if (noaaMap["Freeze"] == "ALARM") { 
+                frProb += 50.0; frMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; frWhy = "<b>NOAA ASSIST:</b> NWS Freeze/Winter Storm Warning is actively elevating local threat probability. " + frWhy 
+            }
+        }
+        
         frProb = Math.round(frProb)
         if (frProb > 100) frProb = 100
         frThreat = Math.round(frThreat)
@@ -1508,7 +1742,7 @@ def evaluateMatrix() {
         
         if (frProb > highestProbThisCycle) highestProbThisCycle = frProb
         
-        if (frProb > 0 && !isIceStorm) {
+        if (frProb > 0 && !isIceStorm && !frWhy.contains("NOAA ASSIST")) {
             frWhy = "Current temperature is ${String.format('%.1f', t)}°. Threat intensity is ${frThreat}%. "
             if (frProb == 100) {
                 frWhy += (dpSpread <= 3.0) ? "Hard Freeze with Hoar Frost actively occurring. " : "Dry Hard Freeze actively occurring. "
@@ -1517,13 +1751,11 @@ def evaluateMatrix() {
             }
         }
         
-        if (isIceStorm) mathEx += "|ICE_FLAG_TRUE"
+        if (isIceStorm) frMath += "|ICE_FLAG_TRUE"
         processHazardState("Freeze", frThreat, frProb, frConf, frWhy, frMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 5. SEVERE HEAT DNA (WBGT)
-    // --------------------------------------------------------------------------------
     if (settings.enableSevereHeat != false && !isStale) {
         def shMath = ""
         def targetHeatMetric = 0.0
@@ -1563,6 +1795,15 @@ def evaluateMatrix() {
              shMath += "&nbsp;↳ PREDICTIVE: Trajectory to 90°: +${String.format('%.1f', shProb)}%<br>"
         }
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["SevereHeat"]) {
+            if (noaaMap["SevereHeat"] == "WARNING") { 
+                shProb += 30.0; shMath += "&nbsp;↳ NOAA Advisory Assist: +30.0%<br>"; shWhy = "<b>NOAA ASSIST:</b> NWS Heat Advisory is elevating local threat probability. " + shWhy 
+            } else if (noaaMap["SevereHeat"] == "ALARM") { 
+                shProb += 50.0; shMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; shWhy = "<b>NOAA ASSIST:</b> NWS Excessive Heat Warning is actively elevating local threat probability. " + shWhy 
+            }
+        }
+        
         shProb = Math.round(shProb)
         if (shProb > 100) shProb = 100
         shThreat = Math.round(shThreat)
@@ -1571,7 +1812,7 @@ def evaluateMatrix() {
         
         if (shProb > highestProbThisCycle) highestProbThisCycle = shProb
         
-        if (shProb > 0) {
+        if (shProb > 0 && !shWhy.contains("NOAA ASSIST")) {
             shWhy = "Current Heat Metric is ${String.format('%.1f', targetHeatMetric)}°F. "
             if (targetHeatMetric >= 103.0) shWhy += "<b>DANGER:</b> High risk of heat exhaustion or heat stroke for individuals or pets outside. "
             else if (targetHeatMetric >= 90.0) shWhy += "CAUTION: Prolonged exposure and physical activity may lead to heat exhaustion. "
@@ -1580,9 +1821,7 @@ def evaluateMatrix() {
         processHazardState("SevereHeat", shThreat, shProb, shConf, shWhy, shMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 6. TROPICAL DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableTropical != false && !isStale) {
         def trMath = ""
         def trThreat = ((29.90 - p) / 0.50) * 100.0
@@ -1619,6 +1858,15 @@ def evaluateMatrix() {
             trMath += "&nbsp;↳ Sustained Wind [>30mph]: +30.0%<br>"
         }
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["Tropical"]) {
+            if (noaaMap["Tropical"] == "WARNING") { 
+                trProb += 30.0; trMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; trWhy = "<b>NOAA ASSIST:</b> NWS Tropical Watch is elevating local threat probability. " + trWhy 
+            } else if (noaaMap["Tropical"] == "ALARM") { 
+                trProb += 50.0; trMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; trWhy = "<b>NOAA ASSIST:</b> NWS Tropical Warning is actively elevating local threat probability. " + trWhy 
+            }
+        }
+        
         trProb = Math.round(trProb)
         if (trProb > 100) trProb = 100
         trThreat = Math.round(trThreat)
@@ -1628,7 +1876,7 @@ def evaluateMatrix() {
         
         if (trProb > highestProbThisCycle) highestProbThisCycle = trProb
         
-        if (trProb > 20) {
+        if (trProb > 20 && !trWhy.contains("NOAA ASSIST")) {
             trWhy = "Threat intensity is ${trThreat}% due to a current barometric depth of ${String.format('%.2f', p)} inHg. "
             if (pTrend3Hr.rate <= -0.05 && dp >= 70.0) trWhy += "<b>PREDICTIVE METRICS ENGAGED:</b> A long-duration barometric vacuum is combining with deep atmospheric moisture loading. "
             trWhy += "Probability is ${trProb}% factoring in a 3-hour pressure trajectory of ${String.format('%.2f', pTrend3Hr.rate)} inHg/hr and sustained winds of ${String.format('%.1f', windVal)} mph. "
@@ -1637,9 +1885,7 @@ def evaluateMatrix() {
         processHazardState("Tropical", trThreat, trProb, trConf, trWhy, trMath, debounceMs)
     }
 
-    // --------------------------------------------------------------------------------
     // 7. FIRE WEATHER (RED FLAG) DNA
-    // --------------------------------------------------------------------------------
     if (settings.enableFireWeather != false && !isStale) {
         def fwMath = ""
         def fwThreat = 0.0
@@ -1681,6 +1927,15 @@ def evaluateMatrix() {
             fwMath += "&nbsp;↳ Recent Rain (${String.format('%.2f', totalFuelMoisture)} in) suppressing fire threat.<br>"
         }
         
+        // NOAA WEIGHTING ASSIST
+        if (settings.noaaWeighting != false && noaaMap["FireWeather"]) {
+            if (noaaMap["FireWeather"] == "WARNING") { 
+                fwProb += 30.0; fwMath += "&nbsp;↳ NOAA Watch Assist: +30.0%<br>"; fwWhy = "<b>NOAA ASSIST:</b> NWS Fire Weather Watch is elevating local threat probability. " + fwWhy 
+            } else if (noaaMap["FireWeather"] == "ALARM") { 
+                fwProb += 50.0; fwMath += "&nbsp;↳ NOAA Warning Assist: +50.0%<br>"; fwWhy = "<b>NOAA ASSIST:</b> NWS Red Flag Warning is actively elevating local threat probability. " + fwWhy 
+            }
+        }
+        
         fwProb = Math.round(fwProb)
         if (fwProb > 100) fwProb = 100
         fwThreat = Math.round(fwThreat)
@@ -1689,7 +1944,7 @@ def evaluateMatrix() {
         
         if (fwProb > highestProbThisCycle) highestProbThisCycle = fwProb
         
-        if (fwProb > 0) {
+        if (fwProb > 0 && !fwWhy.contains("NOAA ASSIST")) {
             fwWhy = "Probability is ${fwProb}% based on bone-dry local fuel (0.00in rain recently). "
             if (vpd >= 2.0) fwWhy += "<b>DANGER:</b> Extreme Vapor Pressure Deficit (${String.format('%.2f', vpd)} kPa) is actively dehydrating vegetation. "
             if (windVal >= 15.0) fwWhy += "Sustained winds of ${String.format('%.1f', windVal)} mph create critical rapid-spread potential for any spark."
@@ -1704,7 +1959,6 @@ def evaluateMatrix() {
         highestProbThisCycle = 0.0 
     }
     
-    // Store highest probability for chart rendering
     updateHistory("probHistory", highestProbThisCycle, 86400000)
 
     // --- FORENSIC EVENT TRACKING & SUMMARY ---
@@ -1744,25 +1998,41 @@ def evaluateMatrix() {
         logAction("Forensic Event Concluded: Max Wind ${state.lastEventReport.maxWind}mph, Min Press ${state.lastEventReport.minPress}inHg, Duration ${durStr}.")
     }
 
-    // --- GLOBAL STAND-DOWN SEQUENCER (ALL-CLEAR) ---
+    // --- GLOBAL STAND-DOWN SEQUENCER (ALL-CLEAR) WITH EXTERNAL APP INTEGRATION ---
     if (!anyAlarmActive && state.globalThreatActive) {
-        if (pTrendData.rate >= 0.0 && windVal < 15.0) {
-            logAction("✅ GLOBAL STAND-DOWN: All hazard matrices have cleared, pressure is stabilizing, and winds are calm.")
-            state.globalThreatActive = false
-            state.globalAllClearPending = false
+        
+        // External application check
+        def externalAppsClear = true
+        if (settings.extRainingSwitch && settings.extRainingSwitch.currentValue("switch") == "on") externalAppsClear = false
+        if (settings.extSprinklingSwitch && settings.extSprinklingSwitch.currentValue("switch") == "on") externalAppsClear = false
+        
+        if (pTrendData.rate >= 0.0 && windVal < 15.0 && externalAppsClear) {
+            if (!state.allClearStartTime) state.allClearStartTime = now()
             
-            if (settings.globalAllClearNotify) sendNotification("✅ Weather All-Clear: All severe weather threats have passed.")
-            if (settings.globalAllClearTTS) playAudio(settings.ttsGlobalAllClear ?: "The severe weather event has concluded. All clear.")
-            if (settings.globalAllClearSound) playSoundFile(settings.urlGlobalAllClear)
+            if (now() - state.allClearStartTime >= 1800000) {
+                logAction("✅ GLOBAL STAND-DOWN: All hazard matrices have cleared, pressure is stabilizing, winds are calm, and external rain applications are clear for 30 minutes.")
+                state.globalThreatActive = false
+                state.globalAllClearPending = false
+                state.allClearStartTime = null
+                
+                if (settings.globalAllClearNotify) sendNotification("✅ Weather All-Clear: All severe weather threats have passed.")
+                if (settings.globalAllClearTTS) playAudio(settings.ttsGlobalAllClear ?: "The severe weather event has concluded. All clear.")
+                if (settings.globalAllClearSound) playSoundFile(settings.urlGlobalAllClear)
+            } else {
+                if (!state.globalAllClearPending) {
+                    logAction("⏳ STAND-DOWN PENDING: Matrix cleared. Verifying stabilization and external applications for 30 minutes before officially broadcasting all-clear.")
+                    state.globalAllClearPending = true
+                }
+            }
         } else {
+            state.allClearStartTime = null
             if (!state.globalAllClearPending) {
-                logAction("⏳ STAND-DOWN PENDING: Matrix cleared, but waiting for barometric/kinetic stabilization to officially broadcast all-clear.")
+                logAction("⏳ STAND-DOWN PAUSED: Matrix cleared, but waiting for barometric/kinetic stabilization and/or external rain applications to officially broadcast all-clear.")
                 state.globalAllClearPending = true
             }
         }
     }
 
-    // DEFCON WATCHDOG LOGIC
     if (settings.enableDefcon != false) {
         def threshold = settings.defconThresh ?: 25
         if (highestProbThisCycle >= threshold && !state.watchdogActive) {
@@ -1792,8 +2062,18 @@ def processHazardState(haz, threat, prob, conf, why, mathEx, debounceMs) {
     def alarmThresh = settings["${pfx}AlarmThresh"] ?: 80
     
     def targetState = "Clear"
-    if (prob >= alarmThresh) targetState = "ALARM"
-    else if (prob >= warnThresh) targetState = "WARNING"
+    def warnRelease = warnThresh - 15
+    def alarmRelease = alarmThresh - 15
+    
+    if (prob >= alarmThresh) {
+        targetState = "ALARM"
+    } else if (data.state.contains("ALARM") && prob > alarmRelease) {
+        targetState = "ALARM"
+    } else if (prob >= warnThresh) {
+        targetState = "WARNING"
+    } else if (data.state.contains("WARNING") && prob > warnRelease) {
+        targetState = "WARNING"
+    }
     
     def isIceStorm = mathEx.contains("|ICE_FLAG_TRUE")
     if (haz == "Freeze" && isIceStorm && targetState != "Clear") {
@@ -2015,6 +2295,34 @@ def stopAllSirens() {
     }
 }
 
+def testDnaOutputs(haz) {
+    def pfx = haz.toLowerCase()
+    logAction("MANUAL TEST: Triggering ${haz} Alarm Outputs")
+    
+    def dnas = [
+        "Tornado": "Critical Alert. Tornado conditions detected locally.",
+        "Thunderstorm": "Critical Alert. Severe thunderstorm conditions actively detected.",
+        "Flood": "Critical Alert. Flash flood conditions detected locally.",
+        "Freeze": "Alert. Freeze conditions actively occurring.",
+        "SevereHeat": "Critical Alert. Severe heat index conditions detected locally.",
+        "Tropical": "Critical Alert. Deep tropical cyclone conditions actively impacting location.",
+        "FireWeather": "Critical Alert. Extreme Red Flag fire weather actively detected. No outdoor sparks."
+    ]
+    
+    def defaultMsg = dnas[haz]
+    
+    if (settings["${pfx}AlarmNotify"]) sendNotification("🛠️ TEST NOTIFICATION: ${haz} ALARM conditions.")
+    if (settings["${pfx}AlarmTTS"]) playAudio("System test. " + (settings["tts${haz}Alarm"] ?: defaultMsg), true)
+    
+    if (settings["${pfx}AlarmSiren"]) { 
+        triggerSiren()
+        runIn(5, "stopAllSirens", [overwrite: true]) 
+        logAction("Siren triggered. Auto-shutoff scheduled in 5 seconds.")
+    }
+    
+    if (settings["${pfx}AlarmSound"]) playSoundFile(settings["url${haz}Alarm"], true)
+}
+
 def createChildDevice() {
     def deviceId = "SevWeather-${app.id}"
     if (!getChildDevice(deviceId)) {
@@ -2063,4 +2371,4 @@ def logAction(msg) {
 }
 
 def logInfo(msg) { if(txtEnable) log.info "${app.label}: ${msg}" }
-def modeChangeHandler(evt) { evaluateMatrix() }
+def modeChangeHandler(evt) { evaluateMatrixWrap() }
