@@ -113,7 +113,7 @@ def mainPage() {
         
         section("Configuration Menus", hideable: false, hidden: false) {
             href(name: "hrefSettings", page: "pageSettings", title: "⚙️ Core Setup & Devices", description: "Select devices to monitor and set schedules")
-            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Descriptions, & Folders", description: "Bulk assign locations and override dashboard folders")
+            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Descriptions, & Folders", description: "Bulk assign locations, battery types, and override folders")
             href(name: "hrefThresholds", page: "pageThresholds", title: "📊 Monitoring Thresholds", description: "Configure battery, inactivity, and signal limits")
         }
     }
@@ -161,6 +161,7 @@ def pageDeviceDetails() {
         def roomOptions = roomListStr.split(',').collect{it.trim()}.findAll{it != ""}
         
         def folderOptions = ["Safety & Alarms", "Switches & Actuators", "Motion Sensors", "Contact Sensors", "Presence Sensors", "Climate Sensors", "Power Meters", "Light Sensors", "Vibration Sensors", "Other Sensors", "General Battery Devices"]
+        def battTypes = ["CR2032", "CR2450", "CR2", "CR123A", "AA", "AAA", "AAAA", "9V", "18650", "Custom / Proprietary Pack", "Rechargeable Internal"]
 
         section("📍 Manage Location Dropdowns") {
             paragraph "<i>Define your standard home locations here (comma separated). This list populates the dropdown menus below.</i>"
@@ -181,7 +182,6 @@ def pageDeviceDetails() {
                 input "btnBulkApplyLoc", "button", title: "✅ Apply to Selected Devices"
             }
             
-            // Grouping Devices by Location for the UI Menu
             def groupedDevs = [:]
             allDevs.each { dev ->
                 def loc = settings["loc_${dev.id}"] ?: "Unassigned / Other"
@@ -190,7 +190,6 @@ def pageDeviceDetails() {
             }
             
             def sortedLocs = groupedDevs.keySet().sort()
-            // Force "Unassigned / Other" to the top of the list
             if (sortedLocs.contains("Unassigned / Other")) {
                 sortedLocs.remove("Unassigned / Other")
                 sortedLocs.add(0, "Unassigned / Other")
@@ -202,6 +201,7 @@ def pageDeviceDetails() {
                         input "folder_${dev.id}", "enum", title: "${dev.displayName} - Dashboard Folder(s)", options: folderOptions, multiple: true, required: false, description: "Leave blank for Auto-placement"
                         input "loc_${dev.id}", "enum", title: "${dev.displayName} - Location", options: roomOptions, required: false
                         input "desc_${dev.id}", "text", title: "${dev.displayName} - Description", required: false
+                        input "battType_${dev.id}", "enum", title: "${dev.displayName} - Battery Type", options: battTypes, required: false
                         paragraph "<hr style='background-color:#ccc; height:1px; border:0; margin:10px 0;'/>"
                     }
                 }
@@ -279,7 +279,6 @@ def initialize() {
     
     schedule("0 0 0/12 * * ?", "autoHealNetwork")
     
-    // --- SAFE LIVE UPDATE REGISTRATION ---
     if (settings.enableLiveUpdates != false) {
         if (settings.batteryDevices) subscribe(settings.batteryDevices, "battery", liveUpdateHandler)
         if (settings.motionSensors) subscribe(settings.motionSensors, "motion", liveUpdateHandler)
@@ -297,7 +296,6 @@ def initialize() {
 
 def liveUpdateHandler(evt) {
     if (settings.masterSwitch && settings.masterSwitch.currentValue("switch") == "off") return
-    // Debounce to 15 seconds to prevent hammering the hub if a room of sensors wakes up
     runIn(15, "runHealthCheck", [overwrite: true])
 }
 
@@ -313,12 +311,11 @@ def appButtonHandler(btn) {
         runHealthCheck()
     } else if (btn == "btnBulkApplyLoc") {
         if (settings.bulkLoc && settings.bulkDevs) {
-            // Handle bulk application of Location
             def devIds = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
             devIds.each { dId ->
                 app.updateSetting("loc_${dId}", [type: "string", value: settings.bulkLoc])
             }
-            app.removeSetting("bulkDevs") // Clear the selection array to reset the UI
+            app.removeSetting("bulkDevs") 
             addToHistory("SYSTEM: Bulk applied location '${settings.bulkLoc}' to ${devIds.size()} devices.")
         }
     }
@@ -406,7 +403,6 @@ def runHealthCheck() {
         }
     }
 
-    // specific sensors first, general catch-alls last 
     addDev(settings.smokeDetectors, "Safety & Alarms")
     addDev(settings.waterSensors, "Safety & Alarms")
     addDev(settings.valveDevices, "Safety & Alarms")
@@ -428,7 +424,6 @@ def runHealthCheck() {
     deviceMap.each { devId, data ->
         def dev = data.device
         
-        // Grab the manual folder override if the user set one, otherwise use the auto-categories
         def finalCategories = []
         def overrideFolders = settings["folder_${dev.id}"]
         if (overrideFolders) {
@@ -441,39 +436,53 @@ def runHealthCheck() {
             def devHealth = "Green"
             def msgs = []
             def battChangedStr = ""
+            def estDaysLeftStr = "Calculating..."
+            def rawBattVal = null
             
             def lastActiveDate = dev.getLastActivity()
             def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
             
-            // 1. Battery Check
             if (settings.enableBatteryCheck && dev.hasAttribute("battery")) {
                 def batt = dev.currentValue("battery")
                 if (batt != null && batt.toString().isNumber()) {
                     def bVal = batt.toInteger()
+                    rawBattVal = bVal
                     
                     def lastB = state.lastBatteryLevels[dev.id]
                     if (lastB != null && bVal > (lastB + 5)) {
                         state.batteryChangeDates[dev.id] = nowMs
                     }
                     state.lastBatteryLevels[dev.id] = bVal
+                    
                     if (state.batteryChangeDates[dev.id]) {
                         battChangedStr = " | Batt Replaced: " + new Date(state.batteryChangeDates[dev.id]).format("MM/dd/yy", location.timeZone)
+                        
+                        long changedMs = state.batteryChangeDates[dev.id]
+                        long elapsedMs = nowMs - changedMs
+                        long daysElapsed = elapsedMs / 86400000
+                        
+                        if (daysElapsed > 1 && bVal < 100) {
+                            BigDecimal dropRate = (100.0 - bVal) / daysElapsed
+                            if (dropRate > 0) {
+                                int daysLeft = (bVal / dropRate).toInteger()
+                                estDaysLeftStr = "~${daysLeft} Days"
+                            }
+                        }
                     }
 
                     def thresh = settings.batteryThreshold ?: 20
                     if (bVal <= thresh) {
                         devHealth = "Red"
-                        msgs << "Battery Critical (${bVal}%)"
+                        msgs << "Battery Critical"
                     } else if (bVal <= thresh + 15) {
                         if (devHealth != "Red") devHealth = "Yellow"
-                        msgs << "Battery Low (${bVal}%)"
+                        msgs << "Battery Low"
                     } else {
-                        msgs << "Battery OK (${bVal}%)"
+                        msgs << "Battery OK"
                     }
                 }
             }
             
-            // 2. Inactivity Check
             if (settings.enableInactivityCheck && !ignoreListIds.contains(dev.id)) {
                 if (lastActiveDate) {
                     def diffHours = (nowMs - lastActiveDate.time) / 3600000
@@ -493,7 +502,6 @@ def runHealthCheck() {
                 }
             }
             
-            // 3. Signal Check
             if (settings.enableSignalCheck && dev.hasAttribute("rssi")) {
                 def rssi = dev.currentValue("rssi")
                 if (rssi != null && rssi.toString().isNumber()) {
@@ -514,9 +522,9 @@ def runHealthCheck() {
             if (msgs.size() == 0) msgs << "Monitoring Active"
             def canPingDev = dev.hasCommand("refresh") || dev.hasCommand("ping")
 
-            // Grab Custom Location / Description Settings
             def devLoc = settings["loc_${dev.id}"] ?: ""
             def devDesc = settings["desc_${dev.id}"] ?: ""
+            def batType = settings["battType_${dev.id}"] ?: ""
 
             results << [
                 id: dev.id,
@@ -528,7 +536,10 @@ def runHealthCheck() {
                 lastActive: lastActiveStr,
                 battChanged: battChangedStr,
                 customLoc: devLoc,
-                customDesc: devDesc
+                customDesc: devDesc,
+                battVal: rawBattVal,
+                estDaysLeft: estDaysLeftStr,
+                battType: batType
             ]
             
         } catch (e) {
@@ -557,47 +568,35 @@ def updateChildHtmlDashboard(results, critCount, warnCount) {
     if (!child) return
     
     StringBuilder html = new StringBuilder()
-    html.append("<div style='font-family: sans-serif; background-color: #151515; padding: 15px; border-radius: 8px; color: #fff;'>")
-    html.append("<div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 15px;'>")
-    html.append("<b style='font-size: 16px;'>🩺 Network Health</b>")
-    
+    html.append("<div style='font-family:sans-serif;background:#151515;padding:15px;border-radius:8px;color:#fff;'><div style='display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:15px;'><b style='font-size:16px;'>🩺 Network Health</b>")
     if (critCount == 0 && warnCount == 0) {
-        html.append("<span style='background-color: #27ae60; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;'>All Systems Nominal</span></div>")
-        html.append("<div style='text-align: center; padding: 20px; color: #aaa; font-style: italic;'>No critical issues or warnings detected.</div>")
+        html.append("<span style='background:#27ae60;color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>All Nominal</span></div><div style='text-align:center;padding:20px;color:#aaa;font-style:italic;'>No critical issues detected.</div>")
     } else {
         def badgeColor = critCount > 0 ? "#e74c3c" : "#f1c40f"
         def badgeText = critCount > 0 ? "${critCount} Critical Issues" : "${warnCount} Warnings"
-        
-        html.append("<span style='background-color: ${badgeColor}; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;'>${badgeText}</span></div>")
-        
-        html.append("<table style='width: 100%; border-collapse: collapse; font-size: 13px;'>")
+        html.append("<span style='background:${badgeColor};color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>${badgeText}</span></div><table style='width:100%;border-collapse:collapse;font-size:13px;'>")
         
         def issues = results.findAll { it.status != "Green" }
-        
         issues.each { issue ->
             def dotColor = issue.status == "Red" ? "#e74c3c" : "#f1c40f"
             def statusList = issue.messages.findAll { it.contains("Critical") || it.contains("Low") || it.contains("Offline") || it.contains("Inactive") || it.contains("Weak") || it.contains("Fair") }.join(", ")
-            def actStr = issue.lastActive ?: "Unknown"
-            def battStr = issue.battChanged ?: ""
-            
             def customText = ""
             if (issue.customLoc || issue.customDesc) {
                 def parts = []
                 if (issue.customLoc) parts << "📍 ${issue.customLoc}"
                 if (issue.customDesc) parts << "📝 ${issue.customDesc}"
-                customText = "<div style='font-size:10px; color:#aaa; margin-top:2px; font-weight:normal;'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>"
+                customText = "<div style='font-size:10px;color:#aaa;margin-top:2px;'>${parts.join(' &nbsp;|&nbsp; ')}</div>"
             }
-            
-            html.append("<tr style='border-bottom: 1px solid #333;'>")
-            html.append("<td style='padding: 8px 0;'><div style='display:flex; align-items:center;'><span style='height:10px; width:10px; border-radius:50%; background-color:${dotColor}; display:inline-block; margin-right:8px; box-shadow: 0 0 4px ${dotColor};'></span><b>${issue.name}</b></div>${customText}<div style='font-size:10px; color:#777; margin-top:4px; margin-left:18px;'>Last Active: ${actStr}${battStr}</div></td>")
-            html.append("<td style='padding: 8px 0; text-align: right; color: #ccc;'>${statusList}</td>")
-            html.append("</tr>")
+            def battBarHtml = ""
+            if (issue.battVal != null) {
+                def barColor = issue.battVal > 50 ? "#27ae60" : (issue.battVal > 20 ? "#f1c40f" : "#e74c3c")
+                battBarHtml = "<div style='margin-top:6px;width:100%;'><div style='display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:3px;'><span>🔋 ${issue.battVal}%</span><span>⏳ ${issue.estDaysLeft}</span></div><div style='width:100%;background:#333;height:4px;border-radius:2px;overflow:hidden;'><div style='width:${issue.battVal}%;background:${barColor};height:100%;'></div></div></div>"
+            }
+            html.append("<tr style='border-bottom:1px solid #333;'><td style='padding:8px 0;width:60%;'><div style='display:flex;align-items:center;'><span style='height:10px;width:10px;border-radius:50%;background:${dotColor};display:inline-block;margin-right:8px;box-shadow:0 0 4px ${dotColor};flex-shrink:0;'></span><b>${issue.name}</b></div>${customText}<div style='font-size:10px;color:#777;margin-top:4px;margin-left:18px;'>Last Active: ${issue.lastActive?:'Unknown'}${issue.battChanged?:''}</div>${battBarHtml}</td><td style='padding:8px 0;text-align:right;color:#ccc;vertical-align:top;'>${statusList}</td></tr>")
         }
         html.append("</table>")
     }
-    
-    html.append("<div style='margin-top: 15px; font-size: 11px; color: #666; text-align: right;'>Last Scan: ${state.lastCheckTime}</div>")
-    html.append("</div>")
+    html.append("<div style='margin-top:15px;font-size:11px;color:#666;text-align:right;'>Last Scan: ${state.lastCheckTime}</div></div>")
     
     child.sendEvent(name: "issueCount", value: critCount)
     def issueNames = results.findAll { it.status == "Red" }.collect{it.name}.join(", ")
@@ -606,22 +605,8 @@ def updateChildHtmlDashboard(results, critCount, warnCount) {
     child.sendEvent(name: "htmlDashboard", value: html.toString())
 }
 
-def addToHistory(msg) {
-    def cleanMsg = msg.toString().replaceAll("\\<.*?\\>", "")
-    def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
-    log.info "SYSTEM: [${timestamp}] ${cleanMsg}"
-    
-    if (!state.historyLog) state.historyLog = []
-    state.historyLog.add(0, "<span style='color: #888; font-size: 11px;'>[${new Date().format("h:mm a", location.timeZone)}]</span> <b>${cleanMsg}</b>")
-    if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
-}
-
-// ==========================================
-// WEB PORTAL (DASHBOARD) ENDPOINTS
-// ==========================================
-
 def getRedirectHtml() {
-    return """<!DOCTYPE html><html><head><script>window.location.href="dashboard?access_token=${state.accessToken}";</script></head><body style="background-color:#0d0d0d;color:#fff;text-align:center;padding-top:50px;font-family:sans-serif;"><h3>Processing command...</h3></body></html>"""
+    return "<!DOCTYPE html><html><head><script>setTimeout(function(){window.location.href=\"dashboard?access_token=${state.accessToken}\";}, 1200);</script></head><body style=\"background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;\"><h3>🔄 Standard BMS Syncing...</h3><p style='color:#666;'>Processing telemetry changes</p></body></html>"
 }
 
 def forceRefreshEndpoint() {
@@ -642,15 +627,12 @@ def pingDeviceEndpoint() {
             def dev = allDevs.find { it.id == dId }
             if (dev) {
                 def cmdSent = false
-                if (dev.hasCommand("refresh")) { 
-                    try { dev.refresh(); cmdSent = true } catch(e){} 
-                } else if (dev.hasCommand("ping")) { 
-                    try { dev.ping(); cmdSent = true } catch(e){} 
-                }
+                if (dev.hasCommand("refresh")) { try { dev.refresh(); cmdSent = true } catch(e){} } 
+                else if (dev.hasCommand("ping")) { try { dev.ping(); cmdSent = true } catch(e){} }
                 
                 if (cmdSent) {
                     addToHistory("NETWORK HEAL: Manual ping/refresh sent to ${dev.displayName} via Portal.")
-                    runIn(4, "runHealthCheck", [overwrite: true]) 
+                    runIn(2, "runHealthCheck", [overwrite: true]) 
                 }
             }
         }
@@ -669,134 +651,58 @@ def serveDashboardPage() {
         def critCount = results.count { it.status == "Red" }
         def warnCount = results.count { it.status == "Yellow" }
         def goodCount = results.count { it.status == "Green" }
-        // Unique devices total, not total categories listed
         def totalCount = results.size()
 
-        StringBuilder html = new StringBuilder()
-        html.append("""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Device Health Portal</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <script>
-                // Auto-Refresh the dashboard every 60 seconds
-                setTimeout(function(){ window.location.reload(1); }, 60000);
-            </script>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background-color: #0d0d0d; color: #e0e0e0; }
-                .container { max-width: 800px; margin: 0 auto; background: #151515; padding: 25px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); }
-                a.main-btn { background-color: #1f618d; color: white; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; width: 100%; box-sizing:border-box; font-size: 16px; font-weight: 600; transition: background 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; display: block; text-decoration: none;}
-                a.main-btn:hover { background-color: #1a5276; }
-                
-                .summary-box { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 25px; }
-                .summary-card { flex: 1 1 calc(50% - 10px); min-width: 120px; box-sizing: border-box; background: #1e1e1e; padding: 15px; border-radius: 8px; text-align: center; border-bottom: 3px solid #333; }
-                .summary-card b { display: block; font-size: 24px; color: #fff; margin-bottom: 5px; }
-                .summary-card span { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 1px;}
-                
-                details { margin-bottom: 15px; }
-                summary { padding: 12px 15px; background-color: #1c1c1c; border-radius: 6px; border-left: 4px solid #3498db; cursor: pointer; color: #fff; font-weight: bold; font-size: 16px; transition: background 0.2s; outline: none; }
-                summary:hover { background-color: #252525; }
-                .cat-count { float: right; font-size: 12px; color: #888; font-weight: normal; margin-top: 3px; }
-                
-                .dev-card { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #333; }
-                .status-Red { border-left-color: #e74c3c; background: linear-gradient(90deg, rgba(231,76,60,0.05) 0%, rgba(34,34,34,1) 30%); }
-                .status-Yellow { border-left-color: #f1c40f; background: linear-gradient(90deg, rgba(241,196,15,0.05) 0%, rgba(34,34,34,1) 30%); }
-                .status-Green { border-left-color: #27ae60; }
-                
-                .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 12px; flex-shrink: 0; }
-                .dot-Red { background-color: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
-                .dot-Yellow { background-color: #f1c40f; box-shadow: 0 0 6px #f1c40f; }
-                .dot-Green { background-color: #27ae60; }
-                
-                .dev-info { flex-grow: 1; }
-                .dev-name { font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 2px; }
-                .dev-custom { font-size: 11px; color: #888; margin-bottom: 5px;}
-                .dev-details { font-size: 13px; color: #aaa; }
-                .dev-subtext { font-size: 11px; color: #7f8c8d; margin-top: 5px; font-style: italic; }
-                
-                a.ping-btn { background-color: #34495e; color: #fff; border: 1px solid #2c3e50; padding: 6px 12px; font-size: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; white-space: nowrap; margin-left: 10px; display:inline-block; text-decoration:none;}
-                a.ping-btn:hover { background-color: #2c3e50; }
-            </style>
-        </head><body><div class="container">""")
-        
-        // Header
-        html.append("""
-            <div style="text-align:center; margin-bottom: 15px; display: flex; justify-content: center;">
-                <svg width="70" height="70" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="50" cy="50" r="48" fill="#151515" stroke="#333333" stroke-width="1"/>
-                    <path d="M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z" stroke="#e0e0e0" stroke-width="3" stroke-linejoin="round"/>
-                    <path d="M 38 52 L 46 60 L 62 42" stroke="#27ae60" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </div>
-            <h2 style="text-align: center; color: #ffffff; margin-top: 0; margin-bottom: 5px;">Estate Health Dashboard</h2>
-            <p style="text-align: center; font-size: 13px; color: #888; margin-bottom: 25px;">Last Scan: ${state.lastCheckTime}</p>
-        """)
-        
-        // Summary Cards
-        html.append("""
-            <div class="summary-box">
-                <div class="summary-card" style="border-bottom-color: #e74c3c;"><b>${critCount}</b><span>Critical</span></div>
-                <div class="summary-card" style="border-bottom-color: #f1c40f;"><b>${warnCount}</b><span>Warnings</span></div>
-                <div class="summary-card" style="border-bottom-color: #27ae60;"><b>${goodCount}</b><span>Healthy</span></div>
-                <div class="summary-card" style="border-bottom-color: #3498db;"><b>${totalCount}</b><span>Total Devices</span></div>
-            </div>
-        """)
-        
-        // Refresh Button
-        html.append("""
-            <a href="refresh?access_token=${state.accessToken}" style="margin-bottom: 30px;" class="main-btn">🩺 Force Health Scan</a>
-        """)
+        def css = "body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;background:#0d0d0d;color:#e0e0e0}.container{max-width:800px;margin:0 auto;background:#151515;padding:25px;border-radius:12px;box-sizing:border-box}a.main-btn{background:#1f618d;color:#fff;border:none;padding:14px 20px;border-radius:8px;display:block;text-align:center;text-decoration:none;font-weight:600;margin-bottom:30px}a.main-btn:hover{background:#1a5276}.summary-box{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:25px}.summary-card{flex:1;min-width:100px;box-sizing:border-box;background:#1e1e1e;padding:15px;border-radius:8px;text-align:center;border-bottom:3px solid #333}.summary-card b{display:block;font-size:24px;color:#fff;margin-bottom:5px}.summary-card span{font-size:12px;color:#aaa;text-transform:uppercase}details{margin-bottom:15px}summary{padding:12px 15px;background:#1c1c1c;border-radius:6px;border-left:4px solid #3498db;cursor:pointer;color:#fff;font-weight:bold;font-size:16px}summary:hover{background:#252525}.cat-count{float:right;font-size:12px;color:#888;margin-top:3px}.dev-card{background:#222;padding:15px;border-radius:8px;margin-bottom:12px;border-left:4px solid #333}.status-Red{border-left-color:#e74c3c;background:linear-gradient(90deg,rgba(231,76,60,.1) 0%,#222 30%)}.status-Yellow{border-left-color:#f1c40f;background:linear-gradient(90deg,rgba(241,196,15,.1) 0%,#222 30%)}.status-Green{border-left-color:#27ae60}.dot{height:12px;width:12px;border-radius:50%;display:inline-block;margin-right:12px;flex-shrink:0}.dot-Red{background:#e74c3c;box-shadow:0 0 6px #e74c3c}.dot-Yellow{background:#f1c40f;box-shadow:0 0 6px #f1c40f}.dot-Green{background:#27ae60}.dev-info{flex-grow:1;min-width:0}.dev-name{font-size:15px;font-weight:bold;color:#fff;margin-bottom:2px}.dev-custom{font-size:11px;color:#888;margin-bottom:5px}.dev-details{font-size:13px;color:#aaa}.dev-subtext{font-size:11px;color:#7f8c8d;margin-top:5px;font-style:italic}a.ping-btn{background:#34495e;color:#fff;border:1px solid #2c3e50;padding:6px 12px;font-size:12px;border-radius:4px;font-weight:bold;text-decoration:none;margin-left:10px;flex-shrink:0}a.ping-btn:hover{background:#2c3e50}.dflex{display:flex;align-items:center;width:100%}.batt-wrap{margin-top:8px;width:100%}.batt-info{display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:3px}.batt-bg{width:100%;background:#333;height:6px;border-radius:3px;overflow:hidden}.batt-fg{height:100%}.bg-grn{background:#27ae60}.bg-ylw{background:#f1c40f}.bg-red{background:#e74c3c}.shop-card{flex:1;min-width:160px;box-sizing:border-box;background:#1e1e1e;padding:15px;border-radius:8px;border-left:4px solid #9b59b6;box-shadow:0 4px 6px rgba(0,0,0,.3)}.shop-title{color:#fff;font-size:15px;display:block;margin-bottom:8px}.shop-badge{background:#9b59b6;color:#fff;font-size:11px;padding:2px 6px;border-radius:10px;float:right}.shop-list{font-size:11px;color:#888;max-height:80px;overflow-y:auto;line-height:1.4}"
 
-        // Active Issues Menu
+        StringBuilder html = new StringBuilder()
+        html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Device Health Portal</title><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.reload(1);}, 60000);</script><style>${css}</style></head><body><div class='container'>")
+        
+        html.append("<div style='text-align:center;margin-bottom:15px;display:flex;justify-content:center;'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div><h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Estate Health Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Scan: ${state.lastCheckTime}</p>")
+        
+        html.append("<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${critCount}</b><span>Critical</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${warnCount}</b><span>Warnings</span></div><div class='summary-card' style='border-bottom-color:#27ae60;'><b>${goodCount}</b><span>Healthy</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalCount}</b><span>Total Devices</span></div></div>")
+        
+        html.append("<a href='refresh?access_token=${state.accessToken}' class='main-btn'>🩺 Force Health Scan</a>")
+
+        def buildCard = { dev ->
+            def detailsStr = dev.messages.join(" • ")
+            def actStr = dev.lastActive ?: "Unknown"
+            def battStr = dev.battChanged ?: ""
+            
+            def customText = ""
+            if (dev.customLoc || dev.customDesc) {
+                def parts = []
+                if (dev.customLoc) parts << "📍 ${dev.customLoc}"
+                if (dev.customDesc) parts << "📝 ${dev.customDesc}"
+                customText = "<div class='dev-custom'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>"
+            }
+            
+            def battBarHtml = ""
+            if (dev.battVal != null) {
+                def barCls = dev.battVal > 50 ? "bg-grn" : (dev.battVal > 20 ? "bg-ylw" : "bg-red")
+                def bType = dev.battType ? " - ${dev.battType}" : ""
+                battBarHtml = "<div class='batt-wrap'><div class='batt-info'><span>🔋 ${dev.battVal}%${bType}</span><span>⏳ ${dev.estDaysLeft}</span></div><div class='batt-bg'><div class='batt-fg ${barCls}' style='width:${dev.battVal}%;'></div></div></div>"
+            }
+
+            def pingHtml = ""
+            if (dev.canPing) {
+                pingHtml = "<a href='ping?deviceId=${dev.id}&access_token=${state.accessToken}' class='ping-btn'>📡 Ping</a>"
+            }
+            
+            return "<div class='dev-card status-${dev.status}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}</div>${pingHtml}</div></div>"
+        }
+
         def allIssues = results.findAll { it.status == "Red" || it.status == "Yellow" }
         if (allIssues.size() > 0) {
-            html.append("""
-                <details>
-                    <summary style="border-left-color: #e74c3c;">
-                        ⚠️ Active Issues <span class="cat-count">${allIssues.size()} Devices</span>
-                    </summary>
-                    <div style="padding-top: 15px;">
-            """)
-            
-            allIssues.each { dev ->
-                def detailsStr = dev.messages.join(" • ")
-                def actStr = dev.lastActive ?: "Unknown"
-                def battStr = dev.battChanged ?: ""
-                
-                def customText = ""
-                if (dev.customLoc || dev.customDesc) {
-                    def parts = []
-                    if (dev.customLoc) parts << "📍 ${dev.customLoc}"
-                    if (dev.customDesc) parts << "📝 ${dev.customDesc}"
-                    customText = "<div class='dev-custom'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>"
-                }
-
-                def pingHtml = ""
-                if (dev.canPing) {
-                    pingHtml = """<a href="ping?deviceId=${dev.id}&access_token=${state.accessToken}" class="ping-btn">📡 Ping</a>"""
-                }
-                
-                html.append("""
-                    <div class="dev-card status-${dev.status}">
-                        <div style="display: flex; align-items: center; width: 100%;">
-                            <span class="dot dot-${dev.status}"></span>
-                            <div class="dev-info">
-                                <div class="dev-name">${dev.name}</div>
-                                ${customText}
-                                <div class="dev-details">${detailsStr}</div>
-                                <div class="dev-subtext">Last Active: ${actStr}${battStr}</div>
-                            </div>
-                            ${pingHtml}
-                        </div>
-                    </div>
-                """)
-            }
+            html.append("<details><summary style='border-left-color:#e74c3c;'>⚠️ Active Issues <span class='cat-count'>${allIssues.size()} Devices</span></summary><div style='padding-top:15px;'>")
+            allIssues.each { dev -> html.append(buildCard(dev)) }
             html.append("</div></details>")
         }
 
-        // Categorized Device List Processing (Supports Multiple Categories Per Device)
         if (results.size() > 0) {
             def categorizedResults = [:]
-            
             results.each { dev ->
-                def cats = dev.categories ?: ["Unassigned / Other"]
+                def cats = dev.categories && dev.categories.size() > 0 ? dev.categories : ["Unassigned / Other"]
                 cats.each { catName ->
                     if (!categorizedResults[catName]) categorizedResults[catName] = []
                     categorizedResults[catName] << dev
@@ -804,54 +710,33 @@ def serveDashboardPage() {
             }
             
             def sortedKeys = categorizedResults.keySet().sort()
-            
             sortedKeys.each { catName ->
                 def catResults = categorizedResults[catName]
-                html.append("""
-                    <details>
-                        <summary style="border-left-color: #3498db;">
-                            📁 ${catName} <span class="cat-count">${catResults.size()} Devices</span>
-                        </summary>
-                        <div style="padding-top: 15px;">
-                """)
-                
-                catResults.each { dev ->
-                    def detailsStr = dev.messages.join(" • ")
-                    def actStr = dev.lastActive ?: "Unknown"
-                    def battStr = dev.battChanged ?: ""
-                    
-                    def customText = ""
-                    if (dev.customLoc || dev.customDesc) {
-                        def parts = []
-                        if (dev.customLoc) parts << "📍 ${dev.customLoc}"
-                        if (dev.customDesc) parts << "📝 ${dev.customDesc}"
-                        customText = "<div class='dev-custom'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>"
-                    }
-
-                    def pingHtml = ""
-                    if (dev.canPing) {
-                        pingHtml = """<a href="ping?deviceId=${dev.id}&access_token=${state.accessToken}" class="ping-btn">📡 Ping</a>"""
-                    }
-                    
-                    html.append("""
-                        <div class="dev-card status-${dev.status}">
-                            <div style="display: flex; align-items: center; width: 100%;">
-                                <span class="dot dot-${dev.status}"></span>
-                                <div class="dev-info">
-                                    <div class="dev-name">${dev.name}</div>
-                                    ${customText}
-                                    <div class="dev-details">${detailsStr}</div>
-                                    <div class="dev-subtext">Last Active: ${actStr}${battStr}</div>
-                                </div>
-                                ${pingHtml}
-                            </div>
-                        </div>
-                    """)
-                }
+                html.append("<details><summary style='border-left-color:#3498db;'>📁 ${catName} <span class='cat-count'>${catResults.size()} Devices</span></summary><div style='padding-top:15px;'>")
+                catResults.each { dev -> html.append(buildCard(dev)) }
                 html.append("</div></details>")
             }
         } else {
-            html.append("<div style='text-align:center; color:#888; padding: 40px;'>No devices selected for monitoring. Please configure the app in Hubitat.</div>")
+            html.append("<div style='text-align:center;color:#888;padding:40px;'>No devices selected for monitoring. Please configure the app in Hubitat.</div>")
+        }
+        
+        def batteryInventory = [:]
+        results.each { dev ->
+            if (dev.battType && dev.battType != "") {
+                if (!batteryInventory[dev.battType]) batteryInventory[dev.battType] = []
+                batteryInventory[dev.battType] << dev
+            }
+        }
+        
+        if (batteryInventory.size() > 0) {
+            html.append("<h3 style='color:#fff;margin-top:35px;border-bottom:1px solid #333;padding-bottom:10px;font-size:18px;'>🔋 Battery Shopping List</h3><div style='display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px;'>")
+            def sortedBatts = batteryInventory.keySet().sort()
+            sortedBatts.each { type ->
+                def devs = batteryInventory[type]
+                def devNames = devs.collect{it.name}.join("<br>• ")
+                html.append("<div class='shop-card'><b class='shop-title'>${type} <span class='shop-badge'>${devs.size()}</span></b><div class='shop-list'>• ${devNames}</div></div>")
+            }
+            html.append("</div>")
         }
 
         html.append("</div></body></html>")
