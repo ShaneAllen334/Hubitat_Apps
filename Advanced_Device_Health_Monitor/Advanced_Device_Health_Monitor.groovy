@@ -113,7 +113,7 @@ def mainPage() {
         
         section("Configuration Menus", hideable: false, hidden: false) {
             href(name: "hrefSettings", page: "pageSettings", title: "⚙️ Core Setup & Devices", description: "Select devices to monitor and set schedules")
-            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Device Locations & Descriptions", description: "Bulk assign locations and add descriptions")
+            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Descriptions, & Folders", description: "Bulk assign locations and override dashboard folders")
             href(name: "hrefThresholds", page: "pageThresholds", title: "📊 Monitoring Thresholds", description: "Configure battery, inactivity, and signal limits")
         }
     }
@@ -154,11 +154,13 @@ def pageSettings() {
 }
 
 def pageDeviceDetails() {
-    dynamicPage(name: "pageDeviceDetails", title: "📍 Device Locations & Descriptions", install: false, uninstall: false) {
+    dynamicPage(name: "pageDeviceDetails", title: "📍 Locations, Descriptions & Folders", install: false, uninstall: false) {
         
         def defaultRooms = "Living Room, Kitchen, Master Bedroom, Garage, Front Yard, Backyard, Hallway, Bathroom"
         def roomListStr = settings.roomList ?: defaultRooms
         def roomOptions = roomListStr.split(',').collect{it.trim()}.findAll{it != ""}
+        
+        def folderOptions = ["Safety & Alarms", "Switches & Actuators", "Motion Sensors", "Contact Sensors", "Presence Sensors", "Climate Sensors", "Power Meters", "Light Sensors", "Vibration Sensors", "Other Sensors", "General Battery Devices"]
 
         section("📍 Manage Location Dropdowns") {
             paragraph "<i>Define your standard home locations here (comma separated). This list populates the dropdown menus below.</i>"
@@ -179,7 +181,7 @@ def pageDeviceDetails() {
                 input "btnBulkApplyLoc", "button", title: "✅ Apply to Selected Devices"
             }
             
-            // Grouping Devices by Location
+            // Grouping Devices by Location for the UI Menu
             def groupedDevs = [:]
             allDevs.each { dev ->
                 def loc = settings["loc_${dev.id}"] ?: "Unassigned / Other"
@@ -197,6 +199,7 @@ def pageDeviceDetails() {
             sortedLocs.each { loc ->
                 section("📁 ${loc} (${groupedDevs[loc].size()} Devices)", hideable: true, hidden: true) {
                     groupedDevs[loc].each { dev ->
+                        input "folder_${dev.id}", "enum", title: "${dev.displayName} - Dashboard Folder(s)", options: folderOptions, multiple: true, required: false, description: "Leave blank for Auto-placement"
                         input "loc_${dev.id}", "enum", title: "${dev.displayName} - Location", options: roomOptions, required: false
                         input "desc_${dev.id}", "text", title: "${dev.displayName} - Description", required: false
                         paragraph "<hr style='background-color:#ccc; height:1px; border:0; margin:10px 0;'/>"
@@ -392,12 +395,18 @@ def runHealthCheck() {
     
     def addDev = { list, category ->
         list?.each { d ->
-            if (d != null && !deviceMap[d.id]) {
-                deviceMap[d.id] = [device: d, category: category]
+            if (d != null) {
+                if (!deviceMap[d.id]) {
+                    deviceMap[d.id] = [device: d, categories: []]
+                }
+                if (!deviceMap[d.id].categories.contains(category)) {
+                    deviceMap[d.id].categories << category
+                }
             }
         }
     }
 
+    // specific sensors first, general catch-alls last 
     addDev(settings.smokeDetectors, "Safety & Alarms")
     addDev(settings.waterSensors, "Safety & Alarms")
     addDev(settings.valveDevices, "Safety & Alarms")
@@ -418,7 +427,15 @@ def runHealthCheck() {
     
     deviceMap.each { devId, data ->
         def dev = data.device
-        def cat = data.category
+        
+        // Grab the manual folder override if the user set one, otherwise use the auto-categories
+        def finalCategories = []
+        def overrideFolders = settings["folder_${dev.id}"]
+        if (overrideFolders) {
+            finalCategories = overrideFolders instanceof List ? overrideFolders : [overrideFolders]
+        } else {
+            finalCategories = data.categories
+        }
         
         try {
             def devHealth = "Green"
@@ -506,7 +523,7 @@ def runHealthCheck() {
                 name: dev.displayName,
                 status: devHealth,
                 messages: msgs,
-                category: cat,
+                categories: finalCategories,
                 canPing: canPingDev,
                 lastActive: lastActiveStr,
                 battChanged: battChangedStr,
@@ -652,6 +669,7 @@ def serveDashboardPage() {
         def critCount = results.count { it.status == "Red" }
         def warnCount = results.count { it.status == "Yellow" }
         def goodCount = results.count { it.status == "Green" }
+        // Unique devices total, not total categories listed
         def totalCount = results.size()
 
         StringBuilder html = new StringBuilder()
@@ -717,7 +735,7 @@ def serveDashboardPage() {
                 <div class="summary-card" style="border-bottom-color: #e74c3c;"><b>${critCount}</b><span>Critical</span></div>
                 <div class="summary-card" style="border-bottom-color: #f1c40f;"><b>${warnCount}</b><span>Warnings</span></div>
                 <div class="summary-card" style="border-bottom-color: #27ae60;"><b>${goodCount}</b><span>Healthy</span></div>
-                <div class="summary-card" style="border-bottom-color: #3498db;"><b>${totalCount}</b><span>Total</span></div>
+                <div class="summary-card" style="border-bottom-color: #3498db;"><b>${totalCount}</b><span>Total Devices</span></div>
             </div>
         """)
         
@@ -773,11 +791,22 @@ def serveDashboardPage() {
             html.append("</div></details>")
         }
 
-        // Categorized Device List
+        // Categorized Device List Processing (Supports Multiple Categories Per Device)
         if (results.size() > 0) {
-            def categorizedResults = results.groupBy { it.category }
+            def categorizedResults = [:]
             
-            categorizedResults.each { catName, catResults ->
+            results.each { dev ->
+                def cats = dev.categories ?: ["Unassigned / Other"]
+                cats.each { catName ->
+                    if (!categorizedResults[catName]) categorizedResults[catName] = []
+                    categorizedResults[catName] << dev
+                }
+            }
+            
+            def sortedKeys = categorizedResults.keySet().sort()
+            
+            sortedKeys.each { catName ->
+                def catResults = categorizedResults[catName]
                 html.append("""
                     <details>
                         <summary style="border-left-color: #3498db;">
