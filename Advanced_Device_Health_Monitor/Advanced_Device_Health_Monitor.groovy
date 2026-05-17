@@ -84,7 +84,8 @@ def mainPage() {
                     def typeLabel = issue.status == "Red" ? "Critical" : (issue.status == "Purple" ? "Flapping" : "Warning")
                     def actStr = issue.lastActive ?: "Unknown"
                     def battStr = issue.battChanged ?: ""
-                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${issue.name}</b><br><span style='font-size:10px; color:#888;'>Last Active: ${actStr}${battStr}</span></td><td style='padding: 8px; color: ${typeColor}; font-weight: bold;'>${typeLabel}</td><td style='padding: 8px;'>${issue.messages.join('<br>')}</td></tr>"
+                    def muteStr = issue.isMuted ? "<br><span style='font-size:10px; color:#8e44ad;'><b>🔕 MUTED</b></span>" : ""
+                    statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${issue.name}</b><br><span style='font-size:10px; color:#888;'>Last Active: ${actStr}${battStr}</span>${muteStr}</td><td style='padding: 8px; color: ${typeColor}; font-weight: bold;'>${typeLabel}</td><td style='padding: 8px;'>${issue.messages.join('<br>')}</td></tr>"
                 }
                 statusText += "</table>"
             } else {
@@ -118,7 +119,7 @@ def mainPage() {
         section("Configuration Menus", hideable: false, hidden: false) {
             href(name: "hrefSettings", page: "pageSettings", title: "⚙️ Core Setup & Devices", description: "Select devices to monitor and set schedules")
             href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Descriptions, & Folders", description: "Bulk assign locations, battery types/qty, and override folders")
-            href(name: "hrefThresholds", page: "pageThresholds", title: "📊 Monitoring Thresholds", description: "Configure battery, inactivity, and signal limits")
+            href(name: "hrefThresholds", page: "pageThresholds", title: "📊 Monitoring Thresholds", description: "Configure battery, inactivity, stuck states and signal limits")
             href(name: "hrefNotifications", page: "pageNotifications", title: "🔔 Notification Rules", description: "Set up targeted alerts and routing")
         }
     }
@@ -267,12 +268,22 @@ def pageThresholds() {
             }
         }
         
+        section("Stale State Detection (Stuck Sensors)") {
+            input "enableStuckCheck", "bool", title: "Enable Stale State Detection?", defaultValue: true, submitOnChange: true
+            if (enableStuckCheck) {
+                paragraph "<i>Detects hardware lockups where a sensor is technically online, but its physical state is frozen (e.g., stuck on 'Active' or 'Open').</i>"
+                input "stuckMotionHours", "number", title: "Stuck 'Active' Threshold (Hours)", defaultValue: 2, required: true
+                input "stuckContactHours", "number", title: "Stuck 'Open' Threshold (Hours)", defaultValue: 24, required: true
+            }
+        }
+        
         section("Signal Quality (Zigbee/Z-Wave)") {
             input "enableSignalCheck", "bool", title: "Enable Signal Monitoring?", defaultValue: false, submitOnChange: true
             if (enableSignalCheck) {
                 paragraph "<i>Checks devices that report 'rssi' or 'lqi' attributes. Tracked via inline sparklines.</i>"
                 input "rssiThreshold", "number", title: "Critical Minimum RSSI Threshold (e.g. -85)", defaultValue: -85, range: "-120..0", required: true
-                paragraph "<i>Note: Signals within 10 dBm above this threshold will trigger a Yellow Warning.</i>"
+                input "lqiThreshold", "number", title: "Critical Minimum LQI Threshold (e.g. 100)", defaultValue: 100, range: "0..255", required: true
+                paragraph "<i>Note: Signals approaching these thresholds will trigger a Yellow Warning.</i>"
             }
         }
         
@@ -526,6 +537,15 @@ def runHealthCheck() {
             def lastActiveDate = dev.getLastActivity()
             def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
             
+            // Native Health Status Override
+            if (dev.hasAttribute("healthStatus")) {
+                def hStat = dev.currentValue("healthStatus")
+                if (hStat && hStat.toString().toLowerCase() == "offline") {
+                    devHealth = "Red"
+                    msgs << "System reports OFFLINE"
+                }
+            }
+            
             if (settings.enableBatteryCheck && dev.hasAttribute("battery")) {
                 def batt = dev.currentValue("battery")
                 if (batt != null && batt.toString().isNumber()) {
@@ -583,7 +603,10 @@ def runHealthCheck() {
                         if (devHealth != "Red") devHealth = "Yellow"
                         msgs << "Inactive (${diffHours.toInteger()} hrs)"
                     } else {
-                        msgs << "Active"
+                        if (msgs.size() == 0 || (msgs.size() == 1 && msgs[0].contains("Battery OK"))) {
+                            // Don't add Active if we are logging other major issues, unless we only have "Battery OK"
+                            if (!msgs.contains("Active")) msgs << "Active"
+                        }
                     }
                 } else {
                     devHealth = "Red"
@@ -591,26 +614,65 @@ def runHealthCheck() {
                 }
             }
             
-            if (settings.enableSignalCheck && dev.hasAttribute("rssi")) {
-                def rssi = dev.currentValue("rssi")
-                if (rssi != null && rssi.toString().isNumber()) {
-                    def rVal = rssi.toInteger()
-                    
-                    // RSSI Sparkline Tracking
-                    if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
-                    state.rssiHistory[dev.id] << rVal
-                    if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
-                    dRssiHistory = state.rssiHistory[dev.id]
-                    
-                    def thresh = settings.rssiThreshold ?: -85
-                    if (rVal <= thresh) {
-                        devHealth = "Red"
-                        msgs << "Weak Signal (${rVal} dBm)"
-                    } else if (rVal <= thresh + 10) {
-                        if (devHealth != "Red") devHealth = "Yellow"
-                        msgs << "Fair Signal (${rVal} dBm)"
-                    } else {
-                        msgs << "Signal OK (${rVal} dBm)"
+            // Stale State (Stuck Sensor) Detection
+            if (settings.enableStuckCheck) {
+                if (dev.hasAttribute("motion") && dev.currentValue("motion") == "active") {
+                    def stateDate = dev.currentState("motion")?.date
+                    if (stateDate) {
+                        def diffHrs = (nowMs - stateDate.time) / 3600000
+                        def thresh = settings.stuckMotionHours ?: 2
+                        if (diffHrs > thresh) {
+                            if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
+                            msgs << "Stuck Active (${diffHrs.toInteger()}h)"
+                        }
+                    }
+                }
+                if (dev.hasAttribute("contact") && dev.currentValue("contact") == "open") {
+                    def stateDate = dev.currentState("contact")?.date
+                    if (stateDate) {
+                        def diffHrs = (nowMs - stateDate.time) / 3600000
+                        def thresh = settings.stuckContactHours ?: 24
+                        if (diffHrs > thresh) {
+                            if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
+                            msgs << "Stuck Open (${diffHrs.toInteger()}h)"
+                        }
+                    }
+                }
+            }
+            
+            if (settings.enableSignalCheck) {
+                if (dev.hasAttribute("rssi")) {
+                    def rssi = dev.currentValue("rssi")
+                    if (rssi != null && rssi.toString().isNumber()) {
+                        def rVal = rssi.toInteger()
+                        
+                        if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
+                        state.rssiHistory[dev.id] << rVal
+                        if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
+                        dRssiHistory = state.rssiHistory[dev.id]
+                        
+                        def thresh = settings.rssiThreshold ?: -85
+                        if (rVal <= thresh) {
+                            devHealth = "Red"
+                            msgs << "Weak Signal (${rVal} dBm)"
+                        } else if (rVal <= thresh + 10) {
+                            if (devHealth != "Red") devHealth = "Yellow"
+                            msgs << "Fair Signal (${rVal} dBm)"
+                        }
+                    }
+                }
+                if (dev.hasAttribute("lqi")) {
+                    def lqi = dev.currentValue("lqi")
+                    if (lqi != null && lqi.toString().isNumber()) {
+                        def lVal = lqi.toInteger()
+                        def thresh = settings.lqiThreshold ?: 100
+                        if (lVal <= thresh) {
+                            devHealth = "Red"
+                            msgs << "Critical LQI (${lVal})"
+                        } else if (lVal <= thresh + 50) {
+                            if (devHealth != "Red") devHealth = "Yellow"
+                            msgs << "Weak LQI (${lVal})"
+                        }
                     }
                 }
             }
@@ -653,7 +715,10 @@ def runHealthCheck() {
             }
             
             state.previousStatus[dev.id] = devHealth
+            // Cleanup Active logic if we didn't add it in the loop
             if (msgs.size() == 0) msgs << "Monitoring Active"
+            msgs.removeAll { it == "Battery OK" && msgs.size() > 1 } // Hide Battery OK if we have warnings
+            
             def canPingDev = dev.hasCommand("refresh") || dev.hasCommand("ping")
 
             def devLoc = settings["loc_${dev.id}"] ?: ""
@@ -756,7 +821,7 @@ def updateChildHtmlDashboard(results, critCount, warnCount) {
         def issues = results.findAll { it.status != "Green" && !it.isMuted }
         issues.each { issue ->
             def dotColor = issue.status == "Red" ? "#e74c3c" : (issue.status == "Purple" ? "#9b59b6" : "#f1c40f")
-            def statusList = issue.messages.findAll { it.contains("Critical") || it.contains("Low") || it.contains("Offline") || it.contains("Inactive") || it.contains("Weak") || it.contains("Fair") || it.contains("Flapping") }.join(", ")
+            def statusList = issue.messages.findAll { it.contains("Critical") || it.contains("Low") || it.contains("Offline") || it.contains("Inactive") || it.contains("Weak") || it.contains("Fair") || it.contains("Stuck") || it.contains("Flapping") }.join(", ")
             def customText = ""
             if (issue.customLoc || issue.customDesc) {
                 def parts = []
