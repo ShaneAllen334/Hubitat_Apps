@@ -25,8 +25,7 @@ def mainPage() {
             input "btnRefresh", "button", title: "🔄 Refresh Data"
             
             if (numRooms > 0) {
-                def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc;'>"
-                statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Room & User</th><th style='padding: 8px;'>Status & Score</th><th style='padding: 8px;'>Session Metrics</th><th style='padding: 8px;'>Nightly Movements</th><th style='padding: 8px;'>Active Timers & Health</th></tr>"
+                def statusText = ""
                 
                 def now = new Date().time
                 def watchdogMillis = (sensorWatchdogHours != null ? sensorWatchdogHours.toInteger() : 48) * 3600000
@@ -51,7 +50,7 @@ def mainPage() {
                         def isOffline = (lastVibGlobal > 0 && (now - lastVibGlobal) > watchdogMillis)
                         
                         def cState = state.sleepState?."${uId}" ?: "EMPTY"
-                        def stateColor = (cState == "SLEEPING") ? "#0055aa" : (cState == "IN BED" ? "#8e44ad" : (cState == "PENDING ENTRY" ? "#1abc9c" : (cState == "BATHROOM TRIP" ? "#e67e22" : "#27ae60")))
+                        def stateColor = (cState == "SLEEPING") ? "#2980b9" : (cState == "IN BED" ? "#8e44ad" : (cState == "PENDING ENTRY" ? "#1abc9c" : (cState == "BATHROOM TRIP" ? "#e67e22" : "#27ae60")))
                         if (isOffline) stateColor = "#c0392b"
                         
                         // Efficiency Score Calculation & AI Data
@@ -61,39 +60,29 @@ def mainPage() {
                         def mlEnabled = (settings["enableML_${uId}"] != false) // defaults to true
                         def aiStats = ""
                         def aiTimes = ""
-                        def tripDisplay = ""
-                        def envDisplay = ""
-                        def trips = state.bathroomTrips?."${uId}" ?: 0
                         def tripMins = state.bathroomDuration?."${uId}" ?: 0
+                        def trips = state.bathroomTrips?."${uId}" ?: 0
                         
                         if (mlEnabled) {
                             def averages = calculateUserAverages(uId)
-                            def learningDisplay = averages.daysLearned >= 14 ? "🧠 <b>Learned</b>" : "🧠 Learning (${averages.daysLearned}/14)"
-                            aiStats = "<br><span style='font-size: 11px; color: #555;'>${learningDisplay} | 7D Score: <b>${averages.avgScore7 ?: "--"}%</b></span>"
+                            def learningDisplay = averages.daysLearned >= 14 ? "🧠 Learned" : "🧠 Learning (${averages.daysLearned}/14)"
+                            aiStats = "<span style='font-size: 12px; color: #555;'>${learningDisplay} | 7D Avg: <b>${averages.avgScore7 ?: "--"}%</b></span>"
                             def todayAvgIn = isWkndGlobal ? averages.avgInWe : averages.avgInWd
                             def todayAvgOut = isWkndGlobal ? averages.avgOutWe : averages.avgOutWd
-                            aiTimes = "<br><span style='font-size: 11px; color: #555;'>Avg In: <b>${formatMinutesFromNoon(todayAvgIn)}</b> | Avg Out: <b>${formatMinutesFromNoon(todayAvgOut)}</b></span>"
-                            tripDisplay = "<br><span style='font-size: 11px; color: #8e44ad;'>Trips: ${trips}x (${tripMins}m) | Avg: <b>${averages.avgTrips ?: "--"}</b></span>"
-                            if (averages.optimalTemp) {
-                                envDisplay = "<br><span style='font-size: 11px; color: #2980b9;'>🌡️ Optimal Sleep Temp: <b>${averages.optimalTemp}°</b></span>"
-                            }
+                            aiTimes = "<span style='font-size: 12px; color: #555;'>Expected In: <b>${formatMinutesFromNoon(todayAvgIn)}</b> | Out: <b>${formatMinutesFromNoon(todayAvgOut)}</b></span>"
                         } else {
-                            aiStats = "<br><span style='font-size: 11px; color: #888;'><i>🧠 AI Disabled</i></span>"
-                            tripDisplay = "<br><span style='font-size: 11px; color: #8e44ad;'>Trips: ${trips}x (${tripMins}m)</span>"
+                            aiStats = "<span style='font-size: 12px; color: #888;'><i>🧠 AI Disabled</i></span>"
+                            aiTimes = "<span style='font-size: 12px; color: #888;'><i>Predictions Disabled</i></span>"
                         }
-                        
-                        def statusDisplay = "<b><span style='color: ${stateColor}; font-size: 14px;'>${isOffline ? "OFFLINE" : cState}</span></b>"
-                        if (score > 0) statusDisplay += "<br><span style='font-size: 12px; font-weight: bold; color: ${scoreColor};'>Sleep Score: ${score}%</span>"
-                        statusDisplay += aiStats
-                        statusDisplay += envDisplay
 
                         def inBedTimeStr = state.inBedTime?."${uId}" ? formatTimestamp(state.inBedTime."${uId}") : "--:--"
+                        def exitTimeStr = state.lastExitTime?."${uId}" ? formatTimestamp(state.lastExitTime."${uId}") : "--:--"
                         def asleepTimeStr = state.asleepTime?."${uId}" ? formatTimestamp(state.asleepTime."${uId}") : "--:--"
                         
                         // Live Duration & Advanced Tracking
                         def liveInBed = 0
                         def liveAsleep = 0
-                        if (cState == "IN BED" || cState == "SLEEPING" || cState == "PENDING ENTRY") {
+                        if (cState == "IN BED" || cState == "SLEEPING" || cState == "PENDING ENTRY" || cState == "BATHROOM TRIP") {
                             if (state.inBedTime?."${uId}") liveInBed = ((now - state.inBedTime."${uId}") / 60000).toInteger()
                             if (state.asleepTime?."${uId}") liveAsleep = ((now - state.asleepTime."${uId}") / 60000).toInteger()
                         } else {
@@ -107,42 +96,56 @@ def mainPage() {
                             def gap = now - stillStart
                             if (gap >= 2700000) deepMins += (gap / 60000).toInteger()
                         }
-                        def latencyMins = state.sleepLatency?."${uId}" ?: "--"
-                        def advancedMetrics = "<br><span style='font-size: 11px; color: #7f8c8d;'>Deep Sleep: <b>${formatDuration(deepMins)}</b> | Latency: <b>${latencyMins}m</b></span>"
                         
-                        def durDisplay = ""
-                        if (cState == "SLEEPING") durDisplay = "<br><span style='color: #0055aa; font-weight: bold;'>Asleep: ${formatDuration(liveAsleep)}</span>"
-                        else if (cState == "IN BED" || cState == "PENDING ENTRY") durDisplay = "<br><span style='color: #8e44ad; font-weight: bold;'>In Bed: ${formatDuration(liveInBed)}</span>"
-                        else if (cState == "BATHROOM TRIP") {
-                            def awayTime = state.lastExitTime?."${uId}" ? ((now - state.lastExitTime."${uId}") / 60000).toInteger() : 0
-                            durDisplay = "<br><span style='color: #e67e22; font-weight: bold;'>Away: ${awayTime}m</span>"
-                        }
-                        else if (cState == "EMPTY" && liveInBed > 0) durDisplay = "<br><span style='color: #27ae60; font-weight: bold;'>Last Sleep: ${formatDuration(liveAsleep)}</span>"
+                        def lightMins = Math.max(0, liveAsleep - deepMins)
+                        def awakeMins = Math.max(0, liveInBed - liveAsleep)
+
+                        def totalMins = liveInBed > 0 ? liveInBed : 1
+                        def pDeep = Math.min(100, ((deepMins / totalMins) * 100).toInteger())
+                        def pLight = Math.min(100, ((lightMins / totalMins) * 100).toInteger())
+                        def pAwake = Math.min(100, ((awakeMins / totalMins) * 100).toInteger())
                         
-                        def metricsDisplay = "Entry: <b>${inBedTimeStr}</b><br>Sleep: <b>${asleepTimeStr}</b>${durDisplay}${advancedMetrics}${tripDisplay}${aiTimes}"
+                        // Pie Chart Data
+                        if ((pDeep + pLight + pAwake) == 0) pAwake = 100
+                        def dEndApp = ((pDeep / 100.0) * 360).toInteger()
+                        def lEndApp = dEndApp + (((pLight / 100.0) * 360).toInteger())
                         
                         def moves = state.movements?."${uId}" ?: 0
                         def liveAsleepForIndex = cState == "SLEEPING" ? liveAsleep : (state.lastSessionAsleep?."${uId}" ?: 0)
                         def rIndex = liveAsleepForIndex > 0 ? Math.round((moves / (liveAsleepForIndex / 60.0)) * 10) / 10.0 : 0.0
-                        def movesDisplay = "<span style='color: ${moves > 10 ? "#e67e22" : "#333"}; font-weight: bold;'>${moves} Events</span><br><span style='font-size: 11px; color: #7f8c8d;'>Index: ${String.format("%.1f", rIndex)}/hr</span>"
                         
+                        // Detailed Context Calculations
+                        def eff = 0
+                        if (totalMins >= 30 && liveAsleep > 0) eff = Math.min(100, ((liveAsleep / totalMins) * 100) as Integer)
+                        def movPen = moves * 2
+                        
+                        def currentEnv = ""
+                        if (state.envStats?."${uId}"?.tCnt > 0) {
+                            def curT = Math.round((state.envStats["${uId}"].tSum / state.envStats["${uId}"].tCnt) * 10) / 10.0
+                            def curH = Math.round((state.envStats["${uId}"].hSum / state.envStats["${uId}"].hCnt) * 10) / 10.0
+                            currentEnv = "Temp: ${curT}° | Hum: ${curH}%"
+                        } else {
+                            currentEnv = "N/A"
+                        }
+
+                        // --- Active Timers ---
                         def timers = []
                         if (isOffline) {
-                            timers << "<span style='color: red; font-size: 11px;'>⚠️ Sensor Stale</span>"
+                            timers << "<span style='color: red;'>⚠️ Sensor Stale</span>"
                         } else {
                             def deafenedUntil = state.deafenedUntil?."${uId}" ?: 0
-                            if (now < deafenedUntil) timers << "<span style='color: #e67e22; font-size: 11px;'>🛡️ Kinetic Shield</span>"
+                            if (now < deafenedUntil) timers << "<span style='color: #e67e22;'>🛡️ Kinetic Shield</span>"
                             
                             def lastMove = state.lastVibrationTime?."${uId}" ?: 0
                             if (cState == "IN BED" && (now - lastMove) < ((fallAsleepThreshold ?: 15) * 60000)) {
                                 def rem = (((fallAsleepThreshold ?: 15) * 60000) - (now - lastMove)) / 60000
-                                timers << "<span style='color: #3498db; font-size: 11px;'>Settling: ${rem.toInteger()}m</span>"
+                                timers << "<span style='color: #3498db;'>Settling: ${rem.toInteger()}m</span>"
                             }
                             if (cState == "PENDING ENTRY") {
                                 def pendingStart = state.pendingEntryTime?."${uId}" ?: now
                                 def abWait = state.pendingAntiBounceWait?."${uId}" != null ? state.pendingAntiBounceWait["${uId}"] : (settings.antiBounceWait ?: 3)
                                 def rem = ((abWait * 60000) - (now - pendingStart)) / 60000
-                                timers << "<span style='color: #1abc9c; font-size: 11px;'>Verifying: ${Math.max(0, rem.toInteger())}m</span>"
+                                timers << "<span style='color: #1abc9c;'>Verifying: ${Math.max(0, rem.toInteger())}m</span>"
                             }
                             if (isSettlingLockActive(uId)) {
                                 def inBed = state.inBedTime?."${uId}" ?: 0
@@ -150,30 +153,106 @@ def mainPage() {
                                 def lockStart = Math.max(inBed as Long, resumed as Long)
                                 if (lockStart == 0) lockStart = now
                                 def rem = (((settlingLockTime ?: 30) * 60000) - (now - lockStart)) / 60000
-                                timers << "<span style='color: #e74c3c; font-size: 11px;'>🔒 Locked: ${Math.max(0, rem.toInteger())}m</span>"
-                            }
-                            
-                            if (cState == "EMPTY" && state.roomEmptyTime?."${i}" > 0) {
-                                def wakeMins = settings["wakeDelay_${i}"] != null ? settings["wakeDelay_${i}"].toInteger() : 45
-                                def wakeMillis = wakeMins * 60000
-                                if ((now - state.roomEmptyTime["${i}"]) < wakeMillis) {
-                                    def rem = (wakeMillis - (now - state.roomEmptyTime["${i}"])) / 60000
-                                    timers << "<span style='color: #8e44ad; font-size: 11px;'>Wake Auth: ${rem.toInteger()}m</span>"
-                                }
+                                timers << "<span style='color: #e74c3c;'>🔒 Locked: ${Math.max(0, rem.toInteger())}m</span>"
                             }
                         }
+                        def timerStr = timers ? timers.join(" | ") : "<span style='color: #95a5a6;'>Monitored Active</span>"
 
-                        def timerStr = timers ? timers.join("<br>") : "<span style='color: #95a5a6; font-size: 11px;'>Monitored</span>"
-                        
-                        statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${getRoomName(i)}</b><br><span style='font-size: 11px;'>${uName}</span></td><td style='padding: 8px;'>${statusDisplay}</td><td style='padding: 8px;'>${metricsDisplay}</td><td style='padding: 8px;'>${movesDisplay}</td><td style='padding: 8px;'>${timerStr}</td></tr>"
+                        // --- Construct the Insight Sentence ---
+                        def insightText = "<b>Deep Sleep Insight:</b><br>"
+                        insightText += "Based on telemetry from your designated pressure and kinetic vibration sensors, you established a base sleep efficiency of <b>${eff}%</b> (Time Asleep vs. Time In Bed). "
+                        if (moves > 0) {
+                            insightText += "Throughout the session, sensors recorded <b>${moves}</b> distinct restlessness events (resulting in a <b>-${movPen} point</b> penalty). "
+                        } else {
+                            insightText += "Your sleep was incredibly still, with 0 recorded restlessness events. "
+                        }
+                        if (trips > 0) {
+                            insightText += "You registered <b>${trips}</b> away/bathroom trip(s), spending <b>${tripMins} minutes</b> out of bed. "
+                        }
+                        insightText += "Combined with room health telemetry (${currentEnv}), your final calculated BMS Sleep Score is <b>${score}%</b>."
+
+                        // --- GENERATE HTML ACCORDION ---
+                        statusText += """
+                        <details style='background: #fdfdfd; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 3px 6px rgba(0,0,0,0.08); font-family: sans-serif;'>
+                            
+                            <!-- COLLAPSED HEADER -->
+                            <summary style='padding: 16px 20px; background: linear-gradient(180deg, #ffffff 0%, #f4f4f4 100%); font-size: 16px; cursor: pointer; border-bottom: 1px solid #ddd; outline: none; display: flex; align-items: center; border-radius: 8px 8px 0 0;'>
+                                <div style='flex: 1; font-weight: bold; color: #2c3e50; font-size: 20px;'>
+                                    ${uName} <span style='font-size: 14px; color: #7f8c8d; font-weight: normal; margin-left: 8px;'>${getRoomName(i)}</span>
+                                </div>
+                                <div style='flex: 1; text-align: center;'>
+                                    <span style='background: ${stateColor}15; color: ${stateColor}; border: 1px solid ${stateColor}; padding: 6px 16px; border-radius: 14px; font-size: 13px; font-weight: bold; letter-spacing: 1px;'>${isOffline ? "OFFLINE" : cState}</span>
+                                </div>
+                                <div style='flex: 1; text-align: right; font-size: 15px; color: #555;'>
+                                    Score: <span style='color: ${scoreColor}; font-size: 24px; font-weight: bold;'>${score}%</span>
+                                </div>
+                            </summary>
+                            
+                            <!-- EXPANDED BODY -->
+                            <div style='padding: 24px; display: flex; flex-direction: column; gap: 20px;'>
+                                
+                                <!-- Top Row: Charts & Data -->
+                                <div style='display: flex; flex-wrap: wrap; gap: 30px; align-items: flex-start;'>
+                                    
+                                    <!-- Donut Chart -->
+                                    <div style='display: flex; flex-direction: column; align-items: center;'>
+                                        <div style='position: relative; width: 100px; height: 100px; border-radius: 50%; background: conic-gradient(${scoreColor} ${score*3.6}deg, #eee 0); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'>
+                                            <div style='width: 76px; height: 76px; background: #fdfdfd; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: bold; color: ${scoreColor};'>${score}</div>
+                                        </div>
+                                        <span style='margin-top: 10px; font-size: 14px; font-weight: bold; color: #555;'>BMS SCORE</span>
+                                    </div>
+
+                                    <!-- Pie Chart w/ Legend -->
+                                    <div style='display: flex; align-items: center; gap: 24px; border-left: 1px solid #eee; padding-left: 30px;'>
+                                        <div style='width: 100px; height: 100px; border-radius: 50%; background: conic-gradient(#2980b9 0 ${dEndApp}deg, #3498db 0 ${lEndApp}deg, #e67e22 0); border: 2px solid #ddd; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'></div>
+                                        
+                                        <div style='display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: #333;'>
+                                            <div style='display: flex; align-items: center;'><span style='display: inline-block; width: 14px; height: 14px; background: #2980b9; margin-right: 10px; border-radius: 3px;'></span> <b>Deep:</b> ${formatDuration(deepMins)} <span style='color:#777; margin-left: 6px;'>(${pDeep}%)</span></div>
+                                            <div style='display: flex; align-items: center;'><span style='display: inline-block; width: 14px; height: 14px; background: #3498db; margin-right: 10px; border-radius: 3px;'></span> <b>Light:</b> ${formatDuration(lightMins)} <span style='color:#777; margin-left: 6px;'>(${pLight}%)</span></div>
+                                            <div style='display: flex; align-items: center;'><span style='display: inline-block; width: 14px; height: 14px; background: #e67e22; margin-right: 10px; border-radius: 3px;'></span> <b>Awake:</b> ${formatDuration(awakeMins)} <span style='color:#777; margin-left: 6px;'>(${pAwake}%)</span></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Quick Stats Column -->
+                                    <div style='flex: 1; border-left: 1px solid #eee; padding-left: 30px; display: flex; flex-direction: column; gap: 12px;'>
+                                        <div style='font-size: 14px;'>🛏️ In Bed: <b>${inBedTimeStr}</b> ➔ Out: <b>${exitTimeStr}</b></div>
+                                        <div style='font-size: 14px;'>💤 Asleep: <b>${asleepTimeStr}</b> (Latency: <b>${state.sleepLatency?."${uId}" ?: "--"}m</b>)</div>
+                                        <div style='font-size: 14px;'>🏃‍♂️ Movements: <b>${moves}</b> (Index: <b>${String.format("%.1f", rIndex)}/hr</b>)</div>
+                                        <div style='font-size: 14px;'>🚽 Bathroom Trips: <b>${trips}x</b> (Away: <b>${tripMins}m</b>)</div>
+                                        <div style='font-size: 14px;'>🌡️ Room Env: <b>${currentEnv}</b></div>
+                                    </div>
+                                </div>
+
+                                <!-- Horizontal Bar Graph -->
+                                <div style='width: 100%;'>
+                                    <div style='width: 100%; height: 16px; background: #eee; border-radius: 8px; display: flex; overflow: hidden; border: 1px solid #ccc;'>
+                                        <div style='width: ${pDeep}%; background: linear-gradient(90deg, #1A2980 0%, #26D0CE 100%);' title='Deep Sleep'></div>
+                                        <div style='width: ${pLight}%; background: linear-gradient(90deg, #2980b9 0%, #3498db 100%); border-left: 1px solid #fff;' title='Light Sleep'></div>
+                                        <div style='width: ${pAwake}%; background: linear-gradient(90deg, #d35400 0%, #e67e22 100%); border-left: 1px solid #fff;' title='Awake/Restless'></div>
+                                    </div>
+                                </div>
+
+                                <!-- Deep Insight Box -->
+                                <div style='background: #f4f6f7; border-left: 5px solid ${scoreColor}; padding: 16px; border-radius: 6px; font-size: 14px; color: #2c3e50; line-height: 1.6; box-shadow: inset 0 0 10px rgba(0,0,0,0.02);'>
+                                    ${insightText}
+                                </div>
+                                
+                                <!-- Footer AI & Timers -->
+                                <div style='display: flex; justify-content: space-between; font-size: 13px; border-top: 1px solid #eee; padding-top: 12px;'>
+                                    <div>${aiStats} | ${aiTimes}</div>
+                                    <div><b>System Activity:</b> ${timerStr}</div>
+                                </div>
+
+                            </div>
+                        </details>
+                        """
                     }
                 }
-                statusText += "</table>"
                 
                 def globalStatus = (masterEnableSwitch && masterEnableSwitch.currentValue("switch") == "off") ? "<span style='color: red; font-weight: bold;'>PAUSED</span>" : (isTrackingAllowed() ? "<span style='color: green; font-weight: bold;'>ACTIVE TRACKING</span>" : "<span style='color: #e65100; font-weight: bold;'>RESTRICTED (Out of Bounds)</span>")
                 
-                statusText += "<div style='margin-top: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
-                statusText += "<b>System Tracking:</b> ${globalStatus}"
+                statusText += "<div style='margin-top: 10px; padding: 12px; background: #e9e9e9; border-radius: 6px; font-size: 14px; border: 1px solid #ccc; text-align: center;'>"
+                statusText += "<b>Master System Tracking:</b> ${globalStatus}"
                 statusText += "</div>"
                 
                 paragraph statusText
@@ -1676,75 +1755,130 @@ def updateInfoDevice(uId) {
     dev.sendEvent(name: "html", value: generateHtmlTile(uId))
 }
 
+// --- MINIFIED HTML TILE TO BYPASS HUBITAT 1024 CHAR LIMIT ---
 def generateHtmlTile(uId) {
     ensureStateMaps()
     def uName = getUserName(uId)
     def status = state.sleepState?."${uId}" ?: "EMPTY"
     def score = calculateEfficiencyScore(uId)
     def moves = state.movements?."${uId}" ?: 0
-    def color = status == "SLEEPING" ? "#3498db" : (status == "IN BED" ? "#9b59b6" : (status == "PENDING ENTRY" ? "#1abc9c" : (status == "BATHROOM TRIP" ? "#e67e22" : "#2ecc71")))
-    
-    def lastEnv = ""
-    if (state.envStats?."${uId}"?.tCnt > 0) {
-        def curT = Math.round((state.envStats["${uId}"].tSum / state.envStats["${uId}"].tCnt) * 10) / 10.0
-        lastEnv = " | 🌡️ ${curT}°"
-    }
+    def trips = state.bathroomTrips?."${uId}" ?: 0
+    def tripMins = state.bathroomDuration?."${uId}" ?: 0
 
+    def color = status == "SLEEPING" ? "#00aaff" : (status == "IN BED" ? "#9b59b6" : (status == "PENDING ENTRY" ? "#1abc9c" : (status == "BATHROOM TRIP" ? "#e67e22" : "#2ecc71")))
+    def scoreColor = score >= 85 ? "#2ecc71" : (score >= 70 ? "#f39c12" : "#e74c3c")
+
+    def inBedTimeStr = state.inBedTime?."${uId}" ? formatTimestamp(state.inBedTime."${uId}") : "--:--"
+    def exitTimeStr = state.lastExitTime?."${uId}" ? formatTimestamp(state.lastExitTime."${uId}") : "--:--"
+
+    def liveInBed = 0
     def liveAsleep = 0
-    if (status == "SLEEPING" && state.asleepTime?."${uId}") {
-        liveAsleep = ((new Date().time - state.asleepTime."${uId}") / 60000).toInteger()
+    def now = new Date().time
+
+    if (status == "IN BED" || status == "SLEEPING" || status == "PENDING ENTRY" || status == "BATHROOM TRIP") {
+        if (state.inBedTime?."${uId}") liveInBed = ((now - state.inBedTime."${uId}") / 60000).toInteger()
+        if (state.asleepTime?."${uId}") liveAsleep = ((now - state.asleepTime."${uId}") / 60000).toInteger()
     } else {
+        liveInBed = state.lastSessionInBed?."${uId}" ?: 0
         liveAsleep = state.lastSessionAsleep?."${uId}" ?: 0
     }
 
-    def indexDisplay = ""
-    if (liveAsleep > 0) {
-        def index = Math.round((moves / (liveAsleep / 60.0)) * 10) / 10.0
-        indexDisplay = " <span style='font-size: 14px; font-weight: normal; color: #888;'>(${String.format('%.1f', index)}/hr)</span>"
-    }
-    
     def deepSleep = state.deepSleepDuration?."${uId}" ?: 0
     if (status == "SLEEPING") {
-         def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: new Date().time
-         def gap = new Date().time - stillStart
+         def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: now
+         def gap = now - stillStart
          if (gap >= 2700000) deepSleep += (gap / 60000).toInteger()
     }
-    def latency = state.sleepLatency?."${uId}" ?: 0
 
+    def lightSleep = Math.max(0, liveAsleep - deepSleep)
+    def awakeTime = Math.max(0, liveInBed - liveAsleep)
+
+    def totalTime = liveInBed > 0 ? liveInBed : 1
+    def pDeep = Math.min(100, ((deepSleep / totalTime) * 100) as Integer)
+    def pLight = Math.min(100, ((lightSleep / totalTime) * 100) as Integer)
+    def pAwake = Math.min(100, ((awakeTime / totalTime) * 100) as Integer)
+    
+    if ((pDeep + pLight + pAwake) == 0) pAwake = 100
+    def dEnd = ((pDeep / 100.0) * 360) as Integer
+    def lEnd = dEnd + (((pLight / 100.0) * 360) as Integer)
+    
+    def cDeep = "#2980b9"
+    def cLight = "#3498db"
+    def cAwake = "#e67e22"
+
+    def indexDisplay = liveAsleep > 0 ? String.format("%.1f", Math.round((moves / (liveAsleep / 60.0)) * 10) / 10.0) : "0.0"
+    def eff = 0
+    if (totalTime >= 30 && liveAsleep > 0) eff = Math.min(100, ((liveAsleep / totalTime) * 100) as Integer)
+    def movPen = moves * 2
+    
+    def lastEnvText = "--"
+    if (state.envStats?."${uId}"?.tCnt > 0) {
+        def curT = Math.round((state.envStats["${uId}"].tSum / state.envStats["${uId}"].tCnt) * 10) / 10.0
+        lastEnvText = "🌡️ ${curT}°"
+    }
+
+    // Minified HTML template safely structured beneath Hubitat's hardcoded 1024 text attribute boundary
     def html = """
-    <div style='background: #1a1a1a; color: white; padding: 15px; border-radius: 12px; font-family: sans-serif; border: 1px solid #333;'>
-        <div style='display: flex; justify-content: space-between; align-items: center;'>
-            <span style='font-size: 18px; font-weight: bold;'>${uName}</span>
-            <span style='background: ${color}; padding: 4px 10px; border-radius: 20px; font-size: 12px;'>${status}</span>
+    <div style='background:#111;color:#ddd;padding:8px;border-radius:8px;font-family:sans-serif'>
+        <div style='display:flex;justify-content:space-between;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:8px'>
+            <b style='font-size:14px;color:#fff'>${uName}</b>
+            <b style='color:${color};font-size:10px'>${status}</b>
         </div>
-        <div style='margin-top: 15px; display: flex; gap: 20px;'>
-            <div><span style='color: #888; font-size: 11px;'>SLEEP SCORE</span><br><span style='font-size: 24px; font-weight: bold; color: ${score > 80 ? "#2ecc71" : "#f1c40f"}'>${score}%</span></div>
-            <div style='border-left: 1px solid #333; padding-left: 20px;'><span style='color: #888; font-size: 11px;'>MOVEMENTS</span><br><span style='font-size: 24px; font-weight: bold;'>${moves}${indexDisplay}</span></div>
+        <div style='display:flex;justify-content:space-evenly;align-items:center;margin-bottom:8px'>
+            <div style='width:50px;height:50px;border-radius:50%;background:conic-gradient(${scoreColor} ${score*3.6}deg,#222 0);display:flex;align-items:center;justify-content:center'>
+                <div style='width:40px;height:40px;background:#111;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;color:${scoreColor}'>${score}</div>
+            </div>
+            <div style='display:flex;align-items:center;gap:6px'>
+                <div style='width:40px;height:40px;border-radius:50%;background:conic-gradient(${cDeep} 0 ${dEnd}deg,${cLight} 0 ${lEnd}deg,${cAwake} 0)'></div>
+                <div style='font-size:9px;line-height:1.2'>
+                    <div style='color:${cDeep}'>■ <span style='color:#bbb'>${formatDuration(deepSleep)}</span></div>
+                    <div style='color:${cLight}'>■ <span style='color:#bbb'>${formatDuration(lightSleep)}</span></div>
+                    <div style='color:${cAwake}'>■ <span style='color:#bbb'>${formatDuration(awakeTime)}</span></div>
+                </div>
+            </div>
         </div>
-        <div style='margin-top: 10px; font-size: 12px; color: #888;'>
-            Session: ${formatDuration(liveAsleep)} asleep | Deep Sleep: ${formatDuration(deepSleep)} | Latency: ${latency}m${lastEnv}
+        <div style='display:flex;height:6px;border-radius:3px;overflow:hidden;margin-bottom:6px'>
+            <div style='width:${pDeep}%;background:${cDeep}'></div><div style='width:${pLight}%;background:${cLight}'></div><div style='width:${pAwake}%;background:${cAwake}'></div>
+        </div>
+        <div style='font-size:9px;color:#888;background:#1a1a1a;padding:4px;border-radius:4px;margin-bottom:6px'>
+            <b style='color:#ccc'>Insight:</b> ${eff}% base eff. ${moves} moves = -${movPen}pts.
+        </div>
+        <div style='display:flex;justify-content:space-between;font-size:10px;text-align:center'>
+            <div style='background:#1a1a1a;padding:4px;border-radius:4px;flex:1;margin-right:2px'>In/Out<br><b style='color:#ccc'>${inBedTimeStr}-${exitTimeStr}</b></div>
+            <div style='background:#1a1a1a;padding:4px;border-radius:4px;flex:1;margin-left:2px'>Trips<br><b style='color:#ccc'>${trips}x (${tripMins}m)</b></div>
         </div>
     </div>
     """
-    return html
+    
+    return html.replaceAll(/(?m)^\s+/, "").replaceAll(/\n/, "").replaceAll(/>\s+</, "><")
 }
 
 // --- BOILERPLATE & HELPERS ---
 def appButtonHandler(btn) {
     ensureStateMaps()
+    def parts = btn.split("_")
+    
     if (btn.startsWith("btnCreateInfo_")) {
-        def parts = btn.split("_")
-        def dni = "ASM_INFO_${parts[2]}_${parts[3]}"
-        def name = "Sleep Info - ${getUserName(parts[2]+'_'+parts[3])}"
-        addChildDevice("hubitat", "Virtual Omni Sensor", dni, null, [name: name, label: name])
+        def rNum = parts[1]
+        def uNum = parts[2]
+        def uId = "${rNum}_${uNum}"
+        def dni = "ASM_INFO_${uId}"
+        def name = "Sleep Info - ${getUserName(uId)}"
+        
+        // Creates child device using Hubitat's native Omnipurpose engine
+        addChildDevice("ShaneAllen", "ASM Dashboard Device", dni, null, [name: name, label: name])
+        updateInfoDevice(uId)
     } else if (btn.startsWith("btnCreateSwitch_")) {
-        def parts = btn.split("_")
-        def dni = "ASM_SW_${parts[2]}_${parts[3]}"
-        def name = "(Virtual) ${getUserName(parts[2]+'_'+parts[3])} In Bed"
+        def rNum = parts[1]
+        def uNum = parts[2]
+        def uId = "${rNum}_${uNum}"
+        def dni = "ASM_SW_${uId}"
+        def name = "(Virtual) ${getUserName(uId)} In Bed"
         addChildDevice("hubitat", "Virtual Switch", dni, null, [name: name, label: name])
     } else if (btn.startsWith("btnClearAI_")) {
-        def parts = btn.split("_")
-        def uId = "${parts[1]}_${parts[2]}"
+        def rNum = parts[1]
+        def uNum = parts[2]
+        def uId = "${rNum}_${uNum}"
         state.dailyStats["${uId}"] = []
         addToHistory("AI Reset: Cleared learned data for ${getUserName(uId)}")
     } else if (btn == "btnForceReset") {
