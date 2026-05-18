@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5
+ * Version 1.5.1
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -1111,6 +1111,8 @@ def finalizeScan() {
     def critCount = results.count { (it.status == "Red" || it.status == "Purple") && !it.isMuted }
     def warnCount = results.count { it.status == "Yellow" && !it.isMuted }
     
+    updateChildHtmlDashboard(results, critCount, warnCount)
+    
     state.isScanning = false
     state.scanStartTime = null
     state.tempResults = []
@@ -1393,11 +1395,13 @@ def serveDashboardPage() {
         .modal-action-row { display:flex; gap:10px; margin-top:15px; }
         .save-modal-btn { flex:1; padding:12px; background:#27ae60; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; transition:background 0.15s; }
         .save-modal-btn:hover { background:#2ecc71; }
+        .save-modal-btn:disabled { background:#7f8c8d; cursor:not-allowed; }
         .close-modal-btn { flex:1; padding:12px; background:#2c3e50; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; text-align:center; transition:background 0.15s; }
         .close-modal-btn:hover { background:#34495e; }
 
         details.folder-group.dragging { opacity: 0.5; }
         
+        /* Ultimate Mobile Responsiveness */
         @media (max-width: 650px) {
             body { padding: 10px; }
             .container { padding: 15px; }
@@ -1814,6 +1818,11 @@ def serveDashboardPage() {
         function closeBatteryLocker() { document.getElementById('batteryLockerModalOverlay').style.display = 'none'; }
         
         function saveDeviceChanges() {
+            let saveBtn = document.querySelector('.save-modal-btn');
+            let originalText = saveBtn.innerText;
+            saveBtn.innerText = '⏳ Saving...';
+            saveBtn.disabled = true;
+
             let dId = document.getElementById('modalDeviceId').value;
             let loc = document.getElementById('modalLocationInput').value;
             let desc = document.getElementById('modalDescriptionInput').value;
@@ -1822,8 +1831,10 @@ def serveDashboardPage() {
             let overrideThresh = document.getElementById('modalOverrideThreshInput').value;
             let isOutdoor = document.getElementById('modalOutdoorCheck').checked;
             
-            fetch(`updateDevice?deviceId=${dId}&loc=${encodeURIComponent(loc)}&desc=${encodeURIComponent(desc)}&battType=${encodeURIComponent(battType)}&battQty=${encodeURIComponent(battQty)}&overrideThresh=${encodeURIComponent(overrideThresh)}&isOutdoor=${encodeURIComponent(isOutdoor)}&access_token=${accessToken}`)
+            fetch('updateDevice?deviceId=' + dId + '&loc=' + encodeURIComponent(loc) + '&desc=' + encodeURIComponent(desc) + '&battType=' + encodeURIComponent(battType) + '&battQty=' + encodeURIComponent(battQty) + '&overrideThresh=' + encodeURIComponent(overrideThresh) + '&isOutdoor=' + encodeURIComponent(isOutdoor) + '&access_token=' + accessToken)
             .then(response => {
+                saveBtn.innerText = originalText;
+                saveBtn.disabled = false;
                 closeDeviceModal();
                 let dev = db.estate.find(d => d.id == dId);
                 if(dev) {
@@ -1835,6 +1846,11 @@ def serveDashboardPage() {
                     dev.isOutdoor = isOutdoor;
                 }
                 renderApp();
+            })
+            .catch(err => {
+                saveBtn.innerText = originalText;
+                saveBtn.disabled = false;
+                alert("Error saving settings.");
             });
         }
 
@@ -1939,6 +1955,22 @@ def updateDeviceEndpoint() {
             if (params.isOutdoor != null) {
                 app.updateSetting("outdoorProfile_${dId}", [type: "bool", value: (params.isOutdoor == "true")])
             }
+
+            // Real-time Dashboard Cache Update
+            def tempData = state.dashboardData
+            if (tempData) {
+                def devEntry = tempData.find { it.id == dId }
+                if (devEntry) {
+                    if (params.loc != null) devEntry.customLoc = params.loc
+                    if (params.desc != null) devEntry.customDesc = params.desc
+                    if (params.battType != null) devEntry.battType = params.battType
+                    if (params.battQty != null && params.battQty.toString().isNumber()) devEntry.battQty = params.battQty.toInteger()
+                    if (params.overrideThresh != null) devEntry.battThreshOverride = params.overrideThresh
+                    if (params.isOutdoor != null) devEntry.isOutdoor = (params.isOutdoor == "true")
+                }
+                state.dashboardData = tempData
+            }
+
             app.addToHistory("PORTAL: Hardware settings for device ${dId} updated live via Web Portal.")
         }
         return render(contentType: "application/json", data: '{"success":true}', status: 200)
