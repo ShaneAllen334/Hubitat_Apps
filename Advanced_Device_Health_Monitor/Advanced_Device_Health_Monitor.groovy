@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.3
+ * Version 1.5.4
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -19,6 +19,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
+@Field static String BUG_WARN = "<div style='background-color:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:8px; border-radius:4px; font-size: 13px; line-height: 1.4; margin-bottom: 5px;'><b>⚠️ Hubitat 'Select All' Bug:</b> If any device names in this list contain an apostrophe ('), ampersand (&), or quote (\"), Hubitat's native <b>Select All</b> button will fail. Please manually check the boxes instead.</div>"
 
 preferences {
     page(name: "mainPage")
@@ -155,11 +156,13 @@ def pageSettings() {
         }
         
         section("Primary Infrastructure") {
+            paragraph BUG_WARN
             input "batteryDevices", "capability.battery", title: "Battery-Powered Infrastructure", multiple: true, required: false
             input "actuatorDevices", "capability.actuator", title: "Hardwired / In-Wall Actuators (Locks, Motors)", multiple: true, required: false
         }
 
         section("Lighting, Switches & Power") {
+            paragraph BUG_WARN
             paragraph "<i>Note: Devices assigned to the Lighting & Power section will inherit the Mains-Power Override and automatically ignore ghost battery attributes from generic drivers.</i>"
             input "lightSwitches", "capability.switch", title: "In-Wall Light Switches & Dimmers", multiple: true, required: false
             input "smartPlugs", "capability.switch", title: "Smart Plugs & Outlets", multiple: true, required: false
@@ -167,15 +170,18 @@ def pageSettings() {
         }
         
         section("External Hubs & Integrations") {
-            input "hubBridges", "capability.*", title: "Hue Bridges & External Hubs", multiple: true, required: false
+            paragraph BUG_WARN
+            input "hubBridges", "capability.actuator", title: "Hue Bridges & External Hubs", multiple: true, required: false
         }
 
         section("Remotes & Buttons (Sleepy Devices)") {
+            paragraph BUG_WARN
             paragraph "<div style='background:#fff3cd; color:#856404; padding:8px; border-radius:4px; border:1px solid #ffeeba;'><b>Developer Note:</b> These devices (like Tuya 4-Button switches) turn their radios completely off to conserve battery. They do not do routine check-ins, and they completely ignore network pings. By assigning them here, the application can apply a separate, much longer inactivity threshold so they don't falsely report as offline in your dashboard.</div>"
             input "buttonControllers", "capability.pushableButton", title: "Button Controllers & Remotes", multiple: true, required: false
         }
 
         section("Environmental & Security Sensors") {
+            paragraph BUG_WARN
             input "smokeDetectors", "capability.smokeDetector", title: "Smoke / Carbon Monoxide Detectors", multiple: true, required: false
             input "waterSensors", "capability.waterSensor", title: "Water / Leak Sensors", multiple: true, required: false
             input "motionSensors", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
@@ -185,6 +191,7 @@ def pageSettings() {
         }
 
         section("Utility & Measurement Sensors") {
+            paragraph BUG_WARN
             input "temperatureSensors", "capability.temperatureMeasurement", title: "Temperature Sensors", multiple: true, required: false
             input "humiditySensors", "capability.relativeHumidityMeasurement", title: "Humidity Sensors", multiple: true, required: false
             input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / Light Sensors", multiple: true, required: false
@@ -198,6 +205,7 @@ def pageSettings() {
 def pageNotifications() {
     dynamicPage(name: "pageNotifications", title: "🔔 Notification Rules & Routing", install: false, uninstall: false) {
         section("🌍 Global Alert Routing") {
+            paragraph BUG_WARN
             paragraph "<i>Set up your default notification devices for the estate. To route alerts for specific devices to specific people (e.g., only send Garage Door alerts to a specific phone), use the 'Override Alert Target' setting for that device in the Locations, Profiles & Folders menu.</i>"
             input "defaultCritNotifiers", "capability.notification", title: "Global Notifier: CRITICAL & FLAPPING issues", multiple: true, required: false
             input "defaultWarnNotifiers", "capability.notification", title: "Global Notifier: WARNING issues", multiple: true, required: false
@@ -237,10 +245,14 @@ def pageDeviceDetails() {
             section("⚡ Bulk Apply Location") {
                 paragraph "<i>Select a location and multiple devices to quickly apply the same location to all of them at once.</i>"
                 
-                def devNamesList = allDevs.collect { it.displayName }.unique().sort()
+                def devOptions = [:]
+                allDevs.each { dev ->
+                    devOptions[dev.id.toString()] = dev.displayName
+                }
+                devOptions = devOptions.sort { it.value }
                 
                 input "bulkLoc", "enum", title: "1. Select Location", options: roomOptions, required: false
-                input "bulkDevs", "enum", title: "2. Select Devices", options: devNamesList, multiple: true, required: false
+                input "bulkDevs", "enum", title: "2. Select Devices", options: devOptions, multiple: true, required: false
                 input "btnBulkApplyLoc", "button", title: "✅ Apply to Selected Devices"
             }
             
@@ -323,9 +335,15 @@ def pageBatteryLocker() {
 def pageThresholds() {
     dynamicPage(name: "pageThresholds", title: "📊 Monitoring Thresholds", install: false, uninstall: false) {
         
+        def allDevs = getAllMonitoredDevices().sort { it.displayName }
+        def devOptions = [:]
+        allDevs.each { devOptions[it.id.toString()] = it.displayName }
+        devOptions = devOptions.sort { it.value }
+        
         section("Auto-Heal Power Cycling") {
+            paragraph BUG_WARN
             paragraph "<i>If a smart plug or switch goes offline and standard pings fail, the system can attempt to toggle its physical power state (Off-On / On-Off) to force it back onto the mesh. This is limited to once every 24 hours per device.</i>"
-            input "optOutPowerCycle", "capability.switch", title: "Devices to EXCLUDE from Auto-Power Cycling", multiple: true, required: false
+            input "optOutPowerCycle", "enum", title: "Devices to EXCLUDE from Auto-Power Cycling", options: devOptions, multiple: true, required: false
         }
         
         section("Battery Health & Parasitic Anomaly Controls") {
@@ -345,6 +363,7 @@ def pageThresholds() {
         section("Device Inactivity (Dead Devices)") {
             input "enableInactivityCheck", "bool", title: "Enable Inactivity Monitoring?", defaultValue: true, submitOnChange: true
             if (enableInactivityCheck) {
+                paragraph BUG_WARN
                 paragraph "<i>Flags devices that have not reported any activity or status updates in the specified timeframe.</i>"
                 input "inactivityThreshold", "number", title: "Standard Inactivity Threshold (Hours)", defaultValue: 24, required: true
                 
@@ -354,17 +373,18 @@ def pageThresholds() {
                 input "ignoreMainsInactivity", "bool", title: "Ignore Inactivity for Mains-Powered Devices?", defaultValue: true, submitOnChange: true
                 paragraph "<i>Prevents lights, switches, and plugs from showing 'Offline' simply because they haven't been turned on recently. They will only flag if their network health check explicitly fails.</i>"
                 
-                input "ignoredInactivityDevices", "capability.*", title: "Ignore Inactivity completely for these Devices", multiple: true, required: false
+                input "ignoredInactivityDevices", "enum", title: "Ignore Inactivity completely for these Devices", options: devOptions, multiple: true, required: false
             }
         }
         
         section("Stale State Detection (Stuck Sensors)") {
             input "enableStuckCheck", "bool", title: "Enable Stale State Detection?", defaultValue: true, submitOnChange: true
             if (enableStuckCheck) {
+                paragraph BUG_WARN
                 paragraph "<i>Detects hardware lockups where a sensor is technically online, but its physical state is frozen (e.g., stuck on 'Active' or 'Open').</i>"
                 input "stuckMotionHours", "number", title: "Stuck 'Active' Threshold (Hours)", defaultValue: 2, required: true
                 input "stuckContactHours", "number", title: "Stuck 'Open' Threshold (Hours)", defaultValue: 24, required: true
-                input "ignoredStuckDevices", "capability.*", title: "Ignore Stuck State for these Devices", multiple: true, required: false
+                input "ignoredStuckDevices", "enum", title: "Ignore Stuck State for these Devices", options: devOptions, multiple: true, required: false
                 paragraph "<i>Note: Useful for multipurpose sensors used only for acceleration/temperature without a magnet.</i>"
             }
         }
@@ -488,16 +508,12 @@ def appButtonHandler(btn) {
         runHealthCheck()
     } else if (btn == "btnBulkApplyLoc") {
         if (settings.bulkLoc && settings.bulkDevs) {
-            def devNames = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
-            def allDevs = getAllMonitoredDevices()
+            def devIds = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
             def count = 0
             
-            devNames.each { dName ->
-                def matchingDevs = allDevs.findAll { it.displayName == dName }
-                matchingDevs.each { d ->
-                    app.updateSetting("loc_${d.id}", [type: "enum", value: settings.bulkLoc])
-                    count++
-                }
+            devIds.each { dId ->
+                app.updateSetting("loc_${dId}", [type: "enum", value: settings.bulkLoc])
+                count++
             }
             
             app.removeSetting("bulkDevs") 
@@ -560,6 +576,8 @@ def autoHealNetwork() {
     def problemDevIds = state.dashboardData?.findAll { it.status == "Red" || it.status == "Purple" || it.status == "Yellow" }?.collect { it.id } ?: []
     def nowMs = new Date().time
     
+    def optOutIds = settings.optOutPowerCycle?.collect { it instanceof String ? it : it.id.toString() } ?: []
+
     allDevs.each { dev ->
         if (problemDevIds.contains(dev.id)) {
             def pingSuccess = false
@@ -570,7 +588,7 @@ def autoHealNetwork() {
             }
 
             if (dev.hasCommand("on") && dev.hasCommand("off")) {
-                def isOptOut = settings.optOutPowerCycle?.find { it.id == dev.id } != null
+                def isOptOut = optOutIds.contains(dev.id.toString())
                 def lastCycle = state.lastPowerCycle[dev.id] ?: 0
                 
                 if (!isOptOut && (nowMs - lastCycle > 86400000)) { 
@@ -692,8 +710,9 @@ def processScanChunk() {
     
     def allDevs = getAllMonitoredDevices()
     def nowMs = new Date().time
-    def ignoreListIds = settings.ignoredInactivityDevices?.collect { it.id } ?: []
-    def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it.id } ?: []
+    
+    def ignoreListIds = settings.ignoredInactivityDevices?.collect { it instanceof String ? it : it.id.toString() } ?: []
+    def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it instanceof String ? it : it.id.toString() } ?: []
     
     chunk.each { qItem ->
         def dev = allDevs.find { it.id == qItem.id }
@@ -830,7 +849,7 @@ def processScanChunk() {
                 }
             }
             
-            def skipInactivity = ignoreListIds.contains(dev.id) || (settings.ignoreMainsInactivity && isMainsPowered)
+            def skipInactivity = ignoreListIds.contains(dev.id.toString()) || (settings.ignoreMainsInactivity && isMainsPowered)
             
             if (settings.enableInactivityCheck && !skipInactivity) {
                 if (lastActiveDate) {
@@ -858,7 +877,7 @@ def processScanChunk() {
                 if (!msgs.contains("Active")) msgs << "Monitoring Active"
             }
             
-            if (settings.enableStuckCheck && !ignoreStuckListIds.contains(dev.id)) {
+            if (settings.enableStuckCheck && !ignoreStuckListIds.contains(dev.id.toString())) {
                 if (dev.hasAttribute("motion") && dev.currentValue("motion") == "active") {
                     def stateDate = dev.currentState("motion")?.date
                     if (stateDate) {
@@ -1228,50 +1247,6 @@ def addToHistory(msg) {
     if (!state.historyLog) state.historyLog = []
     state.historyLog.add(0, "<span style='color: #888; font-size: 11px;'>[${new Date().format("h:mm a", location.timeZone)}]</span> <b>${cleanMsg}</b>")
     if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
-}
-
-def updateChildHtmlDashboard(results, critCount, warnCount) {
-    def child = getChildDevice("health_monitor_child")
-    if (!child) return
-    
-    StringBuilder html = new StringBuilder()
-    html.append("<div style='font-family:sans-serif;background:#151515;padding:15px;border-radius:8px;color:#fff;'><div style='display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:15px;'><b style='font-size:16px;'>🩺 Network Health</b>")
-    if (critCount == 0 && warnCount == 0) {
-        html.append("<span style='background:#27ae60;color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>All Nominal</span></div><div style='text-align:center;padding:20px;color:#aaa;font-style:italic;'>No critical issues detected.</div>")
-    } else {
-        def badgeColor = critCount > 0 ? "#e74c3c" : "#f1c40f"
-        def badgeText = critCount > 0 ? "${critCount} Critical Issues" : "${warnCount} Warnings"
-        html.append("<span style='background:${badgeColor};color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>${badgeText}</span></div><table style='width:100%;border-collapse:collapse;font-size:13px;'>")
-        
-        def issues = results.findAll { (it.status == "Red" || it.status == "Purple" || it.status == "Yellow") && !it.isMuted }
-        issues.each { issue ->
-            def dotColor = issue.status == "Red" ? "#e74c3c" : (issue.status == "Purple" ? "#9b59b6" : "#f1c40f")
-            def statusList = issue.messages.findAll { it.contains("Critical") || it.contains("Low") || it.contains("Offline") || it.contains("Inactive") || it.contains("Weak") || it.contains("Fair") || it.contains("Stuck") || it.contains("Flapping") || it.contains("Parasitic") || it.contains("Mesh Risk") }.join(", ")
-            def customText = ""
-            if (issue.customLoc || issue.customDesc) {
-                def parts = []
-                if (issue.customLoc) parts << "📍 ${issue.customLoc}"
-                if (issue.customDesc) parts << "📝 ${issue.customDesc}"
-                customText = "<div style='font-size:10px;color:#aaa;margin-top:2px;'>${parts.join(' &nbsp;|&nbsp; ')}</div>"
-            }
-            def battBarHtml = ""
-            if (issue.battVal != null) {
-                def barColor = issue.battVal > 50 ? "#27ae60" : (issue.battVal > 20 ? "#f1c40f" : "#e74c3c")
-                def bTypeStr = issue.battType ? " - ${issue.battQty}x ${issue.battType}" : ""
-                battBarHtml = "<div style='margin-top:6px;width:100%;'><div style='display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:3px;'><span>🔋 ${issue.battVal}%${bTypeStr}</span><span>⏳ ${issue.estDaysLeft}</span></div><div style='width:100%;background:#333;height:4px;border-radius:2px;overflow:hidden;'><div style='width:${issue.battVal}%;background:${barColor};height:100%;'></div></div></div>"
-            }
-            
-            html.append("<tr style='border-bottom:1px solid #333;'><td style='padding:8px 0;width:60%;'><div style='display:flex;align-items:center;'><span style='height:10px;width:10px;border-radius:50%;background:${dotColor};display:inline-block;margin-right:8px;box-shadow:0 0 4px ${dotColor};flex-shrink:0;'></span><b>${issue.name}</b></div>${customText}<div style='font-size:10px;color:#777;margin-top:4px;margin-left:18px;'>Last Active: ${issue.lastActive?:'Unknown'}${issue.battChanged?:''}</div>${battBarHtml}</td><td style='padding:8px 0;text-align:right;color:#ccc;vertical-align:top;'>${statusList}</td></tr>")
-        }
-        html.append("</table>")
-    }
-    html.append("<div style='margin-top:15px;font-size:11px;color:#666;text-align:right;'>Last Scan: ${state.lastCheckTime}</div></div>")
-    
-    child.sendEvent(name: "issueCount", value: critCount)
-    def issueNames = results.findAll { (it.status == "Red" || it.status == "Purple") && !it.isMuted }.collect{it.name}.join(", ")
-    if (!issueNames) issueNames = "None"
-    child.sendEvent(name: "issueList", value: issueNames)
-    child.sendEvent(name: "htmlDashboard", value: html.toString())
 }
 
 def getRedirectHtml(delayMs, msgText) {
