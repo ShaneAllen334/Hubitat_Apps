@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.8
+ * Version 1.5.9
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -685,7 +685,7 @@ def mainPage() {
             else issueState = "<span style='color: #27ae60; font-weight: bold;'>All Systems Nominal</span>"
             
             def lastCheckStr = state.lastCheckTime ?: "Never"
-            def scanInProgressStr = state.isScanning ? "<br><span style='color: #3498db; font-weight:bold;'>🔄 Staggered Scan in Progress... (${state.scanQueue?.size() ?: 0} chunks remaining)</span>" : ""
+            def scanInProgressStr = state.isScanning ? "<br><span style='color: #3498db; font-weight:bold;'>🔄 Scan in Progress...</span>" : ""
             
             def statusText = "<div style='margin-bottom: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
             statusText += "<b>System State:</b> ${systemState}<br><b>Network Health:</b> ${issueState}<br><b>Last Scan:</b> ${lastCheckStr}${scanInProgressStr}</div>"
@@ -1167,69 +1167,444 @@ def runHealthCheck() {
     }
     
     def nowMs = new Date().time
-    
-    if (state.isScanning && state.scanStartTime && (nowMs - state.scanStartTime > 60000)) {
-        log.warn "Health Monitor: Previous scan appears stuck. Resetting."
-        state.isScanning = false
-    }
-
     if (state.isScanning) {
-        log.info "Health Monitor: Scan already in progress. Skipping duplicate request."
-        return
+        if (state.scanStartTime && (nowMs - state.scanStartTime < 90000)) {
+            log.info "Health Monitor: Scan already in progress. Skipping duplicate request."
+            return
+        } else {
+            log.warn "Health Monitor: Previous scan appears stuck. Resetting lock."
+        }
     }
     
     ensureStateMaps()
     state.isScanning = true
     state.scanStartTime = nowMs
-    state.tempResults = []
-    state.pendingAlerts = []
     
-    if (state.muteExpirations) {
-        def expired = state.muteExpirations.findAll { k, v -> v < nowMs }.collect { it.key }
-        expired.each { state.muteExpirations.remove(it) }
-    }
+    // Clean up old stuck state variables from previous versions
+    if (state.scanQueue != null) state.remove("scanQueue")
+    if (state.tempResults != null) state.remove("tempResults")
+    if (state.pendingAlerts != null) state.remove("pendingAlerts")
     
-    def deviceMap = [:]
-    def addDev = { list, category ->
-        list?.each { d ->
-            if (d != null) {
-                if (!deviceMap[d.id]) {
-                    deviceMap[d.id] = []
-                }
-                if (!deviceMap[d.id].contains(category)) {
-                    deviceMap[d.id] << category
+    try {
+        if (state.muteExpirations) {
+            def expired = state.muteExpirations.findAll { k, v -> v < nowMs }.collect { it.key }
+            expired.each { state.muteExpirations.remove(it) }
+        }
+        
+        def deviceMap = [:]
+        def addDev = { list, category ->
+            list?.each { d ->
+                if (d != null) {
+                    if (!deviceMap[d.id]) deviceMap[d.id] = []
+                    if (!deviceMap[d.id].contains(category)) deviceMap[d.id] << category
                 }
             }
         }
-    }
 
-    addDev(settings.smokeDetectors, "Safety & Alarms")
-    addDev(settings.waterSensors, "Safety & Alarms")
-    addDev(settings.valveDevices, "Safety & Alarms")
-    addDev(settings.actuatorDevices, "Locks & Actuators")
-    addDev(settings.smartPlugs, "Smart Plugs & Outlets")
-    addDev(settings.lightSwitches, "Light Switches")
-    addDev(settings.hueLights, "Smart Bulbs")
-    addDev(settings.hubBridges, "Hubs & Bridges")
-    addDev(settings.motionSensors, "Motion Sensors")
-    addDev(settings.contactSensors, "Contact Sensors")
-    addDev(settings.presenceSensors, "Presence Sensors")
-    addDev(settings.temperatureSensors, "Climate Sensors")
-    addDev(settings.humiditySensors, "Climate Sensors")
-    addDev(settings.powerSensors, "Power Meters")
-    addDev(settings.illuminanceSensors, "Light Sensors")
-    addDev(settings.accelerationSensors, "Vibration Sensors")
-    addDev(settings.genericSensors, "Other Sensors")
-    addDev(settings.batteryDevices, "General Battery Devices")
-    addDev(settings.buttonControllers, "Button Controllers")
+        addDev(settings.smokeDetectors, "Safety & Alarms")
+        addDev(settings.waterSensors, "Safety & Alarms")
+        addDev(settings.valveDevices, "Safety & Alarms")
+        addDev(settings.actuatorDevices, "Locks & Actuators")
+        addDev(settings.smartPlugs, "Smart Plugs & Outlets")
+        addDev(settings.lightSwitches, "Light Switches")
+        addDev(settings.hueLights, "Smart Bulbs")
+        addDev(settings.hubBridges, "Hubs & Bridges")
+        addDev(settings.motionSensors, "Motion Sensors")
+        addDev(settings.contactSensors, "Contact Sensors")
+        addDev(settings.presenceSensors, "Presence Sensors")
+        addDev(settings.temperatureSensors, "Climate Sensors")
+        addDev(settings.humiditySensors, "Climate Sensors")
+        addDev(settings.powerSensors, "Power Meters")
+        addDev(settings.illuminanceSensors, "Light Sensors")
+        addDev(settings.accelerationSensors, "Vibration Sensors")
+        addDev(settings.genericSensors, "Other Sensors")
+        addDev(settings.batteryDevices, "General Battery Devices")
+        addDev(settings.buttonControllers, "Button Controllers")
 
-    state.scanQueue = deviceMap.collect { k, v -> [id: k, categories: v] }
-    
-    if (state.scanQueue.size() > 0) {
-        app.addToHistory("SCAN: Starting staggered scan for ${state.scanQueue.size()} devices.")
-        runIn(1, "processScanChunk")
-    } else {
-        finalizeScan()
+        def queue = deviceMap.collect { k, v -> [id: k, categories: v] }
+        def chunkSize = (settings.scanChunkSize ?: 40).toInteger()
+        
+        def results = []
+        def alerts = []
+        
+        if (queue.size() > 0) {
+            app.addToHistory("SCAN: Starting synchronous scan for ${queue.size()} devices.")
+            
+            def allDevs = getAllMonitoredDevices()
+            def ignoreListIds = settings.ignoredInactivityDevices?.collect { it.id.toString() } ?: []
+            def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it.id.toString() } ?: []
+            
+            while (queue.size() > 0) {
+                def chunk = queue.take(chunkSize)
+                queue = queue.drop(chunkSize)
+                
+                chunk.each { qItem ->
+                    def dev = allDevs.find { it.id == qItem.id }
+                    if (!dev) return 
+                    
+                    def finalCategories = qItem.categories
+                    def overrideFolders = settings["folder_${dev.id}"]
+                    if (overrideFolders) {
+                        finalCategories = overrideFolders instanceof List ? overrideFolders : [overrideFolders]
+                    }
+                    
+                    def isMuted = state.muteExpirations && state.muteExpirations[dev.id] != null
+                    def muteUntil = isMuted ? state.muteExpirations[dev.id] : null
+                    
+                    try {
+                        def devHealth = "Green"
+                        def msgs = []
+                        def battChangedStr = ""
+                        def estDaysLeftStr = "Calculating..."
+                        def rawBattVal = null
+                        def rawEwmaRate = 0.0
+                        def dRssiHistory = []
+                        
+                        def dManufacturer = "Generic/Unknown"
+                        try { dManufacturer = dev.getDataValue("manufacturer") ?: "Generic/Unknown" } catch(ignore){}
+                        
+                        def dModel = "Generic/Unknown"
+                        try { dModel = dev.getDataValue("model") ?: "Generic/Unknown" } catch(ignore){}
+                        
+                        def dFirmware = "Unknown"
+                        try { dFirmware = dev.getDataValue("application") ?: dev.getDataValue("softwareBuild") ?: "Unknown" } catch(ignore){}
+                        
+                        def dTypeName = "Unknown"
+                        try { dTypeName = dev.typeName ?: "Unknown" } catch(ignore){}
+                        
+                        // --- DEEP DIVE FIX 2.0: The Bulletproof Timestamp Scraper ---
+                        def lastActiveDate = dev.getLastActivity()
+                        long latestTime = lastActiveDate ? lastActiveDate.time : 0
+                        
+                        try {
+                            dev.currentStates?.each { st ->
+                                if (st?.date && st.date.time > latestTime) {
+                                    latestTime = st.date.time
+                                }
+                            }
+                        } catch(e) { log.warn "State parse error for ${dev.displayName}: ${e}" }
+                        
+                        try {
+                            def evts = dev.events([max: 10])
+                            if (evts) {
+                                evts.each { evt ->
+                                    if (evt?.date && evt.date.time > latestTime) {
+                                        latestTime = evt.date.time
+                                    }
+                                }
+                            }
+                        } catch(e) { log.warn "Event parse error for ${dev.displayName}: ${e}" }
+
+                        lastActiveDate = latestTime > 0 ? new Date(latestTime) : null
+                        def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
+                        // --- END FIX ---
+                        
+                        if (dev.hasAttribute("healthStatus")) {
+                            def hStat = dev.currentValue("healthStatus")
+                            if (hStat && hStat.toString().toLowerCase() == "offline") {
+                                devHealth = "Red"
+                                msgs << "System reports OFFLINE"
+                            }
+                        }
+                        
+                        def isMainsPowered = settings.actuatorDevices?.find { it.id == dev.id } != null || 
+                                             settings.smartPlugs?.find { it.id == dev.id } != null || 
+                                             settings.lightSwitches?.find { it.id == dev.id } != null || 
+                                             settings.hueLights?.find { it.id == dev.id } != null || 
+                                             settings.hubBridges?.find { it.id == dev.id } != null
+                        
+                        if (settings.enableBatteryCheck && dev.hasAttribute("battery") && !isMainsPowered) {
+                            def batt = dev.currentValue("battery")
+                            if (batt != null && batt.toString().isNumber()) {
+                                def bVal = batt.toInteger()
+                                rawBattVal = bVal
+                                
+                                def isOutdoor = settings["outdoorProfile_${dev.id}"] == "true" || settings["outdoorProfile_${dev.id}"] == true
+                                
+                                long changedMs = state.batteryChangeDates[dev.id] ?: nowMs
+                                long lastTime = state.lastBatteryTime[dev.id] ?: changedMs
+                                
+                                if (nowMs > lastTime) {
+                                    def lastB = state.lastBatteryLevels[dev.id] ?: bVal
+                                    if (bVal < lastB) { 
+                                        long elapsedMs = nowMs - lastTime
+                                        double daysElapsed = elapsedMs / 86400000.0
+                                        if (daysElapsed > 0.05) { 
+                                            double currentDropRate = (lastB - bVal) / daysElapsed
+                                            double alpha = isOutdoor ? 0.05 : 0.3 
+                                            double oldEwma = state.batteryEwma[dev.id] != null ? state.batteryEwma[dev.id] : currentDropRate
+                                            double newEwma = (alpha * currentDropRate) + ((1.0 - alpha) * oldEwma)
+                                            state.batteryEwma[dev.id] = newEwma
+                                        }
+                                    }
+                                }
+
+                                if (state.lastBatteryLevels[dev.id] != null && bVal > (state.lastBatteryLevels[dev.id] + 5)) {
+                                    state.batteryChangeDates[dev.id] = nowMs
+                                    state.batteryEwma[dev.id] = null 
+                                }
+                                
+                                state.lastBatteryLevels[dev.id] = bVal
+                                state.lastBatteryTime[dev.id] = nowMs
+                                
+                                if (settings.enableParasiticCheck) {
+                                    if (!state.batteryHistory) state.batteryHistory = [:]
+                                    if (!state.batteryHistory[dev.id]) state.batteryHistory[dev.id] = []
+                                    
+                                    state.batteryHistory[dev.id] << [time: nowMs, val: bVal]
+                                    state.batteryHistory[dev.id] = state.batteryHistory[dev.id].findAll { nowMs - it.time <= 86400000 }
+                                    
+                                    if (state.batteryHistory[dev.id].size() > 1) {
+                                        def oldestReading = state.batteryHistory[dev.id].first()
+                                        def dropInDay = oldestReading.val - bVal
+                                        def maxDropAllowed = settings.parasiticThreshold ?: 10
+                                        
+                                        if (dropInDay >= maxDropAllowed) {
+                                            if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
+                                            msgs << "Parasitic Drain Detected (-${dropInDay}% / 24h)"
+                                        }
+                                    }
+                                }
+                                
+                                if (state.batteryChangeDates[dev.id]) {
+                                    battChangedStr = " | Batt Replaced: " + new Date(state.batteryChangeDates[dev.id]).format("MM/dd/yy", location.timeZone)
+                                    
+                                    def ewmaRate = state.batteryEwma[dev.id]
+                                    if (ewmaRate != null && ewmaRate > 0.01) {
+                                        rawEwmaRate = ewmaRate
+                                        int daysLeft = (bVal / ewmaRate).toInteger()
+                                        estDaysLeftStr = "~${daysLeft} Days"
+                                    } else {
+                                        def calcThresh = settings.battCalcThreshold ?: 5
+                                        estDaysLeftStr = "Calculating Trend..."
+                                    }
+                                }
+
+                                def specificThresh = settings["overrideBattThresh_${dev.id}"]
+                                def thresh = (specificThresh != null && specificThresh.toString().isNumber()) ? specificThresh.toInteger() : (settings.batteryThreshold ?: 20)
+                                
+                                if (bVal <= thresh) {
+                                    devHealth = "Red"
+                                    msgs << "Battery Critical"
+                                } else if (bVal <= thresh + 15) {
+                                    if (devHealth != "Red" && !msgs.any{it.contains("Parasitic")}) devHealth = "Yellow"
+                                    msgs << "Battery Low"
+                                } else {
+                                    if (!msgs.any{it.contains("Parasitic")}) msgs << "Battery OK"
+                                }
+                            }
+                        }
+                        
+                        def skipInactivity = ignoreListIds.contains(dev.id.toString()) || (settings.ignoreMainsInactivity && isMainsPowered)
+                        
+                        if (settings.enableInactivityCheck && !skipInactivity) {
+                            if (lastActiveDate) {
+                                def diffHours = (nowMs - lastActiveDate.time) / 3600000
+                                
+                                def isSleepy = settings.buttonControllers?.find { it.id == dev.id } != null
+                                def thresh = isSleepy ? (settings.buttonInactivityThreshold ?: 168) : (settings.inactivityThreshold ?: 24)
+                                
+                                if (diffHours > thresh) {
+                                    devHealth = "Red"
+                                    msgs << "Offline (${diffHours.toInteger()} hrs)"
+                                } else if (diffHours > (thresh * 0.75)) {
+                                    if (devHealth != "Red") devHealth = "Yellow"
+                                    msgs << "Inactive (${diffHours.toInteger()} hrs)"
+                                } else {
+                                    if (msgs.size() == 0 || (msgs.size() == 1 && msgs[0].contains("Battery OK"))) {
+                                        if (!msgs.contains("Active")) msgs << "Active"
+                                    }
+                                }
+                            } else {
+                                devHealth = "Red"
+                                msgs << "No Activity Data Found"
+                            }
+                        } else if (msgs.size() == 0 || (msgs.size() == 1 && msgs[0].contains("Battery OK"))) {
+                            if (!msgs.contains("Active")) msgs << "Monitoring Active"
+                        }
+                        
+                        if (settings.enableStuckCheck && !ignoreStuckListIds.contains(dev.id.toString())) {
+                            if (dev.hasAttribute("motion") && dev.currentValue("motion") == "active") {
+                                def stateDate = dev.currentState("motion")?.date
+                                if (stateDate) {
+                                    def diffHrs = (nowMs - stateDate.time) / 3600000
+                                    def thresh = settings.stuckMotionHours ?: 2
+                                    if (diffHrs > thresh) {
+                                        if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
+                                        msgs << "Stuck Active (${diffHrs.toInteger()}h)"
+                                    }
+                                }
+                            }
+                            if (dev.hasAttribute("contact") && dev.currentValue("contact") == "open") {
+                                def stateDate = dev.currentState("contact")?.date
+                                if (stateDate) {
+                                    def diffHrs = (nowMs - stateDate.time) / 3600000
+                                    def thresh = settings.stuckContactHours ?: 24
+                                    if (diffHrs > thresh) {
+                                        if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
+                                        msgs << "Stuck Open (${diffHrs.toInteger()}h)"
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (settings.enableWifiSignalCheck) {
+                            if (dev.hasAttribute("wifiSignal") || dev.hasAttribute("rssi")) {
+                                if (!dev.hasAttribute("lqi")) { 
+                                    def wifiRssi = dev.currentValue("wifiSignal") ?: dev.currentValue("rssi")
+                                    if (wifiRssi != null && wifiRssi.toString().isNumber()) {
+                                        def rVal = wifiRssi.toInteger()
+                                        
+                                        if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
+                                        state.rssiHistory[dev.id] << rVal
+                                        if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
+                                        dRssiHistory = state.rssiHistory[dev.id]
+                                        
+                                        def thresh = settings.wifiRssiThreshold ?: -75
+                                        if (rVal <= thresh) {
+                                            devHealth = "Red"
+                                            msgs << "Weak Wi-Fi (${rVal} dBm)"
+                                        } else if (rVal <= thresh + 10) {
+                                            if (devHealth != "Red") devHealth = "Yellow"
+                                            msgs << "Fair Wi-Fi (${rVal} dBm)"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (settings.enableSignalCheck) {
+                            if (dev.hasAttribute("rssi") && dev.hasAttribute("lqi")) { 
+                                def rssi = dev.currentValue("rssi")
+                                if (rssi != null && rssi.toString().isNumber()) {
+                                    def rVal = rssi.toInteger()
+                                    
+                                    if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
+                                    state.rssiHistory[dev.id] << rVal
+                                    if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
+                                    dRssiHistory = state.rssiHistory[dev.id]
+                                    
+                                    def thresh = settings.rssiThreshold ?: -85
+                                    if (rVal <= thresh) {
+                                        devHealth = "Red"
+                                        msgs << "Weak Signal (${rVal} dBm)"
+                                    } else if (rVal <= thresh + 10) {
+                                        if (devHealth != "Red") devHealth = "Yellow"
+                                        msgs << "Fair Signal (${rVal} dBm)"
+                                    }
+                                }
+                            }
+                            if (dev.hasAttribute("lqi")) {
+                                def lqi = dev.currentValue("lqi")
+                                if (lqi != null && lqi.toString().isNumber()) {
+                                    def lVal = lqi.toInteger()
+                                    def thresh = settings.lqiThreshold ?: 100
+                                    if (lVal <= thresh) {
+                                        devHealth = "Red"
+                                        msgs << "Critical LQI (${lVal})"
+                                    } else if (lVal <= thresh + 50) {
+                                        if (devHealth != "Red") devHealth = "Yellow"
+                                        msgs << "Weak LQI (${lVal})"
+                                    }
+                                }
+                            }
+                        }
+                        
+                        def oldStatus = state.previousStatus[dev.id]
+                        if (devHealth == "Red" && oldStatus != "Red" && oldStatus != "Purple") {
+                            if (!state.flapHistory[dev.id]) state.flapHistory[dev.id] = []
+                            state.flapHistory[dev.id] << nowMs
+                        }
+                        
+                        if (state.flapHistory[dev.id]) {
+                            state.flapHistory[dev.id] = state.flapHistory[dev.id].findAll { nowMs - it < 86400000 }
+                            if (settings.enableFlapDetection && state.flapHistory[dev.id].size() >= (settings.flapThreshold ?: 3)) {
+                                devHealth = "Purple"
+                                msgs.add(0, "Flapping/Unstable (${state.flapHistory[dev.id].size()} drops/24h)")
+                            }
+                        }
+                        
+                        if (oldStatus != null && oldStatus != devHealth) {
+                            if (!isMuted) {
+                                def msgToSend = null
+                                def level = null
+                                
+                                if (devHealth == "Red") { msgToSend = "🔴 CRITICAL: ${dev.displayName} is Offline/Critical"; level = "Critical" }
+                                else if (devHealth == "Purple") { msgToSend = "🟣 FLAPPING: ${dev.displayName} is dropping repeatedly"; level = "Critical" }
+                                else if (devHealth == "Yellow") { msgToSend = "🟡 WARNING: ${dev.displayName} is showing degradation"; level = "Warning" }
+                                else if (devHealth == "Green" && settings.notifyOnResolved) { msgToSend = "🟢 RESOLVED: ${dev.displayName} returned to nominal"; level = "Resolved" }
+                                
+                                if (msgToSend) {
+                                    alerts << [deviceId: dev.id, devName: dev.displayName, msg: msgToSend, level: level]
+                                }
+                            } else {
+                                app.addToHistory("MUTE: Suppressed status change alert for ${dev.displayName} (Device is currently muted).")
+                            }
+                        }
+                        
+                        state.previousStatus[dev.id] = devHealth
+                        msgs.removeAll { it == "Battery OK" && msgs.size() > 1 } 
+                        
+                        def canPingDev = dev.hasCommand("refresh") || dev.hasCommand("ping")
+                        def devLoc = settings["loc_${dev.id}"] ?: ""
+                        def devDesc = settings["desc_${dev.id}"] ?: ""
+                        def batQty = settings["battQty_${dev.id}"] ?: 1
+                        
+                        def rawBatType = settings["battType_${dev.id}"] ?: ""
+                        def cBatType = settings["customBattType_${dev.id}"] ?: ""
+                        def batType = (rawBatType == "Custom" && cBatType) ? cBatType : rawBatType
+                        
+                        def isOutdoorUI = settings["outdoorProfile_${dev.id}"] == "true" || settings["outdoorProfile_${dev.id}"] == true
+                        def overrideUI = settings["overrideBattThresh_${dev.id}"] ?: ""
+
+                        results << [
+                            id: dev.id,
+                            name: dev.displayName,
+                            status: devHealth,
+                            messages: msgs,
+                            categories: finalCategories,
+                            canPing: canPingDev,
+                            lastActive: lastActiveStr,
+                            battChanged: battChangedStr,
+                            customLoc: devLoc,
+                            customDesc: devDesc,
+                            battVal: rawBattVal,
+                            ewmaRate: rawEwmaRate,
+                            estDaysLeft: estDaysLeftStr,
+                            battType: batType,
+                            battQty: batQty,
+                            isMuted: isMuted,
+                            muteUntil: muteUntil,
+                            rssiHistory: dRssiHistory,
+                            manufacturer: dManufacturer,
+                            model: dModel,
+                            firmware: dFirmware,
+                            driverName: dTypeName,
+                            isMains: isMainsPowered,
+                            isOutdoor: isOutdoorUI,
+                            battThreshOverride: overrideUI
+                        ]
+                        
+                    } catch (e) {
+                        log.warn "Health Monitor: Error scanning device ${dev.displayName} - ${e}"
+                    }
+                }
+                
+                // Safely yield CPU back to the hub between chunks
+                if (queue.size() > 0) {
+                    pauseExecution(500)
+                }
+            }
+        }
+        
+        finalizeScan(results, alerts)
+        
+    } catch (e) {
+        log.error "Health Monitor: Critical error during scan sequence - ${e}"
+        app.addToHistory("ERROR: Critical failure during scan. Check logs.")
+    } finally {
+        state.isScanning = false
+        state.scanStartTime = null
     }
 }
 
@@ -1286,8 +1661,37 @@ def processScanChunk() {
             def dTypeName = "Unknown"
             try { dTypeName = dev.typeName ?: "Unknown" } catch(ignore){}
             
+            // --- DEEP DIVE FIX 2.1: The Filtered Timestamp Scraper ---
             def lastActiveDate = dev.getLastActivity()
+            long latestTime = lastActiveDate ? lastActiveDate.time : 0
+            
+            try {
+                dev.currentStates?.each { st ->
+                    if (st?.date && st.date.time > latestTime) {
+                        latestTime = st.date.time
+                    }
+                }
+            } catch(e) { log.warn "State parse error for ${dev.displayName}: ${e}" }
+            
+            try {
+                def evts = dev.events([max: 15])
+                if (evts) {
+                    evts.each { evt ->
+                        if (evt?.date && evt.date.time > latestTime) {
+                            // Ignore commands sent to the device, only trust data coming FROM it
+                            def isCommand = (evt.type?.toString()?.toLowerCase() == "command") || 
+                                            (evt.name?.toString()?.toLowerCase()?.contains("command"))
+                            if (!isCommand) {
+                                latestTime = evt.date.time
+                            }
+                        }
+                    }
+                }
+            } catch(e) { log.warn "Event parse error for ${dev.displayName}: ${e}" }
+
+            lastActiveDate = latestTime > 0 ? new Date(latestTime) : null
             def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
+            // --- END FIX ---
             
             if (dev.hasAttribute("healthStatus")) {
                 def hStat = dev.currentValue("healthStatus")
@@ -1587,11 +1991,7 @@ def processScanChunk() {
     }
 }
 
-def finalizeScan() {
-    if (!state.isScanning) return
-    
-    def results = state.tempResults ?: []
-    
+def finalizeScan(results, pendingAlerts) {
     if (settings.enableFirmwareAuditor != false) {
         results = runFirmwareConsistencyCheck(results)
     }
@@ -1599,7 +1999,7 @@ def finalizeScan() {
     results = analyzeSpatialInterference(results)
     
     def alertQueue = [:]
-    state.pendingAlerts?.each { alert ->
+    pendingAlerts?.each { alert ->
         def targets = settings["notifyOverride_${alert.deviceId}"]
         if (!targets) {
             targets = (alert.level == "Critical") ? settings.defaultCritNotifiers : (alert.level == "Warning" ? settings.defaultWarnNotifiers : (settings.defaultCritNotifiers ?: settings.defaultWarnNotifiers))
@@ -1646,13 +2046,7 @@ def finalizeScan() {
     
     updateChildHtmlDashboard(results, critCount, warnCount)
     
-    state.isScanning = false
-    state.scanStartTime = null
-    state.tempResults = []
-    state.scanQueue = []
-    state.pendingAlerts = []
-    
-    app.addToHistory("SCAN: Staggered scan sequence completed successfully.")
+    app.addToHistory("SCAN: Synchronous scan sequence completed successfully.")
 }
 
 def updateChildHtmlDashboard(results, critCount, warnCount) {
