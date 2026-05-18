@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.4
+ * Version 1.5.7
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -19,7 +19,673 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
-@Field static String BUG_WARN = "<div style='background-color:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:8px; border-radius:4px; font-size: 13px; line-height: 1.4; margin-bottom: 5px;'><b>⚠️ Hubitat 'Select All' Bug:</b> If any device names in this list contain an apostrophe ('), ampersand (&), or quote (\"), Hubitat's native <b>Select All</b> button will fail. Please manually check the boxes instead.</div>"
+
+// The "Nuclear Option": Universal Capture-Phase Hijack for Hubitat's Select All Button
+@Field static String NUCLEAR_JS = '''<script>
+if (!window.healthNuclearFixApplied) {
+    window.healthNuclearFixApplied = true;
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('button, .btn, input[type="button"]');
+        if (!btn) return;
+        
+        var t = (btn.innerText || btn.value || '').trim().toLowerCase();
+        
+        if (t === 'select all' || t === 'unselect all') {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            
+            var check = (t === 'select all');
+            
+            // Ascend the DOM tree to find the tightest wrapping container
+            var container = btn.closest('.form-group, .mdl-cell, .card, div[class*="col-"]');
+            if (!container) container = btn.parentElement.parentElement.parentElement;
+            
+            if (container) {
+                // Strategy 1: Hubitat's Native Checkbox Wrapper
+                var boxes = container.querySelectorAll('input[type="checkbox"]');
+                if (boxes.length > 0) {
+                    boxes.forEach(function(b) {
+                        // Ensure the checkbox parent/label is visible (respects the 'Filter...' box)
+                        var wrap = b.closest('div');
+                        var isVisible = wrap && wrap.style.display !== 'none';
+                        if (isVisible && b.checked !== check) {
+                            b.click();
+                        }
+                    });
+                    return;
+                }
+                
+                // Strategy 2: Bootstrap Select Virtual Links
+                var links = container.querySelectorAll('.dropdown-menu li a');
+                if (links.length > 0) {
+                    links.forEach(function(item) {
+                        var li = item.closest('li');
+                        if (li && !li.classList.contains('disabled')) {
+                            var isSelected = li.classList.contains('selected');
+                            var isVisible = li.style.display !== 'none';
+                            if (isVisible && ((check && !isSelected) || (!check && isSelected))) {
+                                item.click();
+                            }
+                        }
+                    });
+                    return;
+                }
+                
+                // Strategy 3: Hidden Select (Absolute Fallback)
+                var selectEl = container.querySelector('select[multiple]');
+                if (selectEl) {
+                    for (var i = 0; i < selectEl.options.length; i++) {
+                        selectEl.options[i].selected = check;
+                    }
+                    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof $ !== 'undefined' && $(selectEl).selectpicker) {
+                        $(selectEl).selectpicker('render');
+                    }
+                }
+            }
+        }
+    }, true); 
+}
+</script>'''
+
+@Field static String DASHBOARD_CSS = '''
+body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; padding:20px; background:#0d0d0d; color:#e0e0e0; margin:0; }
+.container { max-width:800px; margin:0 auto; background:#151515; padding:25px; border-radius:12px; box-sizing:border-box; width:100%; }
+.loader { border:4px solid #333; border-top:4px solid #3498db; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:0 auto; }
+@keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+
+.header-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:15px; }
+.header-left { display:flex; gap:10px; flex:1; min-width:260px; }
+.header-center { flex:1; display:flex; justify-content:center; min-width:80px; }
+.header-right { flex:1; display:flex; justify-content:flex-end; min-width:120px; }
+
+.top-btn { background:#1f618d; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-size:12px; cursor:pointer; font-weight:bold; transition:background 0.15s; }
+.top-btn:hover { background:#1a5276; }
+.action-row { display:flex; gap:10px; margin-bottom:30px; }
+a.main-btn { background:#1f618d; color:#fff; border:none; padding:14px 20px; border-radius:8px; display:block; text-align:center; text-decoration:none; font-weight:600; flex:1; }
+a.main-btn:hover { background:#1a5276; }
+
+.summary-box { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:25px; }
+.summary-card { flex:1 1 20%; min-width:120px; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; text-align:center; border-bottom:3px solid #333; }
+.summary-card b { display:block; font-size:24px; color:#fff; margin-bottom:5px; }
+.summary-card span { font-size:12px; color:#aaa; text-transform:uppercase; }
+
+details { margin-bottom:15px; }
+summary { padding:12px 15px; background:#1c1c1c; border-radius:6px; border-left:4px solid #3498db; cursor:pointer; color:#fff; font-weight:bold; font-size:16px; }
+summary:hover { background:#252525; }
+.cat-count { float:right; font-size:12px; color:#888; margin-top:3px; }
+
+.dev-card { background:#222; padding:15px; border-radius:8px; margin-bottom:12px; border-left:4px solid #333; }
+.clickable-card { cursor:pointer; transition:transform 0.15s ease, background-color 0.15s ease; }
+.clickable-card:hover { transform:translateY(-2px); background-color:#2a2a2a !important; }
+
+.status-Red { border-left-color:#e74c3c; background:linear-gradient(90deg, rgba(231,76,60,.1) 0%, #222 30%); }
+.status-Purple { border-left-color:#9b59b6; background:linear-gradient(90deg, rgba(155,89,182,.1) 0%, #222 30%); }
+.status-Yellow { border-left-color:#f1c40f; background:linear-gradient(90deg, rgba(241,196,15,.1) 0%, #222 30%); }
+.status-Blue { border-left-color:#3498db; background:linear-gradient(90deg, rgba(52,152,219,.1) 0%, #222 30%); }
+.status-Green { border-left-color:#27ae60; }
+
+.dot { height:12px; width:12px; border-radius:50%; display:inline-block; margin-right:12px; flex-shrink:0; }
+.dot-Red { background:#e74c3c; box-shadow:0 0 6px #e74c3c; }
+.dot-Purple { background:#9b59b6; box-shadow:0 0 6px #9b59b6; }
+.dot-Yellow { background:#f1c40f; box-shadow:0 0 6px #f1c40f; }
+.dot-Blue { background:#3498db; box-shadow:0 0 6px #3498db; }
+.dot-Green { background:#27ae60; }
+
+.dflex { display:flex; align-items:center; width:100%; }
+.dev-info { flex-grow:1; min-width:0; }
+.dev-name { font-size:15px; font-weight:bold; color:#fff; margin-bottom:2px; }
+.dev-custom { font-size:11px; color:#888; margin-bottom:5px; }
+.dev-details { font-size:13px; color:#aaa; }
+.dev-subtext { font-size:11px; color:#7f8c8d; margin-top:5px; font-style:italic; }
+
+.card-controls { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; }
+a.ping-btn { background:#34495e; color:#fff; border:1px solid #2c3e50; padding:6px 12px; font-size:12px; border-radius:4px; font-weight:bold; text-decoration:none; margin-left:10px; flex-shrink:0; }
+a.ping-btn:hover { background:#2c3e50; }
+
+.batt-wrap { margin-top:8px; width:100%; }
+.batt-info { display:flex; justify-content:space-between; font-size:10px; color:#aaa; margin-bottom:3px; }
+.batt-bg { width:100%; background:#333; height:6px; border-radius:3px; overflow:hidden; }
+.batt-fg { height:100%; }
+.bg-grn { background:#27ae60; }
+.bg-ylw { background:#f1c40f; }
+.bg-red { background:#e74c3c; }
+
+.shop-card { width:100%; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; border-left:4px solid #9b59b6; box-shadow:0 4px 6px rgba(0,0,0,.3); margin-bottom: 12px; }
+.shop-title { color:#fff; font-size:15px; display:block; margin-bottom:8px; }
+.shop-badge { background:#9b59b6; color:#fff; font-size:11px; padding:2px 6px; border-radius:10px; float:right; }
+.shop-list { font-size:11px; color:#888; max-height:80px; overflow-y:auto; line-height:1.4; }
+
+.mute-form { display:inline-flex; align-items:center; margin-left:10px; margin-bottom:0; }
+.mute-input { width:45px; padding:0 4px; font-size:11px; border-radius:4px 0 0 4px; border:1px solid #8e44ad; background:#111; color:#fff; height:26px; box-sizing:border-box; }
+.mute-btn { margin-left:0; border-radius:0 4px 4px 0; background:#8e44ad; border-color:#8e44ad; height:26px; color:#fff; border-style:solid; border-width:1px; font-size:12px; font-weight:bold; cursor:pointer; }
+
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:1000; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; }
+.modal-content { background:#1a1a1a; color:#e0e0e0; width:100%; max-width:550px; border-radius:12px; padding:22px; box-sizing:border-box; position:relative; box-shadow:0 12px 35px rgba(0,0,0,0.6); border:1px solid #333; max-height:90vh; overflow-y:auto; }
+.modal-header { font-size:18px; font-weight:bold; color:#fff; margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:12px; display:flex; align-items:center; }
+.modal-body table { width:100%; border-collapse:collapse; margin-bottom:20px; }
+.modal-body td { padding:10px 0; border-bottom:1px solid #262626; font-size:13px; line-height:1.4; }
+.modal-body td:first-child { color:#888; font-weight:500; width:38%; vertical-align:middle; }
+.modal-body td:last-child { color:#fff; text-align:right; }
+
+.modal-input { width:100%; padding:6px; border-radius:4px; border:1px solid #444; background:#222; color:#fff; font-size:13px; box-sizing:border-box; }
+.modal-input:focus { outline:none; border-color:#3498db; }
+
+.modal-action-row { display:flex; gap:10px; margin-top:15px; }
+.save-modal-btn { flex:1; padding:12px; background:#27ae60; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; transition:background 0.15s; }
+.save-modal-btn:hover { background:#2ecc71; }
+.save-modal-btn:disabled { background:#7f8c8d; cursor:not-allowed; }
+.close-modal-btn { flex:1; padding:12px; background:#2c3e50; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; text-align:center; transition:background 0.15s; }
+.close-modal-btn:hover { background:#34495e; }
+
+details.folder-group.dragging { opacity: 0.5; }
+
+@media (max-width: 650px) {
+    body { padding: 10px; }
+    .container { padding: 15px; }
+    .header-bar { flex-direction: column; }
+    .header-center { order: 1; width: 100%; }
+    .header-left { order: 2; width: 100%; justify-content: center; flex-wrap: wrap; }
+    .header-right { order: 3; width: 100%; justify-content: center; }
+    .summary-card { flex: 1 1 40%; min-width: 40%; }
+    .action-row { flex-direction: column; }
+    .dflex { flex-wrap: wrap; }
+    .card-controls { width: 100%; margin-top: 12px; justify-content: flex-start; }
+    .ping-btn { margin-left: 0; margin-right: 10px; }
+    .mute-form { margin-left: 0; }
+    .modal-content { padding: 15px; }
+    .modal-body td { display: block; width: 100%; text-align: left !important; }
+    .modal-body td:first-child { font-size: 11px; padding-bottom: 2px; border-bottom: none; color: #3498db; }
+    .modal-body td:last-child { padding-top: 2px; padding-bottom: 12px; }
+}
+'''
+
+@Field static String DASHBOARD_MODAL = '''
+<div class='modal-content' onclick='event.stopPropagation()'>
+    <input type='hidden' id='modalDeviceId'>
+    <div class='modal-header'>
+        <span id='modalStatusDot' class='dot'></span>
+        <span id='modalDeviceName'>Device Details</span>
+    </div>
+    <div class='modal-body'>
+        <table>
+            <tr><td>Location</td><td><select id='modalLocationInput' class='modal-input' onchange='checkNewLocation(this)'></select></td></tr>
+            <tr><td>Description</td><td><input type='text' id='modalDescriptionInput' class='modal-input' placeholder='Notes...'></td></tr>
+            <tr><td>Battery Type</td><td><select id='modalBatteryTypeInput' class='modal-input' onchange='checkCustomBattery(this)'></select></td></tr>
+            <tr><td>Battery Quantity</td><td><input type='number' id='modalBatteryQtyInput' class='modal-input' min='1' max='20'></td></tr>
+            <tr><td>Override Critical Batt %</td><td><input type='number' id='modalOverrideThreshInput' class='modal-input' placeholder='Global Default' min='1' max='99'></td></tr>
+            <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:#fff;'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
+            <tr><td>Driver / Device Type</td><td id='modalDriverType'>-</td></tr>
+            <tr><td>Hardware Type</td><td id='modalHardwareSig'>-</td></tr>
+            <tr><td>Firmware Revision</td><td id='modalFirmwareRev'>-</td></tr>
+            <tr><td>Telemetry Diagnostics</td><td id='modalNetworkHealth'>-</td></tr>
+            <tr><td>Signal Quality (RSSI)</td><td id='modalRssi'>-</td></tr>
+            <tr><td>Battery Level</td><td id='modalBatteryHealth'>-</td></tr>
+            <tr><td>EWMA Forecast</td><td id='modalDaysRemaining'>-</td></tr>
+            <tr><td>Last Mesh Check-In</td><td id='modalLastActive'>-</td></tr>
+        </table>
+    </div>
+    <div class='modal-action-row'>
+        <button class='save-modal-btn' onclick='saveDeviceChanges()'>💾 Save Settings</button>
+        <button class='close-modal-btn' onclick='closeDeviceModal()'>Cancel</button>
+    </div>
+</div>
+'''
+
+@Field static String DASHBOARD_BATTERY_LOCKER = '''
+<div class='modal-content' onclick='event.stopPropagation()' style='max-width:700px;'>
+    <div class='modal-header' style='border-bottom-color:#8e44ad;'>
+        <span class='dot' style='background:#8e44ad;box-shadow:0 0 6px #8e44ad;'></span>
+        <span>The Battery Locker</span>
+    </div>
+    <div id='batteryLockerModalBody' class='modal-body' style='max-height:60vh;overflow-y:auto;padding-right:10px;'>
+        </div>
+    <div class='modal-action-row'>
+        <button class='close-modal-btn' onclick='closeBatteryLocker()'>Close Inventory</button>
+    </div>
+</div>
+'''
+
+@Field static String DASHBOARD_JS = '''
+let db = null;
+let groupByMode = 'category';
+const accessToken = 'TOKEN_PLACEHOLDER';
+
+function loadData() {
+    document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#888;'><div class='loader'></div><br><br>Syncing Estate Diagnostics...</div>";
+    fetch('data?access_token=' + accessToken)
+    .then(res => res.json())
+    .then(data => {
+        db = data;
+        renderApp();
+    })
+    .catch(err => {
+        document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#e74c3c;'><b>Cloud Connection Error</b><br>Could not retrieve estate data. The hub might be busy processing a scan.<br><br><small>" + err + "</small></div>";
+    });
+}
+
+function silentRefresh() {
+    if((!document.getElementById('deviceModalOverlay').style.display || document.getElementById('deviceModalOverlay').style.display === 'none') && 
+       (!document.getElementById('batteryLockerModalOverlay').style.display || document.getElementById('batteryLockerModalOverlay').style.display === 'none')){ 
+        
+        fetch('data?access_token=' + accessToken)
+        .then(r => r.json())
+        .then(data => {
+            db = data;
+            renderApp();
+        });
+    } 
+}
+
+function generateCard(dev) {
+    let detailsStr = dev.messages.join(" • ");
+    let actStr = dev.lastActive || "Unknown";
+    let battStr = dev.battChanged || "";
+
+    let safeName = dev.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeMsgs = detailsStr.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeLoc = (dev.customLoc || "Unassigned").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeDesc = (dev.customDesc || "None").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeBattType = (dev.battType || "N/A").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeHardwareSig = `${dev.manufacturer} (${dev.model})`;
+    let safeDriver = (dev.driverName || "Unknown").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeOverride = dev.battThreshOverride || "";
+    let safeOutdoor = dev.isOutdoor ? "true" : "false";
+
+    let customText = "";
+    if (dev.customLoc || dev.customDesc) {
+        let parts = [];
+        if (dev.customLoc) parts.push("📍 " + dev.customLoc);
+        if (dev.customDesc) parts.push("📝 " + dev.customDesc);
+        customText = "<div class='dev-custom'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>";
+    }
+
+    let battBarHtml = "";
+    if (dev.battVal !== null && dev.battVal !== undefined) {
+        let barCls = dev.battVal > 50 ? "bg-grn" : (dev.battVal > 20 ? "bg-ylw" : "bg-red");
+        let bTypeStr = dev.battType ? " - " + dev.battQty + "x " + dev.battType : "";
+        battBarHtml = "<div class='batt-wrap'><div class='batt-info'><span>🔋 " + dev.battVal + "%" + bTypeStr + "</span><span>⏳ " + dev.estDaysLeft + "</span></div><div class='batt-bg'><div class='batt-fg " + barCls + "' style='width:" + dev.battVal + "%;'></div></div></div>";
+    }
+
+    let sparklineHtml = "";
+    let lastRssiStr = "N/A";
+    if (dev.rssiHistory && dev.rssiHistory.length > 1) {
+        let pts = [];
+        let minR = -100.0, maxR = -30.0, w = 50.0, h = 12.0;
+        let xStep = w / (dev.rssiHistory.length - 1);
+        dev.rssiHistory.forEach((rVal, idx) => {
+            let x = Math.round((idx * xStep) * 10) / 10.0;
+            let constrainedR = Math.max(minR, Math.min(maxR, parseFloat(rVal)));
+            let y = Math.round((h - (((constrainedR - minR) / (maxR - minR)) * h)) * 10) / 10.0;
+            pts.push(x + "," + y);
+        });
+        let currRssi = dev.rssiHistory[dev.rssiHistory.length - 1];
+        lastRssiStr = currRssi + " dBm";
+        let slColor = currRssi > -70 ? "#27ae60" : (currRssi > -85 ? "#f1c40f" : "#e74c3c");
+        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + currRssi + " dBm</span><svg width='50' height='12' style='margin-left:8px;overflow:visible;'><polyline fill='none' stroke='" + slColor + "' stroke-width='1.5' points='" + pts.join(' ') + "'/></svg></div>";
+    } else if (dev.rssiHistory && dev.rssiHistory.length === 1) {
+        lastRssiStr = dev.rssiHistory[0] + " dBm";
+        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + lastRssiStr + "</span></div>";
+    }
+
+    let controlsHtml = "<div class='card-controls'>";
+    if (dev.canPing) {
+        controlsHtml += "<a href='ping?deviceId=" + dev.id + "&access_token=" + accessToken + "' class='ping-btn' onclick='event.stopPropagation();'>📡 Ping</a>";
+    }
+
+    if (dev.isMuted) {
+        let muteDate = new Date(dev.muteUntil);
+        let h = muteDate.getHours();
+        let ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12; h = h ? h : 12;
+        let m = muteDate.getMinutes();
+        m = m < 10 ? '0'+m : m;
+        let mTime = (muteDate.getMonth()+1) + '/' + muteDate.getDate() + ' ' + h + ':' + m + ampm;
+        controlsHtml += "<div style='display:inline-block;margin-left:10px;' onclick='event.stopPropagation();'><span style='color:#8e44ad;font-size:11px;margin-right:5px;'>🔕 Muted until " + mTime + "</span><a href='unmute?deviceId=" + dev.id + "&access_token=" + accessToken + "' class='ping-btn' style='background:#8e44ad;border-color:#8e44ad;margin-left:0;'>Unmute</a></div>";
+    } else if (dev.status !== "Green" && dev.status !== "Blue") {
+        controlsHtml += "<form action='mute' method='GET' class='mute-form' onclick='event.stopPropagation();'><input type='hidden' name='deviceId' value='" + dev.id + "'><input type='hidden' name='access_token' value='" + accessToken + "'><input type='number' name='hours' class='mute-input' placeholder='hrs' required min='1'><button type='submit' class='mute-btn'>🔕 Mute</button></form>";
+    }
+    controlsHtml += "</div>";
+
+    let battValAttr = dev.battVal !== null && dev.battVal !== undefined ? dev.battVal + "%" : "N/A";
+
+    return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${dev.firmware}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
+}
+
+let isEditMode = false;
+function toggleFolderEdit() {
+    isEditMode = !isEditMode;
+    document.querySelectorAll('details.folder-group').forEach(el => {
+        el.draggable = isEditMode;
+        el.style.border = isEditMode ? '2px dashed #3498db' : '';
+        el.style.padding = isEditMode ? '5px' : '';
+    });
+    let btn = document.getElementById('editFolderBtn');
+    btn.style.background = isEditMode ? '#e74c3c' : '#1f618d';
+    btn.innerText = isEditMode ? '💾 Save Layout' : '✏️ Edit Layout';
+    
+    if(!isEditMode) {
+        saveFolderOrder();
+    }
+}
+
+function saveFolderOrder() {
+    if (groupByMode !== 'category') return;
+    let folders = [];
+    document.querySelectorAll('details.folder-group summary span.folder-title').forEach(el => {
+        folders.push(el.innerText);
+    });
+    fetch(`updateFolders?order=${encodeURIComponent(folders.join(','))}&access_token=${accessToken}`)
+    .then(r => console.log('Saved order'));
+}
+
+function initDragAndDrop() {
+    let dragged;
+    document.addEventListener('dragstart', function(e) {
+        if(!isEditMode || groupByMode !== 'category') return;
+        let target = e.target.closest('details.folder-group');
+        if(target) {
+            dragged = target;
+            target.classList.add('dragging');
+        }
+    });
+    document.addEventListener('dragend', function(e) {
+        let target = e.target.closest('details.folder-group');
+        if(target) target.classList.remove('dragging');
+    });
+    document.addEventListener('dragover', function(e) {
+        if(!isEditMode || groupByMode !== 'category') return;
+        e.preventDefault();
+    });
+    document.addEventListener('drop', function(e) {
+        if(!isEditMode || groupByMode !== 'category') return;
+        e.preventDefault();
+        let target = e.target.closest('details.folder-group');
+        if (target && target !== dragged) {
+            let container = target.parentNode;
+            let draggedRect = dragged.getBoundingClientRect();
+            let targetRect = target.getBoundingClientRect();
+            if(draggedRect.top > targetRect.top) {
+                container.insertBefore(dragged, target);
+            } else {
+                container.insertBefore(dragged, target.nextSibling);
+            }
+        }
+    });
+}
+
+function changeGroupBy(mode) {
+    groupByMode = mode;
+    isEditMode = false;
+    renderApp();
+}
+
+function renderApp() {
+    if (!db || !db.estate) return;
+    let critCount = 0, warnCount = 0, goodCount = 0;
+    let totalCount = db.estate.length;
+    let activeIssuesHtml = "";
+    let mutedDevsHtml = "";
+    let groupHtmlMap = {};
+
+    db.estate.forEach(dev => {
+        if (!dev.isMuted) {
+            if (dev.status === 'Red' || dev.status === 'Purple') critCount++;
+            else if (dev.status === 'Yellow') warnCount++;
+            else goodCount++;
+        }
+
+        let cardHtml = generateCard(dev);
+
+        if (dev.isMuted) {
+            mutedDevsHtml += cardHtml;
+        } else if (dev.status === 'Red' || dev.status === 'Purple' || dev.status === 'Yellow') {
+            activeIssuesHtml += cardHtml;
+        } else {
+            let groups = [];
+            if (groupByMode === 'category') {
+                groups = (dev.categories && dev.categories.length > 0) ? dev.categories : ["Unassigned / Other"];
+            } else {
+                groups = [dev.customLoc || "Unassigned / Other"];
+            }
+            groups.forEach(gName => {
+                if (!groupHtmlMap[gName]) groupHtmlMap[gName] = { count: 0, html: "" };
+                groupHtmlMap[gName].html += cardHtml;
+                groupHtmlMap[gName].count++;
+            });
+        }
+    });
+
+    let html = "";
+    html += `<div class='header-bar'>`;
+    html += `<div class='header-left'>`;
+    html += `<button class='top-btn' onclick='openBatteryLocker()' style='background:#8e44ad;'>🔋 Battery Locker</button>`;
+    html += `<select id='groupBySelect' class='top-btn' onchange='changeGroupBy(this.value)' style='background:#2c3e50; border:none; outline:none; color:#fff;'>`;
+    html += `<option value='category' ${groupByMode==='category'?'selected':''}>📁 Group by Type</option>`;
+    html += `<option value='location' ${groupByMode==='location'?'selected':''}>📍 Group by Room</option>`;
+    html += `</select></div>`;
+    html += `<div class='header-center'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div>`;
+    html += `<div class='header-right'><button id='editFolderBtn' class='top-btn' onclick='toggleFolderEdit()' style='display:${groupByMode==='category'?'inline-block':'none'};'>✏️ Edit Layout</button></div>`;
+    html += `</div>`;
+    
+    html += `<h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Device Health Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Scan: ${db.lastCheck}</p>`;
+
+    html += `<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${critCount}</b><span>Critical</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${warnCount}</b><span>Warnings</span></div><div class='summary-card' style='border-bottom-color:#27ae60;'><b>${goodCount}</b><span>Healthy</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalCount}</b><span>Total Devices</span></div></div>`;
+
+    html += `<div class='action-row'><a href='refresh?access_token=${accessToken}' class='main-btn'>🩺 Force Health Scan</a><a href='ticket?access_token=${accessToken}' target='_blank' class='main-btn' style='background:#8e44ad;'>🖨️ Print Ticket</a></div>`;
+
+    html += `<details><summary style='border-left-color:#95a5a6;'>🖥️ Hub Health Information</summary><div style='padding:15px; background:#1a1a1a; border-radius:8px; margin-top:10px;'><table style='width:100%; color:#ccc; font-size:13px; border-collapse:collapse;'><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>Firmware Version</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.firmware}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>System Uptime</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.uptime}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>OS Memory (Free / Total)</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.memoryFree} / ${db.telemetry.memoryTotal}</td></tr><tr><td style='padding:8px 0;'>Database Size</td><td style='text-align:right; font-weight:bold; color:#fff;'>${db.telemetry.dbSize}</td></tr></table></div></details>`;
+
+    if (activeIssuesHtml) {
+        html += `<details open><summary style='border-left-color:#e74c3c;'>⚠️ Active Issues <span class='cat-count'>${critCount + warnCount} Devices</span></summary><div style='padding-top:15px;'>${activeIssuesHtml}</div></details>`;
+    }
+
+    if (mutedDevsHtml) {
+        html += `<details><summary style='border-left-color:#8e44ad;'>🔕 Muted Devices</summary><div style='padding-top:15px;'>${mutedDevsHtml}</div></details>`;
+    }
+
+    let catKeys = Object.keys(groupHtmlMap);
+    if (catKeys.length > 0) {
+        if (groupByMode === 'category') {
+            let customOrderList = db.customFolderOrder.split(',').map(s => s.trim()).filter(s => s !== "");
+            catKeys.sort((a, b) => {
+                let idxA = customOrderList.indexOf(a);
+                let idxB = customOrderList.indexOf(b);
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return a.localeCompare(b);
+            });
+        } else {
+            catKeys.sort((a, b) => {
+                if(a === "Unassigned / Other") return 1;
+                if(b === "Unassigned / Other") return -1;
+                return a.localeCompare(b);
+            });
+        }
+
+        html += `<div id='foldersContainer'>`;
+        let fIcon = groupByMode === 'category' ? '📁' : '📍';
+        catKeys.forEach(catName => {
+            html += `<details class='folder-group'><summary style='border-left-color:#3498db;'>${fIcon} <span class='folder-title'>${catName}</span> <span class='cat-count'>${groupHtmlMap[catName].count} Devices</span></summary><div style='padding-top:15px;'>${groupHtmlMap[catName].html}</div></details>`;
+        });
+        html += `</div>`;
+    } else {
+        html += `<div style='text-align:center;color:#888;padding:40px;'>No unmuted devices to display.</div>`;
+    }
+
+    let estateBatts = {};
+    let replaceNowBatts = {};
+    let annualForecast = {};
+
+    db.estate.forEach(dev => {
+        if (dev.battType && dev.battType !== "" && dev.battType !== "Rechargeable Internal" && dev.battType !== "Mains / Hardwired") {
+            let bQty = parseInt(dev.battQty) || 1;
+            estateBatts[dev.battType] = (estateBatts[dev.battType] || 0) + bQty;
+            if (dev.messages.some(m => m.includes("Battery Critical") || m.includes("Battery Low") || m.includes("Parasitic"))) {
+                replaceNowBatts[dev.battType] = (replaceNowBatts[dev.battType] || 0) + bQty;
+            }
+            
+            if (dev.ewmaRate && dev.ewmaRate > 0) {
+                let dropsPerYear = dev.ewmaRate * 365.0;
+                let batteriesPerYear = (dropsPerYear / 100.0) * bQty;
+                annualForecast[dev.battType] = (annualForecast[dev.battType] || 0) + batteriesPerYear;
+            }
+        }
+    });
+
+    let battKeys = Object.keys(estateBatts);
+    let battHtml = "";
+    if (battKeys.length > 0) {
+        battHtml += `<div style='display:block;'>`;
+        battKeys.sort().forEach(type => {
+            let totalEstate = estateBatts[type];
+            let replacingNow = replaceNowBatts[type] || 0;
+            let spares = db.spares[type] || 0;
+            let needsBuy = replacingNow > spares;
+            let projectedYr = Math.ceil(annualForecast[type] || 0);
+
+            let cardStyle = needsBuy ? "border-left:4px solid #e74c3c;" : "border-left:4px solid #27ae60;";
+            let titleColor = needsBuy ? "#e74c3c" : "#27ae60";
+            let shopMsg = needsBuy ? "<div style='color:#e74c3c;font-size:11px;font-weight:bold;margin-top:8px;'>⚠️ Purchase Needed</div>" : "<div style='color:#27ae60;font-size:11px;font-weight:bold;margin-top:8px;'>✓ Stock Sufficient</div>";
+
+            battHtml += `<div class='shop-card' style='${cardStyle}'><b class='shop-title' style='color:${titleColor}; border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:8px;'>${type}</b><div class='shop-list'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span>Estate Total:</span><b>${totalEstate}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#aaa;'><span>Spares on Hand:</span><b>${spares}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#ccc;'><span>Replace Now:</span><b>${replacingNow}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#3498db;border-top:1px dashed #444;padding-top:3px;margin-top:3px;'><span>12-Month Forecast:</span><b>~${projectedYr} / yr</b></div>${shopMsg}</div></div>`;
+        });
+        battHtml += `</div>`;
+    } else {
+        battHtml = "<p style='text-align:center;color:#888;'>No batteries tracked in estate.</p>";
+    }
+    document.getElementById('batteryLockerModalBody').innerHTML = battHtml;
+
+    document.getElementById('appContainer').innerHTML = html;
+    initDragAndDrop();
+}
+
+document.addEventListener("DOMContentLoaded", loadData);
+setInterval(silentRefresh, 60000);
+
+function checkNewLocation(sel) {
+    if (sel.value === '_NEW_') {
+        let newVal = prompt('Enter New Location Name:');
+        if (newVal) {
+            if (!Array.from(sel.options).some(o => o.value === newVal)) {
+                sel.add(new Option(newVal, newVal), sel.options[sel.options.length - 1]);
+            }
+            sel.value = newVal;
+        } else {
+            sel.value = '';
+        }
+    }
+}
+
+function checkCustomBattery(sel) {
+    if (sel.value === 'Custom') {
+        let customVal = prompt('Enter Custom Battery Type:');
+        if (customVal) {
+            if (!Array.from(sel.options).some(o => o.value === customVal)) {
+                sel.add(new Option(customVal, customVal));
+            }
+            sel.value = customVal;
+        } else {
+            sel.value = '';
+        }
+    }
+}
+
+function openDeviceModal(card) {
+    document.getElementById('modalDeviceId').value = card.getAttribute('data-id');
+    document.getElementById('modalDeviceName').innerText = card.getAttribute('data-name');
+    var status = card.getAttribute('data-status');
+    document.getElementById('modalStatusDot').className = 'dot dot-' + status;
+    document.getElementById('modalNetworkHealth').innerText = card.getAttribute('data-msgs') || 'Nominal';
+    
+    let locSel = document.getElementById('modalLocationInput');
+    let locOpts = db.locations.map(l => `<option value="${l}">${l}</option>`).join('');
+    locSel.innerHTML = `<option value="">Unassigned</option>${locOpts}<option value="_NEW_">➕ Add New Location...</option>`;
+    
+    let cardLoc = card.getAttribute('data-loc') === 'Unassigned' ? '' : card.getAttribute('data-loc');
+    if (cardLoc && !Array.from(locSel.options).some(o => o.value === cardLoc)) {
+        locSel.add(new Option(cardLoc, cardLoc), locSel.options[locSel.options.length - 1]);
+    }
+    locSel.value = cardLoc;
+
+    document.getElementById('modalDescriptionInput').value = card.getAttribute('data-desc') === 'None' ? '' : card.getAttribute('data-desc');
+
+    let battSel = document.getElementById('modalBatteryTypeInput');
+    let battOpts = db.batteryTypes.map(b => `<option value="${b}">${b}</option>`).join('');
+    battSel.innerHTML = `<option value="">N/A / Mains Power</option>${battOpts}`;
+    
+    let cardBatt = card.getAttribute('data-batttype') === 'N/A' ? '' : card.getAttribute('data-batttype');
+    if (cardBatt && !Array.from(battSel.options).some(o => o.value === cardBatt)) {
+        battSel.add(new Option(cardBatt, cardBatt));
+    }
+    battSel.value = cardBatt;
+
+    document.getElementById('modalBatteryQtyInput').value = card.getAttribute('data-battqty') || 1;
+    document.getElementById('modalOverrideThreshInput').value = card.getAttribute('data-override') || '';
+    document.getElementById('modalOutdoorCheck').checked = card.getAttribute('data-outdoor') === 'true';
+
+    document.getElementById('modalHardwareSig').innerText = card.getAttribute('data-hw') || 'Generic/Unknown';
+    document.getElementById('modalFirmwareRev').innerText = card.getAttribute('data-fw') || 'Unknown';
+    document.getElementById('modalDriverType').innerText = card.getAttribute('data-driver') || 'Unknown';
+    document.getElementById('modalDaysRemaining').innerText = card.getAttribute('data-daysleft') || 'N/A';
+    document.getElementById('modalRssi').innerText = card.getAttribute('data-rssi') || 'N/A';
+    document.getElementById('modalBatteryHealth').innerText = card.getAttribute('data-batt');
+    document.getElementById('modalLastActive').innerText = card.getAttribute('data-lastactive');
+    
+    document.getElementById('deviceModalOverlay').style.display = 'flex';
+}
+
+function closeDeviceModal() { document.getElementById('deviceModalOverlay').style.display = 'none'; }
+
+function openBatteryLocker() { document.getElementById('batteryLockerModalOverlay').style.display = 'flex'; }
+function closeBatteryLocker() { document.getElementById('batteryLockerModalOverlay').style.display = 'none'; }
+
+function saveDeviceChanges() {
+    let saveBtn = document.querySelector('.save-modal-btn');
+    let originalText = saveBtn.innerText;
+    saveBtn.innerText = '⏳ Saving...';
+    saveBtn.disabled = true;
+
+    let dId = document.getElementById('modalDeviceId').value;
+    let loc = document.getElementById('modalLocationInput').value;
+    let desc = document.getElementById('modalDescriptionInput').value;
+    let battType = document.getElementById('modalBatteryTypeInput').value;
+    let battQty = document.getElementById('modalBatteryQtyInput').value;
+    let overrideThresh = document.getElementById('modalOverrideThreshInput').value;
+    let isOutdoor = document.getElementById('modalOutdoorCheck').checked;
+    
+    fetch('updateDevice?deviceId=' + dId + '&loc=' + encodeURIComponent(loc) + '&desc=' + encodeURIComponent(desc) + '&battType=' + encodeURIComponent(battType) + '&battQty=' + encodeURIComponent(battQty) + '&overrideThresh=' + encodeURIComponent(overrideThresh) + '&isOutdoor=' + encodeURIComponent(isOutdoor) + '&access_token=' + accessToken)
+    .then(response => {
+        saveBtn.innerText = originalText;
+        saveBtn.disabled = false;
+        closeDeviceModal();
+        let dev = db.estate.find(d => d.id == dId);
+        if(dev) {
+            dev.customLoc = loc || "";
+            dev.customDesc = desc || "";
+            dev.battType = battType || "";
+            dev.battQty = parseInt(battQty) || 1;
+            dev.battThreshOverride = overrideThresh;
+            dev.isOutdoor = isOutdoor;
+        }
+        renderApp();
+    })
+    .catch(err => {
+        saveBtn.innerText = originalText;
+        saveBtn.disabled = false;
+        alert("Error saving settings.");
+    });
+}
+
+document.addEventListener('keydown', function(event) { 
+    if (event.key === 'Escape') {
+        closeDeviceModal();
+        closeBatteryLocker();
+    }
+});
+'''
 
 preferences {
     page(name: "mainPage")
@@ -141,6 +807,7 @@ def mainPage() {
 def pageSettings() {
     dynamicPage(name: "pageSettings", title: "⚙️ Core Setup & Devices", install: false, uninstall: false) {
         section("Global Controls") {
+            paragraph NUCLEAR_JS
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
             input "scanInterval", "enum", title: "Automated Scan Interval", options: ["1 Hour", "3 Hours", "6 Hours", "12 Hours", "24 Hours"], defaultValue: "12 Hours", required: true
             
@@ -156,13 +823,11 @@ def pageSettings() {
         }
         
         section("Primary Infrastructure") {
-            paragraph BUG_WARN
             input "batteryDevices", "capability.battery", title: "Battery-Powered Infrastructure", multiple: true, required: false
             input "actuatorDevices", "capability.actuator", title: "Hardwired / In-Wall Actuators (Locks, Motors)", multiple: true, required: false
         }
 
         section("Lighting, Switches & Power") {
-            paragraph BUG_WARN
             paragraph "<i>Note: Devices assigned to the Lighting & Power section will inherit the Mains-Power Override and automatically ignore ghost battery attributes from generic drivers.</i>"
             input "lightSwitches", "capability.switch", title: "In-Wall Light Switches & Dimmers", multiple: true, required: false
             input "smartPlugs", "capability.switch", title: "Smart Plugs & Outlets", multiple: true, required: false
@@ -170,18 +835,15 @@ def pageSettings() {
         }
         
         section("External Hubs & Integrations") {
-            paragraph BUG_WARN
             input "hubBridges", "capability.actuator", title: "Hue Bridges & External Hubs", multiple: true, required: false
         }
 
         section("Remotes & Buttons (Sleepy Devices)") {
-            paragraph BUG_WARN
             paragraph "<div style='background:#fff3cd; color:#856404; padding:8px; border-radius:4px; border:1px solid #ffeeba;'><b>Developer Note:</b> These devices (like Tuya 4-Button switches) turn their radios completely off to conserve battery. They do not do routine check-ins, and they completely ignore network pings. By assigning them here, the application can apply a separate, much longer inactivity threshold so they don't falsely report as offline in your dashboard.</div>"
             input "buttonControllers", "capability.pushableButton", title: "Button Controllers & Remotes", multiple: true, required: false
         }
 
         section("Environmental & Security Sensors") {
-            paragraph BUG_WARN
             input "smokeDetectors", "capability.smokeDetector", title: "Smoke / Carbon Monoxide Detectors", multiple: true, required: false
             input "waterSensors", "capability.waterSensor", title: "Water / Leak Sensors", multiple: true, required: false
             input "motionSensors", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
@@ -191,7 +853,6 @@ def pageSettings() {
         }
 
         section("Utility & Measurement Sensors") {
-            paragraph BUG_WARN
             input "temperatureSensors", "capability.temperatureMeasurement", title: "Temperature Sensors", multiple: true, required: false
             input "humiditySensors", "capability.relativeHumidityMeasurement", title: "Humidity Sensors", multiple: true, required: false
             input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / Light Sensors", multiple: true, required: false
@@ -205,7 +866,7 @@ def pageSettings() {
 def pageNotifications() {
     dynamicPage(name: "pageNotifications", title: "🔔 Notification Rules & Routing", install: false, uninstall: false) {
         section("🌍 Global Alert Routing") {
-            paragraph BUG_WARN
+            paragraph NUCLEAR_JS
             paragraph "<i>Set up your default notification devices for the estate. To route alerts for specific devices to specific people (e.g., only send Garage Door alerts to a specific phone), use the 'Override Alert Target' setting for that device in the Locations, Profiles & Folders menu.</i>"
             input "defaultCritNotifiers", "capability.notification", title: "Global Notifier: CRITICAL & FLAPPING issues", multiple: true, required: false
             input "defaultWarnNotifiers", "capability.notification", title: "Global Notifier: WARNING issues", multiple: true, required: false
@@ -230,6 +891,7 @@ def pageDeviceDetails() {
         def battTypes = ["AA", "AAA", "AAAA", "C", "D", "9V", "CR2032", "CR2025", "CR2450", "CR2477", "CR1632", "CR1220", "CR2", "CR123A", "LR44", "A23", "18650", "14500", "Custom", "Rechargeable Internal"]
 
         section("📁 Global Folder Organization") {
+            paragraph NUCLEAR_JS
             paragraph "<i>Set the exact order you want your categories to appear on the web dashboard. Enter a comma-separated list of folder names. Any unlisted folders will sort alphabetically at the bottom.</i>"
             input "customFolderOrder", "text", title: "Custom Folder Priority Order", required: false, description: "e.g., Safety & Alarms, Smart Plugs & Outlets, Climate Sensors"
         }
@@ -316,6 +978,7 @@ def pageBatteryLocker() {
 
         if (estateBatts.size() > 0) {
             section("Estate Battery Overview & Spares") {
+                paragraph NUCLEAR_JS
                 paragraph "<i>This is your Battery Locker. It dynamically calculates every battery required to power your entire smart home. Enter your current spare inventory below so the dashboard can warn you when it's time to re-order.</i>"
 
                 def sortedTypes = estateBatts.keySet().sort()
@@ -334,14 +997,13 @@ def pageBatteryLocker() {
 
 def pageThresholds() {
     dynamicPage(name: "pageThresholds", title: "📊 Monitoring Thresholds", install: false, uninstall: false) {
-        
         def allDevs = getAllMonitoredDevices().sort { it.displayName }
         def devOptions = [:]
         allDevs.each { devOptions[it.id.toString()] = it.displayName }
         devOptions = devOptions.sort { it.value }
         
         section("Auto-Heal Power Cycling") {
-            paragraph BUG_WARN
+            paragraph NUCLEAR_JS
             paragraph "<i>If a smart plug or switch goes offline and standard pings fail, the system can attempt to toggle its physical power state (Off-On / On-Off) to force it back onto the mesh. This is limited to once every 24 hours per device.</i>"
             input "optOutPowerCycle", "enum", title: "Devices to EXCLUDE from Auto-Power Cycling", options: devOptions, multiple: true, required: false
         }
@@ -363,7 +1025,6 @@ def pageThresholds() {
         section("Device Inactivity (Dead Devices)") {
             input "enableInactivityCheck", "bool", title: "Enable Inactivity Monitoring?", defaultValue: true, submitOnChange: true
             if (enableInactivityCheck) {
-                paragraph BUG_WARN
                 paragraph "<i>Flags devices that have not reported any activity or status updates in the specified timeframe.</i>"
                 input "inactivityThreshold", "number", title: "Standard Inactivity Threshold (Hours)", defaultValue: 24, required: true
                 
@@ -380,7 +1041,6 @@ def pageThresholds() {
         section("Stale State Detection (Stuck Sensors)") {
             input "enableStuckCheck", "bool", title: "Enable Stale State Detection?", defaultValue: true, submitOnChange: true
             if (enableStuckCheck) {
-                paragraph BUG_WARN
                 paragraph "<i>Detects hardware lockups where a sensor is technically online, but its physical state is frozen (e.g., stuck on 'Active' or 'Open').</i>"
                 input "stuckMotionHours", "number", title: "Stuck 'Active' Threshold (Hours)", defaultValue: 2, required: true
                 input "stuckContactHours", "number", title: "Stuck 'Open' Threshold (Hours)", defaultValue: 24, required: true
@@ -1119,6 +1779,26 @@ def finalizeScan() {
     app.addToHistory("SCAN: Staggered scan sequence completed successfully.")
 }
 
+def updateChildHtmlDashboard(results, critCount, warnCount) {
+    try {
+        def child = getChildDevice("health_monitor_child")
+        if (child) {
+            def html = "<div style=\"padding:10px; background-color:#151515; color:#e0e0e0; border-radius:8px; font-family:sans-serif;\">"
+            html += "<h3 style=\"color:#fff; margin-top:0;\">Device Health</h3>"
+            html += "<b>Critical:</b> <span style=\"color:#e74c3c\">${critCount}</span><br>"
+            html += "<b>Warnings:</b> <span style=\"color:#f1c40f\">${warnCount}</span><br>"
+            html += "<b>Last Scan:</b> ${state.lastCheckTime}<br><br>"
+            if (state.accessToken) {
+                html += "<a href=\"${getFullLocalApiServerUrl()}/dashboard?access_token=${state.accessToken}\" target=\"_blank\" style=\"color:#3498db; text-decoration:none;\"><b>Launch Full Dashboard</b></a>"
+            }
+            html += "</div>"
+            child.sendEvent(name: "html", value: html)
+        }
+    } catch (e) {
+        log.warn "Could not update child HTML device: ${e}"
+    }
+}
+
 def runFirmwareConsistencyCheck(results) {
     def hardwareGroups = results.groupBy { "${it.manufacturer}||${it.model}" }
     
@@ -1222,6 +1902,47 @@ def getHubTelemetry() {
     return telemetry
 }
 
+def serveMaintenanceTicket() {
+    try {
+        ensureStateMaps()
+        def issues = state.dashboardData?.findAll { it.status == "Red" || it.status == "Purple" || it.status == "Yellow" } ?: []
+        
+        def html = """<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Device Health Maintenance Ticket</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; color: #333; background: #fff; max-width: 800px; margin: 0 auto; }
+            h2 { color: #0b3b60; border-bottom: 2px solid #0b3b60; padding-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+            th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+            th { background-color: #f8f9fa; color: #333; }
+            .btn-print { background-color: #8e44ad; color: #fff; border: none; padding: 10px 15px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; display: inline-block; margin-top: 10px; }
+            .btn-print:hover { background-color: #732d91; }
+            @media print { .no-print { display: none !important; } }
+        </style></head><body>
+        <h2>Device Health Maintenance Ticket</h2>
+        <p><strong>Generated:</strong> ${new Date().format("MM/dd/yyyy h:mm a", location.timeZone)}</p>
+        <button class="no-print btn-print" onclick="window.print()">🖨️ Print Ticket</button>
+        """
+        
+        if (issues.size() > 0) {
+            html += "<table><tr><th>Device</th><th>Location</th><th>Status</th><th>Details</th><th>Power/Battery</th></tr>"
+            issues.each { dev ->
+                def bStr = dev.battVal != null ? "${dev.battVal}% (${dev.battType ?: 'N/A'})" : "Mains"
+                def statColor = dev.status == "Red" ? "#e74c3c" : (dev.status == "Purple" ? "#9b59b6" : "#f1c40f")
+                html += "<tr><td><b>${dev.name}</b></td><td>${dev.customLoc ?: 'Unassigned'}</td><td style='color:${statColor}; font-weight:bold;'>${dev.status}</td><td>${dev.messages.join('<br>')}</td><td>${bStr}</td></tr>"
+            }
+            html += "</table>"
+        } else {
+            html += "<p style='margin-top:20px; font-style:italic;'>No active network issues or low batteries detected. All systems nominal.</p>"
+        }
+        
+        html += "</body></html>"
+        return render(contentType: "text/html", data: html, status: 200)
+    } catch (e) {
+        log.error "Maintenance Ticket Generation Error: ${e}"
+        return render(contentType: "text/html", data: "Error generating ticket: ${e}", status: 500)
+    }
+}
+
 def serveJsonEndpoint() {
     try {
         ensureStateMaps()
@@ -1306,607 +2027,11 @@ def serveDataEndpoint() {
 
 def serveDashboardPage() {
     try {
-        def css = '''
-        body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; padding:20px; background:#0d0d0d; color:#e0e0e0; margin:0; }
-        .container { max-width:800px; margin:0 auto; background:#151515; padding:25px; border-radius:12px; box-sizing:border-box; width:100%; }
-        .loader { border:4px solid #333; border-top:4px solid #3498db; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:0 auto; }
-        @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+        def css = DASHBOARD_CSS
+        def jsScript = DASHBOARD_JS.replace('TOKEN_PLACEHOLDER', state.accessToken)
+        def modalHtml = DASHBOARD_MODAL
+        def batteryLockerHtml = DASHBOARD_BATTERY_LOCKER
         
-        .header-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:15px; }
-        .header-left { display:flex; gap:10px; flex:1; min-width:260px; }
-        .header-center { flex:1; display:flex; justify-content:center; min-width:80px; }
-        .header-right { flex:1; display:flex; justify-content:flex-end; min-width:120px; }
-        
-        .top-btn { background:#1f618d; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-size:12px; cursor:pointer; font-weight:bold; transition:background 0.15s; }
-        .top-btn:hover { background:#1a5276; }
-        .action-row { display:flex; gap:10px; margin-bottom:30px; }
-        a.main-btn { background:#1f618d; color:#fff; border:none; padding:14px 20px; border-radius:8px; display:block; text-align:center; text-decoration:none; font-weight:600; flex:1; }
-        a.main-btn:hover { background:#1a5276; }
-        
-        .summary-box { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:25px; }
-        .summary-card { flex:1 1 20%; min-width:120px; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; text-align:center; border-bottom:3px solid #333; }
-        .summary-card b { display:block; font-size:24px; color:#fff; margin-bottom:5px; }
-        .summary-card span { font-size:12px; color:#aaa; text-transform:uppercase; }
-        
-        details { margin-bottom:15px; }
-        summary { padding:12px 15px; background:#1c1c1c; border-radius:6px; border-left:4px solid #3498db; cursor:pointer; color:#fff; font-weight:bold; font-size:16px; }
-        summary:hover { background:#252525; }
-        .cat-count { float:right; font-size:12px; color:#888; margin-top:3px; }
-        
-        .dev-card { background:#222; padding:15px; border-radius:8px; margin-bottom:12px; border-left:4px solid #333; }
-        .clickable-card { cursor:pointer; transition:transform 0.15s ease, background-color 0.15s ease; }
-        .clickable-card:hover { transform:translateY(-2px); background-color:#2a2a2a !important; }
-        
-        .status-Red { border-left-color:#e74c3c; background:linear-gradient(90deg, rgba(231,76,60,.1) 0%, #222 30%); }
-        .status-Purple { border-left-color:#9b59b6; background:linear-gradient(90deg, rgba(155,89,182,.1) 0%, #222 30%); }
-        .status-Yellow { border-left-color:#f1c40f; background:linear-gradient(90deg, rgba(241,196,15,.1) 0%, #222 30%); }
-        .status-Blue { border-left-color:#3498db; background:linear-gradient(90deg, rgba(52,152,219,.1) 0%, #222 30%); }
-        .status-Green { border-left-color:#27ae60; }
-        
-        .dot { height:12px; width:12px; border-radius:50%; display:inline-block; margin-right:12px; flex-shrink:0; }
-        .dot-Red { background:#e74c3c; box-shadow:0 0 6px #e74c3c; }
-        .dot-Purple { background:#9b59b6; box-shadow:0 0 6px #9b59b6; }
-        .dot-Yellow { background:#f1c40f; box-shadow:0 0 6px #f1c40f; }
-        .dot-Blue { background:#3498db; box-shadow:0 0 6px #3498db; }
-        .dot-Green { background:#27ae60; }
-        
-        .dflex { display:flex; align-items:center; width:100%; }
-        .dev-info { flex-grow:1; min-width:0; }
-        .dev-name { font-size:15px; font-weight:bold; color:#fff; margin-bottom:2px; }
-        .dev-custom { font-size:11px; color:#888; margin-bottom:5px; }
-        .dev-details { font-size:13px; color:#aaa; }
-        .dev-subtext { font-size:11px; color:#7f8c8d; margin-top:5px; font-style:italic; }
-        
-        .card-controls { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; }
-        a.ping-btn { background:#34495e; color:#fff; border:1px solid #2c3e50; padding:6px 12px; font-size:12px; border-radius:4px; font-weight:bold; text-decoration:none; margin-left:10px; flex-shrink:0; }
-        a.ping-btn:hover { background:#2c3e50; }
-        
-        .batt-wrap { margin-top:8px; width:100%; }
-        .batt-info { display:flex; justify-content:space-between; font-size:10px; color:#aaa; margin-bottom:3px; }
-        .batt-bg { width:100%; background:#333; height:6px; border-radius:3px; overflow:hidden; }
-        .batt-fg { height:100%; }
-        .bg-grn { background:#27ae60; }
-        .bg-ylw { background:#f1c40f; }
-        .bg-red { background:#e74c3c; }
-        
-        .shop-card { flex:1; min-width:160px; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; border-left:4px solid #9b59b6; box-shadow:0 4px 6px rgba(0,0,0,.3); }
-        .shop-title { color:#fff; font-size:15px; display:block; margin-bottom:8px; }
-        .shop-badge { background:#9b59b6; color:#fff; font-size:11px; padding:2px 6px; border-radius:10px; float:right; }
-        .shop-list { font-size:11px; color:#888; max-height:80px; overflow-y:auto; line-height:1.4; }
-        
-        .mute-form { display:inline-flex; align-items:center; margin-left:10px; margin-bottom:0; }
-        .mute-input { width:45px; padding:0 4px; font-size:11px; border-radius:4px 0 0 4px; border:1px solid #8e44ad; background:#111; color:#fff; height:26px; box-sizing:border-box; }
-        .mute-btn { margin-left:0; border-radius:0 4px 4px 0; background:#8e44ad; border-color:#8e44ad; height:26px; color:#fff; border-style:solid; border-width:1px; font-size:12px; font-weight:bold; cursor:pointer; }
-        
-        .modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:1000; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; }
-        .modal-content { background:#1a1a1a; color:#e0e0e0; width:100%; max-width:550px; border-radius:12px; padding:22px; box-sizing:border-box; position:relative; box-shadow:0 12px 35px rgba(0,0,0,0.6); border:1px solid #333; max-height:90vh; overflow-y:auto; }
-        .modal-header { font-size:18px; font-weight:bold; color:#fff; margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:12px; display:flex; align-items:center; }
-        .modal-body table { width:100%; border-collapse:collapse; margin-bottom:20px; }
-        .modal-body td { padding:10px 0; border-bottom:1px solid #262626; font-size:13px; line-height:1.4; }
-        .modal-body td:first-child { color:#888; font-weight:500; width:38%; vertical-align:middle; }
-        .modal-body td:last-child { color:#fff; text-align:right; }
-        
-        .modal-input { width:100%; padding:6px; border-radius:4px; border:1px solid #444; background:#222; color:#fff; font-size:13px; box-sizing:border-box; }
-        .modal-input:focus { outline:none; border-color:#3498db; }
-        
-        .modal-action-row { display:flex; gap:10px; margin-top:15px; }
-        .save-modal-btn { flex:1; padding:12px; background:#27ae60; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; transition:background 0.15s; }
-        .save-modal-btn:hover { background:#2ecc71; }
-        .save-modal-btn:disabled { background:#7f8c8d; cursor:not-allowed; }
-        .close-modal-btn { flex:1; padding:12px; background:#2c3e50; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:13px; cursor:pointer; text-align:center; transition:background 0.15s; }
-        .close-modal-btn:hover { background:#34495e; }
-
-        details.folder-group.dragging { opacity: 0.5; }
-        
-        /* Ultimate Mobile Responsiveness */
-        @media (max-width: 650px) {
-            body { padding: 10px; }
-            .container { padding: 15px; }
-            .header-bar { flex-direction: column; }
-            .header-center { order: 1; width: 100%; }
-            .header-left { order: 2; width: 100%; justify-content: center; flex-wrap: wrap; }
-            .header-right { order: 3; width: 100%; justify-content: center; }
-            .summary-card { flex: 1 1 40%; min-width: 40%; }
-            .action-row { flex-direction: column; }
-            .dflex { flex-wrap: wrap; }
-            .card-controls { width: 100%; margin-top: 12px; justify-content: flex-start; }
-            .ping-btn { margin-left: 0; margin-right: 10px; }
-            .mute-form { margin-left: 0; }
-            .modal-content { padding: 15px; }
-            .modal-body td { display: block; width: 100%; text-align: left !important; }
-            .modal-body td:first-child { font-size: 11px; padding-bottom: 2px; border-bottom: none; color: #3498db; }
-            .modal-body td:last-child { padding-top: 2px; padding-bottom: 12px; }
-        }
-        '''
-
-        def jsScript = '''
-        let db = null;
-        let groupByMode = 'category';
-        const accessToken = 'TOKEN_PLACEHOLDER';
-
-        function loadData() {
-            document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#888;'><div class='loader'></div><br><br>Syncing Estate Diagnostics...</div>";
-            fetch('data?access_token=' + accessToken)
-            .then(res => res.json())
-            .then(data => {
-                db = data;
-                renderApp();
-            })
-            .catch(err => {
-                document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#e74c3c;'><b>Cloud Connection Error</b><br>Could not retrieve estate data. The hub might be busy processing a scan.<br><br><small>" + err + "</small></div>";
-            });
-        }
-
-        function silentRefresh() {
-            if((!document.getElementById('deviceModalOverlay').style.display || document.getElementById('deviceModalOverlay').style.display === 'none') && 
-               (!document.getElementById('batteryLockerModalOverlay').style.display || document.getElementById('batteryLockerModalOverlay').style.display === 'none')){ 
-                
-                fetch('data?access_token=' + accessToken)
-                .then(r => r.json())
-                .then(data => {
-                    db = data;
-                    renderApp();
-                });
-            } 
-        }
-
-        function generateCard(dev) {
-            let detailsStr = dev.messages.join(" • ");
-            let actStr = dev.lastActive || "Unknown";
-            let battStr = dev.battChanged || "";
-
-            let safeName = dev.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeMsgs = detailsStr.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeLoc = (dev.customLoc || "Unassigned").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeDesc = (dev.customDesc || "None").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeBattType = (dev.battType || "N/A").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeHardwareSig = `${dev.manufacturer} (${dev.model})`;
-            let safeDriver = (dev.driverName || "Unknown").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-            let safeOverride = dev.battThreshOverride || "";
-            let safeOutdoor = dev.isOutdoor ? "true" : "false";
-
-            let customText = "";
-            if (dev.customLoc || dev.customDesc) {
-                let parts = [];
-                if (dev.customLoc) parts.push("📍 " + dev.customLoc);
-                if (dev.customDesc) parts.push("📝 " + dev.customDesc);
-                customText = "<div class='dev-custom'>" + parts.join(" &nbsp;|&nbsp; ") + "</div>";
-            }
-
-            let battBarHtml = "";
-            if (dev.battVal !== null && dev.battVal !== undefined) {
-                let barCls = dev.battVal > 50 ? "bg-grn" : (dev.battVal > 20 ? "bg-ylw" : "bg-red");
-                let bTypeStr = dev.battType ? " - " + dev.battQty + "x " + dev.battType : "";
-                battBarHtml = "<div class='batt-wrap'><div class='batt-info'><span>🔋 " + dev.battVal + "%" + bTypeStr + "</span><span>⏳ " + dev.estDaysLeft + "</span></div><div class='batt-bg'><div class='batt-fg " + barCls + "' style='width:" + dev.battVal + "%;'></div></div></div>";
-            }
-
-            let sparklineHtml = "";
-            let lastRssiStr = "N/A";
-            if (dev.rssiHistory && dev.rssiHistory.length > 1) {
-                let pts = [];
-                let minR = -100.0, maxR = -30.0, w = 50.0, h = 12.0;
-                let xStep = w / (dev.rssiHistory.length - 1);
-                dev.rssiHistory.forEach((rVal, idx) => {
-                    let x = Math.round((idx * xStep) * 10) / 10.0;
-                    let constrainedR = Math.max(minR, Math.min(maxR, parseFloat(rVal)));
-                    let y = Math.round((h - (((constrainedR - minR) / (maxR - minR)) * h)) * 10) / 10.0;
-                    pts.push(x + "," + y);
-                });
-                let currRssi = dev.rssiHistory[dev.rssiHistory.length - 1];
-                lastRssiStr = currRssi + " dBm";
-                let slColor = currRssi > -70 ? "#27ae60" : (currRssi > -85 ? "#f1c40f" : "#e74c3c");
-                sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + currRssi + " dBm</span><svg width='50' height='12' style='margin-left:8px;overflow:visible;'><polyline fill='none' stroke='" + slColor + "' stroke-width='1.5' points='" + pts.join(' ') + "'/></svg></div>";
-            } else if (dev.rssiHistory && dev.rssiHistory.length === 1) {
-                lastRssiStr = dev.rssiHistory[0] + " dBm";
-                sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + lastRssiStr + "</span></div>";
-            }
-
-            let controlsHtml = "<div class='card-controls'>";
-            if (dev.canPing) {
-                controlsHtml += "<a href='ping?deviceId=" + dev.id + "&access_token=" + accessToken + "' class='ping-btn' onclick='event.stopPropagation();'>📡 Ping</a>";
-            }
-
-            if (dev.isMuted) {
-                let muteDate = new Date(dev.muteUntil);
-                let h = muteDate.getHours();
-                let ampm = h >= 12 ? 'PM' : 'AM';
-                h = h % 12; h = h ? h : 12;
-                let m = muteDate.getMinutes();
-                m = m < 10 ? '0'+m : m;
-                let mTime = (muteDate.getMonth()+1) + '/' + muteDate.getDate() + ' ' + h + ':' + m + ampm;
-                controlsHtml += "<div style='display:inline-block;margin-left:10px;' onclick='event.stopPropagation();'><span style='color:#8e44ad;font-size:11px;margin-right:5px;'>🔕 Muted until " + mTime + "</span><a href='unmute?deviceId=" + dev.id + "&access_token=" + accessToken + "' class='ping-btn' style='background:#8e44ad;border-color:#8e44ad;margin-left:0;'>Unmute</a></div>";
-            } else if (dev.status !== "Green" && dev.status !== "Blue") {
-                controlsHtml += "<form action='mute' method='GET' class='mute-form' onclick='event.stopPropagation();'><input type='hidden' name='deviceId' value='" + dev.id + "'><input type='hidden' name='access_token' value='" + accessToken + "'><input type='number' name='hours' class='mute-input' placeholder='hrs' required min='1'><button type='submit' class='mute-btn'>🔕 Mute</button></form>";
-            }
-            controlsHtml += "</div>";
-
-            let battValAttr = dev.battVal !== null && dev.battVal !== undefined ? dev.battVal + "%" : "N/A";
-
-            return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${dev.firmware}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
-        }
-
-        let isEditMode = false;
-        function toggleFolderEdit() {
-            isEditMode = !isEditMode;
-            document.querySelectorAll('details.folder-group').forEach(el => {
-                el.draggable = isEditMode;
-                el.style.border = isEditMode ? '2px dashed #3498db' : '';
-                el.style.padding = isEditMode ? '5px' : '';
-            });
-            let btn = document.getElementById('editFolderBtn');
-            btn.style.background = isEditMode ? '#e74c3c' : '#1f618d';
-            btn.innerText = isEditMode ? '💾 Save Layout' : '✏️ Edit Layout';
-            
-            if(!isEditMode) {
-                saveFolderOrder();
-            }
-        }
-
-        function saveFolderOrder() {
-            if (groupByMode !== 'category') return;
-            let folders = [];
-            document.querySelectorAll('details.folder-group summary span.folder-title').forEach(el => {
-                folders.push(el.innerText);
-            });
-            fetch(`updateFolders?order=${encodeURIComponent(folders.join(','))}&access_token=${accessToken}`)
-            .then(r => console.log('Saved order'));
-        }
-
-        function initDragAndDrop() {
-            let dragged;
-            document.addEventListener('dragstart', function(e) {
-                if(!isEditMode || groupByMode !== 'category') return;
-                let target = e.target.closest('details.folder-group');
-                if(target) {
-                    dragged = target;
-                    target.classList.add('dragging');
-                }
-            });
-            document.addEventListener('dragend', function(e) {
-                let target = e.target.closest('details.folder-group');
-                if(target) target.classList.remove('dragging');
-            });
-            document.addEventListener('dragover', function(e) {
-                if(!isEditMode || groupByMode !== 'category') return;
-                e.preventDefault();
-            });
-            document.addEventListener('drop', function(e) {
-                if(!isEditMode || groupByMode !== 'category') return;
-                e.preventDefault();
-                let target = e.target.closest('details.folder-group');
-                if (target && target !== dragged) {
-                    let container = target.parentNode;
-                    let draggedRect = dragged.getBoundingClientRect();
-                    let targetRect = target.getBoundingClientRect();
-                    if(draggedRect.top > targetRect.top) {
-                        container.insertBefore(dragged, target);
-                    } else {
-                        container.insertBefore(dragged, target.nextSibling);
-                    }
-                }
-            });
-        }
-        
-        function changeGroupBy(mode) {
-            groupByMode = mode;
-            isEditMode = false;
-            renderApp();
-        }
-
-        function renderApp() {
-            if (!db || !db.estate) return;
-            let critCount = 0, warnCount = 0, goodCount = 0;
-            let totalCount = db.estate.length;
-            let activeIssuesHtml = "";
-            let mutedDevsHtml = "";
-            let groupHtmlMap = {};
-
-            db.estate.forEach(dev => {
-                if (!dev.isMuted) {
-                    if (dev.status === 'Red' || dev.status === 'Purple') critCount++;
-                    else if (dev.status === 'Yellow') warnCount++;
-                    else goodCount++;
-                }
-
-                let cardHtml = generateCard(dev);
-
-                if (dev.isMuted) {
-                    mutedDevsHtml += cardHtml;
-                } else if (dev.status === 'Red' || dev.status === 'Purple' || dev.status === 'Yellow') {
-                    activeIssuesHtml += cardHtml;
-                } else {
-                    let groups = [];
-                    if (groupByMode === 'category') {
-                        groups = (dev.categories && dev.categories.length > 0) ? dev.categories : ["Unassigned / Other"];
-                    } else {
-                        groups = [dev.customLoc || "Unassigned / Other"];
-                    }
-                    groups.forEach(gName => {
-                        if (!groupHtmlMap[gName]) groupHtmlMap[gName] = { count: 0, html: "" };
-                        groupHtmlMap[gName].html += cardHtml;
-                        groupHtmlMap[gName].count++;
-                    });
-                }
-            });
-
-            let html = "";
-            html += `<div class='header-bar'>`;
-            html += `<div class='header-left'>`;
-            html += `<button class='top-btn' onclick='openBatteryLocker()' style='background:#8e44ad;'>🔋 Battery Locker</button>`;
-            html += `<select id='groupBySelect' class='top-btn' onchange='changeGroupBy(this.value)' style='background:#2c3e50; border:none; outline:none; color:#fff;'>`;
-            html += `<option value='category' ${groupByMode==='category'?'selected':''}>📁 Group by Type</option>`;
-            html += `<option value='location' ${groupByMode==='location'?'selected':''}>📍 Group by Room</option>`;
-            html += `</select></div>`;
-            html += `<div class='header-center'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div>`;
-            html += `<div class='header-right'><button id='editFolderBtn' class='top-btn' onclick='toggleFolderEdit()' style='display:${groupByMode==='category'?'inline-block':'none'};'>✏️ Edit Layout</button></div>`;
-            html += `</div>`;
-            
-            html += `<h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Device Health Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Scan: ${db.lastCheck}</p>`;
-
-            html += `<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${critCount}</b><span>Critical</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${warnCount}</b><span>Warnings</span></div><div class='summary-card' style='border-bottom-color:#27ae60;'><b>${goodCount}</b><span>Healthy</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalCount}</b><span>Total Devices</span></div></div>`;
-
-            html += `<div class='action-row'><a href='refresh?access_token=${accessToken}' class='main-btn'>🩺 Force Health Scan</a><a href='ticket?access_token=${accessToken}' target='_blank' class='main-btn' style='background:#8e44ad;'>🖨️ Print Ticket</a></div>`;
-
-            html += `<details><summary style='border-left-color:#95a5a6;'>🖥️ Hub Health Information</summary><div style='padding:15px; background:#1a1a1a; border-radius:8px; margin-top:10px;'><table style='width:100%; color:#ccc; font-size:13px; border-collapse:collapse;'><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>Firmware Version</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.firmware}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>System Uptime</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.uptime}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>OS Memory (Free / Total)</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.memoryFree} / ${db.telemetry.memoryTotal}</td></tr><tr><td style='padding:8px 0;'>Database Size</td><td style='text-align:right; font-weight:bold; color:#fff;'>${db.telemetry.dbSize}</td></tr></table></div></details>`;
-
-            if (activeIssuesHtml) {
-                html += `<details open><summary style='border-left-color:#e74c3c;'>⚠️ Active Issues <span class='cat-count'>${critCount + warnCount} Devices</span></summary><div style='padding-top:15px;'>${activeIssuesHtml}</div></details>`;
-            }
-
-            if (mutedDevsHtml) {
-                html += `<details><summary style='border-left-color:#8e44ad;'>🔕 Muted Devices</summary><div style='padding-top:15px;'>${mutedDevsHtml}</div></details>`;
-            }
-
-            let catKeys = Object.keys(groupHtmlMap);
-            if (catKeys.length > 0) {
-                if (groupByMode === 'category') {
-                    let customOrderList = db.customFolderOrder.split(',').map(s => s.trim()).filter(s => s !== "");
-                    catKeys.sort((a, b) => {
-                        let idxA = customOrderList.indexOf(a);
-                        let idxB = customOrderList.indexOf(b);
-                        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-                        if (idxA !== -1) return -1;
-                        if (idxB !== -1) return 1;
-                        return a.localeCompare(b);
-                    });
-                } else {
-                    catKeys.sort((a, b) => {
-                        if(a === "Unassigned / Other") return 1;
-                        if(b === "Unassigned / Other") return -1;
-                        return a.localeCompare(b);
-                    });
-                }
-
-                html += `<div id='foldersContainer'>`;
-                let fIcon = groupByMode === 'category' ? '📁' : '📍';
-                catKeys.forEach(catName => {
-                    html += `<details class='folder-group'><summary style='border-left-color:#3498db;'>${fIcon} <span class='folder-title'>${catName}</span> <span class='cat-count'>${groupHtmlMap[catName].count} Devices</span></summary><div style='padding-top:15px;'>${groupHtmlMap[catName].html}</div></details>`;
-                });
-                html += `</div>`;
-            } else {
-                html += `<div style='text-align:center;color:#888;padding:40px;'>No unmuted devices to display.</div>`;
-            }
-
-            let estateBatts = {};
-            let replaceNowBatts = {};
-            let annualForecast = {};
-
-            db.estate.forEach(dev => {
-                if (dev.battType && dev.battType !== "" && dev.battType !== "Rechargeable Internal" && dev.battType !== "Mains / Hardwired") {
-                    let bQty = parseInt(dev.battQty) || 1;
-                    estateBatts[dev.battType] = (estateBatts[dev.battType] || 0) + bQty;
-                    if (dev.messages.some(m => m.includes("Battery Critical") || m.includes("Battery Low") || m.includes("Parasitic"))) {
-                        replaceNowBatts[dev.battType] = (replaceNowBatts[dev.battType] || 0) + bQty;
-                    }
-                    
-                    if (dev.ewmaRate && dev.ewmaRate > 0) {
-                        let dropsPerYear = dev.ewmaRate * 365.0;
-                        let batteriesPerYear = (dropsPerYear / 100.0) * bQty;
-                        annualForecast[dev.battType] = (annualForecast[dev.battType] || 0) + batteriesPerYear;
-                    }
-                }
-            });
-
-            let battKeys = Object.keys(estateBatts);
-            let battHtml = "";
-            if (battKeys.length > 0) {
-                battHtml += `<div style='display:flex;flex-wrap:wrap;gap:12px;'>`;
-                battKeys.sort().forEach(type => {
-                    let totalEstate = estateBatts[type];
-                    let replacingNow = replaceNowBatts[type] || 0;
-                    let spares = db.spares[type] || 0;
-                    let needsBuy = replacingNow > spares;
-                    let projectedYr = Math.ceil(annualForecast[type] || 0);
-
-                    let cardStyle = needsBuy ? "border-left:4px solid #e74c3c;" : "border-left:4px solid #27ae60;";
-                    let titleColor = needsBuy ? "#e74c3c" : "#27ae60";
-                    let shopMsg = needsBuy ? "<div style='color:#e74c3c;font-size:11px;font-weight:bold;margin-top:8px;'>⚠️ Purchase Needed</div>" : "<div style='color:#27ae60;font-size:11px;font-weight:bold;margin-top:8px;'>✓ Stock Sufficient</div>";
-
-                    battHtml += `<div class='shop-card' style='${cardStyle}'><b class='shop-title' style='color:${titleColor}; border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:8px;'>${type}</b><div class='shop-list'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span>Estate Total:</span><b>${totalEstate}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#aaa;'><span>Spares on Hand:</span><b>${spares}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#ccc;'><span>Replace Now:</span><b>${replacingNow}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#3498db;border-top:1px dashed #444;padding-top:3px;margin-top:3px;'><span>12-Month Forecast:</span><b>~${projectedYr} / yr</b></div>${shopMsg}</div></div>`;
-                });
-                battHtml += `</div>`;
-            } else {
-                battHtml = "<p style='text-align:center;color:#888;'>No batteries tracked in estate.</p>";
-            }
-            document.getElementById('batteryLockerModalBody').innerHTML = battHtml;
-
-            document.getElementById('appContainer').innerHTML = html;
-            initDragAndDrop();
-        }
-
-        document.addEventListener("DOMContentLoaded", loadData);
-        setInterval(silentRefresh, 60000);
-
-        function checkNewLocation(sel) {
-            if (sel.value === '_NEW_') {
-                let newVal = prompt('Enter New Location Name:');
-                if (newVal) {
-                    if (!Array.from(sel.options).some(o => o.value === newVal)) {
-                        sel.add(new Option(newVal, newVal), sel.options[sel.options.length - 1]);
-                    }
-                    sel.value = newVal;
-                } else {
-                    sel.value = '';
-                }
-            }
-        }
-
-        function checkCustomBattery(sel) {
-            if (sel.value === 'Custom') {
-                let customVal = prompt('Enter Custom Battery Type:');
-                if (customVal) {
-                    if (!Array.from(sel.options).some(o => o.value === customVal)) {
-                        sel.add(new Option(customVal, customVal));
-                    }
-                    sel.value = customVal;
-                } else {
-                    sel.value = '';
-                }
-            }
-        }
-
-        function openDeviceModal(card) {
-            document.getElementById('modalDeviceId').value = card.getAttribute('data-id');
-            document.getElementById('modalDeviceName').innerText = card.getAttribute('data-name');
-            var status = card.getAttribute('data-status');
-            document.getElementById('modalStatusDot').className = 'dot dot-' + status;
-            document.getElementById('modalNetworkHealth').innerText = card.getAttribute('data-msgs') || 'Nominal';
-            
-            let locSel = document.getElementById('modalLocationInput');
-            let locOpts = db.locations.map(l => `<option value="${l}">${l}</option>`).join('');
-            locSel.innerHTML = `<option value="">Unassigned</option>${locOpts}<option value="_NEW_">➕ Add New Location...</option>`;
-            
-            let cardLoc = card.getAttribute('data-loc') === 'Unassigned' ? '' : card.getAttribute('data-loc');
-            if (cardLoc && !Array.from(locSel.options).some(o => o.value === cardLoc)) {
-                locSel.add(new Option(cardLoc, cardLoc), locSel.options[locSel.options.length - 1]);
-            }
-            locSel.value = cardLoc;
-
-            document.getElementById('modalDescriptionInput').value = card.getAttribute('data-desc') === 'None' ? '' : card.getAttribute('data-desc');
-
-            let battSel = document.getElementById('modalBatteryTypeInput');
-            let battOpts = db.batteryTypes.map(b => `<option value="${b}">${b}</option>`).join('');
-            battSel.innerHTML = `<option value="">N/A / Mains Power</option>${battOpts}`;
-            
-            let cardBatt = card.getAttribute('data-batttype') === 'N/A' ? '' : card.getAttribute('data-batttype');
-            if (cardBatt && !Array.from(battSel.options).some(o => o.value === cardBatt)) {
-                battSel.add(new Option(cardBatt, cardBatt));
-            }
-            battSel.value = cardBatt;
-
-            document.getElementById('modalBatteryQtyInput').value = card.getAttribute('data-battqty') || 1;
-            document.getElementById('modalOverrideThreshInput').value = card.getAttribute('data-override') || '';
-            document.getElementById('modalOutdoorCheck').checked = card.getAttribute('data-outdoor') === 'true';
-
-            document.getElementById('modalHardwareSig').innerText = card.getAttribute('data-hw') || 'Generic/Unknown';
-            document.getElementById('modalFirmwareRev').innerText = card.getAttribute('data-fw') || 'Unknown';
-            document.getElementById('modalDriverType').innerText = card.getAttribute('data-driver') || 'Unknown';
-            document.getElementById('modalDaysRemaining').innerText = card.getAttribute('data-daysleft') || 'N/A';
-            document.getElementById('modalRssi').innerText = card.getAttribute('data-rssi') || 'N/A';
-            document.getElementById('modalBatteryHealth').innerText = card.getAttribute('data-batt');
-            document.getElementById('modalLastActive').innerText = card.getAttribute('data-lastactive');
-            
-            document.getElementById('deviceModalOverlay').style.display = 'flex';
-        }
-
-        function closeDeviceModal() { document.getElementById('deviceModalOverlay').style.display = 'none'; }
-        
-        function openBatteryLocker() { document.getElementById('batteryLockerModalOverlay').style.display = 'flex'; }
-        function closeBatteryLocker() { document.getElementById('batteryLockerModalOverlay').style.display = 'none'; }
-        
-        function saveDeviceChanges() {
-            let saveBtn = document.querySelector('.save-modal-btn');
-            let originalText = saveBtn.innerText;
-            saveBtn.innerText = '⏳ Saving...';
-            saveBtn.disabled = true;
-
-            let dId = document.getElementById('modalDeviceId').value;
-            let loc = document.getElementById('modalLocationInput').value;
-            let desc = document.getElementById('modalDescriptionInput').value;
-            let battType = document.getElementById('modalBatteryTypeInput').value;
-            let battQty = document.getElementById('modalBatteryQtyInput').value;
-            let overrideThresh = document.getElementById('modalOverrideThreshInput').value;
-            let isOutdoor = document.getElementById('modalOutdoorCheck').checked;
-            
-            fetch('updateDevice?deviceId=' + dId + '&loc=' + encodeURIComponent(loc) + '&desc=' + encodeURIComponent(desc) + '&battType=' + encodeURIComponent(battType) + '&battQty=' + encodeURIComponent(battQty) + '&overrideThresh=' + encodeURIComponent(overrideThresh) + '&isOutdoor=' + encodeURIComponent(isOutdoor) + '&access_token=' + accessToken)
-            .then(response => {
-                saveBtn.innerText = originalText;
-                saveBtn.disabled = false;
-                closeDeviceModal();
-                let dev = db.estate.find(d => d.id == dId);
-                if(dev) {
-                    dev.customLoc = loc || "";
-                    dev.customDesc = desc || "";
-                    dev.battType = battType || "";
-                    dev.battQty = parseInt(battQty) || 1;
-                    dev.battThreshOverride = overrideThresh;
-                    dev.isOutdoor = isOutdoor;
-                }
-                renderApp();
-            })
-            .catch(err => {
-                saveBtn.innerText = originalText;
-                saveBtn.disabled = false;
-                alert("Error saving settings.");
-            });
-        }
-
-        document.addEventListener('keydown', function(event) { 
-            if (event.key === 'Escape') {
-                closeDeviceModal();
-                closeBatteryLocker();
-            }
-        });
-        '''
-        
-        jsScript = jsScript.replace('TOKEN_PLACEHOLDER', state.accessToken)
-
-        def modalHtml = '''
-        <div class='modal-content' onclick='event.stopPropagation()'>
-            <input type='hidden' id='modalDeviceId'>
-            <div class='modal-header'>
-                <span id='modalStatusDot' class='dot'></span>
-                <span id='modalDeviceName'>Device Details</span>
-            </div>
-            <div class='modal-body'>
-                <table>
-                    <tr><td>Location</td><td><select id='modalLocationInput' class='modal-input' onchange='checkNewLocation(this)'></select></td></tr>
-                    <tr><td>Description</td><td><input type='text' id='modalDescriptionInput' class='modal-input' placeholder='Notes...'></td></tr>
-                    <tr><td>Battery Type</td><td><select id='modalBatteryTypeInput' class='modal-input' onchange='checkCustomBattery(this)'></select></td></tr>
-                    <tr><td>Battery Quantity</td><td><input type='number' id='modalBatteryQtyInput' class='modal-input' min='1' max='20'></td></tr>
-                    <tr><td>Override Critical Batt %</td><td><input type='number' id='modalOverrideThreshInput' class='modal-input' placeholder='Global Default' min='1' max='99'></td></tr>
-                    <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:#fff;'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
-                    <tr><td>Driver / Device Type</td><td id='modalDriverType'>-</td></tr>
-                    <tr><td>Hardware Type</td><td id='modalHardwareSig'>-</td></tr>
-                    <tr><td>Firmware Revision</td><td id='modalFirmwareRev'>-</td></tr>
-                    <tr><td>Telemetry Diagnostics</td><td id='modalNetworkHealth'>-</td></tr>
-                    <tr><td>Signal Quality (RSSI)</td><td id='modalRssi'>-</td></tr>
-                    <tr><td>Battery Level</td><td id='modalBatteryHealth'>-</td></tr>
-                    <tr><td>EWMA Forecast</td><td id='modalDaysRemaining'>-</td></tr>
-                    <tr><td>Last Mesh Check-In</td><td id='modalLastActive'>-</td></tr>
-                </table>
-            </div>
-            <div class='modal-action-row'>
-                <button class='save-modal-btn' onclick='saveDeviceChanges()'>💾 Save Settings</button>
-                <button class='close-modal-btn' onclick='closeDeviceModal()'>Cancel</button>
-            </div>
-        </div>
-        '''
-        
-        def batteryLockerHtml = '''
-        <div class='modal-content' onclick='event.stopPropagation()' style='max-width:700px;'>
-            <div class='modal-header' style='border-bottom-color:#8e44ad;'>
-                <span class='dot' style='background:#8e44ad;box-shadow:0 0 6px #8e44ad;'></span>
-                <span>The Battery Locker</span>
-            </div>
-            <div id='batteryLockerModalBody' class='modal-body' style='max-height:60vh;overflow-y:auto;padding-right:10px;'>
-                </div>
-            <div class='modal-action-row'>
-                <button class='close-modal-btn' onclick='closeBatteryLocker()'>Close Inventory</button>
-            </div>
-        </div>
-        '''
-
         def html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'><title>Device Health Portal</title><style>${css}</style></head><body><div id='appContainer' class='container'></div><div id='deviceModalOverlay' class='modal-overlay' onclick='closeDeviceModal()'>${modalHtml}</div><div id='batteryLockerModalOverlay' class='modal-overlay' onclick='closeBatteryLocker()'>${batteryLockerHtml}</div><script>${jsScript}</script></body></html>"
 
         return render(contentType: "text/html", data: html, status: 200)
