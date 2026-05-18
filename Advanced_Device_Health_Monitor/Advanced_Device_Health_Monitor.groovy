@@ -2,8 +2,6 @@
  * Advanced Device Health Monitor
  *
  * Author: ShaneAllen
- *
- * Version 1.5
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -521,7 +519,7 @@ def appButtonHandler(btn) {
         if (settings.bulkLoc && settings.bulkDevs) {
             def devIds = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
             devIds.each { dId ->
-                app.updateSetting("loc_${dId}", [type: "string", value: settings.bulkLoc])
+                app.updateSetting("loc_${dId}", [type: "enum", value: settings.bulkLoc])
             }
             app.removeSetting("bulkDevs") 
             app.addToHistory("SYSTEM: Bulk applied location '${settings.bulkLoc}' to ${devIds.size()} devices.")
@@ -1111,8 +1109,6 @@ def finalizeScan() {
     def critCount = results.count { (it.status == "Red" || it.status == "Purple") && !it.isMuted }
     def warnCount = results.count { it.status == "Yellow" && !it.isMuted }
     
-    updateChildHtmlDashboard(results, critCount, warnCount)
-    
     state.isScanning = false
     state.scanStartTime = null
     state.tempResults = []
@@ -1250,50 +1246,6 @@ def addToHistory(msg) {
     if (!state.historyLog) state.historyLog = []
     state.historyLog.add(0, "<span style='color: #888; font-size: 11px;'>[${new Date().format("h:mm a", location.timeZone)}]</span> <b>${cleanMsg}</b>")
     if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
-}
-
-def updateChildHtmlDashboard(results, critCount, warnCount) {
-    def child = getChildDevice("health_monitor_child")
-    if (!child) return
-    
-    StringBuilder html = new StringBuilder()
-    html.append("<div style='font-family:sans-serif;background:#151515;padding:15px;border-radius:8px;color:#fff;'><div style='display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:15px;'><b style='font-size:16px;'>🩺 Network Health</b>")
-    if (critCount == 0 && warnCount == 0) {
-        html.append("<span style='background:#27ae60;color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>All Nominal</span></div><div style='text-align:center;padding:20px;color:#aaa;font-style:italic;'>No critical issues detected.</div>")
-    } else {
-        def badgeColor = critCount > 0 ? "#e74c3c" : "#f1c40f"
-        def badgeText = critCount > 0 ? "${critCount} Critical Issues" : "${warnCount} Warnings"
-        html.append("<span style='background:${badgeColor};color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>${badgeText}</span></div><table style='width:100%;border-collapse:collapse;font-size:13px;'>")
-        
-        def issues = results.findAll { (it.status == "Red" || it.status == "Purple" || it.status == "Yellow") && !it.isMuted }
-        issues.each { issue ->
-            def dotColor = issue.status == "Red" ? "#e74c3c" : (issue.status == "Purple" ? "#9b59b6" : "#f1c40f")
-            def statusList = issue.messages.findAll { it.contains("Critical") || it.contains("Low") || it.contains("Offline") || it.contains("Inactive") || it.contains("Weak") || it.contains("Fair") || it.contains("Stuck") || it.contains("Flapping") || it.contains("Parasitic") || it.contains("Mesh Risk") }.join(", ")
-            def customText = ""
-            if (issue.customLoc || issue.customDesc) {
-                def parts = []
-                if (issue.customLoc) parts << "📍 ${issue.customLoc}"
-                if (issue.customDesc) parts << "📝 ${issue.customDesc}"
-                customText = "<div style='font-size:10px;color:#aaa;margin-top:2px;'>${parts.join(' &nbsp;|&nbsp; ')}</div>"
-            }
-            def battBarHtml = ""
-            if (issue.battVal != null) {
-                def barColor = issue.battVal > 50 ? "#27ae60" : (issue.battVal > 20 ? "#f1c40f" : "#e74c3c")
-                def bTypeStr = issue.battType ? " - ${issue.battQty}x ${issue.battType}" : ""
-                battBarHtml = "<div style='margin-top:6px;width:100%;'><div style='display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:3px;'><span>🔋 ${issue.battVal}%${bTypeStr}</span><span>⏳ ${issue.estDaysLeft}</span></div><div style='width:100%;background:#333;height:4px;border-radius:2px;overflow:hidden;'><div style='width:${issue.battVal}%;background:${barColor};height:100%;'></div></div></div>"
-            }
-            
-            html.append("<tr style='border-bottom:1px solid #333;'><td style='padding:8px 0;width:60%;'><div style='display:flex;align-items:center;'><span style='height:10px;width:10px;border-radius:50%;background:${dotColor};display:inline-block;margin-right:8px;box-shadow:0 0 4px ${dotColor};flex-shrink:0;'></span><b>${issue.name}</b></div>${customText}<div style='font-size:10px;color:#777;margin-top:4px;margin-left:18px;'>Last Active: ${issue.lastActive?:'Unknown'}${issue.battChanged?:''}</div>${battBarHtml}</td><td style='padding:8px 0;text-align:right;color:#ccc;vertical-align:top;'>${statusList}</td></tr>")
-        }
-        html.append("</table>")
-    }
-    html.append("<div style='margin-top:15px;font-size:11px;color:#666;text-align:right;'>Last Scan: ${state.lastCheckTime}</div></div>")
-    
-    child.sendEvent(name: "issueCount", value: critCount)
-    def issueNames = results.findAll { (it.status == "Red" || it.status == "Purple") && !it.isMuted }.collect{it.name}.join(", ")
-    if (!issueNames) issueNames = "None"
-    child.sendEvent(name: "issueList", value: issueNames)
-    child.sendEvent(name: "htmlDashboard", value: html.toString())
 }
 
 def getRedirectHtml(delayMs, msgText) {
@@ -1444,7 +1396,6 @@ def serveDashboardPage() {
 
         details.folder-group.dragging { opacity: 0.5; }
         
-        /* Ultimate Mobile Responsiveness */
         @media (max-width: 650px) {
             body { padding: 10px; }
             .container { padding: 15px; }
@@ -1594,7 +1545,7 @@ def serveDashboardPage() {
             document.querySelectorAll('details.folder-group summary span.folder-title').forEach(el => {
                 folders.push(el.innerText);
             });
-            fetch('updateFolders?order=' + encodeURIComponent(folders.join(',')) + '&access_token=' + accessToken)
+            fetch(`updateFolders?order=${encodeURIComponent(folders.join(','))}&access_token=${accessToken}`)
             .then(r => console.log('Saved order'));
         }
 
@@ -1783,6 +1734,34 @@ def serveDashboardPage() {
         document.addEventListener("DOMContentLoaded", loadData);
         setInterval(silentRefresh, 60000);
 
+        function checkNewLocation(sel) {
+            if (sel.value === '_NEW_') {
+                let newVal = prompt('Enter New Location Name:');
+                if (newVal) {
+                    if (!Array.from(sel.options).some(o => o.value === newVal)) {
+                        sel.add(new Option(newVal, newVal), sel.options[sel.options.length - 1]);
+                    }
+                    sel.value = newVal;
+                } else {
+                    sel.value = '';
+                }
+            }
+        }
+
+        function checkCustomBattery(sel) {
+            if (sel.value === 'Custom') {
+                let customVal = prompt('Enter Custom Battery Type:');
+                if (customVal) {
+                    if (!Array.from(sel.options).some(o => o.value === customVal)) {
+                        sel.add(new Option(customVal, customVal));
+                    }
+                    sel.value = customVal;
+                } else {
+                    sel.value = '';
+                }
+            }
+        }
+
         function openDeviceModal(card) {
             document.getElementById('modalDeviceId').value = card.getAttribute('data-id');
             document.getElementById('modalDeviceName').innerText = card.getAttribute('data-name');
@@ -1790,15 +1769,27 @@ def serveDashboardPage() {
             document.getElementById('modalStatusDot').className = 'dot dot-' + status;
             document.getElementById('modalNetworkHealth').innerText = card.getAttribute('data-msgs') || 'Nominal';
             
+            let locSel = document.getElementById('modalLocationInput');
             let locOpts = db.locations.map(l => `<option value="${l}">${l}</option>`).join('');
-            document.getElementById('modalLocationInput').innerHTML = `<option value="">Unassigned</option>${locOpts}`;
-            document.getElementById('modalLocationInput').value = card.getAttribute('data-loc') === 'Unassigned' ? '' : card.getAttribute('data-loc');
+            locSel.innerHTML = `<option value="">Unassigned</option>${locOpts}<option value="_NEW_">➕ Add New Location...</option>`;
+            
+            let cardLoc = card.getAttribute('data-loc') === 'Unassigned' ? '' : card.getAttribute('data-loc');
+            if (cardLoc && !Array.from(locSel.options).some(o => o.value === cardLoc)) {
+                locSel.add(new Option(cardLoc, cardLoc), locSel.options[locSel.options.length - 1]);
+            }
+            locSel.value = cardLoc;
 
             document.getElementById('modalDescriptionInput').value = card.getAttribute('data-desc') === 'None' ? '' : card.getAttribute('data-desc');
 
+            let battSel = document.getElementById('modalBatteryTypeInput');
             let battOpts = db.batteryTypes.map(b => `<option value="${b}">${b}</option>`).join('');
-            document.getElementById('modalBatteryTypeInput').innerHTML = `<option value="">N/A / Mains Power</option>${battOpts}`;
-            document.getElementById('modalBatteryTypeInput').value = card.getAttribute('data-batttype') === 'N/A' ? '' : card.getAttribute('data-batttype');
+            battSel.innerHTML = `<option value="">N/A / Mains Power</option>${battOpts}`;
+            
+            let cardBatt = card.getAttribute('data-batttype') === 'N/A' ? '' : card.getAttribute('data-batttype');
+            if (cardBatt && !Array.from(battSel.options).some(o => o.value === cardBatt)) {
+                battSel.add(new Option(cardBatt, cardBatt));
+            }
+            battSel.value = cardBatt;
 
             document.getElementById('modalBatteryQtyInput').value = card.getAttribute('data-battqty') || 1;
             document.getElementById('modalOverrideThreshInput').value = card.getAttribute('data-override') || '';
@@ -1829,7 +1820,7 @@ def serveDashboardPage() {
             let overrideThresh = document.getElementById('modalOverrideThreshInput').value;
             let isOutdoor = document.getElementById('modalOutdoorCheck').checked;
             
-            fetch('updateDevice?deviceId=' + dId + '&loc=' + encodeURIComponent(loc) + '&desc=' + encodeURIComponent(desc) + '&battType=' + encodeURIComponent(battType) + '&battQty=' + encodeURIComponent(battQty) + '&overrideThresh=' + encodeURIComponent(overrideThresh) + '&isOutdoor=' + encodeURIComponent(isOutdoor) + '&access_token=' + accessToken)
+            fetch(`updateDevice?deviceId=${dId}&loc=${encodeURIComponent(loc)}&desc=${encodeURIComponent(desc)}&battType=${encodeURIComponent(battType)}&battQty=${encodeURIComponent(battQty)}&overrideThresh=${encodeURIComponent(overrideThresh)}&isOutdoor=${encodeURIComponent(isOutdoor)}&access_token=${accessToken}`)
             .then(response => {
                 closeDeviceModal();
                 let dev = db.estate.find(d => d.id == dId);
@@ -1864,9 +1855,9 @@ def serveDashboardPage() {
             </div>
             <div class='modal-body'>
                 <table>
-                    <tr><td>Location</td><td><select id='modalLocationInput' class='modal-input'></select></td></tr>
+                    <tr><td>Location</td><td><select id='modalLocationInput' class='modal-input' onchange='checkNewLocation(this)'></select></td></tr>
                     <tr><td>Description</td><td><input type='text' id='modalDescriptionInput' class='modal-input' placeholder='Notes...'></td></tr>
-                    <tr><td>Battery Type</td><td><select id='modalBatteryTypeInput' class='modal-input'></select></td></tr>
+                    <tr><td>Battery Type</td><td><select id='modalBatteryTypeInput' class='modal-input' onchange='checkCustomBattery(this)'></select></td></tr>
                     <tr><td>Battery Quantity</td><td><input type='number' id='modalBatteryQtyInput' class='modal-input' min='1' max='20'></td></tr>
                     <tr><td>Override Critical Batt %</td><td><input type='number' id='modalOverrideThreshInput' class='modal-input' placeholder='Global Default' min='1' max='99'></td></tr>
                     <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:#fff;'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
@@ -1915,9 +1906,27 @@ def updateDeviceEndpoint() {
     try {
         def dId = params.deviceId
         if (dId) {
-            if (params.loc != null) app.updateSetting("loc_${dId}", [type: "string", value: params.loc])
-            if (params.desc != null) app.updateSetting("desc_${dId}", [type: "string", value: params.desc])
-            if (params.battType != null) app.updateSetting("battType_${dId}", [type: "string", value: params.battType])
+            if (params.loc != null) {
+                if (params.loc == "") app.removeSetting("loc_${dId}")
+                else app.updateSetting("loc_${dId}", [type: "enum", value: params.loc])
+            }
+            if (params.desc != null) {
+                if (params.desc == "") app.removeSetting("desc_${dId}")
+                else app.updateSetting("desc_${dId}", [type: "text", value: params.desc])
+            }
+            if (params.battType != null) {
+                def predefinedBatts = ["AA", "AAA", "AAAA", "C", "D", "9V", "CR2032", "CR2025", "CR2450", "CR2477", "CR1632", "CR1220", "CR2", "CR123A", "LR44", "A23", "18650", "14500", "Rechargeable Internal"]
+                if (params.battType == "") {
+                    app.removeSetting("battType_${dId}")
+                    app.removeSetting("customBattType_${dId}")
+                } else if (predefinedBatts.contains(params.battType)) {
+                    app.updateSetting("battType_${dId}", [type: "enum", value: params.battType])
+                    app.removeSetting("customBattType_${dId}")
+                } else {
+                    app.updateSetting("battType_${dId}", [type: "enum", value: "Custom"])
+                    app.updateSetting("customBattType_${dId}", [type: "text", value: params.battType])
+                }
+            }
             if (params.battQty != null && params.battQty.toString().isNumber()) {
                 app.updateSetting("battQty_${dId}", [type: "number", value: params.battQty.toInteger()])
             }
@@ -2026,77 +2035,5 @@ def pingDeviceEndpoint() {
     } catch(e) { 
         log.error "Ping Endpoint Error: ${e}" 
         return render(contentType: "text/html", data: "Error executing ping: ${e.message}", status: 500)
-    }
-}
-
-def serveMaintenanceTicket() {
-    try {
-        def results = state.dashboardData ?: []
-        def issues = results.findAll { (it.status == "Red" || it.status == "Purple" || it.status == "Yellow") }
-        
-        StringBuilder html = new StringBuilder()
-        html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Maintenance Ticket</title>")
-        html.append("<style>body{font-family:sans-serif;color:#000;background:#fff;padding:20px;max-width:900px;margin:0 auto;} h1{text-align:center;border-bottom:2px solid #000;padding-bottom:10px;} table{width:100%;border-collapse:collapse;margin-top:20px;} th,td{border:1px solid #000;padding:10px;text-align:left;font-size:14px;} th{background:#eee;} .checkbox{width:20px;height:20px;border:2px solid #000;display:inline-block;} .print-btn{display:block;width:100%;padding:15px;background:#000;color:#fff;text-align:center;text-decoration:none;font-size:18px;font-weight:bold;margin-bottom:20px;cursor:pointer;} @media print{ .print-btn{display:none;} }</style>")
-        html.append("</head><body onload='window.print()'>")
-        
-        html.append("<a href='#' onclick='window.print();return false;' class='print-btn'>🖨️ Print Ticket</a>")
-        html.append("<h1>MAINTENANCE WORK ORDER</h1>")
-        html.append("<p><strong>Generated:</strong> ${new Date().format("MM/dd/yyyy h:mm a", location.timeZone)}</p>")
-        
-        if (issues.size() == 0) {
-            html.append("<p style='text-align:center;font-size:18px;margin-top:50px;'>No active issues detected. Estate is nominal.</p>")
-        } else {
-            def groupedByLoc = issues.groupBy { it.customLoc ?: "Unassigned Location" }
-            def sortedLocs = groupedByLoc.keySet().sort()
-            
-            sortedLocs.each { loc ->
-                html.append("<h3 style='margin-top:30px;'>📍 ${loc}</h3>")
-                html.append("<table><tr><th style='width:50px;'>Done</th><th>Device</th><th>Issue</th><th>Battery Req.</th></tr>")
-                
-                groupedByLoc[loc].each { dev ->
-                    def issueStr = dev.messages.join(", ")
-                    def bReq = ""
-                    if (dev.battType) {
-                        bReq = "${dev.battQty}x ${dev.battType}"
-                    } else if (issueStr.contains("Battery") || issueStr.contains("Parasitic")) {
-                        bReq = "Unknown Type"
-                    } else {
-                        bReq = "N/A"
-                    }
-                    def dName = dev.customDesc ? "<b>${dev.name}</b><br><span style='font-size:11px;color:#555;'>${dev.customDesc}</span>" : "<b>${dev.name}</b>"
-                    
-                    html.append("<tr>")
-                    html.append("<td style='text-align:center;'><div class='checkbox'></div></td>")
-                    html.append("<td>${dName}</td>")
-                    html.append("<td>${issueStr}</td>")
-                    html.append("<td>${bReq}</td>")
-                    html.append("</tr>")
-                }
-                html.append("</table>")
-            }
-            
-            def batteryInventory = [:]
-            issues.each { dev ->
-                if (dev.battType && dev.battType != "") {
-                    if (!batteryInventory[dev.battType]) batteryInventory[dev.battType] = 0
-                    batteryInventory[dev.battType] += (dev.battQty?.toInteger() ?: 1)
-                }
-            }
-            
-            if (batteryInventory.size() > 0) {
-                html.append("<h2 style='margin-top:40px;border-bottom:2px solid #000;padding-bottom:5px;'>Hardware Pull List</h2>")
-                html.append("<ul style='font-size:16px;'>")
-                batteryInventory.keySet().sort().each { type ->
-                    html.append("<li>[ &nbsp; ] &nbsp; <b>${batteryInventory[type]}x</b> &nbsp; ${type} Batteries</li>")
-                }
-                html.append("</ul>")
-            }
-        }
-        
-        html.append("</body></html>")
-        return render(contentType: "text/html", data: html.toString(), status: 200)
-    } catch (e) {
-        log.error "Ticket Error: ${e}"
-        return render(contentType: "text/html", data: "Error generating ticket.", status: 500)
     }
 }
