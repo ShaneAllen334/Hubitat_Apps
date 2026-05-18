@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.2
+ * Version 1.5.3
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -197,16 +197,10 @@ def pageSettings() {
 
 def pageNotifications() {
     dynamicPage(name: "pageNotifications", title: "🔔 Notification Rules & Routing", install: false, uninstall: false) {
-        section("🌍 Targeted Alert Routing") {
-            paragraph "<i>Set up dedicated notification streams so alerts go to the right people without spamming the whole group. Assign these targets to specific devices or locations in the Details page via Override Alert Target.</i>"
-            input "notifyShane", "capability.notification", title: "📱 Route to Shane", multiple: true, required: false
-            input "notifyChristy", "capability.notification", title: "📱 Route to Christy", multiple: true, required: false
-            input "notifyLeanne", "capability.notification", title: "📱 Route to Leanne", multiple: true, required: false
-            input "notifyTyler", "capability.notification", title: "📱 Route to Tyler", multiple: true, required: false
-            
-            paragraph "<hr>"
-            input "defaultCritNotifiers", "capability.notification", title: "Fallback: Notify on CRITICAL / FLAPPING issues", multiple: true, required: false
-            input "defaultWarnNotifiers", "capability.notification", title: "Fallback: Notify on WARNING issues", multiple: true, required: false
+        section("🌍 Global Alert Routing") {
+            paragraph "<i>Set up your default notification devices for the estate. To route alerts for specific devices to specific people (e.g., only send Garage Door alerts to a specific phone), use the 'Override Alert Target' setting for that device in the Locations, Profiles & Folders menu.</i>"
+            input "defaultCritNotifiers", "capability.notification", title: "Global Notifier: CRITICAL & FLAPPING issues", multiple: true, required: false
+            input "defaultWarnNotifiers", "capability.notification", title: "Global Notifier: WARNING issues", multiple: true, required: false
             input "notifyOnResolved", "bool", title: "Notify when issues are Resolved (Return to Green)?", defaultValue: false
         }
         
@@ -243,11 +237,10 @@ def pageDeviceDetails() {
             section("⚡ Bulk Apply Location") {
                 paragraph "<i>Select a location and multiple devices to quickly apply the same location to all of them at once.</i>"
                 
-                def devOptions = [:]
-                allDevs.each { devOptions[it.id] = it.displayName }
+                def devNamesList = allDevs.collect { it.displayName }.unique().sort()
                 
                 input "bulkLoc", "enum", title: "1. Select Location", options: roomOptions, required: false
-                input "bulkDevs", "enum", title: "2. Select Devices", options: devOptions, multiple: true, required: false
+                input "bulkDevs", "enum", title: "2. Select Devices", options: devNamesList, multiple: true, required: false
                 input "btnBulkApplyLoc", "button", title: "✅ Apply to Selected Devices"
             }
             
@@ -495,12 +488,20 @@ def appButtonHandler(btn) {
         runHealthCheck()
     } else if (btn == "btnBulkApplyLoc") {
         if (settings.bulkLoc && settings.bulkDevs) {
-            def devIds = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
-            devIds.each { dId ->
-                app.updateSetting("loc_${dId}", [type: "enum", value: settings.bulkLoc])
+            def devNames = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
+            def allDevs = getAllMonitoredDevices()
+            def count = 0
+            
+            devNames.each { dName ->
+                def matchingDevs = allDevs.findAll { it.displayName == dName }
+                matchingDevs.each { d ->
+                    app.updateSetting("loc_${d.id}", [type: "enum", value: settings.bulkLoc])
+                    count++
+                }
             }
+            
             app.removeSetting("bulkDevs") 
-            app.addToHistory("SYSTEM: Bulk applied location '${settings.bulkLoc}' to ${devIds.size()} devices.")
+            app.addToHistory("SYSTEM: Bulk applied location '${settings.bulkLoc}' to ${count} devices.")
         }
     }
 }
