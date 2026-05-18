@@ -146,9 +146,6 @@ def pageSettings() {
             input "scanChunkSize", "number", title: "Devices Processed per Staggered Chunk", defaultValue: 40, required: true
             paragraph "<i>Note: To prevent slamming the hub with 300+ device queries at once, the app scans in chunks and yields back to the hub between batches. 40-50 is the recommended size.</i>"
             
-            input "enableLiveUpdates", "bool", title: "Enable Live Auto-Updating?", defaultValue: true, submitOnChange: true
-            paragraph "<i>Note: Live Auto-Updating will detect if a sensor wakes up and instantly update the dashboard. The Auto-Heal feature runs automatically every 12 hours.</i>"
-            
             input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing?", defaultValue: false, submitOnChange: true
             if (enableQuietHours) {
                 paragraph "<i>During quiet hours, auto-healing pings will be paused to prevent devices from waking up or flashing lights in the middle of the night.</i>"
@@ -456,7 +453,6 @@ def ensureStateMaps() {
     if (state.pendingAlerts == null) state.pendingAlerts = []
     
     if (state.cachedTelemetry == null) state.cachedTelemetry = [memoryTotal: "Unknown", memoryFree: "Unknown", dbSize: "Unknown", uptime: "Unknown", firmware: "Unknown"]
-    if (state.lastLiveScanReq == null) state.lastLiveScanReq = 0
 }
 
 def isQuietTime() {
@@ -483,36 +479,8 @@ def initialize() {
     
     schedule("0 0 0/12 * * ?", "autoHealNetwork")
     
-    if (settings.enableLiveUpdates != false) {
-        if (settings.batteryDevices) subscribe(settings.batteryDevices, "battery", liveUpdateHandler)
-        if (settings.motionSensors) subscribe(settings.motionSensors, "motion", liveUpdateHandler)
-        if (settings.contactSensors) subscribe(settings.contactSensors, "contact", liveUpdateHandler)
-        if (settings.actuatorDevices) subscribe(settings.actuatorDevices, "switch", liveUpdateHandler)
-        if (settings.smartPlugs) subscribe(settings.smartPlugs, "switch", liveUpdateHandler)
-        if (settings.lightSwitches) subscribe(settings.lightSwitches, "switch", liveUpdateHandler)
-        if (settings.hueLights) subscribe(settings.hueLights, "switch", liveUpdateHandler)
-        if (settings.temperatureSensors) subscribe(settings.temperatureSensors, "temperature", liveUpdateHandler)
-        if (settings.humiditySensors) subscribe(settings.humiditySensors, "humidity", liveUpdateHandler)
-        
-        app.addToHistory("SYSTEM: Live Auto-Updating is active (with 5-minute hardware debounce).")
-    }
-    
     app.addToHistory("SYSTEM: Initialization complete. Monitoring schedule set to ${sInt}.")
     runIn(2, "runHealthCheck")
-}
-
-def liveUpdateHandler(evt) {
-    if (settings.masterSwitch && settings.masterSwitch.currentValue("switch") == "off") return
-    
-    // Throttle the live update scan to run no more than once every 5 minutes
-    def nowMs = new Date().time
-    def lastReq = state.lastLiveScanReq ?: 0
-    if (nowMs - lastReq > 300000) { 
-        state.lastLiveScanReq = nowMs
-        if (!state.isScanning) {
-            runIn(60, "runHealthCheck")
-        }
-    }
 }
 
 def appButtonHandler(btn) {
