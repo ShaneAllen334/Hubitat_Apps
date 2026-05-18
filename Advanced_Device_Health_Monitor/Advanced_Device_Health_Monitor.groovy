@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.7
+ * Version 1.5.8
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -12,82 +12,14 @@ definition(
     description: "Monitors device status, signal quality, battery health, and inactivity across all sensor categories with an Auto-Healing Web Portal.",
     category: "Maintenance",
     iconUrl: "",
-    iconX2Url: ""
+    iconX2Url: "",
+    oauth: [displayName: "Advanced Device Health Monitor API", displayLink: ""]
 )
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
-
-// The "Nuclear Option": Universal Capture-Phase Hijack for Hubitat's Select All Button
-@Field static String NUCLEAR_JS = '''<script>
-if (!window.healthNuclearFixApplied) {
-    window.healthNuclearFixApplied = true;
-    document.addEventListener('click', function(e) {
-        var btn = e.target.closest('button, .btn, input[type="button"]');
-        if (!btn) return;
-        
-        var t = (btn.innerText || btn.value || '').trim().toLowerCase();
-        
-        if (t === 'select all' || t === 'unselect all') {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            
-            var check = (t === 'select all');
-            
-            // Ascend the DOM tree to find the tightest wrapping container
-            var container = btn.closest('.form-group, .mdl-cell, .card, div[class*="col-"]');
-            if (!container) container = btn.parentElement.parentElement.parentElement;
-            
-            if (container) {
-                // Strategy 1: Hubitat's Native Checkbox Wrapper
-                var boxes = container.querySelectorAll('input[type="checkbox"]');
-                if (boxes.length > 0) {
-                    boxes.forEach(function(b) {
-                        // Ensure the checkbox parent/label is visible (respects the 'Filter...' box)
-                        var wrap = b.closest('div');
-                        var isVisible = wrap && wrap.style.display !== 'none';
-                        if (isVisible && b.checked !== check) {
-                            b.click();
-                        }
-                    });
-                    return;
-                }
-                
-                // Strategy 2: Bootstrap Select Virtual Links
-                var links = container.querySelectorAll('.dropdown-menu li a');
-                if (links.length > 0) {
-                    links.forEach(function(item) {
-                        var li = item.closest('li');
-                        if (li && !li.classList.contains('disabled')) {
-                            var isSelected = li.classList.contains('selected');
-                            var isVisible = li.style.display !== 'none';
-                            if (isVisible && ((check && !isSelected) || (!check && isSelected))) {
-                                item.click();
-                            }
-                        }
-                    });
-                    return;
-                }
-                
-                // Strategy 3: Hidden Select (Absolute Fallback)
-                var selectEl = container.querySelector('select[multiple]');
-                if (selectEl) {
-                    for (var i = 0; i < selectEl.options.length; i++) {
-                        selectEl.options[i].selected = check;
-                    }
-                    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-                    if (typeof $ !== 'undefined' && $(selectEl).selectpicker) {
-                        $(selectEl).selectpicker('render');
-                    }
-                }
-            }
-        }
-    }, true); 
-}
-</script>'''
 
 @Field static String DASHBOARD_CSS = '''
 body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; padding:20px; background:#0d0d0d; color:#e0e0e0; margin:0; }
@@ -562,9 +494,6 @@ function renderApp() {
     initDragAndDrop();
 }
 
-document.addEventListener("DOMContentLoaded", loadData);
-setInterval(silentRefresh, 60000);
-
 function checkNewLocation(sel) {
     if (sel.value === '_NEW_') {
         let newVal = prompt('Enter New Location Name:');
@@ -685,11 +614,21 @@ document.addEventListener('keydown', function(event) {
         closeBatteryLocker();
     }
 });
+
+// Start the dashboard on load
+loadData();
+
+// Optional: Keep it updated automatically without page reloads every 60 seconds
+setInterval(silentRefresh, 60000); 
 '''
 
 preferences {
     page(name: "mainPage")
     page(name: "pageSettings")
+    page(name: "pageSetupInfrastructure")
+    page(name: "pageSetupLighting")
+    page(name: "pageSetupSensors")
+    page(name: "pageSetupUtility")
     page(name: "pageThresholds")
     page(name: "pageDeviceDetails")
     page(name: "pageBatteryLocker")
@@ -796,9 +735,9 @@ def mainPage() {
         
         section("Configuration Menus", hideable: false, hidden: false) {
             href(name: "hrefSettings", page: "pageSettings", title: "⚙️ Core Setup & Devices", description: "Select devices to monitor and set schedules")
-            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Profiles & Folders", description: "Assign locations, outdoor thermal profiles, and battery configs")
-            href(name: "hrefBatteryLocker", page: "pageBatteryLocker", title: "🔋 Battery Locker Inventory", description: "Manage spare inventory and view 12-month supply forecasts")
             href(name: "hrefThresholds", page: "pageThresholds", title: "📊 Monitoring Thresholds", description: "Configure global thresholds, inactivity, stuck states, and signal limits")
+            href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Profiles & Folders", description: "Manage folder layouts and standard locations")
+            href(name: "hrefBatteryLocker", page: "pageBatteryLocker", title: "🔋 Battery Locker Inventory", description: "Manage spare inventory and view 12-month supply forecasts")
             href(name: "hrefNotifications", page: "pageNotifications", title: "🔔 Notification Rules & Routing", description: "Set up targeted alerts and routing")
         }
     }
@@ -806,15 +745,15 @@ def mainPage() {
 
 def pageSettings() {
     dynamicPage(name: "pageSettings", title: "⚙️ Core Setup & Devices", install: false, uninstall: false) {
+        
         section("Global Controls") {
-            paragraph NUCLEAR_JS
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
             input "scanInterval", "enum", title: "Automated Scan Interval", options: ["1 Hour", "3 Hours", "6 Hours", "12 Hours", "24 Hours"], defaultValue: "12 Hours", required: true
             
             input "scanChunkSize", "number", title: "Devices Processed per Staggered Chunk", defaultValue: 40, required: true
             paragraph "<i>Note: To prevent slamming the hub with 300+ device queries at once, the app scans in chunks and yields back to the hub between batches. 40-50 is the recommended size.</i>"
             
-            input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing?", defaultValue: false, submitOnChange: true
+            input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing?", defaultValue: false
             if (enableQuietHours) {
                 paragraph "<i>During quiet hours, auto-healing pings will be paused to prevent devices from waking up or flashing lights in the middle of the night.</i>"
                 input "quietStart", "time", title: "Quiet Hours Start", required: true
@@ -822,28 +761,43 @@ def pageSettings() {
             }
         }
         
+        section("Device Selection Categories") {
+            href(name: "hrefInfra", page: "pageSetupInfrastructure", title: "🏗️ Primary Infrastructure & Hubs", description: "Battery infrastructure, actuators, and bridges")
+            href(name: "hrefLight", page: "pageSetupLighting", title: "💡 Lighting, Switches & Power", description: "Switches, dimmers, plugs, and bulbs")
+            href(name: "hrefSensors", page: "pageSetupSensors", title: "🛡️ Security & Environmental", description: "Motion, contact, smoke, and water sensors")
+            href(name: "hrefUtility", page: "pageSetupUtility", title: "🌡️ Utility & Measurement", description: "Temperature, humidity, power, and generic sensors")
+        }
+    }
+}
+
+def pageSetupInfrastructure() {
+    dynamicPage(name: "pageSetupInfrastructure", title: "🏗️ Primary Infrastructure", install: false, uninstall: false) {
         section("Primary Infrastructure") {
             input "batteryDevices", "capability.battery", title: "Battery-Powered Infrastructure", multiple: true, required: false
             input "actuatorDevices", "capability.actuator", title: "Hardwired / In-Wall Actuators (Locks, Motors)", multiple: true, required: false
-        }
-
-        section("Lighting, Switches & Power") {
-            paragraph "<i>Note: Devices assigned to the Lighting & Power section will inherit the Mains-Power Override and automatically ignore ghost battery attributes from generic drivers.</i>"
-            input "lightSwitches", "capability.switch", title: "In-Wall Light Switches & Dimmers", multiple: true, required: false
-            input "smartPlugs", "capability.switch", title: "Smart Plugs & Outlets", multiple: true, required: false
-            input "hueLights", "capability.switchLevel", title: "Smart Bulbs & LED Strips", multiple: true, required: false
-        }
-        
-        section("External Hubs & Integrations") {
             input "hubBridges", "capability.actuator", title: "Hue Bridges & External Hubs", multiple: true, required: false
         }
-
         section("Remotes & Buttons (Sleepy Devices)") {
-            paragraph "<div style='background:#fff3cd; color:#856404; padding:8px; border-radius:4px; border:1px solid #ffeeba;'><b>Developer Note:</b> These devices (like Tuya 4-Button switches) turn their radios completely off to conserve battery. They do not do routine check-ins, and they completely ignore network pings. By assigning them here, the application can apply a separate, much longer inactivity threshold so they don't falsely report as offline in your dashboard.</div>"
+            paragraph "<i>These devices turn their radios completely off to conserve battery. By assigning them here, the application can apply a separate, much longer inactivity threshold.</i>"
             input "buttonControllers", "capability.pushableButton", title: "Button Controllers & Remotes", multiple: true, required: false
         }
+    }
+}
 
-        section("Environmental & Security Sensors") {
+def pageSetupLighting() {
+    dynamicPage(name: "pageSetupLighting", title: "💡 Lighting, Switches & Power", install: false, uninstall: false) {
+        section("Lighting, Switches & Power") {
+            paragraph "<i>Note: Devices assigned here inherit the Mains-Power Override and automatically ignore ghost battery attributes from generic drivers.</i>"
+            input "lightSwitches", "capability.switch", title: "In-Wall Light Switches & Dimmers", multiple: true, required: false
+            input "smartPlugs", "capability.outlet", title: "Smart Plugs & Outlets", multiple: true, required: false
+            input "hueLights", "capability.switchLevel", title: "Smart Bulbs & LED Strips", multiple: true, required: false
+        }
+    }
+}
+
+def pageSetupSensors() {
+    dynamicPage(name: "pageSetupSensors", title: "🛡️ Security & Environmental", install: false, uninstall: false) {
+        section("Security & Environmental Sensors") {
             input "smokeDetectors", "capability.smokeDetector", title: "Smoke / Carbon Monoxide Detectors", multiple: true, required: false
             input "waterSensors", "capability.waterSensor", title: "Water / Leak Sensors", multiple: true, required: false
             input "motionSensors", "capability.motionSensor", title: "Motion Sensors", multiple: true, required: false
@@ -851,7 +805,11 @@ def pageSettings() {
             input "accelerationSensors", "capability.accelerationSensor", title: "Acceleration/Vibration Sensors", multiple: true, required: false
             input "presenceSensors", "capability.presenceSensor", title: "Presence Sensors (Fobs, Mobile Apps)", multiple: true, required: false
         }
+    }
+}
 
+def pageSetupUtility() {
+    dynamicPage(name: "pageSetupUtility", title: "🌡️ Utility & Measurement", install: false, uninstall: false) {
         section("Utility & Measurement Sensors") {
             input "temperatureSensors", "capability.temperatureMeasurement", title: "Temperature Sensors", multiple: true, required: false
             input "humiditySensors", "capability.relativeHumidityMeasurement", title: "Humidity Sensors", multiple: true, required: false
@@ -863,11 +821,99 @@ def pageSettings() {
     }
 }
 
+def pageThresholds() {
+    dynamicPage(name: "pageThresholds", title: "📊 Monitoring Thresholds", install: false, uninstall: false) {
+        
+        section("Auto-Heal Power Cycling") {
+            paragraph "<i>If a smart plug or switch goes offline and standard pings fail, the system can attempt to toggle its physical power state (Off-On / On-Off) to force it back onto the mesh. This is limited to once every 24 hours per device.</i>"
+            input "optOutPowerCycle", "capability.actuator", title: "Devices to EXCLUDE from Auto-Power Cycling", multiple: true, required: false
+        }
+        
+        section("Battery Health & Parasitic Anomaly Controls") {
+            input "enableBatteryCheck", "bool", title: "Enable Battery Monitoring?", defaultValue: true
+            if (enableBatteryCheck) {
+                input "batteryThreshold", "number", title: "Global Critical Battery Threshold (%)", defaultValue: 20, range: "1..100", required: true
+                input "battCalcThreshold", "number", title: "Minimum % Drop for Battery Forecasting", defaultValue: 5, range: "1..50", required: true
+                
+                input "enableParasiticCheck", "bool", title: "Enable Parasitic Battery Drain Detection?", defaultValue: true
+                if (enableParasiticCheck) {
+                    input "parasiticThreshold", "number", title: "Max Allowable Battery Drop / 24 Hours (%)", defaultValue: 10, range: "1..50", required: true
+                    paragraph "<i>Triggers a yellow warning instantly if a device drops faster than this percentage in 24 hours, alerting you to internal hardware shorts or mesh pairing loops.</i>"
+                }
+            }
+        }
+        
+        section("Device Inactivity (Dead Devices)") {
+            input "enableInactivityCheck", "bool", title: "Enable Inactivity Monitoring?", defaultValue: true
+            if (enableInactivityCheck) {
+                paragraph "<i>Flags devices that have not reported any activity or status updates in the specified timeframe.</i>"
+                input "inactivityThreshold", "number", title: "Standard Inactivity Threshold (Hours)", defaultValue: 24, required: true
+                
+                input "buttonInactivityThreshold", "number", title: "Sleepy Device (Remotes/Buttons) Threshold (Hours)", defaultValue: 168, required: true
+                paragraph "<i>Note: 168 Hours = 7 Days. Remotes inactive for 75% of this extended threshold will trigger a Yellow Warning.</i>"
+                
+                input "ignoreMainsInactivity", "bool", title: "Ignore Inactivity for Mains-Powered Devices?", defaultValue: true
+                paragraph "<i>Prevents lights, switches, and plugs from showing 'Offline' simply because they haven't been turned on recently. They will only flag if their network health check explicitly fails.</i>"
+                
+                input "ignoredInactivityDevices", "capability.sensor", title: "Ignore Inactivity completely for these Devices", multiple: true, required: false
+            }
+        }
+        
+        section("Stale State Detection (Stuck Sensors)") {
+            input "enableStuckCheck", "bool", title: "Enable Stale State Detection?", defaultValue: true
+            if (enableStuckCheck) {
+                paragraph "<i>Detects hardware lockups where a sensor is technically online, but its physical state is frozen (e.g., stuck on 'Active' or 'Open').</i>"
+                input "stuckMotionHours", "number", title: "Stuck 'Active' Threshold (Hours)", defaultValue: 2, required: true
+                input "stuckContactHours", "number", title: "Stuck 'Open' Threshold (Hours)", defaultValue: 24, required: true
+                input "ignoredStuckDevices", "capability.sensor", title: "Ignore Stuck State for these Devices", multiple: true, required: false
+                paragraph "<i>Note: Useful for multipurpose sensors used only for acceleration/temperature without a magnet.</i>"
+            }
+        }
+
+        section("Wi-Fi Signal Quality") {
+            input "enableWifiSignalCheck", "bool", title: "Enable Wi-Fi Monitoring?", defaultValue: false
+            if (enableWifiSignalCheck) {
+                paragraph "<i>Checks Wi-Fi devices reporting 'wifiSignal' or 'rssi'. Tracked via inline sparklines.</i>"
+                input "wifiRssiThreshold", "number", title: "Critical Minimum Wi-Fi RSSI (e.g. -75)", defaultValue: -75, range: "-100..0", required: true
+            }
+        }
+        
+        section("Signal Quality (Zigbee/Z-Wave)") {
+            input "enableSignalCheck", "bool", title: "Enable Signal Monitoring?", defaultValue: false
+            if (enableSignalCheck) {
+                paragraph "<i>Checks devices that report 'rssi' or 'lqi' attributes. Tracked via inline sparklines.</i>"
+                input "rssiThreshold", "number", title: "Critical Minimum RSSI Threshold (e.g. -85)", defaultValue: -85, range: "-120..0", required: true
+                input "lqiThreshold", "number", title: "Critical Minimum LQI Threshold (e.g. 100)", defaultValue: 100, range: "0..255", required: true
+                paragraph "<i>Note: Signals approaching these thresholds will trigger a Yellow Warning.</i>"
+            }
+        }
+        
+        section("Device Flapping (Unstable Network)") {
+            input "enableFlapDetection", "bool", title: "Enable Flap Detection?", defaultValue: true
+            if (enableFlapDetection) {
+                paragraph "<i>Detects if a device repeatedly drops off the network, indicating a bad route or failing radio (Purple Status).</i>"
+                input "flapThreshold", "number", title: "Drops per 24hrs to trigger Flapping status", defaultValue: 3, required: true
+            }
+        }
+
+        section("Spatial Radio Interference Detection") {
+            input "enableInterferenceCheck", "bool", title: "Enable Topology/Interference Analysis?", defaultValue: false
+            if (enableInterferenceCheck) {
+                paragraph "<i>Calculates an 'Interference Index' by grouping RSSI drops and flap events by physical location to detect localized RF black holes.</i>"
+                input "chattyDeviceThreshold", "number", title: "Max State Changes / Hour (Detects Mesh Saturation)", defaultValue: 100, required: true
+            }
+        }
+
+        section("Firmware Consistency Auditor") {
+            input "enableFirmwareAuditor", "bool", title: "Enable Automated Firmware Audits?", defaultValue: true
+            paragraph "<i>Groups your identical hardware endpoints together and automatically identifies firmware trailing anomalies across the estate.</i>"
+        }
+    }
+}
+
 def pageNotifications() {
     dynamicPage(name: "pageNotifications", title: "🔔 Notification Rules & Routing", install: false, uninstall: false) {
         section("🌍 Global Alert Routing") {
-            paragraph NUCLEAR_JS
-            paragraph "<i>Set up your default notification devices for the estate. To route alerts for specific devices to specific people (e.g., only send Garage Door alerts to a specific phone), use the 'Override Alert Target' setting for that device in the Locations, Profiles & Folders menu.</i>"
             input "defaultCritNotifiers", "capability.notification", title: "Global Notifier: CRITICAL & FLAPPING issues", multiple: true, required: false
             input "defaultWarnNotifiers", "capability.notification", title: "Global Notifier: WARNING issues", multiple: true, required: false
             input "notifyOnResolved", "bool", title: "Notify when issues are Resolved (Return to Green)?", defaultValue: false
@@ -883,78 +929,19 @@ def pageDeviceDetails() {
     dynamicPage(name: "pageDeviceDetails", title: "📍 Locations, Profiles & Folders", install: false, uninstall: false) {
         
         def defaultRooms = "Living Room, Kitchen, Master Bedroom, Garage, Front Yard, Backyard, Hallway, Bathroom"
-        def roomListStr = settings.roomList ?: defaultRooms
-        def roomOptions = roomListStr.split(',').collect{it.trim()}.findAll{it != ""}
         
-        def folderOptions = ["Safety & Alarms", "Locks & Actuators", "Light Switches", "Smart Bulbs", "Smart Plugs & Outlets", "Hubs & Bridges", "Motion Sensors", "Contact Sensors", "Presence Sensors", "Climate Sensors", "Power Meters", "Light Sensors", "Vibration Sensors", "Other Sensors", "General Battery Devices", "Button Controllers", "Firmware Updates Required"]
-        
-        def battTypes = ["AA", "AAA", "AAAA", "C", "D", "9V", "CR2032", "CR2025", "CR2450", "CR2477", "CR1632", "CR1220", "CR2", "CR123A", "LR44", "A23", "18650", "14500", "Custom", "Rechargeable Internal"]
+        section("Device Configuration Has Moved") {
+            paragraph "<div style='${PREV_STYLE}'><b>Optimized Performance:</b><br>To prevent the Hubitat interface from crashing due to large device counts, individual device configurations (Location, Custom Batteries, Overrides) have been permanently moved to the Web Portal.<br><br>Simply open your <b>Live Health Dashboard</b> and click on any device card to edit its settings instantly.</div>"
+        }
 
         section("📁 Global Folder Organization") {
-            paragraph NUCLEAR_JS
             paragraph "<i>Set the exact order you want your categories to appear on the web dashboard. Enter a comma-separated list of folder names. Any unlisted folders will sort alphabetically at the bottom.</i>"
             input "customFolderOrder", "text", title: "Custom Folder Priority Order", required: false, description: "e.g., Safety & Alarms, Smart Plugs & Outlets, Climate Sensors"
         }
 
         section("📍 Manage Location Dropdowns") {
-            paragraph "<i>Define your standard home locations here (comma separated). This list populates the dropdown menus below.</i>"
-            input "roomList", "text", title: "Available Locations", defaultValue: defaultRooms, submitOnChange: true
-        }
-
-        def allDevs = getAllMonitoredDevices().sort { it.displayName }
-        
-        if (allDevs && allDevs.size() > 0) {
-            section("⚡ Bulk Apply Location") {
-                paragraph "<i>Select a location and multiple devices to quickly apply the same location to all of them at once.</i>"
-                
-                def devOptions = [:]
-                allDevs.each { dev ->
-                    devOptions[dev.id.toString()] = dev.displayName
-                }
-                devOptions = devOptions.sort { it.value }
-                
-                input "bulkLoc", "enum", title: "1. Select Location", options: roomOptions, required: false
-                input "bulkDevs", "enum", title: "2. Select Devices", options: devOptions, multiple: true, required: false
-                input "btnBulkApplyLoc", "button", title: "✅ Apply to Selected Devices"
-            }
-            
-            def groupedDevs = [:]
-            allDevs.each { dev ->
-                def loc = settings["loc_${dev.id}"] ?: "Unassigned / Other"
-                if (!groupedDevs[loc]) groupedDevs[loc] = []
-                groupedDevs[loc] << dev
-            }
-            
-            def sortedLocs = groupedDevs.keySet().sort()
-            if (sortedLocs.contains("Unassigned / Other")) {
-                sortedLocs.remove("Unassigned / Other")
-                sortedLocs.add(0, "Unassigned / Other")
-            }
-
-            sortedLocs.each { loc ->
-                section("📁 ${loc} (${groupedDevs[loc].size()} Devices)", hideable: true, hidden: true) {
-                    groupedDevs[loc].each { dev ->
-                        input "folder_${dev.id}", "enum", title: "${dev.displayName} - Dashboard Folder(s)", options: folderOptions, multiple: true, required: false, description: "Leave blank for Auto-placement"
-                        input "loc_${dev.id}", "enum", title: "${dev.displayName} - Location", options: roomOptions, required: false
-                        input "desc_${dev.id}", "text", title: "${dev.displayName} - Description", required: false
-                        
-                        input "overrideBattThresh_${dev.id}", "number", title: "${dev.displayName} - Override Global Critical Battery %", range: "1..99", required: false
-                        input "outdoorProfile_${dev.id}", "bool", title: "${dev.displayName} - Use Outdoor Thermal Profile (Dampens EWMA temp swings)", defaultValue: false
-                        
-                        input "battType_${dev.id}", "enum", title: "${dev.displayName} - Battery Type", options: battTypes, required: false
-                        input "customBattType_${dev.id}", "text", title: "${dev.displayName} - Custom Type (If 'Custom' selected above)", required: false
-                        input "battQty_${dev.id}", "number", title: "${dev.displayName} - Battery Quantity", defaultValue: 1, range: "1..20", required: false
-                        
-                        input "notifyOverride_${dev.id}", "capability.notification", title: "${dev.displayName} - Override Alert Target (Bypasses Global Rules)", multiple: true, required: false
-                        paragraph "<hr style='background-color:#ccc; height:1px; border:0; margin:10px 0;'/>"
-                    }
-                }
-            }
-            
-        } else {
-            section("No Devices Found") {
-                paragraph "Please select devices in the Core Setup page first before configuring locations."
-            }
+            paragraph "<i>Define your standard home locations here (comma separated). This list populates the dropdown menus when you are assigning locations via the Web Dashboard.</i>"
+            input "roomList", "text", title: "Available Locations", defaultValue: defaultRooms
         }
     }
 }
@@ -978,7 +965,6 @@ def pageBatteryLocker() {
 
         if (estateBatts.size() > 0) {
             section("Estate Battery Overview & Spares") {
-                paragraph NUCLEAR_JS
                 paragraph "<i>This is your Battery Locker. It dynamically calculates every battery required to power your entire smart home. Enter your current spare inventory below so the dashboard can warn you when it's time to re-order.</i>"
 
                 def sortedTypes = estateBatts.keySet().sort()
@@ -989,103 +975,8 @@ def pageBatteryLocker() {
             }
         } else {
             section("No Batteries Configured") {
-                paragraph "You have not assigned any battery types to your devices in the 'Locations, Descriptions & Folders' menu."
+                paragraph "You have not assigned any battery types to your devices. Click on your devices in the Web Portal to configure their battery types."
             }
-        }
-    }
-}
-
-def pageThresholds() {
-    dynamicPage(name: "pageThresholds", title: "📊 Monitoring Thresholds", install: false, uninstall: false) {
-        def allDevs = getAllMonitoredDevices().sort { it.displayName }
-        def devOptions = [:]
-        allDevs.each { devOptions[it.id.toString()] = it.displayName }
-        devOptions = devOptions.sort { it.value }
-        
-        section("Auto-Heal Power Cycling") {
-            paragraph NUCLEAR_JS
-            paragraph "<i>If a smart plug or switch goes offline and standard pings fail, the system can attempt to toggle its physical power state (Off-On / On-Off) to force it back onto the mesh. This is limited to once every 24 hours per device.</i>"
-            input "optOutPowerCycle", "enum", title: "Devices to EXCLUDE from Auto-Power Cycling", options: devOptions, multiple: true, required: false
-        }
-        
-        section("Battery Health & Parasitic Anomaly Controls") {
-            input "enableBatteryCheck", "bool", title: "Enable Battery Monitoring?", defaultValue: true, submitOnChange: true
-            if (enableBatteryCheck) {
-                input "batteryThreshold", "number", title: "Global Critical Battery Threshold (%)", defaultValue: 20, range: "1..100", required: true
-                input "battCalcThreshold", "number", title: "Minimum % Drop for Battery Forecasting", defaultValue: 5, range: "1..50", required: true
-                
-                input "enableParasiticCheck", "bool", title: "Enable Parasitic Battery Drain Detection?", defaultValue: true, submitOnChange: true
-                if (enableParasiticCheck) {
-                    input "parasiticThreshold", "number", title: "Max Allowable Battery Drop / 24 Hours (%)", defaultValue: 10, range: "1..50", required: true
-                    paragraph "<i>Triggers a yellow warning instantly if a device drops faster than this percentage in 24 hours, alerting you to internal hardware shorts or mesh pairing loops.</i>"
-                }
-            }
-        }
-        
-        section("Device Inactivity (Dead Devices)") {
-            input "enableInactivityCheck", "bool", title: "Enable Inactivity Monitoring?", defaultValue: true, submitOnChange: true
-            if (enableInactivityCheck) {
-                paragraph "<i>Flags devices that have not reported any activity or status updates in the specified timeframe.</i>"
-                input "inactivityThreshold", "number", title: "Standard Inactivity Threshold (Hours)", defaultValue: 24, required: true
-                
-                input "buttonInactivityThreshold", "number", title: "Sleepy Device (Remotes/Buttons) Threshold (Hours)", defaultValue: 168, required: true
-                paragraph "<i>Note: 168 Hours = 7 Days. Remotes inactive for 75% of this extended threshold will trigger a Yellow Warning.</i>"
-                
-                input "ignoreMainsInactivity", "bool", title: "Ignore Inactivity for Mains-Powered Devices?", defaultValue: true, submitOnChange: true
-                paragraph "<i>Prevents lights, switches, and plugs from showing 'Offline' simply because they haven't been turned on recently. They will only flag if their network health check explicitly fails.</i>"
-                
-                input "ignoredInactivityDevices", "enum", title: "Ignore Inactivity completely for these Devices", options: devOptions, multiple: true, required: false
-            }
-        }
-        
-        section("Stale State Detection (Stuck Sensors)") {
-            input "enableStuckCheck", "bool", title: "Enable Stale State Detection?", defaultValue: true, submitOnChange: true
-            if (enableStuckCheck) {
-                paragraph "<i>Detects hardware lockups where a sensor is technically online, but its physical state is frozen (e.g., stuck on 'Active' or 'Open').</i>"
-                input "stuckMotionHours", "number", title: "Stuck 'Active' Threshold (Hours)", defaultValue: 2, required: true
-                input "stuckContactHours", "number", title: "Stuck 'Open' Threshold (Hours)", defaultValue: 24, required: true
-                input "ignoredStuckDevices", "enum", title: "Ignore Stuck State for these Devices", options: devOptions, multiple: true, required: false
-                paragraph "<i>Note: Useful for multipurpose sensors used only for acceleration/temperature without a magnet.</i>"
-            }
-        }
-
-        section("Wi-Fi Signal Quality") {
-            input "enableWifiSignalCheck", "bool", title: "Enable Wi-Fi Monitoring?", defaultValue: false, submitOnChange: true
-            if (enableWifiSignalCheck) {
-                paragraph "<i>Checks Wi-Fi devices reporting 'wifiSignal' or 'rssi'. Tracked via inline sparklines.</i>"
-                input "wifiRssiThreshold", "number", title: "Critical Minimum Wi-Fi RSSI (e.g. -75)", defaultValue: -75, range: "-100..0", required: true
-            }
-        }
-        
-        section("Signal Quality (Zigbee/Z-Wave)") {
-            input "enableSignalCheck", "bool", title: "Enable Signal Monitoring?", defaultValue: false, submitOnChange: true
-            if (enableSignalCheck) {
-                paragraph "<i>Checks devices that report 'rssi' or 'lqi' attributes. Tracked via inline sparklines.</i>"
-                input "rssiThreshold", "number", title: "Critical Minimum RSSI Threshold (e.g. -85)", defaultValue: -85, range: "-120..0", required: true
-                input "lqiThreshold", "number", title: "Critical Minimum LQI Threshold (e.g. 100)", defaultValue: 100, range: "0..255", required: true
-                paragraph "<i>Note: Signals approaching these thresholds will trigger a Yellow Warning.</i>"
-            }
-        }
-        
-        section("Device Flapping (Unstable Network)") {
-            input "enableFlapDetection", "bool", title: "Enable Flap Detection?", defaultValue: true, submitOnChange: true
-            if (enableFlapDetection) {
-                paragraph "<i>Detects if a device repeatedly drops off the network, indicating a bad route or failing radio (Purple Status).</i>"
-                input "flapThreshold", "number", title: "Drops per 24hrs to trigger Flapping status", defaultValue: 3, required: true
-            }
-        }
-
-        section("Spatial Radio Interference Detection") {
-            input "enableInterferenceCheck", "bool", title: "Enable Topology/Interference Analysis?", defaultValue: false, submitOnChange: true
-            if (enableInterferenceCheck) {
-                paragraph "<i>Calculates an 'Interference Index' by grouping RSSI drops and flap events by physical location to detect localized RF black holes.</i>"
-                input "chattyDeviceThreshold", "number", title: "Max State Changes / Hour (Detects Mesh Saturation)", defaultValue: 100, required: true
-            }
-        }
-
-        section("Firmware Consistency Auditor") {
-            input "enableFirmwareAuditor", "bool", title: "Enable Automated Firmware Audits?", defaultValue: true
-            paragraph "<i>Groups your identical hardware endpoints together and automatically identifies firmware trailing anomalies across the estate.</i>"
         }
     }
 }
@@ -1166,19 +1057,6 @@ def appButtonHandler(btn) {
         createChildDevice()
     } else if (btn == "btnRunCheck") {
         runHealthCheck()
-    } else if (btn == "btnBulkApplyLoc") {
-        if (settings.bulkLoc && settings.bulkDevs) {
-            def devIds = settings.bulkDevs instanceof List ? settings.bulkDevs : [settings.bulkDevs]
-            def count = 0
-            
-            devIds.each { dId ->
-                app.updateSetting("loc_${dId}", [type: "enum", value: settings.bulkLoc])
-                count++
-            }
-            
-            app.removeSetting("bulkDevs") 
-            app.addToHistory("SYSTEM: Bulk applied location '${settings.bulkLoc}' to ${count} devices.")
-        }
     }
 }
 
@@ -1236,7 +1114,7 @@ def autoHealNetwork() {
     def problemDevIds = state.dashboardData?.findAll { it.status == "Red" || it.status == "Purple" || it.status == "Yellow" }?.collect { it.id } ?: []
     def nowMs = new Date().time
     
-    def optOutIds = settings.optOutPowerCycle?.collect { it instanceof String ? it : it.id.toString() } ?: []
+    def optOutIds = settings.optOutPowerCycle?.collect { it.id.toString() } ?: []
 
     allDevs.each { dev ->
         if (problemDevIds.contains(dev.id)) {
@@ -1344,7 +1222,7 @@ def runHealthCheck() {
     addDev(settings.genericSensors, "Other Sensors")
     addDev(settings.batteryDevices, "General Battery Devices")
     addDev(settings.buttonControllers, "Button Controllers")
-    
+
     state.scanQueue = deviceMap.collect { k, v -> [id: k, categories: v] }
     
     if (state.scanQueue.size() > 0) {
@@ -1371,19 +1249,17 @@ def processScanChunk() {
     def allDevs = getAllMonitoredDevices()
     def nowMs = new Date().time
     
-    def ignoreListIds = settings.ignoredInactivityDevices?.collect { it instanceof String ? it : it.id.toString() } ?: []
-    def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it instanceof String ? it : it.id.toString() } ?: []
+    def ignoreListIds = settings.ignoredInactivityDevices?.collect { it.id.toString() } ?: []
+    def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it.id.toString() } ?: []
     
     chunk.each { qItem ->
         def dev = allDevs.find { it.id == qItem.id }
         if (!dev) return 
         
-        def finalCategories = []
+        def finalCategories = qItem.categories
         def overrideFolders = settings["folder_${dev.id}"]
         if (overrideFolders) {
             finalCategories = overrideFolders instanceof List ? overrideFolders : [overrideFolders]
-        } else {
-            finalCategories = qItem.categories
         }
         
         def isMuted = state.muteExpirations && state.muteExpirations[dev.id] != null
@@ -1907,21 +1783,20 @@ def serveMaintenanceTicket() {
         ensureStateMaps()
         def issues = state.dashboardData?.findAll { it.status == "Red" || it.status == "Purple" || it.status == "Yellow" } ?: []
         
-        def html = """<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Device Health Maintenance Ticket</title>
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; color: #333; background: #fff; max-width: 800px; margin: 0 auto; }
-            h2 { color: #0b3b60; border-bottom: 2px solid #0b3b60; padding-bottom: 5px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
-            th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }
-            th { background-color: #f8f9fa; color: #333; }
-            .btn-print { background-color: #8e44ad; color: #fff; border: none; padding: 10px 15px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; display: inline-block; margin-top: 10px; }
-            .btn-print:hover { background-color: #732d91; }
-            @media print { .no-print { display: none !important; } }
-        </style></head><body>
-        <h2>Device Health Maintenance Ticket</h2>
-        <p><strong>Generated:</strong> ${new Date().format("MM/dd/yyyy h:mm a", location.timeZone)}</p>
-        <button class="no-print btn-print" onclick="window.print()">🖨️ Print Ticket</button>
-        """
+        def html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Device Health Maintenance Ticket</title>" +
+        "<style>body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; color: #333; background: #fff; max-width: 800px; margin: 0 auto; } " +
+        "h2 { color: #0b3b60; border-bottom: 2px solid #0b3b60; padding-bottom: 5px; } " +
+        "table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; } " +
+        "th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } " +
+        "th { background-color: #f8f9fa; color: #333; } " +
+        ".btn-print { background-color: #8e44ad; color: #fff; border: none; padding: 10px 15px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; display: inline-block; margin-top: 10px; } " +
+        ".btn-print:hover { background-color: #732d91; } " +
+        "@media print { .no-print { display: none !important; } }</style>" +
+        "<script>window.onload = function() { setTimeout(function() { window.print(); }, 500); }</script>" +
+        "</head><body>" +
+        "<h2>Device Health Maintenance Ticket</h2>" +
+        "<p><strong>Generated:</strong> ${new Date().format('MM/dd/yyyy h:mm a', location.timeZone)}</p>" +
+        "<button class='no-print btn-print' onclick='window.print()'>🖨️ Print Ticket</button>"
         
         if (issues.size() > 0) {
             html += "<table><tr><th>Device</th><th>Location</th><th>Status</th><th>Details</th><th>Power/Battery</th></tr>"
@@ -1939,7 +1814,7 @@ def serveMaintenanceTicket() {
         return render(contentType: "text/html", data: html, status: 200)
     } catch (e) {
         log.error "Maintenance Ticket Generation Error: ${e}"
-        return render(contentType: "text/html", data: "Error generating ticket: ${e}", status: 500)
+        return render(contentType: "text/html", data: "Error generating ticket: ${e.message}", status: 500)
     }
 }
 
@@ -1958,7 +1833,6 @@ def serveJsonEndpoint() {
     }
 }
 
-// Re-written to dynamically adapt to Strings, GStrings, or any other Object
 def addToHistory(msg) {
     def msgStr = msg.toString()
     def cleanMsg = msgStr.replaceAll(/<.*?>/, "")
@@ -1971,7 +1845,7 @@ def addToHistory(msg) {
 }
 
 def getRedirectHtml(delayMs, msgText) {
-    return "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.href=\"dashboard?access_token=${state.accessToken}\";}, ${delayMs});</script></head><body style=\"background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;\"><h3>🔄 Standard BMS Syncing...</h3><p style='color:#666;'>${msgText}</p></body></html>"
+    return "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.href='dashboard?access_token=${state.accessToken}';}, ${delayMs});</script></head><body style='background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;'><h3>🔄 Standard BMS Syncing...</h3><p style='color:#666;'>${msgText}</p></body></html>"
 }
 
 // --------------------------------------------------------------------------------------
@@ -2098,7 +1972,7 @@ def updateDeviceEndpoint() {
         return render(contentType: "application/json", data: '{"success":true}', status: 200)
     } catch(e) { 
         log.error "Portal Device Update Error: ${e}"
-        return render(contentType: "application/json", data: '{"error":"'+e+'"}', status: 500) 
+        return render(contentType: "application/json", data: '{"error":"Error"}', status: 500) 
     }
 }
 
@@ -2111,7 +1985,7 @@ def updateFoldersEndpoint() {
         return render(contentType: "application/json", data: '{"success":true}', status: 200)
     } catch(e) { 
         log.error "Portal Folder Update Error: ${e}"
-        return render(contentType: "application/json", data: '{"error":"'+e+'"}', status: 500) 
+        return render(contentType: "application/json", data: '{"error":"Error"}', status: 500) 
     }
 }
 
