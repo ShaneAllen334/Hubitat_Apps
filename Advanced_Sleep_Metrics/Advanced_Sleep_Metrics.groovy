@@ -1,5 +1,5 @@
 /**
- * Advanced Sleep Metrics (BMS Edition)
+ * Advanced Sleep Metrics
  *
  * Author: ShaneAllen
  */
@@ -7,7 +7,7 @@ definition(
     name: "Advanced Sleep Metrics",
     namespace: "ShaneAllen",
     author: "ShaneAllen",
-    description: "BMS-grade sleep orchestrator with Midnight Wanderer tracking, HTML Dashboards, and Predictive Wake Triggers.",
+    description: "Clinical-grade sleep orchestrator with EWMA tracking, environmental correlation, and Predictive Wake Triggers.",
     category: "Health & Wellness",
     iconUrl: "",
     iconX2Url: ""
@@ -19,10 +19,11 @@ preferences {
 }
 
 def mainPage() {
+    // Auto-refresh removed as requested
     dynamicPage(name: "mainPage", title: "BMS Configuration", install: true, uninstall: true) {
         
         section("Live System Dashboard") {
-            input "btnRefresh", "button", title: "🔄 Refresh Data"
+            input "btnRefresh", "button", title: "🔄 Force Manual Refresh"
             
             if (numRooms > 0) {
                 def statusText = ""
@@ -45,6 +46,13 @@ def mainPage() {
                         
                         if (!vSensor && !vSensor2 && !pMat) continue
                         
+                        // Live Hardware Status Checks
+                        def vSensState = vSensor ? (vSensor.currentValue("acceleration") ?: "inactive") : "none"
+                        def pMatState = pMat ? (pMat.currentValue("contact") ?: pMat.currentValue("presence") ?: "open") : "none"
+                        
+                        def vIndicator = vSensState == "active" ? "<span style='color:#e74c3c;font-weight:bold;'>ACTIVE 📳</span>" : "<span style='color:#95a5a6;'>INACTIVE</span>"
+                        def pIndicator = (pMatState == "closed" || pMatState == "present") ? "<span style='color:#2980b9;font-weight:bold;'>CLOSED 🛏️</span>" : "<span style='color:#95a5a6;'>OPEN</span>"
+
                         // BMS Health Check
                         def lastVibGlobal = state.lastVibrationTime?."${uId}" ?: 0
                         def isOffline = (lastVibGlobal > 0 && (now - lastVibGlobal) > watchdogMillis)
@@ -57,14 +65,15 @@ def mainPage() {
                         def score = calculateEfficiencyScore(uId)
                         def scoreColor = score >= 85 ? "#27ae60" : (score >= 70 ? "#f39c12" : "#c0392b")
                         
-                        def mlEnabled = (settings["enableML_${uId}"] != false) // defaults to true
+                        def mlEnabled = (settings["enableML_${uId}"] != false)
                         def aiStats = ""
                         def aiTimes = ""
                         def tripMins = state.bathroomDuration?."${uId}" ?: 0
                         def trips = state.bathroomTrips?."${uId}" ?: 0
                         
+                        def averages = calculateUserAverages(uId)
+                        
                         if (mlEnabled) {
-                            def averages = calculateUserAverages(uId)
                             def learningDisplay = averages.daysLearned >= 14 ? "🧠 Learned" : "🧠 Learning (${averages.daysLearned}/14)"
                             aiStats = "<span style='font-size: 12px; color: #555;'>${learningDisplay} | 7D Avg: <b>${averages.avgScore7 ?: "--"}%</b></span>"
                             def todayAvgIn = isWkndGlobal ? averages.avgInWe : averages.avgInWd
@@ -105,19 +114,22 @@ def mainPage() {
                         def pLight = Math.min(100, ((lightMins / totalMins) * 100).toInteger())
                         def pAwake = Math.min(100, ((awakeMins / totalMins) * 100).toInteger())
                         
-                        // Pie Chart Data
                         if ((pDeep + pLight + pAwake) == 0) pAwake = 100
                         def dEndApp = ((pDeep / 100.0) * 360).toInteger()
                         def lEndApp = dEndApp + (((pLight / 100.0) * 360).toInteger())
                         
                         def moves = state.movements?."${uId}" ?: 0
                         def liveAsleepForIndex = cState == "SLEEPING" ? liveAsleep : (state.lastSessionAsleep?."${uId}" ?: 0)
-                        def rIndex = liveAsleepForIndex > 0 ? Math.round((moves / (liveAsleepForIndex / 60.0)) * 10) / 10.0 : 0.0
+                        def rIndex = liveAsleepForIndex > 0 ? (Math.round((moves / (liveAsleepForIndex / 60.0)) * 10) / 10.0) : 0.0
+                        def rIndexFmt = rIndex as Double 
                         
-                        // Detailed Context Calculations
                         def eff = 0
                         if (totalMins >= 30 && liveAsleep > 0) eff = Math.min(100, ((liveAsleep / totalMins) * 100) as Integer)
-                        def movPen = moves * 2
+                        
+                        // Rescaled movement penalty logic
+                        def rawPen = state.weightedMovementPenalty?."${uId}" != null ? state.weightedMovementPenalty["${uId}"] : (moves * 0.25)
+                        if (rawPen > moves) rawPen = moves * 0.25 // Backward compatibility fix for the massive 2.0 point explosion
+                        def movPenFmt = Math.min(30.0, rawPen as Double)
                         
                         def currentEnv = ""
                         if (state.envStats?."${uId}"?.tCnt > 0) {
@@ -127,8 +139,21 @@ def mainPage() {
                         } else {
                             currentEnv = "N/A"
                         }
+                        
+                        def advText = ""
+                        if (settings["enableCircadianScaling_${uId}"]) advText += " 🌖 <i>Circadian movement scaling active.</i>"
+                        if (settings["enableClinicalScoring_${uId}"]) advText += "<br>⚕️ <b>Clinical Scoring:</b> Active (Duration Goal: ${settings["targetSleepHours_${uId}"] ?: 7.5}h). Latency and Sleep Jet-Lag considered in final score."
+                        if (settings["enableAdvancedStages_${uId}"] && cState == "SLEEPING") {
+                            def stage = state.currentSleepStage?."${uId}" ?: "DEEP"
+                            def ewmaVal = state.ewmaMovement?."${uId}" ?: 0.0
+                            def sColor = stage == "LIGHT" ? "#3498db" : "#2980b9"
+                            advText += "<br>📈 <b>Real-Time EWMA Stage:</b> <span style='color:${sColor}; font-weight:bold;'>${stage}</span> <i>(Index: ${String.format("%.2f", ewmaVal as Double)})</i>"
+                        }
+                        if (settings["enableEnvCorrelation_${uId}"] && averages.optimalTemp != null) {
+                            def oH = averages.optimalHumid != null ? "at ${averages.optimalHumid}% Hum" : ""
+                            advText += "<br>🌡️ <b>Learned Optimal Env:</b> <b>${averages.optimalTemp}°</b> ${oH} yields highest scores."
+                        }
 
-                        // --- Active Timers ---
                         def timers = []
                         if (isOffline) {
                             timers << "<span style='color: red;'>⚠️ Sensor Stale</span>"
@@ -158,11 +183,10 @@ def mainPage() {
                         }
                         def timerStr = timers ? timers.join(" | ") : "<span style='color: #95a5a6;'>Monitored Active</span>"
 
-                        // --- Construct the Insight Sentence ---
                         def insightText = "<b>Deep Sleep Insight:</b><br>"
                         insightText += "Based on telemetry from your designated pressure and kinetic vibration sensors, you established a base sleep efficiency of <b>${eff}%</b> (Time Asleep vs. Time In Bed). "
                         if (moves > 0) {
-                            insightText += "Throughout the session, sensors recorded <b>${moves}</b> distinct restlessness events (resulting in a <b>-${movPen} point</b> penalty). "
+                            insightText += "Throughout the session, sensors recorded <b>${moves}</b> distinct restlessness events (resulting in a capped <b>-${String.format("%.1f", movPenFmt)} point</b> penalty). "
                         } else {
                             insightText += "Your sleep was incredibly still, with 0 recorded restlessness events. "
                         }
@@ -170,12 +194,11 @@ def mainPage() {
                             insightText += "You registered <b>${trips}</b> away/bathroom trip(s), spending <b>${tripMins} minutes</b> out of bed. "
                         }
                         insightText += "Combined with room health telemetry (${currentEnv}), your final calculated BMS Sleep Score is <b>${score}%</b>."
+                        if (advText != "") insightText += "<br><br>${advText}"
 
-                        // --- GENERATE HTML ACCORDION ---
                         statusText += """
                         <details style='background: #fdfdfd; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 3px 6px rgba(0,0,0,0.08); font-family: sans-serif;'>
                             
-                            <!-- COLLAPSED HEADER -->
                             <summary style='padding: 16px 20px; background: linear-gradient(180deg, #ffffff 0%, #f4f4f4 100%); font-size: 16px; cursor: pointer; border-bottom: 1px solid #ddd; outline: none; display: flex; align-items: center; border-radius: 8px 8px 0 0;'>
                                 <div style='flex: 1; font-weight: bold; color: #2c3e50; font-size: 20px;'>
                                     ${uName} <span style='font-size: 14px; color: #7f8c8d; font-weight: normal; margin-left: 8px;'>${getRoomName(i)}</span>
@@ -188,13 +211,10 @@ def mainPage() {
                                 </div>
                             </summary>
                             
-                            <!-- EXPANDED BODY -->
                             <div style='padding: 24px; display: flex; flex-direction: column; gap: 20px;'>
                                 
-                                <!-- Top Row: Charts & Data -->
                                 <div style='display: flex; flex-wrap: wrap; gap: 30px; align-items: flex-start;'>
                                     
-                                    <!-- Donut Chart -->
                                     <div style='display: flex; flex-direction: column; align-items: center;'>
                                         <div style='position: relative; width: 100px; height: 100px; border-radius: 50%; background: conic-gradient(${scoreColor} ${score*3.6}deg, #eee 0); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'>
                                             <div style='width: 76px; height: 76px; background: #fdfdfd; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: bold; color: ${scoreColor};'>${score}</div>
@@ -202,7 +222,6 @@ def mainPage() {
                                         <span style='margin-top: 10px; font-size: 14px; font-weight: bold; color: #555;'>BMS SCORE</span>
                                     </div>
 
-                                    <!-- Pie Chart w/ Legend -->
                                     <div style='display: flex; align-items: center; gap: 24px; border-left: 1px solid #eee; padding-left: 30px;'>
                                         <div style='width: 100px; height: 100px; border-radius: 50%; background: conic-gradient(#2980b9 0 ${dEndApp}deg, #3498db 0 ${lEndApp}deg, #e67e22 0); border: 2px solid #ddd; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'></div>
                                         
@@ -213,17 +232,15 @@ def mainPage() {
                                         </div>
                                     </div>
 
-                                    <!-- Quick Stats Column -->
                                     <div style='flex: 1; border-left: 1px solid #eee; padding-left: 30px; display: flex; flex-direction: column; gap: 12px;'>
                                         <div style='font-size: 14px;'>🛏️ In Bed: <b>${inBedTimeStr}</b> ➔ Out: <b>${exitTimeStr}</b></div>
                                         <div style='font-size: 14px;'>💤 Asleep: <b>${asleepTimeStr}</b> (Latency: <b>${state.sleepLatency?."${uId}" ?: "--"}m</b>)</div>
-                                        <div style='font-size: 14px;'>🏃‍♂️ Movements: <b>${moves}</b> (Index: <b>${String.format("%.1f", rIndex)}/hr</b>)</div>
-                                        <div style='font-size: 14px;'>🚽 Bathroom Trips: <b>${trips}x</b> (Away: <b>${tripMins}m</b>)</div>
+                                        <div style='font-size: 14px;'>🏃‍♂️ Movements: <b>${moves}</b> (Index: <b>${String.format("%.1f", rIndexFmt)}/hr</b>)</div>
+                                        <div style='font-size: 14px;'>📡 Hardware: Vib: ${vIndicator} | Mat: ${pIndicator}</div>
                                         <div style='font-size: 14px;'>🌡️ Room Env: <b>${currentEnv}</b></div>
                                     </div>
                                 </div>
 
-                                <!-- Horizontal Bar Graph -->
                                 <div style='width: 100%;'>
                                     <div style='width: 100%; height: 16px; background: #eee; border-radius: 8px; display: flex; overflow: hidden; border: 1px solid #ccc;'>
                                         <div style='width: ${pDeep}%; background: linear-gradient(90deg, #1A2980 0%, #26D0CE 100%);' title='Deep Sleep'></div>
@@ -232,12 +249,10 @@ def mainPage() {
                                     </div>
                                 </div>
 
-                                <!-- Deep Insight Box -->
                                 <div style='background: #f4f6f7; border-left: 5px solid ${scoreColor}; padding: 16px; border-radius: 6px; font-size: 14px; color: #2c3e50; line-height: 1.6; box-shadow: inset 0 0 10px rgba(0,0,0,0.02);'>
                                     ${insightText}
                                 </div>
                                 
-                                <!-- Footer AI & Timers -->
                                 <div style='display: flex; justify-content: space-between; font-size: 13px; border-top: 1px solid #eee; padding-top: 12px;'>
                                     <div>${aiStats} | ${aiTimes}</div>
                                     <div><b>System Activity:</b> ${timerStr}</div>
@@ -287,7 +302,6 @@ def mainPage() {
             input "fallAsleepThreshold", "number", title: "Fall Asleep Duration (Minutes)", defaultValue: 15
             input "exitBedThreshold", "number", title: "Bed Exit Delay (Minutes)", defaultValue: 5
             input "stitchingWindow", "number", title: "Standard Stitching Window (Minutes)", defaultValue: 15
-            input "restlessThreshold", "number", title: "Restless Movement Log Threshold (Events)", defaultValue: 5, required: false
             
             paragraph "<b>Advanced Signal Processing</b>"
             input "enableSettlingLock", "bool", title: "🔒 Enable Settling Lock?", defaultValue: true, submitOnChange: true, description: "Completely locks the user IN BED for a set time after entry to prevent tossing/adjusting from causing false exits."
@@ -362,10 +376,12 @@ def roomPage(params) {
             input "wakeDelay_${rNum}", "number", title: "Wake Confirmation Timeout (Mins)", defaultValue: 45
         }
 
-        section("Room Environment Analytics (Optional)", hideable: true, hidden: true) {
-            paragraph "Correlates average room temperature and humidity during the SLEEPING phase to identify optimal conditions for the highest Sleep Score."
+        section("Room Environment Diagnostics (Optional)", hideable: true, hidden: true) {
+            paragraph "Provides Environmental AI correlation mapping and Real-Time external disturbance disruption tracking."
             input "tempSensor_${rNum}", "capability.temperatureMeasurement", title: "Room Temperature Sensor", required: false
             input "humidSensor_${rNum}", "capability.relativeHumidityMeasurement", title: "Room Humidity Sensor", required: false
+            input "luxSensor_${rNum}", "capability.illuminanceMeasurement", title: "Room Lux/Light Sensor", required: false
+            input "noiseSensor_${rNum}", "capability.soundPressureLevel", title: "Room Decibel/Noise Sensor", required: false
         }
         
         section("Fallback Room Sensors", hideable: true, hidden: true) {
@@ -381,6 +397,7 @@ def roomPage(params) {
                 input "usePressureMat_${rNum}_${u}", "bool", title: "🛏️ Use Tuya Pressure Mat for Primary Presence?", defaultValue: false, submitOnChange: true
                 if (settings["usePressureMat_${rNum}_${u}"]) {
                     input "pressureMat_${rNum}_${u}", "capability.contactSensor", title: "Primary Bed Pressure Mat (Contact)", required: true, description: "When selected, vibration sensors are only used to track exact moment of sleep and nightly restlessness."
+                    input "matExitDelay_${rNum}_${u}", "number", title: "Mat Open Exit Force Delay (Mins)", defaultValue: 10, description: "If the mat remains open for this long, bypass all motion checks and absolutely force an exit."
                 }
 
                 input "vibrationSensor_${rNum}_${u}", "capability.accelerationSensor", title: "Primary Vibration Sensor (Mattress)", required: true
@@ -402,6 +419,22 @@ def roomPage(params) {
                     paragraph "✅ <b>User Virtual Switch Linked.</b>"
                 } else {
                     input "btnCreateSwitch_${rNum}_${u}", "button", title: "➕ Create User Virtual Switch"
+                }
+            }
+
+            section("User ${u} Next-Gen Analytics & Triggers", hideable: true, hidden: true) {
+                input "enableClinicalScoring_${rNum}_${u}", "bool", title: "⚕️ Enable Clinical Scoring Model?", defaultValue: false, submitOnChange: true, description: "Overhauls base math to factor in Total Sleep Duration vs Goal, Latency efficiency, and Bedtime Regularity."
+                if (settings["enableClinicalScoring_${rNum}_${u}"]) {
+                    input "targetSleepHours_${rNum}_${u}", "decimal", title: "Target Sleep Duration Goal (Hours)", defaultValue: 7.5
+                }
+                
+                input "enableAdvancedStages_${rNum}_${u}", "bool", title: "📊 Enable EWMA Sleep Stage Tracking?", defaultValue: false, submitOnChange: true, description: "Replaces standard timer gaps with an Exponentially Weighted Moving Average engine to detect true Light vs Deep sleep phases."
+                input "enableCircadianScaling_${rNum}_${u}", "bool", title: "🌖 Enable Circadian Movement Scaling?", defaultValue: false, description: "Dynamically halves the score penalty for restless twitches if they occur during typical early morning REM hours (3 AM - 8 AM)."
+                input "enableEnvCorrelation_${rNum}_${u}", "bool", title: "🌡️ Enable Environmental Correlation?", defaultValue: false, description: "Analyzes historical data natively to find your optimal sleep temperature and humidity zones for maximum BMS scores."
+                
+                input "enableSmartAlarm_${rNum}_${u}", "bool", title: "⏰ Enable Predictive Smart Alarm?", defaultValue: false, submitOnChange: true, description: "Triggers a virtual switch if kinetic movement or LIGHT sleep is detected while inside your established Wake Window, allowing you to run natural wake-up automations."
+                if (settings["enableSmartAlarm_${rNum}_${u}"]) {
+                    input "smartAlarmSwitch_${rNum}_${u}", "capability.switch", title: "Smart Alarm Trigger Switch", required: true
                 }
             }
             
@@ -473,11 +506,18 @@ def ensureStateMaps() {
     if (state.sessionResumedTime == null) state.sessionResumedTime = [:]
     if (state.sessionStartTime == null) state.sessionStartTime = [:]
     if (state.envStats == null) state.envStats = [:] 
-    
-    // New Maps for Deep Sleep & Latency Tracking
     if (state.deepSleepDuration == null) state.deepSleepDuration = [:]
     if (state.lastStillStartTime == null) state.lastStillStartTime = [:]
     if (state.sleepLatency == null) state.sleepLatency = [:]
+    
+    if (state.weightedMovementPenalty == null) state.weightedMovementPenalty = [:]
+    if (state.ewmaMovement == null) state.ewmaMovement = [:]
+    if (state.lastMoveTimeForEwma == null) state.lastMoveTimeForEwma = [:]
+    if (state.currentSleepStage == null) state.currentSleepStage = [:]
+    if (state.smartAlarmTriggeredDate == null) state.smartAlarmTriggeredDate = [:]
+    
+    if (state.lastEnvDisturbanceTime == null) state.lastEnvDisturbanceTime = [:]
+    if (state.lastEnvDisturbanceType == null) state.lastEnvDisturbanceType = [:]
 }
 
 def initialize() {
@@ -492,9 +532,10 @@ def initialize() {
         if (!state.lastRoomMotionTime["${i}"]) state.lastRoomMotionTime["${i}"] = 0
         if (!state.roomGoodNightTriggered["${i}"]) state.roomGoodNightTriggered["${i}"] = false
         
-        // Environmental Sensors
         if (settings["tempSensor_${i}"]) subscribe(settings["tempSensor_${i}"], "temperature", envHandler)
         if (settings["humidSensor_${i}"]) subscribe(settings["humidSensor_${i}"], "humidity", envHandler)
+        if (settings["luxSensor_${i}"]) subscribe(settings["luxSensor_${i}"], "illuminance", noiseLuxHandler)
+        if (settings["noiseSensor_${i}"]) subscribe(settings["noiseSensor_${i}"], "soundPressureLevel", noiseLuxHandler)
         
         def numUsers = (i == 1) ? 2 : 1
         for (int u = 1; u <= numUsers; u++) {
@@ -515,6 +556,12 @@ def initialize() {
             if (!state.deepSleepDuration["${uId}"]) state.deepSleepDuration["${uId}"] = 0
             if (!state.lastStillStartTime["${uId}"]) state.lastStillStartTime["${uId}"] = 0
             if (!state.sleepLatency["${uId}"]) state.sleepLatency["${uId}"] = 0
+            
+            if (!state.weightedMovementPenalty["${uId}"]) state.weightedMovementPenalty["${uId}"] = 0.0
+            if (!state.ewmaMovement["${uId}"]) state.ewmaMovement["${uId}"] = 0.0
+            if (!state.lastMoveTimeForEwma["${uId}"]) state.lastMoveTimeForEwma["${uId}"] = 0
+            if (!state.currentSleepStage["${uId}"]) state.currentSleepStage["${uId}"] = "DEEP"
+            if (!state.smartAlarmTriggeredDate["${uId}"]) state.smartAlarmTriggeredDate["${uId}"] = ""
             
             if (!state.telemetry["${uId}"] || !state.telemetry["${uId}"].today) {
                 state.telemetry["${uId}"] = [today: [vibrations: 0, falseExits: 0, crossTalkAvoided: 0, inBedMotionsIgnored: 0, ghostBlocks: 0, settlingLockBlocks: 0], overall: [vibrations: 0, falseExits: 0, crossTalkAvoided: 0, inBedMotionsIgnored: 0, ghostBlocks: 0, settlingLockBlocks: 0]]
@@ -542,10 +589,9 @@ def initialize() {
         for (int u = 1; u <= numUsers; u++) {
             def uId = "${i}_${u}"
             
-            // Subscribe to Pressure Mat if enabled
             if (settings["usePressureMat_${uId}"] && settings["pressureMat_${uId}"]) {
                 subscribe(settings["pressureMat_${uId}"], "contact", pressureMatHandler)
-                subscribe(settings["pressureMat_${uId}"], "presence", pressureMatHandler) // Supports presence capability formats too
+                subscribe(settings["pressureMat_${uId}"], "presence", pressureMatHandler) 
             }
 
             def vSensor = settings["vibrationSensor_${uId}"]
@@ -557,14 +603,36 @@ def initialize() {
     }
 }
 
-// --- GLOBAL MOTION HANDLER ---
 def globalMotionHandler(evt) {
     if (evt.value == "active") {
         state.lastGlobalMotionTime = new Date().time
     }
 }
 
-// --- ENVIRONMENTAL SENSOR HANDLER ---
+def noiseLuxHandler(evt) {
+    if (isSystemPaused()) return
+    def rNum = getRoomNumFromDevice(evt.device.id, evt.name == "illuminance" ? "luxSensor" : "noiseSensor")
+    if (!rNum) return
+    
+    def val = evt.value as Double
+    def isSpike = false
+    def typeStr = ""
+    
+    if (evt.name == "illuminance" && val > 10) { 
+        isSpike = true
+        typeStr = "Light Bleed (${val} lx)"
+    } else if (evt.name == "soundPressureLevel" && val > 55) { 
+        isSpike = true
+        typeStr = "Noise Spike (${val} dB)"
+    }
+
+    if (isSpike) {
+        ensureStateMaps()
+        state.lastEnvDisturbanceTime["${rNum}"] = new Date().time
+        state.lastEnvDisturbanceType["${rNum}"] = typeStr
+    }
+}
+
 def envHandler(evt) {
     ensureStateMaps()
     if (isSystemPaused() || !evt.value) return
@@ -591,16 +659,11 @@ def envHandler(evt) {
     }
 }
 
-// --- AI AVERAGING ENGINE WITH OUTLIER REJECTION ---
 def calculateRobustAverage(list) {
     if (!list || list.size() == 0) return null
-    if (list.size() < 4) {
-        return (list.sum() / list.size()).toInteger()
-    }
-    // Clone and sort the list so we don't mutate the original data
+    if (list.size() < 4) return (list.sum() / list.size()).toInteger()
     def sorted = list.collect() 
     sorted.sort()
-    // Drop the lowest and highest values to reject extreme outliers
     def trimmed = sorted[1..-2] 
     return (trimmed.sum() / trimmed.size()).toInteger()
 }
@@ -609,7 +672,7 @@ def calculateUserAverages(uId) {
     ensureStateMaps()
     def stats = state.dailyStats?."${uId}" ?: []
     def days = stats.size()
-    if (days == 0) return [daysLearned: 0, avgInWd: null, avgInWe: null, avgOutWd: null, avgOutWe: null, avgScore7: null, avgTrips: null, optimalTemp: null]
+    if (days == 0) return [daysLearned: 0, avgInWd: null, avgInWe: null, avgOutWd: null, avgOutWe: null, avgScore7: null, avgTrips: null, optimalTemp: null, optimalHumid: null]
     
     def inBedWdList = []
     def inBedWeList = []
@@ -617,10 +680,10 @@ def calculateUserAverages(uId) {
     def outWeList = []
     def totalTrips = 0
     def tempScores = [:]
+    def humidScores = [:]
     
     stats.each { s ->
         totalTrips += (s.trips ?: 0)
-        
         if (s.isWeekend) {
             if (s.inBedMins != null) inBedWeList << s.inBedMins
             if (s.outBedMins != null) outWeList << s.outBedMins
@@ -629,12 +692,19 @@ def calculateUserAverages(uId) {
             if (s.outBedMins != null) outWdList << s.outBedMins
         }
         
-        // Accumulate data for optimal temperature tracking
-        if (s.avgTemp != null && s.score != null && s.score > 0) {
-            def tRound = Math.round(s.avgTemp)
-            if (!tempScores[tRound]) tempScores[tRound] = [sum: 0, cnt: 0]
-            tempScores[tRound].sum += s.score
-            tempScores[tRound].cnt += 1
+        if (settings["enableEnvCorrelation_${uId}"] && s.score != null && s.score > 0) {
+            if (s.avgTemp != null) {
+                def tRound = Math.round(s.avgTemp)
+                if (!tempScores[tRound]) tempScores[tRound] = [sum: 0, cnt: 0]
+                tempScores[tRound].sum += s.score
+                tempScores[tRound].cnt += 1
+            }
+            if (s.avgHumid != null) {
+                def hRound = Math.round(s.avgHumid / 5) * 5 
+                if (!humidScores[hRound]) humidScores[hRound] = [sum: 0, cnt: 0]
+                humidScores[hRound].sum += s.score
+                humidScores[hRound].cnt += 1
+            }
         }
     }
     
@@ -647,12 +717,22 @@ def calculateUserAverages(uId) {
     }
     
     def optTemp = null
-    def maxAvgScore = 0
+    def maxAvgScoreT = 0
     tempScores.each { k, v ->
         def avgForTemp = v.sum / v.cnt
-        if (v.cnt >= 2 && avgForTemp > maxAvgScore) { // Requires at least 2 sessions at this temp
-            maxAvgScore = avgForTemp
+        if (v.cnt >= 2 && avgForTemp > maxAvgScoreT) { 
+            maxAvgScoreT = avgForTemp
             optTemp = k
+        }
+    }
+    
+    def optHumid = null
+    def maxAvgScoreH = 0
+    humidScores.each { k, v ->
+        def avgForHumid = v.sum / v.cnt
+        if (v.cnt >= 2 && avgForHumid > maxAvgScoreH) { 
+            maxAvgScoreH = avgForHumid
+            optHumid = k
         }
     }
     
@@ -664,7 +744,8 @@ def calculateUserAverages(uId) {
         avgOutWe: calculateRobustAverage(outWeList),
         avgScore7: score7Count > 0 ? (score7 / score7Count).toInteger() : 0,
         avgTrips: Math.round((totalTrips / days) * 10) / 10.0,
-        optimalTemp: optTemp
+        optimalTemp: optTemp,
+        optimalHumid: optHumid
     ]
 }
 
@@ -683,15 +764,12 @@ def formatMinutesFromNoon(mins) {
     def unshiftedHours = (mins.toInteger() / 60).toInteger()
     def actualHours = (unshiftedHours - 12 + 24) % 24
     def actualMins = mins.toInteger() % 60
-    
     def ampm = actualHours >= 12 ? "PM" : "AM"
     def displayHours = actualHours % 12
     if (displayHours == 0) displayHours = 12
-    
     return "${displayHours}:${actualMins.toString().padLeft(2, '0')} ${ampm}"
 }
 
-// --- STRICT LOCKOUT HELPERS ---
 def isWithinWakeLockout(uId) {
     if (!settings["enableWakeLockout_${uId}"]) return false
     def startTime = settings["lockoutStart_${uId}"]
@@ -719,17 +797,72 @@ def getLockoutEndTimeMillis(uId) {
     def nowTime = new Date().time
 
     if (start.time > end.time) {
-        if (nowTime >= start.time) return end.time + 86400000 // End is tomorrow
-        else return end.time // End is today
+        if (nowTime >= start.time) return end.time + 86400000 
+        else return end.time 
     } else {
-        if (nowTime > end.time) return end.time + 86400000 // Safety catch
+        if (nowTime > end.time) return end.time + 86400000 
         return end.time
     }
 }
 
-// --- CORE BMS LOGIC ---
+def processUserMovement(uId, rNum) {
+    def now = new Date().time
+    state.movements["${uId}"] = (state.movements["${uId}"] ?: 0) + 1
+    
+    // Environmental Check
+    def lastDisturbTime = state.lastEnvDisturbanceTime?."${rNum}" ?: 0
+    if (lastDisturbTime > 0 && (now - lastDisturbTime) <= 180000) { 
+         def dType = state.lastEnvDisturbanceType?."${rNum}" ?: "Disturbance"
+         addToHistory("ENVIRONMENTAL DISTURBANCE: ${getUserName(uId)} movement likely caused by ${dType}.")
+         state.lastEnvDisturbanceTime["${rNum}"] = 0 
+    }
+    
+    def penalty = 0.25
+    if (settings["enableCircadianScaling_${uId}"]) {
+        def hour = Calendar.getInstance(location.timeZone ?: TimeZone.getDefault()).get(Calendar.HOUR_OF_DAY)
+        if (hour >= 3 && hour <= 8) penalty = 0.10 
+    }
+    state.weightedMovementPenalty["${uId}"] = (state.weightedMovementPenalty["${uId}"] ?: 0.0) + penalty
+    
+    if (settings["enableAdvancedStages_${uId}"]) {
+        def lastT = state.lastMoveTimeForEwma["${uId}"] ?: now
+        def diffMins = (now - lastT) / 60000.0
+        def decay = Math.pow(0.5, diffMins / 15.0) 
+        state.ewmaMovement["${uId}"] = (state.ewmaMovement["${uId}"] ?: 0.0) * decay + 1.0
+        state.lastMoveTimeForEwma["${uId}"] = now
+        
+        def newStage = state.ewmaMovement["${uId}"] > 1.5 ? "LIGHT" : "DEEP"
+        if (state.currentSleepStage["${uId}"] != newStage) {
+            state.currentSleepStage["${uId}"] = newStage
+        }
+    }
+    
+    if (settings["enableSmartAlarm_${uId}"] && settings["smartAlarmSwitch_${uId}"]) {
+        def todayStr = new Date().format("yyyy-MM-dd", location.timeZone ?: TimeZone.getDefault())
+        if (state.smartAlarmTriggeredDate["${uId}"] != todayStr && isWithinWakeWindow(uId)) {
+            def cState = state.sleepState["${uId}"] ?: "EMPTY"
+            if (cState == "SLEEPING" || cState == "IN BED") {
+                settings["smartAlarmSwitch_${uId}"].on()
+                state.smartAlarmTriggeredDate["${uId}"] = todayStr
+                addToHistory("⏰ SMART ALARM: ${getUserName(uId)} registered movement/LIGHT sleep inside Wake Window. Fired smart alarm trigger.")
+            }
+        }
+    }
+    
+    def cState = state.sleepState["${uId}"] ?: "EMPTY"
+    if (cState == "SLEEPING") {
+        def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: now
+        def gap = now - stillStart
+        if (gap >= 2700000) { 
+            state.deepSleepDuration["${uId}"] = (state.deepSleepDuration["${uId}"] ?: 0) + (gap / 60000).toInteger()
+        }
+        state.lastStillStartTime["${uId}"] = now
+    } else if (cState == "IN BED") {
+        runIn((fallAsleepThreshold ?: 15) * 60, "evaluateSleepState", [data: [uId: uId], overwrite: true])
+    }
+}
 
-// --- NEW PRESSURE MAT HANDLER (Either/Or Logic) ---
+
 def pressureMatHandler(evt) {
     ensureStateMaps()
     if (isSystemPaused()) return
@@ -741,23 +874,21 @@ def pressureMatHandler(evt) {
     def cState = state.sleepState["${uId}"] ?: "EMPTY"
     def uName = getUserName(uId)
 
-    if (evt.value == "closed" || evt.value == "present") { // IN BED Trigger
+    if (evt.value == "closed" || evt.value == "present") { 
         state.pendingExit["${uId}"] = 0
         state.exitSequenceProgress["${uId}"] = 0 
         
         if (cState == "EMPTY" || cState == "BATHROOM TRIP") {
             if (cState == "EMPTY" && !isTrackingAllowed()) return
             
-            // --- NEW TELEPORTATION FILTER ---
             if (settings["enableTeleportFilter"] != false && cState == "EMPTY") {
                 def lastRoomMot = state.lastRoomMotionTime["${rNum}"] ?: 0
                 def teleWindowMillis = (settings["teleportWindow"] != null ? settings["teleportWindow"].toInteger() : 10) * 60000
                 if (lastRoomMot == 0 || (now - lastRoomMot) > teleWindowMillis) {
                     log.warn "BMS: Blocked Mat Entry for ${uName}. No room motion detected in the last ${(teleWindowMillis/60000).toInteger()} minutes."
-                    return // Kill the event, it's a phantom reading or a pet
+                    return 
                 }
             }
-            // ---------------------------------
             
             if (cState == "EMPTY" && !state.sessionStartTime["${uId}"]) {
                 state.sessionStartTime["${uId}"] = now
@@ -776,12 +907,13 @@ def pressureMatHandler(evt) {
                     addToHistory("SESSION STITCHED: ${uName} returned within window via Mat (Away: ${awayMins}m). Continuing previous session.")
                 }
                 state.sleepState["${uId}"] = "IN BED"
-                state.sessionResumedTime["${uId}"] = now // Grants fresh settling lock upon return
+                state.sessionResumedTime["${uId}"] = now 
                 updateVirtualSwitch(uId, "on")
             } else {
                 state.inBedTime["${uId}"] = now
                 state.sessionResumedTime["${uId}"] = 0
                 state.movements["${uId}"] = 0
+                state.weightedMovementPenalty["${uId}"] = 0.0
                 state.asleepTime["${uId}"] = null
                 state.bathroomTrips["${uId}"] = 0
                 state.bathroomDuration["${uId}"] = 0
@@ -819,8 +951,16 @@ def pressureMatHandler(evt) {
             runIn((fallAsleepThreshold ?: 15) * 60, "evaluateSleepState", [data: [uId: uId], overwrite: true])
         }
         updateInfoDevice(uId)
+
+        runIn(300, "verifySustainedPressureMat", [data: [uId: uId, roomNum: rNum], overwrite: true])
         
-    } else if (evt.value == "open" || evt.value == "not present") { // EXIT BED Trigger
+    } else if (evt.value == "open" || evt.value == "not present") { 
+        
+        // --- NEW: SUSTAINED EMPTY MAT BYPASS ---
+        def forceDelay = settings["matExitDelay_${uId}"] != null ? settings["matExitDelay_${uId}"].toInteger() : 10
+        runIn(forceDelay * 60, "verifySustainedEmptyMat", [data: [uId: uId, roomNum: rNum], overwrite: true])
+        // ----------------------------------------
+        
         def rMotion = settings["motionSensor_${rNum}"]?.currentValue("motion")
         if (settings["enableGhostFilter"] && rMotion == "active") {
             logTelemetryEvent(uId, "ghostBlocks")
@@ -829,7 +969,6 @@ def pressureMatHandler(evt) {
             state.pendingExit["${uId}"] = now
             def actualThresh = exitBedThreshold != null ? exitBedThreshold.toInteger() : 5
             
-            // We use the same smartWake AI as before, though mats are more immediate
             def smartWake = false
             def mlEnabled = (settings["enableML_${uId}"] != false)
             if (mlEnabled) {
@@ -846,7 +985,61 @@ def pressureMatHandler(evt) {
                     }
                 }
             }
+            
+            if (settings["enableAdvancedStages_${uId}"]) {
+                def stage = state.currentSleepStage["${uId}"] ?: "DEEP"
+                if (stage == "LIGHT" && isWithinWakeWindow(uId)) {
+                    actualThresh = 0 
+                    smartWake = true
+                    addToHistory("STAGE EXIT: ${uName} exited while in LIGHT sleep during Expected Wake Window. Accelerating exit.")
+                } else if (stage == "DEEP") {
+                    actualThresh = Math.max(actualThresh, 5) 
+                }
+            }
+            actualThresh = Math.max(1, actualThresh)
             runIn(actualThresh * 60, "evaluateBedExit", [data: [uId: uId, roomNum: rNum, thresh: actualThresh, ai: smartWake], overwrite: true])
+        }
+    }
+}
+
+// --- NEW HARD-BYPASS: MAT EMPTY FORCE EXIT ---
+def verifySustainedEmptyMat(data) {
+    ensureStateMaps()
+    def uId = data.uId
+    def rNum = data.roomNum
+    def mat = settings["pressureMat_${uId}"]
+    if (!mat) return
+
+    def matState = mat.currentValue("contact") ?: mat.currentValue("presence")
+    if (matState == "open" || matState == "not present") {
+        def cState = state.sleepState["${uId}"] ?: "EMPTY"
+        if (cState != "EMPTY" && cState != "BATHROOM TRIP") {
+            addToHistory("SUSTAINED MAT EXIT: ${getUserName(uId)}'s mat has been open for continuous timeout. Bypassing motion checks and forcing bed exit.")
+            forceBedExit(uId, rNum, true) // Pass true to retain the exact timestamp the mat originally opened
+        }
+    }
+}
+
+def verifySustainedPressureMat(data) {
+    ensureStateMaps()
+    def uId = data.uId
+    def mat = settings["pressureMat_${uId}"]
+    if (!mat) return
+
+    def matState = mat.currentValue("contact") ?: mat.currentValue("presence")
+    if (matState == "closed" || matState == "present") {
+        def cState = state.sleepState["${uId}"] ?: "EMPTY"
+        if (cState == "EMPTY" || cState == "PENDING ENTRY") {
+            addToHistory("SUSTAINED PRESSURE OVERRIDE: ${getUserName(uId)}'s mat has been closed for 5 continuous minutes despite room motion. Forcing IN BED state.")
+            state.sleepState["${uId}"] = "IN BED"
+            if (!state.sessionStartTime["${uId}"]) state.sessionStartTime["${uId}"] = new Date().time
+            state.inBedTime["${uId}"] = state.pendingEntryTime["${uId}"] ?: new Date().time
+            state.movements["${uId}"] = 0
+            state.weightedMovementPenalty["${uId}"] = 0.0
+            state.asleepTime["${uId}"] = null
+            updateVirtualSwitch(uId, "on")
+            updateInfoDevice(uId)
+            runIn((fallAsleepThreshold ?: 15) * 60, "evaluateSleepState", [data: [uId: uId], overwrite: true])
         }
     }
 }
@@ -869,36 +1062,20 @@ def vibrationHandler(evt) {
     if (evt.value == "active") {
         state.lastVibrationTime["${uId}"] = now
 
-        // --- SECONDARY MODE (If Pressure Mat is Active) ---
         if (useMat) {
             def cState = state.sleepState["${uId}"] ?: "EMPTY"
             if (cState == "SLEEPING" || cState == "IN BED") {
-                state.movements["${uId}"] = (state.movements["${uId}"] ?: 0) + 1
+                processUserMovement(uId, rNum)
                 
-                // EDGE OF BED FUSION: If the mat is open (pending exit) but we have vibration, cancel the exit.
                 if (state.pendingExit["${uId}"] > 0) {
                     addToHistory("EDGE OF BED FUSION: ${getUserName(uId)} is off the mat but kinetic movement detected. Assuming roll-to-edge and canceling exit sequence.")
                     state.pendingExit["${uId}"] = 0 
                 }
-
-                if (cState == "SLEEPING") {
-                    // Deep Sleep tracker check
-                    def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: now
-                    def gap = now - stillStart
-                    if (gap >= 2700000) { // 45 mins
-                        state.deepSleepDuration["${uId}"] = (state.deepSleepDuration["${uId}"] ?: 0) + (gap / 60000).toInteger()
-                    }
-                    state.lastStillStartTime["${uId}"] = now
-                } else if (cState == "IN BED") {
-                    // Push out the fall-asleep timer since they are still restless
-                    runIn((fallAsleepThreshold ?: 15) * 60, "evaluateSleepState", [data: [uId: uId], overwrite: true])
-                }
             }
             updateInfoDevice(uId)
-            return // Short-circuit: Do NOT run legacy vibration entry logic
+            return 
         }
 
-        // --- PRIMARY MODE (Legacy Vibration Logic) ---
         state.pendingExit["${uId}"] = 0
         state.exitSequenceProgress["${uId}"] = 0 
         
@@ -907,26 +1084,22 @@ def vibrationHandler(evt) {
         if (cState == "EMPTY" || cState == "BATHROOM TRIP") {
             if (cState == "EMPTY" && !isTrackingAllowed()) return
             
-            // --- NEW TELEPORTATION FILTER ---
             if (settings["enableTeleportFilter"] != false && cState == "EMPTY") {
                 def lastRoomMot = state.lastRoomMotionTime["${rNum}"] ?: 0
                 def teleWindowMillis = (settings["teleportWindow"] != null ? settings["teleportWindow"].toInteger() : 10) * 60000
                 if (lastRoomMot == 0 || (now - lastRoomMot) > teleWindowMillis) {
                     log.warn "BMS: Blocked Kinetic Entry for ${getUserName(uId)}. No room motion detected in the last ${(teleWindowMillis/60000).toInteger()} minutes."
-                    return // Kill the event, it's a phantom/pet
+                    return 
                 }
             }
-            // ---------------------------------
             
-            // Log true session start for AI tracking
             if (cState == "EMPTY" && !state.sessionStartTime["${uId}"]) {
                 state.sessionStartTime["${uId}"] = now
             }
             
-            // --- AI ENTRY PREDICTION ---
             def mlEnabled = (settings["enableML_${uId}"] != false)
             def reqVibs = settings.vibrationsToEnterBed != null ? settings.vibrationsToEnterBed.toInteger() : 1
-            if (reqVibs < 2 && mlEnabled) reqVibs = 2 // Bumped base safety to 2 when using AI
+            if (reqVibs < 2 && mlEnabled) reqVibs = 2 
             def smartEntry = false
             
             if (mlEnabled) {
@@ -938,7 +1111,7 @@ def vibrationHandler(evt) {
                 if (averages.daysLearned >= 14 && targetAvgIn != null) {
                     def nowMins = getMinutesFromNoon(now)
                     if (Math.abs(nowMins - targetAvgIn) <= 60) {
-                        reqVibs = Math.max(2, reqVibs - 1) // AI reduces friction, but NEVER allows a 1-hit entry for kinetic sensors
+                        reqVibs = Math.max(2, reqVibs - 1) 
                         smartEntry = true
                     }
                 }
@@ -956,7 +1129,6 @@ def vibrationHandler(evt) {
             def stitchMillis = getDynamicStitchMillis()
             def uName = getUserName(uId)
             
-            // If they are in BATHROOM TRIP state, they are inherently still part of the session regardless of stitch time
             if ((lastExit > 0 && (now - lastExit) < stitchMillis) || cState == "BATHROOM TRIP") {
                 def awayMins = ((now - lastExit) / 60000).toInteger()
                 if (cState == "BATHROOM TRIP") {
@@ -967,12 +1139,13 @@ def vibrationHandler(evt) {
                     addToHistory("SESSION STITCHED: ${uName} returned within window (Away: ${awayMins}m). Continuing previous session.")
                 }
                 state.sleepState["${uId}"] = "IN BED"
-                state.sessionResumedTime["${uId}"] = now // Grants fresh settling lock upon return
+                state.sessionResumedTime["${uId}"] = now 
                 updateVirtualSwitch(uId, "on")
             } else {
                 state.inBedTime["${uId}"] = now
                 state.sessionResumedTime["${uId}"] = 0
                 state.movements["${uId}"] = 0
+                state.weightedMovementPenalty["${uId}"] = 0.0
                 state.asleepTime["${uId}"] = null
                 state.bathroomTrips["${uId}"] = 0
                 state.bathroomDuration["${uId}"] = 0
@@ -980,7 +1153,7 @@ def vibrationHandler(evt) {
                 if (settings["enableAntiBounce"]) {
                     def abWait = settings.antiBounceWait != null ? settings.antiBounceWait.toInteger() : 3
                     if (smartEntry) {
-                        abWait = 1 // AI bypass: accelerate verification
+                        abWait = 1 
                         addToHistory("🧠 AI PREDICTION: ${uName} activity matches learned bedtime. Fast-tracking Anti-Bounce verification.")
                     } else {
                         addToHistory("SUSTAINED ENTRY VERIFICATION: ${uName} met entry threshold. Verifying against room activity for ${abWait} minutes...")
@@ -1004,7 +1177,6 @@ def vibrationHandler(evt) {
                 runIn(10, "orchestrateRooms", [overwrite: true])
             }
         } else if (cState == "PENDING ENTRY") {
-            // If they move, check if the timer was dropped and should have expired by now
             def pStart = state.pendingEntryTime["${uId}"] ?: now
             def waitSecs = (state.pendingAntiBounceWait["${uId}"] ?: 3) * 60
             
@@ -1013,14 +1185,7 @@ def vibrationHandler(evt) {
                 verifyBedEntry([uId: uId, roomNum: rNum])
             }
         } else if (cState == "SLEEPING") {
-            state.movements["${uId}"] = (state.movements["${uId}"] ?: 0) + 1
-            // Deep Sleep tracker check
-            def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: now
-            def gap = now - stillStart
-            if (gap >= 2700000) { // 45 mins
-                state.deepSleepDuration["${uId}"] = (state.deepSleepDuration["${uId}"] ?: 0) + (gap / 60000).toInteger()
-            }
-            state.lastStillStartTime["${uId}"] = now
+            processUserMovement(uId, rNum)
         }
         
         if (state.sleepState["${uId}"] == "IN BED") {
@@ -1028,9 +1193,8 @@ def vibrationHandler(evt) {
         }
         updateInfoDevice(uId)
     } else {
-        if (useMat) return // SECONDARY MODE: Pressure mat handles bed exits. Ignore vibration stopping.
+        if (useMat) return 
 
-        // PRIMARY MODE: Handle bed exits via vibration stopping
         def rMotion = settings["motionSensor_${rNum}"]?.currentValue("motion")
         if (settings["enableGhostFilter"] && rMotion == "active") {
             logTelemetryEvent(uId, "ghostBlocks")
@@ -1038,7 +1202,6 @@ def vibrationHandler(evt) {
         } else {
             state.pendingExit["${uId}"] = now
             
-            // --- AI WAKE PREDICTION ---
             def mlEnabled = (settings["enableML_${uId}"] != false)
             def actualThresh = exitBedThreshold != null ? exitBedThreshold.toInteger() : 5
             def smartWake = false
@@ -1057,12 +1220,23 @@ def vibrationHandler(evt) {
                     }
                 }
             }
+            
+            if (settings["enableAdvancedStages_${uId}"]) {
+                def stage = state.currentSleepStage["${uId}"] ?: "DEEP"
+                if (stage == "LIGHT" && isWithinWakeWindow(uId)) {
+                    actualThresh = 0 
+                    smartWake = true
+                    addToHistory("STAGE EXIT: ${getUserName(uId)} exited while in LIGHT sleep during Expected Wake Window. Accelerating exit.")
+                } else if (stage == "DEEP") {
+                    actualThresh = Math.max(actualThresh, 5) 
+                }
+            }
+            actualThresh = Math.max(1, actualThresh)
             runIn(actualThresh * 60, "evaluateBedExit", [data: [uId: uId, roomNum: rNum, thresh: actualThresh, ai: smartWake], overwrite: true])
         }
     }
 }
 
-// --- NEW ANTI-BOUNCE VERIFICATION ---
 def verifyBedEntry(data) {
     ensureStateMaps()
     def uId = data.uId
@@ -1087,7 +1261,6 @@ def verifyBedEntry(data) {
     }
 }
 
-// --- SETTLING LOCK LOGIC ---
 def isSettlingLockActive(uId) {
     if (!settings["enableSettlingLock"]) return false
     def inBed = state.inBedTime?."${uId}" ?: 0
@@ -1099,7 +1272,6 @@ def isSettlingLockActive(uId) {
     return (now - lockStart) < lockMillis
 }
 
-// --- DYNAMIC STITCHING LOGIC ---
 def getDynamicStitchMillis() {
     def baseWindow = (settings["stitchingWindow"] != null ? settings["stitchingWindow"].toInteger() : 15) * 60000
     def deepWindow = (settings["deepSleepStitchWindow"] != null ? settings["deepSleepStitchWindow"].toInteger() : 45) * 60000
@@ -1135,7 +1307,6 @@ def evaluateBathroomTimeout(data) {
             return
         }
 
-        // --- QUIET HOUSE AUTO-RETURN ---
         if (settings["enableQuietHouseReturn"] && settings["globalMotionSensors"]) {
             def lastGlobal = state.lastGlobalMotionTime ?: 0
             def quietMins = settings["quietHouseThreshold"] != null ? settings["quietHouseThreshold"].toInteger() : 20
@@ -1153,8 +1324,6 @@ def evaluateBathroomTimeout(data) {
                 runIn((fallAsleepThreshold ?: 15) * 60, "evaluateSleepState", [data: [uId: uId], overwrite: true])
                 return
             } else if (awayMillis < quietMillis) {
-                // Timeout triggered (e.g. 15m stitch window), but we haven't reached the 20m quiet threshold yet. 
-                // Give the house time to settle before declaring a terminal wake.
                 def delaySecs = ((quietMillis - awayMillis) / 1000).toInteger() + 10
                 runIn(delaySecs, "evaluateBathroomTimeout", [data: [uId: uId, roomNum: data.roomNum], overwrite: true])
                 return
@@ -1162,13 +1331,11 @@ def evaluateBathroomTimeout(data) {
         }
 
         addToHistory("BATHROOM TRIP EXPIRED: ${getUserName(uId)} did not return within the stitching window. Assuming terminal wake.")
-        // Roll back the trip counter since it was just a final wake
         state.bathroomTrips["${uId}"] = Math.max(0, (state.bathroomTrips["${uId}"] ?: 1) - 1)
         forceBedExit(uId, data.roomNum, true)
     }
 }
 
-// --- ADVANCED MOTION SEQUENCE HANDLER ---
 def sequenceMotionHandler(evt) {
     ensureStateMaps()
     if (isSystemPaused() || evt.value != "active") return
@@ -1195,11 +1362,10 @@ def sequenceMotionHandler(evt) {
             def pending = state.pendingExit["${uId}"] ?: 0
             def progress = state.exitSequenceProgress["${uId}"] ?: 0
 
-            // --- TERMINAL WAKE OVERRIDE (SHOWER) ---
             if (sMotion?.id == devId) {
                 def isRecentExit = false
-                if (pending > 0 && (now - pending) <= 600000) isRecentExit = true // Exited bed within 10 mins
-                if (cState == "BATHROOM TRIP" && state.lastExitTime["${uId}"] && (now - state.lastExitTime["${uId}"]) <= 600000) isRecentExit = true // On a bathroom trip that started < 10 mins ago
+                if (pending > 0 && (now - pending) <= 600000) isRecentExit = true 
+                if (cState == "BATHROOM TRIP" && state.lastExitTime["${uId}"] && (now - state.lastExitTime["${uId}"]) <= 600000) isRecentExit = true 
                 
                 if (isRecentExit) {
                     if (isWithinWakeLockout(uId)) {
@@ -1216,7 +1382,6 @@ def sequenceMotionHandler(evt) {
                     } else {
                         addToHistory("SHOWER WAKE CONFIRMED: ${getUserName(uId)} entered the shower. Terminal Wake applied.")
                         if (cState == "BATHROOM TRIP") {
-                            // Roll back the false bathroom trip counter since this is a final wake
                             state.bathroomTrips["${uId}"] = Math.max(0, (state.bathroomTrips["${uId}"] ?: 1) - 1)
                         }
                         forceBedExit(uId, "${i}")
@@ -1225,7 +1390,6 @@ def sequenceMotionHandler(evt) {
                 }
             }
 
-            // Normal Sequence Trackers
             if (pending > 0 && (now - pending) < 300000) {
                 if (progress == 0 && m1?.id == devId) {
                     state.exitSequenceProgress["${uId}"] = 1
@@ -1333,6 +1497,18 @@ def fallbackMotionHandler(evt) {
             logTelemetryEvent(uId, "inBedMotionsIgnored")
             continue
         }
+
+        def useMat = settings["usePressureMat_${uId}"] && settings["pressureMat_${uId}"]
+        def matIsClosed = false
+        if (useMat) {
+            def mState = settings["pressureMat_${uId}"].currentValue("contact") ?: settings["pressureMat_${uId}"].currentValue("presence")
+            if (mState == "closed" || mState == "present") matIsClosed = true
+        }
+
+        if (matIsClosed && (cState == "IN BED" || cState == "SLEEPING")) {
+            processUserMovement(uId, rNum)
+            updateInfoDevice(uId)
+        }
         
         def lastVib = state.lastVibrationTime["${uId}"] ?: 0
         if ((now - lastVib) <= 90000) { 
@@ -1341,7 +1517,6 @@ def fallbackMotionHandler(evt) {
             
             def pending = state.pendingExit["${uId}"] ?: 0
             if (pending > 0 && (now - pending) >= ((exitBedThreshold ?: 5) * 60000)) {
-                // If the standard exit passes via fallback during motion, handle it
                 runIn(1, "evaluateBedExit", [data: [uId: uId, roomNum: rNum], overwrite: true])
             }
         } else {
@@ -1388,7 +1563,6 @@ def forceBedExit(uId, rNum, keepExistingTime = false) {
     if (state.asleepTime["${uId}"]) {
         state.lastSessionAsleep["${uId}"] = ((exitTime - state.asleepTime["${uId}"]) / 60000).toInteger()
         
-        // Finalize Deep Sleep Tracker
         def cState = state.sleepState["${uId}"] ?: "EMPTY"
         if (cState == "SLEEPING") {
              def stillStart = state.lastStillStartTime["${uId}"] ?: state.asleepTime["${uId}"] ?: exitTime
@@ -1424,7 +1598,6 @@ def evaluateBedExit(data) {
     
     if (state.sleepState["${uId}"] == "EMPTY") return
 
-    // --- WAKE LOCKOUT CHECK ---
     if (isWithinWakeLockout(uId)) {
         if (pending > 0 && (now - pending) >= (thresh * 60000)) {
             if (state.sleepState["${uId}"] != "BATHROOM TRIP") {
@@ -1434,7 +1607,6 @@ def evaluateBedExit(data) {
                 updateVirtualSwitch(uId, "off")
                 updateInfoDevice(uId)
 
-                // Schedule the bathroom timeout check for when the lockout ends
                 def lockoutEnd = getLockoutEndTimeMillis(uId)
                 def delaySecs = ((lockoutEnd - now) / 1000).toInteger() + 10
                 runIn(delaySecs, "evaluateBathroomTimeout", [data: [uId: uId, roomNum: rNum], overwrite: true])
@@ -1444,7 +1616,6 @@ def evaluateBedExit(data) {
     }
 
     if (pending > 0 && (now - pending) >= (thresh * 60000)) {
-        // Require actual room motion AFTER the vibration stopped, OR a confirmed Step 1 in the Wake Window
         if (lastValid > pending) {
             if (ai) addToHistory("🧠 AI PREDICTION: ${getUserName(uId)} learned wake pattern detected. Wake sequence accelerated.")
             forceBedExit(uId, rNum)
@@ -1500,7 +1671,6 @@ def orchestrateRooms() {
                 def cState = state.sleepState["${uId}"] ?: "EMPTY"
                 def inBedTime = state.inBedTime?."${uId}" ?: 0
                 
-                // --- QUIET HOUSE AUTO-RETURN WATCHDOG ---
                 if (cState == "BATHROOM TRIP") {
                     if (settings["enableQuietHouseReturn"] && settings["globalMotionSensors"]) {
                         def lastGlobal = state.lastGlobalMotionTime ?: 0
@@ -1563,6 +1733,7 @@ def goodNightOnHandler(evt) {
                     if (!state.sessionStartTime["${uId}"]) state.sessionStartTime["${uId}"] = now
                     state.inBedTime["${uId}"] = now
                     state.movements["${uId}"] = 0
+                    state.weightedMovementPenalty["${uId}"] = 0.0
                     state.asleepTime["${uId}"] = null
                     state.lastVibrationTime["${uId}"] = now
                     state.pendingExit["${uId}"] = now 
@@ -1641,7 +1812,6 @@ def evaluateSleepState(data) {
         def lastVib = state.lastVibrationTime["${uId}"] ?: 0
         if ((now - lastVib) >= ((fallAsleepThreshold ?: 15) * 60000)) {
             
-            // Advance analytics (Latency & true Sleep Start)
             def inBed = state.inBedTime["${uId}"] ?: now
             def actualSleepTime = (lastVib > inBed) ? lastVib : now
             
@@ -1652,7 +1822,6 @@ def evaluateSleepState(data) {
             
             addToHistory("SLEEP DETECTED: ${getUserName(uId)} marking as SLEEPING retroactively to ${formatTimestamp(actualSleepTime)}. (Latency: ${state.sleepLatency["${uId}"]}m)")
             
-            // Re-initialize environment tracking for this new sleep session
             state.envStats["${uId}"] = [tSum: 0.0, tCnt: 0, hSum: 0.0, hCnt: 0]
             def rNum = uId.split('_')[0]
             def tSens = settings["tempSensor_${rNum}"]
@@ -1734,13 +1903,55 @@ def calculateEfficiencyScore(uId) {
     def asleep = cState == "EMPTY" ? (state.lastSessionAsleep["${uId}"] ?: 0) : ((new Date().time - (state.asleepTime?."${uId}" ?: new Date().time)) / 60000)
     
     if (!inBed || inBed < 30) return 0
-    def efficiency = (asleep / inBed) * 100
-    def movementPenalty = (state.movements?."${uId}" ?: 0) * 2
-    def finalScore = (efficiency - movementPenalty).toInteger()
-    return Math.max(0, Math.min(100, finalScore))
+    
+    def moves = state.movements?."${uId}" ?: 0
+    def rawPenalty = state.weightedMovementPenalty?."${uId}" != null ? state.weightedMovementPenalty["${uId}"].toDouble() : (moves * 0.25)
+    
+    // Backward compatibility fix for the 2.0 penalty math explosion
+    if (rawPenalty > moves) rawPenalty = moves * 0.25 
+    def movementPenalty = Math.min(30.0, rawPenalty)
+    
+    def efficiency = (asleep / inBed) * 100.0
+    
+    def baseScore = efficiency - movementPenalty
+    def finalScore = baseScore
+
+    def clinicalEnabled = settings["enableClinicalScoring_${uId}"]
+    
+    if (clinicalEnabled) {
+        // 1. Duration Score
+        def targetHours = settings["targetSleepHours_${uId}"] != null ? settings["targetSleepHours_${uId}"].toDouble() : 7.5
+        def targetMins = targetHours * 60
+        def durationRatio = Math.min(1.0, asleep / targetMins)
+        // 50% Efficiency/Restlessness, 50% Duration Goal
+        finalScore = (baseScore * 0.5) + ((durationRatio * 100.0) * 0.5)
+
+        // 2. Latency Modifiers
+        def latency = state.sleepLatency["${uId}"] ?: 0
+        if (latency > 0 && latency < 5) finalScore -= 5.0
+        else if (latency >= 10 && latency <= 20) finalScore += 5.0
+        else if (latency >= 30 && latency < 45) finalScore -= 5.0
+        else if (latency >= 45) finalScore -= 10.0
+
+        // 3. Regularity Modifier (Social Jet Lag)
+        def averages = calculateUserAverages(uId)
+        def mlEnabled = (settings["enableML_${uId}"] != false)
+        if (mlEnabled && averages.daysLearned >= 14) {
+            def cal = Calendar.getInstance(location.timeZone ?: TimeZone.getDefault())
+            def isWknd = (cal.get(Calendar.DAY_OF_WEEK) == Calendar.SATURDAY || cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY)
+            def targetAvgIn = isWknd ? averages.avgInWe : averages.avgInWd
+            if (targetAvgIn != null && state.sessionStartTime["${uId}"]) {
+                def startMins = getMinutesFromNoon(state.sessionStartTime["${uId}"])
+                def diff = Math.abs(startMins - targetAvgIn)
+                if (diff > 60 && diff <= 120) finalScore -= 5.0
+                else if (diff > 120) finalScore -= 10.0
+            }
+        }
+    }
+
+    return Math.max(0, Math.min(100, Math.round(finalScore).toInteger()))
 }
 
-// --- DEVICE CREATION & UPDATE ---
 def updateInfoDevice(uId) {
     ensureStateMaps()
     def dni = "ASM_INFO_${uId}"
@@ -1755,7 +1966,6 @@ def updateInfoDevice(uId) {
     dev.sendEvent(name: "html", value: generateHtmlTile(uId))
 }
 
-// --- MINIFIED HTML TILE TO BYPASS HUBITAT 1024 CHAR LIMIT ---
 def generateHtmlTile(uId) {
     ensureStateMaps()
     def uName = getUserName(uId)
@@ -1764,6 +1974,14 @@ def generateHtmlTile(uId) {
     def moves = state.movements?."${uId}" ?: 0
     def trips = state.bathroomTrips?."${uId}" ?: 0
     def tripMins = state.bathroomDuration?."${uId}" ?: 0
+
+    // Fetch Hardware Statuses for Tile
+    def vSens = settings["vibrationSensor_${uId}"]
+    def pMat = settings["pressureMat_${uId}"]
+    def vSensState = vSens ? (vSens.currentValue("acceleration") ?: "inactive") : "none"
+    def pMatState = pMat ? (pMat.currentValue("contact") ?: pMat.currentValue("presence") ?: "open") : "none"
+    def vIcon = vSensState == "active" ? "<span style='color:#e74c3c'>●</span>" : "<span style='color:#555'>●</span>"
+    def pIcon = (pMatState == "closed" || pMatState == "present") ? "<span style='color:#2980b9'>●</span>" : "<span style='color:#555'>●</span>"
 
     def color = status == "SLEEPING" ? "#00aaff" : (status == "IN BED" ? "#9b59b6" : (status == "PENDING ENTRY" ? "#1abc9c" : (status == "BATHROOM TRIP" ? "#e67e22" : "#2ecc71")))
     def scoreColor = score >= 85 ? "#2ecc71" : (score >= 70 ? "#f39c12" : "#e74c3c")
@@ -1806,18 +2024,13 @@ def generateHtmlTile(uId) {
     def cLight = "#3498db"
     def cAwake = "#e67e22"
 
-    def indexDisplay = liveAsleep > 0 ? String.format("%.1f", Math.round((moves / (liveAsleep / 60.0)) * 10) / 10.0) : "0.0"
     def eff = 0
     if (totalTime >= 30 && liveAsleep > 0) eff = Math.min(100, ((liveAsleep / totalTime) * 100) as Integer)
-    def movPen = moves * 2
     
-    def lastEnvText = "--"
-    if (state.envStats?."${uId}"?.tCnt > 0) {
-        def curT = Math.round((state.envStats["${uId}"].tSum / state.envStats["${uId}"].tCnt) * 10) / 10.0
-        lastEnvText = "🌡️ ${curT}°"
-    }
+    def rawPen = state.weightedMovementPenalty?."${uId}" != null ? state.weightedMovementPenalty["${uId}"] : (moves * 0.25)
+    if (rawPen > moves) rawPen = moves * 0.25 
+    def movPenFmt = Math.min(30.0, rawPen as Double)
 
-    // Minified HTML template safely structured beneath Hubitat's hardcoded 1024 text attribute boundary
     def html = """
     <div style='background:#111;color:#ddd;padding:8px;border-radius:8px;font-family:sans-serif'>
         <div style='display:flex;justify-content:space-between;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:8px'>
@@ -1840,8 +2053,9 @@ def generateHtmlTile(uId) {
         <div style='display:flex;height:6px;border-radius:3px;overflow:hidden;margin-bottom:6px'>
             <div style='width:${pDeep}%;background:${cDeep}'></div><div style='width:${pLight}%;background:${cLight}'></div><div style='width:${pAwake}%;background:${cAwake}'></div>
         </div>
-        <div style='font-size:9px;color:#888;background:#1a1a1a;padding:4px;border-radius:4px;margin-bottom:6px'>
-            <b style='color:#ccc'>Insight:</b> ${eff}% base eff. ${moves} moves = -${movPen}pts.
+        <div style='font-size:9px;color:#888;background:#1a1a1a;padding:4px;border-radius:4px;margin-bottom:6px;display:flex;justify-content:space-between'>
+            <span><b style='color:#ccc'>Insight:</b> ${eff}% eff. ${moves} moves</span>
+            <span>Vib:${vIcon} Mat:${pIcon}</span>
         </div>
         <div style='display:flex;justify-content:space-between;font-size:10px;text-align:center'>
             <div style='background:#1a1a1a;padding:4px;border-radius:4px;flex:1;margin-right:2px'>In/Out<br><b style='color:#ccc'>${inBedTimeStr}-${exitTimeStr}</b></div>
@@ -1853,7 +2067,6 @@ def generateHtmlTile(uId) {
     return html.replaceAll(/(?m)^\s+/, "").replaceAll(/\n/, "").replaceAll(/>\s+</, "><")
 }
 
-// --- BOILERPLATE & HELPERS ---
 def appButtonHandler(btn) {
     ensureStateMaps()
     def parts = btn.split("_")
@@ -1864,8 +2077,6 @@ def appButtonHandler(btn) {
         def uId = "${rNum}_${uNum}"
         def dni = "ASM_INFO_${uId}"
         def name = "Sleep Info - ${getUserName(uId)}"
-        
-        // Creates child device using Hubitat's native Omnipurpose engine
         addChildDevice("ShaneAllen", "ASM Dashboard Device", dni, null, [name: name, label: name])
         updateInfoDevice(uId)
     } else if (btn.startsWith("btnCreateSwitch_")) {
@@ -1924,11 +2135,18 @@ def forceResetAllBeds() {
             state.deepSleepDuration["${uId}"] = 0
             state.lastStillStartTime["${uId}"] = 0
             state.sleepLatency["${uId}"] = 0
+            state.weightedMovementPenalty["${uId}"] = 0.0
+            state.ewmaMovement["${uId}"] = 0.0
+            state.lastMoveTimeForEwma["${uId}"] = 0
+            state.currentSleepStage["${uId}"] = "DEEP"
+            state.smartAlarmTriggeredDate["${uId}"] = ""
             updateVirtualSwitch(uId, "off")
             updateInfoDevice(uId)
         }
         state.roomEmptyTime["${i}"] = 0
         state.roomGoodNightTriggered["${i}"] = false
+        state.lastEnvDisturbanceTime["${i}"] = 0
+        state.lastEnvDisturbanceType["${i}"] = ""
     }
     addToHistory("SYSTEM: Forced all beds to EMPTY via manual button override.")
 }
@@ -1940,6 +2158,9 @@ def middayReset() {
     for (int i = 1; i <= 3; i++) {
         state.roomEmptyTime["${i}"] = 0
         state.roomGoodNightTriggered["${i}"] = false
+        state.lastEnvDisturbanceTime["${i}"] = 0
+        state.lastEnvDisturbanceType["${i}"] = ""
+        
         def numUsers = (i == 1) ? 2 : 1
         for (int u = 1; u <= numUsers; u++) {
             def uId = "${i}_${u}"
@@ -1947,13 +2168,11 @@ def middayReset() {
                 state.telemetry["${uId}"].today = [vibrations: 0, falseExits: 0, crossTalkAvoided: 0, inBedMotionsIgnored: 0, ghostBlocks: 0, settlingLockBlocks: 0]
             }
             
-            // Calculate session environment averages
             def avgT = null
             def avgH = null
             if (state.envStats?."${uId}"?.tCnt > 0) avgT = Math.round((state.envStats["${uId}"].tSum / state.envStats["${uId}"].tCnt) * 10) / 10.0
             if (state.envStats?."${uId}"?.hCnt > 0) avgH = Math.round((state.envStats["${uId}"].hSum / state.envStats["${uId}"].hCnt) * 10) / 10.0
 
-            // AI Ledger Logging (Lock in true first entrance and final exit)
             def mlEnabled = (settings["enableML_${uId}"] != false)
             if (mlEnabled) {
                 def inBed = state.sessionStartTime["${uId}"]
@@ -1999,6 +2218,10 @@ def middayReset() {
                 state.deepSleepDuration["${uId}"] = 0
                 state.lastStillStartTime["${uId}"] = 0
                 state.sleepLatency["${uId}"] = 0
+                state.weightedMovementPenalty["${uId}"] = 0.0
+                state.ewmaMovement["${uId}"] = 0.0
+                state.lastMoveTimeForEwma["${uId}"] = 0
+                state.currentSleepStage["${uId}"] = "DEEP"
                 updateVirtualSwitch(uId, "off") 
                 state.sleepState["${uId}"] = "EMPTY" 
                 updateInfoDevice(uId)
