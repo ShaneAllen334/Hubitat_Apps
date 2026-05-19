@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5.9
+ * Version 1.5.10
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -18,13 +18,31 @@ definition(
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
 
 @Field static String DASHBOARD_CSS = '''
-body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; padding:20px; background:#0d0d0d; color:#e0e0e0; margin:0; }
-.container { max-width:800px; margin:0 auto; background:#151515; padding:25px; border-radius:12px; box-sizing:border-box; width:100%; }
-.loader { border:4px solid #333; border-top:4px solid #3498db; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:0 auto; }
+:root {
+    --bg-main: #0d0d0d;
+    --bg-panel: #151515;
+    --bg-card: #222222;
+    --text-main: #ffffff;
+    --text-mut: #aaaaaa;
+    --border: #333333;
+}
+[data-theme='light'] {
+    --bg-main: #eef2f5;
+    --bg-panel: #ffffff;
+    --bg-card: #f8f9fa;
+    --text-main: #2c3e50;
+    --text-mut: #7f8c8d;
+    --border: #dee2e6;
+}
+
+body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; padding:20px; background:var(--bg-main); color:var(--text-main); margin:0; transition: background 0.3s, color 0.3s; }
+.container { max-width:800px; margin:0 auto; background:var(--bg-panel); padding:25px; border-radius:12px; box-sizing:border-box; width:100%; border: 1px solid var(--border); transition: background 0.3s; }
+.loader { border:4px solid var(--border); border-top:4px solid #3498db; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:0 auto; }
 @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
 
 .header-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:15px; }
@@ -39,23 +57,23 @@ a.main-btn { background:#1f618d; color:#fff; border:none; padding:14px 20px; bor
 a.main-btn:hover { background:#1a5276; }
 
 .summary-box { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:25px; }
-.summary-card { flex:1 1 20%; min-width:120px; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; text-align:center; border-bottom:3px solid #333; }
-.summary-card b { display:block; font-size:24px; color:#fff; margin-bottom:5px; }
-.summary-card span { font-size:12px; color:#aaa; text-transform:uppercase; }
+.summary-card { flex:1 1 20%; min-width:120px; box-sizing:border-box; background:var(--bg-card); padding:15px; border-radius:8px; text-align:center; border-bottom:3px solid var(--border); }
+.summary-card b { display:block; font-size:24px; color:var(--text-main); margin-bottom:5px; }
+.summary-card span { font-size:12px; color:var(--text-mut); text-transform:uppercase; }
 
 details { margin-bottom:15px; }
-summary { padding:12px 15px; background:#1c1c1c; border-radius:6px; border-left:4px solid #3498db; cursor:pointer; color:#fff; font-weight:bold; font-size:16px; }
-summary:hover { background:#252525; }
-.cat-count { float:right; font-size:12px; color:#888; margin-top:3px; }
+summary { padding:12px 15px; background:var(--bg-card); border-radius:6px; border-left:4px solid #3498db; cursor:pointer; color:var(--text-main); font-weight:bold; font-size:16px; border: 1px solid var(--border); }
+summary:hover { opacity: 0.9; }
+.cat-count { float:right; font-size:12px; color:var(--text-mut); margin-top:3px; }
 
-.dev-card { background:#222; padding:15px; border-radius:8px; margin-bottom:12px; border-left:4px solid #333; }
-.clickable-card { cursor:pointer; transition:transform 0.15s ease, background-color 0.15s ease; }
-.clickable-card:hover { transform:translateY(-2px); background-color:#2a2a2a !important; }
+.dev-card { background:var(--bg-card); padding:15px; border-radius:8px; margin-bottom:12px; border-left:4px solid var(--border); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.clickable-card { cursor:pointer; transition:transform 0.15s ease, opacity 0.15s ease; }
+.clickable-card:hover { transform:translateY(-2px); opacity: 0.9; }
 
-.status-Red { border-left-color:#e74c3c; background:linear-gradient(90deg, rgba(231,76,60,.1) 0%, #222 30%); }
-.status-Purple { border-left-color:#9b59b6; background:linear-gradient(90deg, rgba(155,89,182,.1) 0%, #222 30%); }
-.status-Yellow { border-left-color:#f1c40f; background:linear-gradient(90deg, rgba(241,196,15,.1) 0%, #222 30%); }
-.status-Blue { border-left-color:#3498db; background:linear-gradient(90deg, rgba(52,152,219,.1) 0%, #222 30%); }
+.status-Red { border-left-color:#e74c3c; background:linear-gradient(90deg, rgba(231,76,60,.1) 0%, var(--bg-card) 30%); }
+.status-Purple { border-left-color:#9b59b6; background:linear-gradient(90deg, rgba(155,89,182,.1) 0%, var(--bg-card) 30%); }
+.status-Yellow { border-left-color:#f1c40f; background:linear-gradient(90deg, rgba(241,196,15,.1) 0%, var(--bg-card) 30%); }
+.status-Blue { border-left-color:#3498db; background:linear-gradient(90deg, rgba(52,152,219,.1) 0%, var(--bg-card) 30%); }
 .status-Green { border-left-color:#27ae60; }
 
 .dot { height:12px; width:12px; border-radius:50%; display:inline-block; margin-right:12px; flex-shrink:0; }
@@ -67,9 +85,9 @@ summary:hover { background:#252525; }
 
 .dflex { display:flex; align-items:center; width:100%; }
 .dev-info { flex-grow:1; min-width:0; }
-.dev-name { font-size:15px; font-weight:bold; color:#fff; margin-bottom:2px; }
-.dev-custom { font-size:11px; color:#888; margin-bottom:5px; }
-.dev-details { font-size:13px; color:#aaa; }
+.dev-name { font-size:15px; font-weight:bold; color:var(--text-main); margin-bottom:2px; }
+.dev-custom { font-size:11px; color:var(--text-mut); margin-bottom:5px; }
+.dev-details { font-size:13px; color:var(--text-mut); }
 .dev-subtext { font-size:11px; color:#7f8c8d; margin-top:5px; font-style:italic; }
 
 .card-controls { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; }
@@ -77,31 +95,31 @@ a.ping-btn { background:#34495e; color:#fff; border:1px solid #2c3e50; padding:6
 a.ping-btn:hover { background:#2c3e50; }
 
 .batt-wrap { margin-top:8px; width:100%; }
-.batt-info { display:flex; justify-content:space-between; font-size:10px; color:#aaa; margin-bottom:3px; }
-.batt-bg { width:100%; background:#333; height:6px; border-radius:3px; overflow:hidden; }
+.batt-info { display:flex; justify-content:space-between; font-size:10px; color:var(--text-mut); margin-bottom:3px; }
+.batt-bg { width:100%; background:var(--border); height:6px; border-radius:3px; overflow:hidden; }
 .batt-fg { height:100%; }
 .bg-grn { background:#27ae60; }
 .bg-ylw { background:#f1c40f; }
 .bg-red { background:#e74c3c; }
 
-.shop-card { width:100%; box-sizing:border-box; background:#1e1e1e; padding:15px; border-radius:8px; border-left:4px solid #9b59b6; box-shadow:0 4px 6px rgba(0,0,0,.3); margin-bottom: 12px; }
-.shop-title { color:#fff; font-size:15px; display:block; margin-bottom:8px; }
+.shop-card { width:100%; box-sizing:border-box; background:var(--bg-card); padding:15px; border-radius:8px; border-left:4px solid #9b59b6; box-shadow:0 4px 6px rgba(0,0,0,.1); margin-bottom: 12px; border: 1px solid var(--border); }
+.shop-title { color:var(--text-main); font-size:15px; display:block; margin-bottom:8px; }
 .shop-badge { background:#9b59b6; color:#fff; font-size:11px; padding:2px 6px; border-radius:10px; float:right; }
-.shop-list { font-size:11px; color:#888; max-height:80px; overflow-y:auto; line-height:1.4; }
+.shop-list { font-size:11px; color:var(--text-mut); max-height:80px; overflow-y:auto; line-height:1.4; }
 
 .mute-form { display:inline-flex; align-items:center; margin-left:10px; margin-bottom:0; }
-.mute-input { width:45px; padding:0 4px; font-size:11px; border-radius:4px 0 0 4px; border:1px solid #8e44ad; background:#111; color:#fff; height:26px; box-sizing:border-box; }
+.mute-input { width:45px; padding:0 4px; font-size:11px; border-radius:4px 0 0 4px; border:1px solid #8e44ad; background:var(--bg-main); color:var(--text-main); height:26px; box-sizing:border-box; }
 .mute-btn { margin-left:0; border-radius:0 4px 4px 0; background:#8e44ad; border-color:#8e44ad; height:26px; color:#fff; border-style:solid; border-width:1px; font-size:12px; font-weight:bold; cursor:pointer; }
 
 .modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:1000; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; }
-.modal-content { background:#1a1a1a; color:#e0e0e0; width:100%; max-width:550px; border-radius:12px; padding:22px; box-sizing:border-box; position:relative; box-shadow:0 12px 35px rgba(0,0,0,0.6); border:1px solid #333; max-height:90vh; overflow-y:auto; }
-.modal-header { font-size:18px; font-weight:bold; color:#fff; margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:12px; display:flex; align-items:center; }
+.modal-content { background:var(--bg-panel); color:var(--text-main); width:100%; max-width:550px; border-radius:12px; padding:22px; box-sizing:border-box; position:relative; box-shadow:0 12px 35px rgba(0,0,0,0.6); border:1px solid var(--border); max-height:90vh; overflow-y:auto; }
+.modal-header { font-size:18px; font-weight:bold; color:var(--text-main); margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:12px; display:flex; align-items:center; }
 .modal-body table { width:100%; border-collapse:collapse; margin-bottom:20px; }
-.modal-body td { padding:10px 0; border-bottom:1px solid #262626; font-size:13px; line-height:1.4; }
-.modal-body td:first-child { color:#888; font-weight:500; width:38%; vertical-align:middle; }
-.modal-body td:last-child { color:#fff; text-align:right; }
+.modal-body td { padding:10px 0; border-bottom:1px solid var(--border); font-size:13px; line-height:1.4; }
+.modal-body td:first-child { color:var(--text-mut); font-weight:500; width:38%; vertical-align:middle; }
+.modal-body td:last-child { color:var(--text-main); text-align:right; }
 
-.modal-input { width:100%; padding:6px; border-radius:4px; border:1px solid #444; background:#222; color:#fff; font-size:13px; box-sizing:border-box; }
+.modal-input { width:100%; padding:6px; border-radius:4px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-main); font-size:13px; box-sizing:border-box; }
 .modal-input:focus { outline:none; border-color:#3498db; }
 
 .modal-action-row { display:flex; gap:10px; margin-top:15px; }
@@ -147,7 +165,7 @@ details.folder-group.dragging { opacity: 0.5; }
             <tr><td>Battery Type</td><td><select id='modalBatteryTypeInput' class='modal-input' onchange='checkCustomBattery(this)'></select></td></tr>
             <tr><td>Battery Quantity</td><td><input type='number' id='modalBatteryQtyInput' class='modal-input' min='1' max='20'></td></tr>
             <tr><td>Override Critical Batt %</td><td><input type='number' id='modalOverrideThreshInput' class='modal-input' placeholder='Global Default' min='1' max='99'></td></tr>
-            <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:#fff;'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
+            <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:var(--text-main);'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
             <tr><td>Driver / Device Type</td><td id='modalDriverType'>-</td></tr>
             <tr><td>Hardware Type</td><td id='modalHardwareSig'>-</td></tr>
             <tr><td>Firmware Revision</td><td id='modalFirmwareRev'>-</td></tr>
@@ -157,6 +175,7 @@ details.folder-group.dragging { opacity: 0.5; }
             <tr><td>EWMA Forecast</td><td id='modalDaysRemaining'>-</td></tr>
             <tr><td>Last Mesh Check-In</td><td id='modalLastActive'>-</td></tr>
         </table>
+        <canvas id="historyChart" style="max-height: 160px; margin-top: 15px; display: none;"></canvas>
     </div>
     <div class='modal-action-row'>
         <button class='save-modal-btn' onclick='saveDeviceChanges()'>💾 Save Settings</button>
@@ -184,16 +203,38 @@ let db = null;
 let groupByMode = 'category';
 const accessToken = 'TOKEN_PLACEHOLDER';
 
+if (localStorage.getItem('theme') === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+}
+
+function toggleTheme() {
+    let current = document.documentElement.getAttribute('data-theme');
+    let next = current === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    if(window.myChart) {
+        Chart.defaults.color = next === 'light' ? '#333' : '#aaa';
+        window.myChart.update();
+    }
+}
+
 function loadData() {
-    document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#888;'><div class='loader'></div><br><br>Syncing Estate Diagnostics...</div>";
+    document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:var(--text-mut);'><div class='loader'></div><br><br>Syncing Estate Diagnostics...</div>";
     fetch('data?access_token=' + accessToken)
-    .then(res => res.json())
+    .then(res => res.text())
+    .then(text => {
+        if (text.includes("No response from hub") || text.includes("<html>")) {
+            throw new Error("Hubitat Cloud timeout. The hub is performing heavy processing (likely a scan). Try again in a minute, or use your Local Dashboard URL.");
+        }
+        try { return JSON.parse(text); } 
+        catch(e) { throw new Error("Failed to parse hub data."); }
+    })
     .then(data => {
         db = data;
         renderApp();
     })
     .catch(err => {
-        document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#e74c3c;'><b>Cloud Connection Error</b><br>Could not retrieve estate data. The hub might be busy processing a scan.<br><br><small>" + err + "</small></div>";
+        document.getElementById('appContainer').innerHTML = "<div style='text-align:center;padding:50px;color:#e74c3c;'><b>Cloud Connection Error</b><br>Could not retrieve estate data.<br><br><small>" + err + "</small></div>";
     });
 }
 
@@ -202,11 +243,15 @@ function silentRefresh() {
        (!document.getElementById('batteryLockerModalOverlay').style.display || document.getElementById('batteryLockerModalOverlay').style.display === 'none')){ 
         
         fetch('data?access_token=' + accessToken)
-        .then(r => r.json())
-        .then(data => {
-            db = data;
-            renderApp();
-        });
+        .then(res => res.text())
+        .then(text => {
+            if (!text.includes("No response from hub") && !text.includes("<html>")) {
+                let data = JSON.parse(text);
+                db = data;
+                renderApp();
+            }
+        })
+        .catch(err => console.log("Silent refresh skipped: Hub busy"));
     } 
 }
 
@@ -255,10 +300,10 @@ function generateCard(dev) {
         let currRssi = dev.rssiHistory[dev.rssiHistory.length - 1];
         lastRssiStr = currRssi + " dBm";
         let slColor = currRssi > -70 ? "#27ae60" : (currRssi > -85 ? "#f1c40f" : "#e74c3c");
-        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + currRssi + " dBm</span><svg width='50' height='12' style='margin-left:8px;overflow:visible;'><polyline fill='none' stroke='" + slColor + "' stroke-width='1.5' points='" + pts.join(' ') + "'/></svg></div>";
+        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:var(--text-mut);'><span>📶 " + currRssi + " dBm</span><svg width='50' height='12' style='margin-left:8px;overflow:visible;'><polyline fill='none' stroke='" + slColor + "' stroke-width='1.5' points='" + pts.join(' ') + "'/></svg></div>";
     } else if (dev.rssiHistory && dev.rssiHistory.length === 1) {
         lastRssiStr = dev.rssiHistory[0] + " dBm";
-        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:#aaa;'><span>📶 " + lastRssiStr + "</span></div>";
+        sparklineHtml = "<div style='margin-top:6px;display:flex;align-items:center;font-size:10px;color:var(--text-mut);'><span>📶 " + lastRssiStr + "</span></div>";
     }
 
     let controlsHtml = "<div class='card-controls'>";
@@ -281,8 +326,9 @@ function generateCard(dev) {
     controlsHtml += "</div>";
 
     let battValAttr = dev.battVal !== null && dev.battVal !== undefined ? dev.battVal + "%" : "N/A";
+    let bHistData = dev.battHist || "";
 
-    return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${dev.firmware}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
+    return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${dev.firmware}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}' data-bhist='${bHistData}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
 }
 
 let isEditMode = false;
@@ -393,21 +439,26 @@ function renderApp() {
     html += `<div class='header-bar'>`;
     html += `<div class='header-left'>`;
     html += `<button class='top-btn' onclick='openBatteryLocker()' style='background:#8e44ad;'>🔋 Battery Locker</button>`;
+    html += `<button class='top-btn' onclick='toggleTheme()' style='background:#f39c12; color:#fff;'>🌗 Theme</button>`;
     html += `<select id='groupBySelect' class='top-btn' onchange='changeGroupBy(this.value)' style='background:#2c3e50; border:none; outline:none; color:#fff;'>`;
     html += `<option value='category' ${groupByMode==='category'?'selected':''}>📁 Group by Type</option>`;
     html += `<option value='location' ${groupByMode==='location'?'selected':''}>📍 Group by Room</option>`;
     html += `</select></div>`;
-    html += `<div class='header-center'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div>`;
+    
+    // Add spinner if scan in progress
+    let centerIcon = db.isScanning ? `<div class='loader' style='width:30px;height:30px;border-width:3px;'></div>` : `<svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='var(--bg-panel)' stroke='var(--border)' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='var(--text-main)' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg>`;
+    
+    html += `<div class='header-center'>${centerIcon}</div>`;
     html += `<div class='header-right'><button id='editFolderBtn' class='top-btn' onclick='toggleFolderEdit()' style='display:${groupByMode==='category'?'inline-block':'none'};'>✏️ Edit Layout</button></div>`;
     html += `</div>`;
     
-    html += `<h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Device Health Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Scan: ${db.lastCheck}</p>`;
+    html += `<h2 style='text-align:center;color:var(--text-main);margin:0 0 5px 0;'>Device Health Dashboard</h2><p style='text-align:center;font-size:13px;color:var(--text-mut);margin-bottom:25px;'>Last Scan: ${db.lastCheck}</p>`;
 
     html += `<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${critCount}</b><span>Critical</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${warnCount}</b><span>Warnings</span></div><div class='summary-card' style='border-bottom-color:#27ae60;'><b>${goodCount}</b><span>Healthy</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalCount}</b><span>Total Devices</span></div></div>`;
 
     html += `<div class='action-row'><a href='refresh?access_token=${accessToken}' class='main-btn'>🩺 Force Health Scan</a><a href='ticket?access_token=${accessToken}' target='_blank' class='main-btn' style='background:#8e44ad;'>🖨️ Print Ticket</a></div>`;
 
-    html += `<details><summary style='border-left-color:#95a5a6;'>🖥️ Hub Health Information</summary><div style='padding:15px; background:#1a1a1a; border-radius:8px; margin-top:10px;'><table style='width:100%; color:#ccc; font-size:13px; border-collapse:collapse;'><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>Firmware Version</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.firmware}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>System Uptime</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.uptime}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #333;'>OS Memory (Free / Total)</td><td style='text-align:right; font-weight:bold; color:#fff; border-bottom:1px solid #333;'>${db.telemetry.memoryFree} / ${db.telemetry.memoryTotal}</td></tr><tr><td style='padding:8px 0;'>Database Size</td><td style='text-align:right; font-weight:bold; color:#fff;'>${db.telemetry.dbSize}</td></tr></table></div></details>`;
+    html += `<details><summary style='border-left-color:#95a5a6;'>🖥️ Hub Health Information</summary><div style='padding:15px; background:var(--bg-card); border-radius:8px; margin-top:10px; border:1px solid var(--border);'><table style='width:100%; color:var(--text-mut); font-size:13px; border-collapse:collapse;'><tr><td style='padding:8px 0; border-bottom:1px solid var(--border);'>Firmware Version</td><td style='text-align:right; font-weight:bold; color:var(--text-main); border-bottom:1px solid var(--border);'>${db.telemetry.firmware}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid var(--border);'>System Uptime</td><td style='text-align:right; font-weight:bold; color:var(--text-main); border-bottom:1px solid var(--border);'>${db.telemetry.uptime}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid var(--border);'>OS Memory (Free / Total)</td><td style='text-align:right; font-weight:bold; color:var(--text-main); border-bottom:1px solid var(--border);'>${db.telemetry.memoryFree} / ${db.telemetry.memoryTotal}</td></tr><tr><td style='padding:8px 0;'>Database Size</td><td style='text-align:right; font-weight:bold; color:var(--text-main);'>${db.telemetry.dbSize}</td></tr></table></div></details>`;
 
     if (activeIssuesHtml) {
         html += `<details open><summary style='border-left-color:#e74c3c;'>⚠️ Active Issues <span class='cat-count'>${critCount + warnCount} Devices</span></summary><div style='padding-top:15px;'>${activeIssuesHtml}</div></details>`;
@@ -444,7 +495,7 @@ function renderApp() {
         });
         html += `</div>`;
     } else {
-        html += `<div style='text-align:center;color:#888;padding:40px;'>No unmuted devices to display.</div>`;
+        html += `<div style='text-align:center;color:var(--text-mut);padding:40px;'>No unmuted devices to display.</div>`;
     }
 
     let estateBatts = {};
@@ -482,11 +533,11 @@ function renderApp() {
             let titleColor = needsBuy ? "#e74c3c" : "#27ae60";
             let shopMsg = needsBuy ? "<div style='color:#e74c3c;font-size:11px;font-weight:bold;margin-top:8px;'>⚠️ Purchase Needed</div>" : "<div style='color:#27ae60;font-size:11px;font-weight:bold;margin-top:8px;'>✓ Stock Sufficient</div>";
 
-            battHtml += `<div class='shop-card' style='${cardStyle}'><b class='shop-title' style='color:${titleColor}; border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:8px;'>${type}</b><div class='shop-list'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span>Estate Total:</span><b>${totalEstate}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#aaa;'><span>Spares on Hand:</span><b>${spares}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#ccc;'><span>Replace Now:</span><b>${replacingNow}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#3498db;border-top:1px dashed #444;padding-top:3px;margin-top:3px;'><span>12-Month Forecast:</span><b>~${projectedYr} / yr</b></div>${shopMsg}</div></div>`;
+            battHtml += `<div class='shop-card' style='${cardStyle}'><b class='shop-title' style='color:${titleColor}; border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:8px;'>${type}</b><div class='shop-list'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span>Estate Total:</span><b>${totalEstate}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:var(--text-mut);'><span>Spares on Hand:</span><b>${spares}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:var(--text-mut);'><span>Replace Now:</span><b>${replacingNow}</b></div><div style='display:flex;justify-content:space-between;margin-bottom:3px;color:#3498db;border-top:1px dashed var(--border);padding-top:3px;margin-top:3px;'><span>12-Month Forecast:</span><b>~${projectedYr} / yr</b></div>${shopMsg}</div></div>`;
         });
         battHtml += `</div>`;
     } else {
-        battHtml = "<p style='text-align:center;color:#888;'>No batteries tracked in estate.</p>";
+        battHtml = "<p style='text-align:center;color:var(--text-mut);'>No batteries tracked in estate.</p>";
     }
     document.getElementById('batteryLockerModalBody').innerHTML = battHtml;
 
@@ -563,6 +614,27 @@ function openDeviceModal(card) {
     document.getElementById('modalBatteryHealth').innerText = card.getAttribute('data-batt');
     document.getElementById('modalLastActive').innerText = card.getAttribute('data-lastactive');
     
+    // Feature 1: Dynamic Chart Rendering
+    let canvas = document.getElementById('historyChart');
+    let bHistStr = card.getAttribute('data-bhist');
+    if (window.myChart) { window.myChart.destroy(); }
+    
+    if (bHistStr && bHistStr !== "") {
+        canvas.style.display = 'block';
+        let dataPts = bHistStr.split(',').map(Number);
+        let labels = dataPts.map((_, i) => `T-${dataPts.length - i}`);
+        let ctx = canvas.getContext('2d');
+        Chart.defaults.color = document.documentElement.getAttribute('data-theme') === 'light' ? '#333' : '#aaa';
+        
+        window.myChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: [{ label: 'Battery % Trend (24h)', data: dataPts, borderColor: '#3498db', backgroundColor: 'rgba(52, 152, 219, 0.2)', borderWidth: 2, fill: true, tension: 0.3 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { min: Math.max(0, Math.min(...dataPts) - 10), max: 100 } } }
+        });
+    } else {
+        canvas.style.display = 'none';
+    }
+
     document.getElementById('deviceModalOverlay').style.display = 'flex';
 }
 
@@ -618,7 +690,7 @@ document.addEventListener('keydown', function(event) {
 // Start the dashboard on load
 loadData();
 
-// Optional: Keep it updated automatically without page reloads every 60 seconds
+// Reverted polling to 60s to save cloud bandwidth
 setInterval(silentRefresh, 60000); 
 '''
 
@@ -633,6 +705,7 @@ preferences {
     page(name: "pageDeviceDetails")
     page(name: "pageBatteryLocker")
     page(name: "pageNotifications")
+    page(name: "pageBackupRestore")
 }
 
 mappings {
@@ -647,6 +720,9 @@ mappings {
     path("/updateDevice") { action: [GET: "updateDeviceEndpoint"] }
     path("/updateFolders") { action: [GET: "updateFoldersEndpoint"] }
 }
+
+def logDebug(msg) { if (settings.debugMode) log.debug "Advanced Health: ${msg}" }
+def disableDebug() { app.updateSetting("debugMode", [type: "bool", value: false]); log.info "Advanced Health: Debug mode auto-disabled." }
 
 def mainPage() {
     ensureStateMaps()
@@ -739,6 +815,7 @@ def mainPage() {
             href(name: "hrefDeviceDetails", page: "pageDeviceDetails", title: "📍 Locations, Profiles & Folders", description: "Manage folder layouts and standard locations")
             href(name: "hrefBatteryLocker", page: "pageBatteryLocker", title: "🔋 Battery Locker Inventory", description: "Manage spare inventory and view 12-month supply forecasts")
             href(name: "hrefNotifications", page: "pageNotifications", title: "🔔 Notification Rules & Routing", description: "Set up targeted alerts and routing")
+            href(name: "hrefBackupRestore", page: "pageBackupRestore", title: "💾 Backup & Restore Database", description: "Backup your portal settings or restore from JSON")
         }
     }
 }
@@ -750,15 +827,19 @@ def pageSettings() {
             input "masterSwitch", "capability.switch", title: "Master Enable/Pause Switch", required: false
             input "scanInterval", "enum", title: "Automated Scan Interval", options: ["1 Hour", "3 Hours", "6 Hours", "12 Hours", "24 Hours"], defaultValue: "12 Hours", required: true
             
-            input "scanChunkSize", "number", title: "Devices Processed per Staggered Chunk", defaultValue: 40, required: true
-            paragraph "<i>Note: To prevent slamming the hub with 300+ device queries at once, the app scans in chunks and yields back to the hub between batches. 40-50 is the recommended size.</i>"
+            input "scanChunkSize", "number", title: "Devices Processed per Async Chunk", defaultValue: 15, required: true
+            paragraph "<i>Note: This controls how many devices process in one burst before resting the CPU. 15-20 is ideal for large networks to prevent cloud timeouts.</i>"
             
-            input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing?", defaultValue: false
+            // Feature 2: Added Nighttime Notification Batching UI
+            input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing & Nighttime Alert Batching?", defaultValue: false, submitOnChange: true
             if (enableQuietHours) {
-                paragraph "<i>During quiet hours, auto-healing pings will be paused to prevent devices from waking up or flashing lights in the middle of the night.</i>"
+                paragraph "<i>During quiet hours, auto-healing pings will be paused, and any alerts triggered will be queued up silently and blasted out once quiet hours end.</i>"
                 input "quietStart", "time", title: "Quiet Hours Start", required: true
                 input "quietEnd", "time", title: "Quiet Hours End", required: true
             }
+            
+            // Feature 3: Self-terminating debug mode
+            input "debugMode", "bool", title: "Enable Debug Logging (Auto-off in 30m)", defaultValue: false
         }
         
         section("Device Selection Categories") {
@@ -920,7 +1001,7 @@ def pageNotifications() {
         }
         
         section("Smart Batching") {
-            paragraph "<i>When multiple devices fail simultaneously, the app consolidates messages (up to 5 per push) to prevent overwhelming the selected targets.</i>"
+            paragraph "<i>When multiple devices fail simultaneously, the app consolidates messages (up to 5 per push) to prevent overwhelming the selected targets. Nighttime errors are pushed at the end of Quiet Hours if enabled.</i>"
         }
     }
 }
@@ -981,6 +1062,40 @@ def pageBatteryLocker() {
     }
 }
 
+// Feature 3: Configuration Backup and Restore
+def pageBackupRestore() {
+    dynamicPage(name: "pageBackupRestore", title: "💾 Configuration Backup & Restore", install: false, uninstall: false) {
+        section("System Backup (Copy Text Below)") {
+            def backupMap = [:]
+            settings.each { k, v ->
+                if (k.startsWith("loc_") || k.startsWith("desc_") || k.startsWith("battType_") || k.startsWith("battQty_") || k.startsWith("overrideBattThresh_") || k.startsWith("outdoorProfile_") || k.startsWith("folder_") || k.startsWith("customBattType_") || k == "customFolderOrder" || k == "roomList") {
+                    backupMap[k] = v
+                }
+            }
+            def jsonBackup = groovy.json.JsonOutput.toJson(backupMap)
+            paragraph "<textarea rows='8' style='width:100%; border: 1px solid #ccc; border-radius: 4px; padding: 5px; font-family: monospace; font-size: 11px;' readonly>${jsonBackup}</textarea>"
+        }
+        section("System Restore (Paste JSON Below)") {
+            input "restorePayload", "text", title: "Paste Backup JSON here and click outside the box", required: false, submitOnChange: true
+            if (settings.restorePayload) {
+                try {
+                    def parsed = new groovy.json.JsonSlurper().parseText(settings.restorePayload)
+                    parsed.each { k, v ->
+                        if (k.startsWith("battQty_") || k.startsWith("overrideBattThresh_")) app.updateSetting(k, [type: "number", value: v.toInteger()])
+                        else if (k.startsWith("outdoorProfile_")) app.updateSetting(k, [type: "bool", value: v.toBoolean()])
+                        else app.updateSetting(k, [type: "text", value: v.toString()])
+                    }
+                    app.removeSetting("restorePayload")
+                    app.addToHistory("SYSTEM: Successfully restored configuration from JSON backup.")
+                    paragraph "<div style='padding:10px; background-color:#d4edda; color:#155724; border-radius:4px;'><b>Restore Successful!</b> Settings applied to database.</div>"
+                } catch(e) {
+                    paragraph "<div style='padding:10px; background-color:#f8d7da; color:#721c24; border-radius:4px;'><b>Error:</b> Invalid JSON payload. Could not restore.</div>"
+                }
+            }
+        }
+    }
+}
+
 def installed() {
     log.info "Advanced Device Health Monitor Installed."
     initialize()
@@ -991,6 +1106,7 @@ def updated() {
     unsubscribe()
     unschedule()
     initialize()
+    if (settings.debugMode) runIn(1800, "disableDebug")
 }
 
 def ensureStateMaps() {
@@ -1010,6 +1126,7 @@ def ensureStateMaps() {
     
     if (state.muteExpirations == null) state.muteExpirations = [:]
     if (state.lastPowerCycle == null) state.lastPowerCycle = [:]
+    if (state.queuedAlerts == null) state.queuedAlerts = []
     
     if (state.isScanning == null) state.isScanning = false
     if (state.scanQueue == null) state.scanQueue = []
@@ -1033,6 +1150,7 @@ def isQuietTime() {
 
 def initialize() {
     ensureStateMaps()
+    logDebug("System initializing...")
     
     def sInt = settings.scanInterval ?: "12 Hours"
     if (sInt == "1 Hour") runEvery1Hour("runHealthCheck")
@@ -1169,7 +1287,7 @@ def runHealthCheck() {
     def nowMs = new Date().time
     if (state.isScanning) {
         if (state.scanStartTime && (nowMs - state.scanStartTime < 90000)) {
-            log.info "Health Monitor: Scan already in progress. Skipping duplicate request."
+            logDebug("Scan already in progress. Skipping duplicate request.")
             return
         } else {
             log.warn "Health Monitor: Previous scan appears stuck. Resetting lock."
@@ -1180,10 +1298,9 @@ def runHealthCheck() {
     state.isScanning = true
     state.scanStartTime = nowMs
     
-    // Clean up old stuck state variables from previous versions
-    if (state.scanQueue != null) state.remove("scanQueue")
-    if (state.tempResults != null) state.remove("tempResults")
-    if (state.pendingAlerts != null) state.remove("pendingAlerts")
+    state.scanQueue = []
+    state.tempResults = []
+    state.pendingAlerts = []
     
     try {
         if (state.muteExpirations) {
@@ -1222,408 +1339,41 @@ def runHealthCheck() {
         addDev(settings.buttonControllers, "Button Controllers")
 
         def queue = deviceMap.collect { k, v -> [id: k, categories: v] }
-        def chunkSize = (settings.scanChunkSize ?: 40).toInteger()
-        
-        def results = []
-        def alerts = []
         
         if (queue.size() > 0) {
-            app.addToHistory("SCAN: Starting synchronous scan for ${queue.size()} devices.")
-            
-            def allDevs = getAllMonitoredDevices()
-            def ignoreListIds = settings.ignoredInactivityDevices?.collect { it.id.toString() } ?: []
-            def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it.id.toString() } ?: []
-            
-            while (queue.size() > 0) {
-                def chunk = queue.take(chunkSize)
-                queue = queue.drop(chunkSize)
-                
-                chunk.each { qItem ->
-                    def dev = allDevs.find { it.id == qItem.id }
-                    if (!dev) return 
-                    
-                    def finalCategories = qItem.categories
-                    def overrideFolders = settings["folder_${dev.id}"]
-                    if (overrideFolders) {
-                        finalCategories = overrideFolders instanceof List ? overrideFolders : [overrideFolders]
-                    }
-                    
-                    def isMuted = state.muteExpirations && state.muteExpirations[dev.id] != null
-                    def muteUntil = isMuted ? state.muteExpirations[dev.id] : null
-                    
-                    try {
-                        def devHealth = "Green"
-                        def msgs = []
-                        def battChangedStr = ""
-                        def estDaysLeftStr = "Calculating..."
-                        def rawBattVal = null
-                        def rawEwmaRate = 0.0
-                        def dRssiHistory = []
-                        
-                        def dManufacturer = "Generic/Unknown"
-                        try { dManufacturer = dev.getDataValue("manufacturer") ?: "Generic/Unknown" } catch(ignore){}
-                        
-                        def dModel = "Generic/Unknown"
-                        try { dModel = dev.getDataValue("model") ?: "Generic/Unknown" } catch(ignore){}
-                        
-                        def dFirmware = "Unknown"
-                        try { dFirmware = dev.getDataValue("application") ?: dev.getDataValue("softwareBuild") ?: "Unknown" } catch(ignore){}
-                        
-                        def dTypeName = "Unknown"
-                        try { dTypeName = dev.typeName ?: "Unknown" } catch(ignore){}
-                        
-                        // --- DEEP DIVE FIX 2.0: The Bulletproof Timestamp Scraper ---
-                        def lastActiveDate = dev.getLastActivity()
-                        long latestTime = lastActiveDate ? lastActiveDate.time : 0
-                        
-                        try {
-                            dev.currentStates?.each { st ->
-                                if (st?.date && st.date.time > latestTime) {
-                                    latestTime = st.date.time
-                                }
-                            }
-                        } catch(e) { log.warn "State parse error for ${dev.displayName}: ${e}" }
-                        
-                        try {
-                            def evts = dev.events([max: 10])
-                            if (evts) {
-                                evts.each { evt ->
-                                    if (evt?.date && evt.date.time > latestTime) {
-                                        latestTime = evt.date.time
-                                    }
-                                }
-                            }
-                        } catch(e) { log.warn "Event parse error for ${dev.displayName}: ${e}" }
-
-                        lastActiveDate = latestTime > 0 ? new Date(latestTime) : null
-                        def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
-                        // --- END FIX ---
-                        
-                        if (dev.hasAttribute("healthStatus")) {
-                            def hStat = dev.currentValue("healthStatus")
-                            if (hStat && hStat.toString().toLowerCase() == "offline") {
-                                devHealth = "Red"
-                                msgs << "System reports OFFLINE"
-                            }
-                        }
-                        
-                        def isMainsPowered = settings.actuatorDevices?.find { it.id == dev.id } != null || 
-                                             settings.smartPlugs?.find { it.id == dev.id } != null || 
-                                             settings.lightSwitches?.find { it.id == dev.id } != null || 
-                                             settings.hueLights?.find { it.id == dev.id } != null || 
-                                             settings.hubBridges?.find { it.id == dev.id } != null
-                        
-                        if (settings.enableBatteryCheck && dev.hasAttribute("battery") && !isMainsPowered) {
-                            def batt = dev.currentValue("battery")
-                            if (batt != null && batt.toString().isNumber()) {
-                                def bVal = batt.toInteger()
-                                rawBattVal = bVal
-                                
-                                def isOutdoor = settings["outdoorProfile_${dev.id}"] == "true" || settings["outdoorProfile_${dev.id}"] == true
-                                
-                                long changedMs = state.batteryChangeDates[dev.id] ?: nowMs
-                                long lastTime = state.lastBatteryTime[dev.id] ?: changedMs
-                                
-                                if (nowMs > lastTime) {
-                                    def lastB = state.lastBatteryLevels[dev.id] ?: bVal
-                                    if (bVal < lastB) { 
-                                        long elapsedMs = nowMs - lastTime
-                                        double daysElapsed = elapsedMs / 86400000.0
-                                        if (daysElapsed > 0.05) { 
-                                            double currentDropRate = (lastB - bVal) / daysElapsed
-                                            double alpha = isOutdoor ? 0.05 : 0.3 
-                                            double oldEwma = state.batteryEwma[dev.id] != null ? state.batteryEwma[dev.id] : currentDropRate
-                                            double newEwma = (alpha * currentDropRate) + ((1.0 - alpha) * oldEwma)
-                                            state.batteryEwma[dev.id] = newEwma
-                                        }
-                                    }
-                                }
-
-                                if (state.lastBatteryLevels[dev.id] != null && bVal > (state.lastBatteryLevels[dev.id] + 5)) {
-                                    state.batteryChangeDates[dev.id] = nowMs
-                                    state.batteryEwma[dev.id] = null 
-                                }
-                                
-                                state.lastBatteryLevels[dev.id] = bVal
-                                state.lastBatteryTime[dev.id] = nowMs
-                                
-                                if (settings.enableParasiticCheck) {
-                                    if (!state.batteryHistory) state.batteryHistory = [:]
-                                    if (!state.batteryHistory[dev.id]) state.batteryHistory[dev.id] = []
-                                    
-                                    state.batteryHistory[dev.id] << [time: nowMs, val: bVal]
-                                    state.batteryHistory[dev.id] = state.batteryHistory[dev.id].findAll { nowMs - it.time <= 86400000 }
-                                    
-                                    if (state.batteryHistory[dev.id].size() > 1) {
-                                        def oldestReading = state.batteryHistory[dev.id].first()
-                                        def dropInDay = oldestReading.val - bVal
-                                        def maxDropAllowed = settings.parasiticThreshold ?: 10
-                                        
-                                        if (dropInDay >= maxDropAllowed) {
-                                            if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
-                                            msgs << "Parasitic Drain Detected (-${dropInDay}% / 24h)"
-                                        }
-                                    }
-                                }
-                                
-                                if (state.batteryChangeDates[dev.id]) {
-                                    battChangedStr = " | Batt Replaced: " + new Date(state.batteryChangeDates[dev.id]).format("MM/dd/yy", location.timeZone)
-                                    
-                                    def ewmaRate = state.batteryEwma[dev.id]
-                                    if (ewmaRate != null && ewmaRate > 0.01) {
-                                        rawEwmaRate = ewmaRate
-                                        int daysLeft = (bVal / ewmaRate).toInteger()
-                                        estDaysLeftStr = "~${daysLeft} Days"
-                                    } else {
-                                        def calcThresh = settings.battCalcThreshold ?: 5
-                                        estDaysLeftStr = "Calculating Trend..."
-                                    }
-                                }
-
-                                def specificThresh = settings["overrideBattThresh_${dev.id}"]
-                                def thresh = (specificThresh != null && specificThresh.toString().isNumber()) ? specificThresh.toInteger() : (settings.batteryThreshold ?: 20)
-                                
-                                if (bVal <= thresh) {
-                                    devHealth = "Red"
-                                    msgs << "Battery Critical"
-                                } else if (bVal <= thresh + 15) {
-                                    if (devHealth != "Red" && !msgs.any{it.contains("Parasitic")}) devHealth = "Yellow"
-                                    msgs << "Battery Low"
-                                } else {
-                                    if (!msgs.any{it.contains("Parasitic")}) msgs << "Battery OK"
-                                }
-                            }
-                        }
-                        
-                        def skipInactivity = ignoreListIds.contains(dev.id.toString()) || (settings.ignoreMainsInactivity && isMainsPowered)
-                        
-                        if (settings.enableInactivityCheck && !skipInactivity) {
-                            if (lastActiveDate) {
-                                def diffHours = (nowMs - lastActiveDate.time) / 3600000
-                                
-                                def isSleepy = settings.buttonControllers?.find { it.id == dev.id } != null
-                                def thresh = isSleepy ? (settings.buttonInactivityThreshold ?: 168) : (settings.inactivityThreshold ?: 24)
-                                
-                                if (diffHours > thresh) {
-                                    devHealth = "Red"
-                                    msgs << "Offline (${diffHours.toInteger()} hrs)"
-                                } else if (diffHours > (thresh * 0.75)) {
-                                    if (devHealth != "Red") devHealth = "Yellow"
-                                    msgs << "Inactive (${diffHours.toInteger()} hrs)"
-                                } else {
-                                    if (msgs.size() == 0 || (msgs.size() == 1 && msgs[0].contains("Battery OK"))) {
-                                        if (!msgs.contains("Active")) msgs << "Active"
-                                    }
-                                }
-                            } else {
-                                devHealth = "Red"
-                                msgs << "No Activity Data Found"
-                            }
-                        } else if (msgs.size() == 0 || (msgs.size() == 1 && msgs[0].contains("Battery OK"))) {
-                            if (!msgs.contains("Active")) msgs << "Monitoring Active"
-                        }
-                        
-                        if (settings.enableStuckCheck && !ignoreStuckListIds.contains(dev.id.toString())) {
-                            if (dev.hasAttribute("motion") && dev.currentValue("motion") == "active") {
-                                def stateDate = dev.currentState("motion")?.date
-                                if (stateDate) {
-                                    def diffHrs = (nowMs - stateDate.time) / 3600000
-                                    def thresh = settings.stuckMotionHours ?: 2
-                                    if (diffHrs > thresh) {
-                                        if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
-                                        msgs << "Stuck Active (${diffHrs.toInteger()}h)"
-                                    }
-                                }
-                            }
-                            if (dev.hasAttribute("contact") && dev.currentValue("contact") == "open") {
-                                def stateDate = dev.currentState("contact")?.date
-                                if (stateDate) {
-                                    def diffHrs = (nowMs - stateDate.time) / 3600000
-                                    def thresh = settings.stuckContactHours ?: 24
-                                    if (diffHrs > thresh) {
-                                        if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
-                                        msgs << "Stuck Open (${diffHrs.toInteger()}h)"
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if (settings.enableWifiSignalCheck) {
-                            if (dev.hasAttribute("wifiSignal") || dev.hasAttribute("rssi")) {
-                                if (!dev.hasAttribute("lqi")) { 
-                                    def wifiRssi = dev.currentValue("wifiSignal") ?: dev.currentValue("rssi")
-                                    if (wifiRssi != null && wifiRssi.toString().isNumber()) {
-                                        def rVal = wifiRssi.toInteger()
-                                        
-                                        if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
-                                        state.rssiHistory[dev.id] << rVal
-                                        if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
-                                        dRssiHistory = state.rssiHistory[dev.id]
-                                        
-                                        def thresh = settings.wifiRssiThreshold ?: -75
-                                        if (rVal <= thresh) {
-                                            devHealth = "Red"
-                                            msgs << "Weak Wi-Fi (${rVal} dBm)"
-                                        } else if (rVal <= thresh + 10) {
-                                            if (devHealth != "Red") devHealth = "Yellow"
-                                            msgs << "Fair Wi-Fi (${rVal} dBm)"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if (settings.enableSignalCheck) {
-                            if (dev.hasAttribute("rssi") && dev.hasAttribute("lqi")) { 
-                                def rssi = dev.currentValue("rssi")
-                                if (rssi != null && rssi.toString().isNumber()) {
-                                    def rVal = rssi.toInteger()
-                                    
-                                    if (!state.rssiHistory[dev.id]) state.rssiHistory[dev.id] = []
-                                    state.rssiHistory[dev.id] << rVal
-                                    if (state.rssiHistory[dev.id].size() > 10) state.rssiHistory[dev.id].remove(0)
-                                    dRssiHistory = state.rssiHistory[dev.id]
-                                    
-                                    def thresh = settings.rssiThreshold ?: -85
-                                    if (rVal <= thresh) {
-                                        devHealth = "Red"
-                                        msgs << "Weak Signal (${rVal} dBm)"
-                                    } else if (rVal <= thresh + 10) {
-                                        if (devHealth != "Red") devHealth = "Yellow"
-                                        msgs << "Fair Signal (${rVal} dBm)"
-                                    }
-                                }
-                            }
-                            if (dev.hasAttribute("lqi")) {
-                                def lqi = dev.currentValue("lqi")
-                                if (lqi != null && lqi.toString().isNumber()) {
-                                    def lVal = lqi.toInteger()
-                                    def thresh = settings.lqiThreshold ?: 100
-                                    if (lVal <= thresh) {
-                                        devHealth = "Red"
-                                        msgs << "Critical LQI (${lVal})"
-                                    } else if (lVal <= thresh + 50) {
-                                        if (devHealth != "Red") devHealth = "Yellow"
-                                        msgs << "Weak LQI (${lVal})"
-                                    }
-                                }
-                            }
-                        }
-                        
-                        def oldStatus = state.previousStatus[dev.id]
-                        if (devHealth == "Red" && oldStatus != "Red" && oldStatus != "Purple") {
-                            if (!state.flapHistory[dev.id]) state.flapHistory[dev.id] = []
-                            state.flapHistory[dev.id] << nowMs
-                        }
-                        
-                        if (state.flapHistory[dev.id]) {
-                            state.flapHistory[dev.id] = state.flapHistory[dev.id].findAll { nowMs - it < 86400000 }
-                            if (settings.enableFlapDetection && state.flapHistory[dev.id].size() >= (settings.flapThreshold ?: 3)) {
-                                devHealth = "Purple"
-                                msgs.add(0, "Flapping/Unstable (${state.flapHistory[dev.id].size()} drops/24h)")
-                            }
-                        }
-                        
-                        if (oldStatus != null && oldStatus != devHealth) {
-                            if (!isMuted) {
-                                def msgToSend = null
-                                def level = null
-                                
-                                if (devHealth == "Red") { msgToSend = "🔴 CRITICAL: ${dev.displayName} is Offline/Critical"; level = "Critical" }
-                                else if (devHealth == "Purple") { msgToSend = "🟣 FLAPPING: ${dev.displayName} is dropping repeatedly"; level = "Critical" }
-                                else if (devHealth == "Yellow") { msgToSend = "🟡 WARNING: ${dev.displayName} is showing degradation"; level = "Warning" }
-                                else if (devHealth == "Green" && settings.notifyOnResolved) { msgToSend = "🟢 RESOLVED: ${dev.displayName} returned to nominal"; level = "Resolved" }
-                                
-                                if (msgToSend) {
-                                    alerts << [deviceId: dev.id, devName: dev.displayName, msg: msgToSend, level: level]
-                                }
-                            } else {
-                                app.addToHistory("MUTE: Suppressed status change alert for ${dev.displayName} (Device is currently muted).")
-                            }
-                        }
-                        
-                        state.previousStatus[dev.id] = devHealth
-                        msgs.removeAll { it == "Battery OK" && msgs.size() > 1 } 
-                        
-                        def canPingDev = dev.hasCommand("refresh") || dev.hasCommand("ping")
-                        def devLoc = settings["loc_${dev.id}"] ?: ""
-                        def devDesc = settings["desc_${dev.id}"] ?: ""
-                        def batQty = settings["battQty_${dev.id}"] ?: 1
-                        
-                        def rawBatType = settings["battType_${dev.id}"] ?: ""
-                        def cBatType = settings["customBattType_${dev.id}"] ?: ""
-                        def batType = (rawBatType == "Custom" && cBatType) ? cBatType : rawBatType
-                        
-                        def isOutdoorUI = settings["outdoorProfile_${dev.id}"] == "true" || settings["outdoorProfile_${dev.id}"] == true
-                        def overrideUI = settings["overrideBattThresh_${dev.id}"] ?: ""
-
-                        results << [
-                            id: dev.id,
-                            name: dev.displayName,
-                            status: devHealth,
-                            messages: msgs,
-                            categories: finalCategories,
-                            canPing: canPingDev,
-                            lastActive: lastActiveStr,
-                            battChanged: battChangedStr,
-                            customLoc: devLoc,
-                            customDesc: devDesc,
-                            battVal: rawBattVal,
-                            ewmaRate: rawEwmaRate,
-                            estDaysLeft: estDaysLeftStr,
-                            battType: batType,
-                            battQty: batQty,
-                            isMuted: isMuted,
-                            muteUntil: muteUntil,
-                            rssiHistory: dRssiHistory,
-                            manufacturer: dManufacturer,
-                            model: dModel,
-                            firmware: dFirmware,
-                            driverName: dTypeName,
-                            isMains: isMainsPowered,
-                            isOutdoor: isOutdoorUI,
-                            battThreshOverride: overrideUI
-                        ]
-                        
-                    } catch (e) {
-                        log.warn "Health Monitor: Error scanning device ${dev.displayName} - ${e}"
-                    }
-                }
-                
-                // Safely yield CPU back to the hub between chunks
-                if (queue.size() > 0) {
-                    pauseExecution(500)
-                }
-            }
+            app.addToHistory("SCAN: Starting True Async scan for ${queue.size()} devices.")
+            state.scanQueue = queue
+            runIn(1, "processScanChunk")
+        } else {
+            state.isScanning = false
+            app.addToHistory("SCAN: No devices mapped. Scan aborted.")
         }
         
-        finalizeScan(results, alerts)
-        
     } catch (e) {
-        log.error "Health Monitor: Critical error during scan sequence - ${e}"
-        app.addToHistory("ERROR: Critical failure during scan. Check logs.")
-    } finally {
+        log.error "Health Monitor: Error initializing scan sequence - ${e}"
         state.isScanning = false
-        state.scanStartTime = null
     }
 }
 
+// TRUE ASYNC PROCESSING ENGINE WITH SMART SCRAPER
 def processScanChunk() {
     if (!state.isScanning) return
     
     def queue = state.scanQueue ?: []
     if (queue.size() == 0) {
-        finalizeScan()
+        runIn(1, "finalizeScanWrapper")
         return
     }
     
-    def chunkSize = (settings.scanChunkSize ?: 40).toInteger()
+    def chunkSize = (settings.scanChunkSize ?: 15).toInteger() // Lower default for cloud stability
     def chunk = queue.take(chunkSize)
     state.scanQueue = queue.drop(chunkSize)
     
+    def currentResults = state.tempResults ?: []
+    def currentAlerts = state.pendingAlerts ?: []
+    
     def allDevs = getAllMonitoredDevices()
     def nowMs = new Date().time
-    
     def ignoreListIds = settings.ignoredInactivityDevices?.collect { it.id.toString() } ?: []
     def ignoreStuckListIds = settings.ignoredStuckDevices?.collect { it.id.toString() } ?: []
     
@@ -1648,6 +1398,7 @@ def processScanChunk() {
             def rawBattVal = null
             def rawEwmaRate = 0.0
             def dRssiHistory = []
+            def bHistStr = ""
             
             def dManufacturer = "Generic/Unknown"
             try { dManufacturer = dev.getDataValue("manufacturer") ?: "Generic/Unknown" } catch(ignore){}
@@ -1661,37 +1412,42 @@ def processScanChunk() {
             def dTypeName = "Unknown"
             try { dTypeName = dev.typeName ?: "Unknown" } catch(ignore){}
             
-            // --- DEEP DIVE FIX 2.1: The Filtered Timestamp Scraper ---
+            // --- SMART SCRAPER OPTIMIZATION ---
+            long latestTime = 0
             def lastActiveDate = dev.getLastActivity()
-            long latestTime = lastActiveDate ? lastActiveDate.time : 0
+            if (lastActiveDate) latestTime = lastActiveDate.time
             
-            try {
-                dev.currentStates?.each { st ->
-                    if (st?.date && st.date.time > latestTime) {
-                        latestTime = st.date.time
+            def isSleepyDev = settings.buttonControllers?.find { it.id == dev.id } != null
+            def inactivityThreshHours = isSleepyDev ? (settings.buttonInactivityThreshold ?: 168) : (settings.inactivityThreshold ?: 24)
+            def diffHours = (nowMs - latestTime) / 3600000.0
+            
+            // ONLY perform heavy database queries if the device looks like it might be offline
+            if (diffHours >= (inactivityThreshHours * 0.75)) {
+                try {
+                    dev.currentStates?.each { st ->
+                        if (st?.date && st.date.time > latestTime) {
+                            latestTime = st.date.time
+                        }
                     }
-                }
-            } catch(e) { log.warn "State parse error for ${dev.displayName}: ${e}" }
-            
-            try {
-                def evts = dev.events([max: 15])
-                if (evts) {
-                    evts.each { evt ->
-                        if (evt?.date && evt.date.time > latestTime) {
-                            // Ignore commands sent to the device, only trust data coming FROM it
+                } catch(e) { log.warn "State parse error for ${dev.displayName}: ${e}" }
+                
+                try {
+                    def evts = dev.events([max: 5])
+                    if (evts) {
+                        evts.each { evt ->
                             def isCommand = (evt.type?.toString()?.toLowerCase() == "command") || 
                                             (evt.name?.toString()?.toLowerCase()?.contains("command"))
-                            if (!isCommand) {
+                            if (!isCommand && evt?.date && evt.date.time > latestTime) {
                                 latestTime = evt.date.time
                             }
                         }
                     }
-                }
-            } catch(e) { log.warn "Event parse error for ${dev.displayName}: ${e}" }
-
+                } catch(e) { log.warn "Event parse error for ${dev.displayName}: ${e}" }
+            }
+            
             lastActiveDate = latestTime > 0 ? new Date(latestTime) : null
             def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
-            // --- END FIX ---
+            // --- END SMART SCRAPER ---
             
             if (dev.hasAttribute("healthStatus")) {
                 def hStat = dev.currentValue("healthStatus")
@@ -1757,6 +1513,9 @@ def processScanChunk() {
                                 if (devHealth != "Red" && devHealth != "Purple") devHealth = "Yellow"
                                 msgs << "Parasitic Drain Detected (-${dropInDay}% / 24h)"
                             }
+                            
+                            // Export for Chart.js
+                            bHistStr = state.batteryHistory[dev.id].collect { it.val }.join(",")
                         }
                     }
                     
@@ -1793,15 +1552,12 @@ def processScanChunk() {
             
             if (settings.enableInactivityCheck && !skipInactivity) {
                 if (lastActiveDate) {
-                    def diffHours = (nowMs - lastActiveDate.time) / 3600000
+                    diffHours = (nowMs - lastActiveDate.time) / 3600000
                     
-                    def isSleepy = settings.buttonControllers?.find { it.id == dev.id } != null
-                    def thresh = isSleepy ? (settings.buttonInactivityThreshold ?: 168) : (settings.inactivityThreshold ?: 24)
-                    
-                    if (diffHours > thresh) {
+                    if (diffHours > inactivityThreshHours) {
                         devHealth = "Red"
                         msgs << "Offline (${diffHours.toInteger()} hrs)"
-                    } else if (diffHours > (thresh * 0.75)) {
+                    } else if (diffHours > (inactivityThreshHours * 0.75)) {
                         if (devHealth != "Red") devHealth = "Yellow"
                         msgs << "Inactive (${diffHours.toInteger()} hrs)"
                     } else {
@@ -1929,7 +1685,7 @@ def processScanChunk() {
                     else if (devHealth == "Green" && settings.notifyOnResolved) { msgToSend = "🟢 RESOLVED: ${dev.displayName} returned to nominal"; level = "Resolved" }
                     
                     if (msgToSend) {
-                        state.pendingAlerts << [deviceId: dev.id, devName: dev.displayName, msg: msgToSend, level: level]
+                        currentAlerts << [deviceId: dev.id, devName: dev.displayName, msg: msgToSend, level: level]
                     }
                 } else {
                     app.addToHistory("MUTE: Suppressed status change alert for ${dev.displayName} (Device is currently muted).")
@@ -1951,7 +1707,7 @@ def processScanChunk() {
             def isOutdoorUI = settings["outdoorProfile_${dev.id}"] == "true" || settings["outdoorProfile_${dev.id}"] == true
             def overrideUI = settings["overrideBattThresh_${dev.id}"] ?: ""
 
-            state.tempResults << [
+            currentResults << [
                 id: dev.id,
                 name: dev.displayName,
                 status: devHealth,
@@ -1970,6 +1726,7 @@ def processScanChunk() {
                 isMuted: isMuted,
                 muteUntil: muteUntil,
                 rssiHistory: dRssiHistory,
+                battHist: bHistStr,
                 manufacturer: dManufacturer,
                 model: dModel,
                 firmware: dFirmware,
@@ -1984,11 +1741,21 @@ def processScanChunk() {
         }
     }
     
+    // Save state and let the hub breathe before processing the next chunk
+    state.tempResults = currentResults
+    state.pendingAlerts = currentAlerts
+    
     if (state.scanQueue.size() > 0) {
-        runIn(2, "processScanChunk") 
+        runIn(1, "processScanChunk") 
     } else {
-        runIn(1, "finalizeScan")
+        runIn(1, "finalizeScanWrapper")
     }
+}
+
+def finalizeScanWrapper() {
+    def res = state.tempResults ?: []
+    def alerts = state.pendingAlerts ?: []
+    finalizeScan(res, alerts)
 }
 
 def finalizeScan(results, pendingAlerts) {
@@ -1998,35 +1765,51 @@ def finalizeScan(results, pendingAlerts) {
     
     results = analyzeSpatialInterference(results)
     
-    def alertQueue = [:]
-    pendingAlerts?.each { alert ->
-        def targets = settings["notifyOverride_${alert.deviceId}"]
-        if (!targets) {
-            targets = (alert.level == "Critical") ? settings.defaultCritNotifiers : (alert.level == "Warning" ? settings.defaultWarnNotifiers : (settings.defaultCritNotifiers ?: settings.defaultWarnNotifiers))
+    // Feature 2: Nighttime Notification Batching
+    if (settings.enableQuietHours && isQuietTime()) {
+        if (pendingAlerts.size() > 0) {
+            state.queuedAlerts.addAll(pendingAlerts)
+            app.addToHistory("NOTIFICATIONS: Nighttime Mode Active. Held ${pendingAlerts.size()} alerts in silent queue.")
         }
-        
-        targets?.each { t ->
-            if (t) {
-                if (!alertQueue[t.id]) alertQueue[t.id] = [device: t, msgs: []]
-                alertQueue[t.id].msgs << alert.msg
-            }
+        pendingAlerts = []
+    } else {
+        if (state.queuedAlerts && state.queuedAlerts.size() > 0) {
+            pendingAlerts.addAll(state.queuedAlerts)
+            state.queuedAlerts = []
+            app.addToHistory("NOTIFICATIONS: Morning Flush. Releasing queued nighttime alerts.")
         }
     }
     
-    alertQueue.each { tId, data ->
-        def tDev = data.device
-        def messages = data.msgs
-        if (messages.size() > 0) {
-            def chunked = messages.collate(5) 
-            def totalChunks = chunked.size()
-            
-            chunked.eachWithIndex { chunk, idx ->
-                def header = totalChunks > 1 ? "Device Health Alert (${idx+1}/${totalChunks}):\n" : "Device Health Alert:\n"
-                def combinedMsg = header + chunk.join("\n")
-                tDev.deviceNotification(combinedMsg)
-                pauseExecution(500) 
+    if (pendingAlerts.size() > 0) {
+        def alertQueue = [:]
+        pendingAlerts.each { alert ->
+            def targets = settings["notifyOverride_${alert.deviceId}"]
+            if (!targets) {
+                targets = (alert.level == "Critical") ? settings.defaultCritNotifiers : (alert.level == "Warning" ? settings.defaultWarnNotifiers : (settings.defaultCritNotifiers ?: settings.defaultWarnNotifiers))
             }
-            app.addToHistory("NOTIFIED: Sent ${messages.size()} batched alerts to ${tDev.displayName}.")
+            
+            targets?.each { t ->
+                if (t) {
+                    if (!alertQueue[t.id]) alertQueue[t.id] = [device: t, msgs: []]
+                    alertQueue[t.id].msgs << alert.msg
+                }
+            }
+        }
+        
+        alertQueue.each { tId, data ->
+            def tDev = data.device
+            def messages = data.msgs
+            if (messages.size() > 0) {
+                def chunked = messages.collate(5) 
+                def totalChunks = chunked.size()
+                
+                chunked.eachWithIndex { chunk, idx ->
+                    def header = totalChunks > 1 ? "Device Health Alert (${idx+1}/${totalChunks}):\n" : "Device Health Alert:\n"
+                    def combinedMsg = header + chunk.join("\n")
+                    tDev.deviceNotification(combinedMsg)
+                }
+                app.addToHistory("NOTIFIED: Sent ${messages.size()} batched alerts to ${tDev.displayName}.")
+            }
         }
     }
     
@@ -2046,7 +1829,14 @@ def finalizeScan(results, pendingAlerts) {
     
     updateChildHtmlDashboard(results, critCount, warnCount)
     
-    app.addToHistory("SCAN: Synchronous scan sequence completed successfully.")
+    state.isScanning = false
+    state.scanStartTime = null
+    state.tempResults = []
+    state.scanQueue = []
+    state.pendingAlerts = []
+    
+    app.addToHistory("SCAN: Asynchronous scan sequence completed successfully.")
+    logDebug("Scan completed. Processed ${results.size()} active devices.")
 }
 
 def updateChildHtmlDashboard(results, critCount, warnCount) {
@@ -2248,48 +2038,61 @@ def getRedirectHtml(delayMs, msgText) {
 def serveDataEndpoint() {
     try {
         ensureStateMaps()
-        def nowMs = new Date().time
-        def results = state.dashboardData ?: []
+        def rawResults = state.dashboardData ?: []
         
-        if (state.muteExpirations) {
-            def keysToRemove = []
-            state.muteExpirations.each { k, v -> if (v < nowMs) keysToRemove << k }
-            if (keysToRemove) keysToRemove.each { state.muteExpirations.remove(it) }
-            
-            results.each { dev ->
-                dev.isMuted = state.muteExpirations.containsKey(dev.id)
-                dev.muteUntil = dev.isMuted ? state.muteExpirations[dev.id] : null
-            }
+        def slimResults = rawResults.collect { dev ->
+            def isHealthy = (dev.status == "Green" || dev.status == "Blue")
+            [
+                id: dev.id,
+                name: dev.name,
+                status: dev.status,
+                messages: isHealthy ? [] : dev.messages,
+                categories: dev.categories,
+                canPing: dev.canPing,
+                lastActive: dev.lastActive,
+                battVal: dev.battVal,
+                estDaysLeft: dev.estDaysLeft,
+                battType: dev.battType,
+                battQty: dev.battQty,
+                isMuted: state.muteExpirations?.containsKey(dev.id),
+                rssiHistory: dev.rssiHistory ? dev.rssiHistory.takeRight(3) : [], 
+                customLoc: dev.customLoc,
+                battHist: isHealthy ? "" : dev.battHist, 
+                isOutdoor: dev.isOutdoor,
+                battThreshOverride: dev.battThreshOverride
+            ]
         }
 
-        def customFolderOrderStr = settings.customFolderOrder ?: ""
-        def defaultRooms = "Living Room, Kitchen, Master Bedroom, Garage, Front Yard, Backyard, Hallway, Bathroom"
-        def roomOptions = (settings.roomList ?: defaultRooms).split(',').collect{it.trim()}.findAll{it != ""}
-        def battTypes = ["AA", "AAA", "AAAA", "C", "D", "9V", "CR2032", "CR2025", "CR2450", "CR2477", "CR1632", "CR1220", "CR2", "CR123A", "LR44", "A23", "18650", "14500", "Custom", "Rechargeable Internal"]
-
-        def spareBatts = [:]
-        results.each { dev ->
-            if (dev.battType && dev.battType != "Rechargeable Internal" && dev.battType != "Mains / Hardwired") {
-                def safeType = dev.battType.replaceAll("[^a-zA-Z0-9]+", "_")
-                if (!spareBatts[dev.battType]) spareBatts[dev.battType] = settings["spareBatt_${safeType}"] ?: 0
+        // Re-calculate spares on the fly so the map is always populated but small
+        def spareMap = [:]
+        slimResults.each { d ->
+            if (d.battType && d.battType != "") {
+                def safeType = d.battType.replaceAll("[^a-zA-Z0-9]+", "_")
+                spareMap[d.battType] = settings["spareBatt_${safeType}"] ?: 0
             }
         }
 
         def payload = [
             token: state.accessToken,
             lastCheck: state.lastCheckTime ?: "Never",
-            customFolderOrder: customFolderOrderStr,
-            locations: roomOptions,
-            batteryTypes: battTypes,
-            spares: spareBatts,
-            estate: results,
-            telemetry: state.cachedTelemetry ?: [memoryTotal: "Unknown", memoryFree: "Unknown", dbSize: "Unknown", uptime: "Unknown", firmware: "Unknown"]
+            isScanning: state.isScanning,
+            customFolderOrder: settings.customFolderOrder ?: "",
+            locations: (settings.roomList ?: "").split(',').collect{it.trim()}.findAll{it != ""},
+            batteryTypes: ["AA", "AAA", "CR2032", "CR2450", "9V", "Custom"],
+            spares: spareMap, // Re-added the map to fix the 'AA' error
+            estate: slimResults,
+            telemetry: [
+                firmware: state.cachedTelemetry?.firmware ?: "Ok",
+                uptime: state.cachedTelemetry?.uptime ?: "Ok",
+                dbSize: state.cachedTelemetry?.dbSize ?: "Ok",
+                memoryFree: state.cachedTelemetry?.memoryFree ?: "Ok"
+            ]
         ]
 
         return render(contentType: "application/json", data: JsonOutput.toJson(payload), status: 200)
     } catch (e) {
         log.error "Data API Error: ${e}"
-        return render(contentType: "application/json", data: '{"error":"Data unavailable"}', status: 500)
+        return render(contentType: "application/json", data: '{"error":"Hub busy"}', status: 500)
     }
 }
 
@@ -2300,7 +2103,7 @@ def serveDashboardPage() {
         def modalHtml = DASHBOARD_MODAL
         def batteryLockerHtml = DASHBOARD_BATTERY_LOCKER
         
-        def html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'><title>Device Health Portal</title><style>${css}</style></head><body><div id='appContainer' class='container'></div><div id='deviceModalOverlay' class='modal-overlay' onclick='closeDeviceModal()'>${modalHtml}</div><div id='batteryLockerModalOverlay' class='modal-overlay' onclick='closeBatteryLocker()'>${batteryLockerHtml}</div><script>${jsScript}</script></body></html>"
+        def html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'><title>Device Health Portal</title><style>${css}</style><script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script></head><body><div id='appContainer' class='container'></div><div id='deviceModalOverlay' class='modal-overlay' onclick='closeDeviceModal()'>${modalHtml}</div><div id='batteryLockerModalOverlay' class='modal-overlay' onclick='closeBatteryLocker()'>${batteryLockerHtml}</div><script>${jsScript}</script></body></html>"
 
         return render(contentType: "text/html", data: html, status: 200)
 
