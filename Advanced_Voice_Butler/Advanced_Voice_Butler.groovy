@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.8
+ * Version 2.8.1
  */
 definition(
     name: "Advanced Voice Butler",
@@ -17,7 +17,7 @@ definition(
 
 import groovy.transform.Field
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
-@Field static String VERSION = "2.8"
+@Field static String VERSION = "2.8.1"
 
 preferences {
     page(name: "mainPage")
@@ -1275,6 +1275,9 @@ def roomPage(params) {
 }
 
 def getDefaultMessages(type) {
+    // Log what is being requested to help troubleshoot
+    log.info "Butler: Fetching messages for type: '${type}'"
+    
     switch(type) {
         case "Good Night": return ["Good night %name%.", "Sweet dreams %name%.", "Rest well.", "Sleep tight %name%.", "Have a peaceful night %name%.", "Rest easy %name%.", "Sleep well %name%."]
         case "Good Morning": return ["Good morning %name%.", "Rise and shine %name%.", "Hello %name%.", "Good morning %name%, I hope you slept well."]
@@ -1288,9 +1291,14 @@ def getDefaultMessages(type) {
         case "ScreenTime": return ["%interruption%, but the daily screen time allotment has expired. Please power down the device.", "Attention. Screen time is now over. Please find a non-digital activity.", "Sir, the screen time timer has reached zero. Please turn off the television.", "Excuse me, but screen time has concluded.", "The screen time switch has been deactivated. Please turn off the screens."]
         case "Calendar": return ["%interruption%, but you have %event% starting in %time%.", "Sir, please note that %event% will begin in %time%.", "A quick reminder that your schedule shows %event% in %time%.", "Excuse me, but %event% is coming up in %time%."]
         case "BreakingNews": return ["%interruption%, but a major news event has just occurred.", "Sir, I have an urgent news update.", "Excuse me, but there is breaking news.", "Pardon me, the news desk has just reported an update."]
+        case "MailArrival": return ["Pardon the interruption, but the mail has just arrived.", "I am pleased to inform you that the mail has been delivered.", "Attention: New mail has been placed in the mailbox."]
+        case "MailRetrieved": return ["The mail has been collected. Thank you.", "I see the mail has been retrieved.", "The mailbox is now empty, mail collection is complete."]
     }
+    
+    log.warn "Voice Butler: getDefaultMessages called with unknown type: '${type}'"
     return ["Message"]
 }
+
 
 def installed() {
     log.info "Advanced Voice Butler Installed."
@@ -1364,188 +1372,171 @@ def initialize() {
         if (ev.dateEpoch > nowMs) runOnce(new Date(ev.dateEpoch), "startHostedEvent", [data: [eventId: eId], overwrite: false])
         if (ev.endEpoch && ev.endEpoch > nowMs) runOnce(new Date(ev.endEpoch), "endHostedEvent", [data: [eventId: eId], overwrite: false])
     }
-    // -----------------------------------------------
 
     schedule("0 0 0 * * ?", "midnightReset") 
     schedule("0 0/15 * * * ?", "checkAnomalies")
     runEvery1Hour("pollPresenceSensors")
+    
+    // Subscriptions with correct string format
     subscribe(location, "voiceButlerStaffSync", "staffSyncHandler")
     subscribe(location, "tvManagerSync", "tvSyncHandler")
     subscribe(location, "voiceButlerTvAlert", "tvAlertHandler")
     
-    // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
         schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
-        // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
         def cal = Calendar.getInstance(location.timeZone)
         if (cal.get(Calendar.HOUR_OF_DAY) >= 10 && cal.get(Calendar.HOUR_OF_DAY) < 15) scheduleRandomMiddayMaintenance()
     }
     
-    // --- NEW: Real-Time Task Subscription ---
     if (settings.enableRealTimeTasks && settings.middayMaintenanceDevice) {
-        subscribe(settings.middayMaintenanceDevice, "overdueTasks", realTimeTaskHandler)
+        subscribe(settings.middayMaintenanceDevice, "overdueTasks", "realTimeTaskHandler")
     }
 
-    // --- Device Health Alert Subscription ---
     if (settings.enableDeviceHealthAlerts && settings.deviceHealthDevice) {
-        subscribe(settings.deviceHealthDevice, "issueCount", deviceHealthHandler)
+        subscribe(settings.deviceHealthDevice, "issueCount", "deviceHealthHandler")
     }
 
-    // --- Health Window Scheduler ---
     if (settings.enableHealthWindow && settings.healthWindowStart && settings.healthWindowEnd) {
         schedule("0 5 0 * * ?", "scheduleHealthWindow")
-        scheduleHealthWindow() // Run on init to queue today's check
+        scheduleHealthWindow() 
     }
     
-    // --- Farmers Market Scheduler ---
     if (settings.enableMarketReminder && settings.marketOpenTime) {
         schedule(settings.marketOpenTime, "executeMarketReminder")
     }
     
-    // --- Severe Weather Subscriptions ---
     if (settings.enableWeatherAlerts) {
-        if (settings.swTornadoWarn) subscribe(settings.swTornadoWarn, "switch.on", weatherAlertHandler)
-        if (settings.swTstormWarn) subscribe(settings.swTstormWarn, "switch.on", weatherAlertHandler)
-        if (settings.swTornadoWatch) subscribe(settings.swTornadoWatch, "switch.on", weatherAlertHandler)
-        if (settings.swTstormWatch) subscribe(settings.swTstormWatch, "switch.on", weatherAlertHandler)
-        if (settings.swFloodWarn) subscribe(settings.swFloodWarn, "switch.on", weatherAlertHandler)
-        if (settings.swFloodWatch) subscribe(settings.swFloodWatch, "switch.on", weatherAlertHandler)
-        if (settings.swHeatWarn) subscribe(settings.swHeatWarn, "switch.on", weatherAlertHandler)
-        if (settings.swHeatWatch) subscribe(settings.swHeatWatch, "switch.on", weatherAlertHandler)
-        
-        // Rain/Sprinkle subscribe to BOTH 'on' and 'off' to announce starting/stopping
+        if (settings.swTornadoWarn) subscribe(settings.swTornadoWarn, "switch.on", "weatherAlertHandler")
+        if (settings.swTstormWarn) subscribe(settings.swTstormWarn, "switch.on", "weatherAlertHandler")
+        if (settings.swTornadoWatch) subscribe(settings.swTornadoWatch, "switch.on", "weatherAlertHandler")
+        if (settings.swTstormWatch) subscribe(settings.swTstormWatch, "switch.on", "weatherAlertHandler")
+        if (settings.swFloodWarn) subscribe(settings.swFloodWarn, "switch.on", "weatherAlertHandler")
+        if (settings.swFloodWatch) subscribe(settings.swFloodWatch, "switch.on", "weatherAlertHandler")
+        if (settings.swHeatWarn) subscribe(settings.swHeatWarn, "switch.on", "weatherAlertHandler")
+        if (settings.swHeatWatch) subscribe(settings.swHeatWatch, "switch.on", "weatherAlertHandler")
         if (settings.swRain) {
-            subscribe(settings.swRain, "switch.on", weatherAlertHandler)
-            subscribe(settings.swRain, "switch.off", weatherAlertHandler)
+            subscribe(settings.swRain, "switch.on", "weatherAlertHandler")
+            subscribe(settings.swRain, "switch.off", "weatherAlertHandler")
         }
         if (settings.swSprinkle) {
-            subscribe(settings.swSprinkle, "switch.on", weatherAlertHandler)
-            subscribe(settings.swSprinkle, "switch.off", weatherAlertHandler)
+            subscribe(settings.swSprinkle, "switch.on", "weatherAlertHandler")
+            subscribe(settings.swSprinkle, "switch.off", "weatherAlertHandler")
         }
     }
     
-    // --- Cinema & Streaming Scheduler ---
     if (settings.enableCinemaScout && settings.cinemaTime) {
         schedule(settings.cinemaTime, "executeCinemaScout")
     }
     
-    // --- NEW: Quick Exit (Away Mode Farewell) ---
     if (settings.enableQuickExit && settings.quickExitDoors) {
-        subscribe(settings.quickExitDoors, "contact.open", quickExitDoorHandler)
+        subscribe(settings.quickExitDoors, "contact.open", "quickExitDoorHandler")
     }
     
-    // Vital Checks & Internet Safety
     if (settings.enableInternetCheck) { runEvery5Minutes("checkInternetConnection"); checkInternetConnection() }
     
-    // Perimeter & Visitor Handlers
-    if (frontDoorbell) { subscribe(frontDoorbell, "pushed", visitorHandler); subscribe(frontDoorbell, "pushed", countDoorbellHandler) }
-    if (frontDoorMotion) { subscribe(frontDoorMotion, "motion.active", visitorHandler); subscribe(frontDoorMotion, "motion.active", countMotionHandler) }
-    if (settings.enableDaytimeFollowUp && settings.daytimeDoorContact) { subscribe(settings.daytimeDoorContact, "contact.open", daytimeDoorHandler) }
-    
-    // Intruder Deterrent Subscriptions
-    if (enableIntruder) {
-        if (intruderMotion) subscribe(intruderMotion, "motion.active", intruderMotionHandler)
-        if (intruderBypassDoors) subscribe(intruderBypassDoors, "contact.open", intruderDoorHandler)
-        if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, unifiProtectHandler) }
+    if (frontDoorbell) { 
+        subscribe(frontDoorbell, "pushed", "visitorHandler")
+        subscribe(frontDoorbell, "pushed", "countDoorbellHandler") 
+    }
+    if (frontDoorMotion) { 
+        subscribe(frontDoorMotion, "motion.active", "visitorHandler")
+        subscribe(frontDoorMotion, "motion.active", "countMotionHandler") 
+    }
+    if (settings.enableDaytimeFollowUp && settings.daytimeDoorContact) { 
+        subscribe(settings.daytimeDoorContact, "contact.open", "daytimeDoorHandler") 
     }
     
-    // --- Fallback Presence Subscriptions ---
+    if (enableIntruder) {
+        if (intruderMotion) subscribe(intruderMotion, "motion.active", "intruderMotionHandler")
+        if (intruderBypassDoors) subscribe(intruderBypassDoors, "contact.open", "intruderDoorHandler")
+        if (smartCameraDevice && smartAttribute) { subscribe(smartCameraDevice, smartAttribute, "unifiProtectHandler") }
+    }
+    
     if (settings.enableFallbackPresence && settings.fallbackMotionSensors) {
         subscribe(settings.fallbackMotionSensors, "motion", "fallbackMotionHandler")
-        state.fallbackTrackingActive = false // Ensure clean state on boot
+        state.fallbackTrackingActive = false 
     }
     
-    // --- NEW: SMART PACKAGE SUBSCRIPTION ---
     if (settings.enableSmartPackage && settings.packageCameraDevice && settings.packageAttribute) {
-        subscribe(settings.packageCameraDevice, settings.packageAttribute, unifiPackageHandler)
+        subscribe(settings.packageCameraDevice, settings.packageAttribute, "unifiPackageHandler")
     }
     
-    // Smart Lock & Presence Arrival Handlers
-    if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", arrivalHandler)
+    if (frontDoorLock) subscribe(frontDoorLock, "lock.unlocked", "arrivalHandler")
+    
     def numPres = settings.numPresenceMappings ? settings.numPresenceMappings as Integer : 0
     for (int i = 1; i <= numPres; i++) {
         if (settings["fallbackPresence_${i}"]) {
-            subscribe(settings["fallbackPresence_${i}"], "presence.present", presenceFallbackHandler)
+            subscribe(settings["fallbackPresence_${i}"], "presence.present", "presenceFallbackHandler")
         }
     }
     
-    // --- Grocery Scout Scheduler ---
     if (settings.enableGroceryScout && settings.groceryTime && settings.groceryDay) {
         schedule(settings.groceryTime, "executeGroceryScout")
     }
     
-    // Household Routine Handlers (Mail, Meals, Departures, Screen Time)
+    // --- FIXED MAIL SUBSCRIPTIONS ---
     if (settings.enableMailCheck && settings.mailSwitch) { 
-        subscribe(settings.mailSwitch, "switch.on", mailSwitchHandler)
-        subscribe(settings.mailSwitch, "switch.off", mailClearedHandler)
+        subscribe(settings.mailSwitch, "switch.on", "mailSwitchHandler")
+        subscribe(settings.mailSwitch, "switch.off", "mailClearedHandler")
     }
-    // --- NEW HEADED HOME SUBSCRIPTIONS ---
+
     if (settings.enableHeadedHome) {
         def numHH = settings.numHeadedHome ? settings.numHeadedHome as Integer : 0
         for (int i = 1; i <= numHH; i++) {
-            if (settings["hhSwitch_${i}"]) subscribe(settings["hhSwitch_${i}"], "switch.on", headedHomeHandler)
+            if (settings["hhSwitch_${i}"]) subscribe(settings["hhSwitch_${i}"], "switch.on", "headedHomeHandler")
         }
     }
-    // --- UPDATED MEAL TIME SUBSCRIPTIONS ---
-    if (settings.enableMealTime) { 
-        if (settings.mealTimeSwitch) subscribe(settings.mealTimeSwitch, "switch.on", mealTimeHandler) 
-        if (settings.mealTimeButton && settings.mealTimeButtonAction) subscribe(settings.mealTimeButton, settings.mealTimeButtonAction, mealTimeButtonHandler)
-    }
-    if (frontDoorContact) subscribe(frontDoorContact, "contact", departureHandler)
-    if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", screenTimeHandler) }
-    if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", officeSwitchHandler) }
 
-    // --- Estate Directory Subscriptions ---
+    if (settings.enableMealTime) { 
+        if (settings.mealTimeSwitch) subscribe(settings.mealTimeSwitch, "switch.on", "mealTimeHandler") 
+        if (settings.mealTimeButton && settings.mealTimeButtonAction) subscribe(settings.mealTimeButton, settings.mealTimeButtonAction, "mealTimeButtonHandler")
+    }
+    
+    if (frontDoorContact) subscribe(frontDoorContact, "contact", "departureHandler")
+    if (settings.enableScreenTime && settings.screenTimeSwitch) { subscribe(settings.screenTimeSwitch, "switch.off", "screenTimeHandler") }
+    if (settings.enableOffice && settings.officeSwitch) { subscribe(settings.officeSwitch, "switch.on", "officeSwitchHandler") }
+
     if (settings.enableDirectory) {
         def numC = settings.numContacts ? settings.numContacts as Integer : 0
         for (int i = 1; i <= numC; i++) {
             if (settings["contactSwitch_${i}"]) {
-                subscribe(settings["contactSwitch_${i}"], "switch.on", directorySwitchHandler)
+                subscribe(settings["contactSwitch_${i}"], "switch.on", "directorySwitchHandler")
             }
         }
     }
     
-    // Global Mode & Motion Tracking
-    subscribe(location, "mode", modeChangeHandler)
+    subscribe(location, "mode", "modeChangeHandler")
+    subscribe(location, "voiceButlerMsg", "crossAppMessageHandler")
+    subscribe(location, "voiceButlerStaffSync", "staffSyncHandler") 
+    subscribe(location, "voiceButlerApplianceSync", "applianceSyncHandler")
+    subscribe(location, "voiceButlerTrashSync", "trashSyncHandler")
     
-    // --- NEW: CROSS-APP TELEMETRY ---
-    subscribe(location, "voiceButlerMsg", crossAppMessageHandler)
-    subscribe(location, "voiceButlerStaffSync", staffSyncHandler) 
-    subscribe(location, "voiceButlerApplianceSync", applianceSyncHandler)
-    subscribe(location, "voiceButlerTrashSync", trashSyncHandler)
-    
-    // --- FIX 3C: GLOBAL INCIDENT WARNINGS (MORNING MOTION) SUBSCRIPTION ---
-    if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", butlerLrMotionHandler) }
-    // ----------------------------------------------------------------------
+    if (butlerLrMotion) { subscribe(butlerLrMotion, "motion.active", "butlerLrMotionHandler") }
     
     if (awayCheckTime) { schedule(awayCheckTime, "scheduledAwayCheck") }
     
-    // Manual Away Logic Mappings
     def numMappings = settings.numAwayMappings ? settings.numAwayMappings as Integer : 0
     for (int i = 1; i <= numMappings; i++) {
-        if (settings["awayMappingSwitch_${i}"]) { subscribe(settings["awayMappingSwitch_${i}"], "switch.on", awaySwitchOnHandler) }
-        if (settings["awayMappingPresence_${i}"]) { subscribe(settings["awayMappingPresence_${i}"], "presence", awayPresenceHandler) }
+        if (settings["awayMappingSwitch_${i}"]) { subscribe(settings["awayMappingSwitch_${i}"], "switch.on", "awaySwitchOnHandler") }
+        if (settings["awayMappingPresence_${i}"]) { subscribe(settings["awayMappingPresence_${i}"], "presence", "awayPresenceHandler") }
     }
     
-    // Local Voice Zone (Room) Subscriptions
     def numRoomsSet = settings.numRooms ? settings.numRooms as Integer : 0
     for (int i = 1; i <= numRoomsSet; i++) {
         if (settings["roomGoodNightSwitch_${i}"]) {
-            subscribe(settings["roomGoodNightSwitch_${i}"], "switch.on", goodNightOnHandler)
-            subscribe(settings["roomGoodNightSwitch_${i}"], "switch.off", goodNightOffHandler)
+            subscribe(settings["roomGoodNightSwitch_${i}"], "switch.on", "goodNightOnHandler")
+            subscribe(settings["roomGoodNightSwitch_${i}"], "switch.off", "goodNightOffHandler")
         }
         
-        // Setup for Verified and Motion Driven Wakeup Modes
         def mode = settings["roomWakeupMode_${i}"] ?: "1. Immediate (When Good Night Switch turns OFF)"
         if (mode != "1. Immediate (When Good Night Switch turns OFF)") {
-            if (settings["roomMotion_${i}"]) subscribe(settings["roomMotion_${i}"], "motion.active", roomMotionHandler)
+            if (settings["roomMotion_${i}"]) subscribe(settings["roomMotion_${i}"], "motion.active", "roomMotionHandler")
         }
     }
     
-    // Calendar Integration Engine
     if (settings.enableCalendar) {
         if (settings.calendarType == "Built-In Device (Advanced Calendar App)" && settings.calendarDevice && settings.calEventTimeAttr) {
-            subscribe(settings.calendarDevice, settings.calEventTimeAttr, calendarTimeHandler)
+            subscribe(settings.calendarDevice, settings.calEventTimeAttr, "calendarTimeHandler")
         } else if (settings.calendarUrl) {
             if (settings.calSyncMethod == "Standard .ics Polling (Delayed)") {
                 def cInt = settings.calPollInterval ?: "1 Hour"
@@ -1553,18 +1544,15 @@ def initialize() {
                 else if (cInt == "30 Minutes") runEvery30Minutes("pollCalendars")
                 else if (cInt == "3 Hours") runEvery3Hours("pollCalendars")
                 else runEvery1Hour("pollCalendars")
-                
-                pollCalendars() // Run it immediately on boot
+                pollCalendars() 
             }
         }
     }
     
-    // Organic Breaking News Engine
     if (settings.enableBreakingNews && settings.breakingNewsFeed) {
         scheduleNextNewsPoll()
     }
     
-    // Status Tile Update
     if (settings.dashboardStatusDevice) {
         settings.dashboardStatusDevice.sendEvent(name: "appStatus", value: "Running and Active", descriptionText: "Voice Butler is active", isStateChange: true)
     }
@@ -2107,11 +2095,19 @@ def checkAnomalies() {
     }
 }
 
-// --- MAIL DELIVERY HANDLER ---
+// --- MAIL DELIVERY HANDLER (Triggered by Switch ON) ---
 def mailSwitchHandler(evt) {
     ensureStateMaps()
     state.lastMailDeliveryTime = new Date().time
-    addToHistory("SYSTEM: Mail delivery logged via switch.")
+    
+    def msgs = getDefaultMessages("MailArrival")
+    def randomMsg = msgs[new Random().nextInt(msgs.size())]
+    
+    log.info "MAIL Handler: Selected message: ${randomMsg}"
+    
+    // Announce
+    executeRoutedTTS(applyDynamicVars(randomMsg), settings.emailRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.emailVolume ?: settings.globalVolume, 2)
+    addToHistory("MAIL: ${randomMsg}")
 }
 
 // --- MEAL TIME HANDLERS ---
@@ -4525,9 +4521,17 @@ def testGoogleIntegration() {
 }
 
 def addToHistory(String msg) {
-    // Keeps system events (like portal clicks) in Hubitat's native log, but removes them from the visual dashboard
-    def timestamp = new Date().format("MM/dd HH:mm:ss", location.timeZone)
+    ensureStateMaps()
+    def timestamp = new Date().format("h:mm a", location.timeZone)
     def cleanMsg = msg.replaceAll("\\<.*?\\>", "")
+    
+    // FIX: Push system events and notifications to the visual dashboard history
+    if (!state.historyLog) state.historyLog = []
+    state.historyLog.add(0, "<span style='color: #888; font-size: 11px;'>[${timestamp}]</span> <b>⚙️ ${cleanMsg}</b>")
+    
+    // Keep it trimmed to the last 30 events
+    if (state.historyLog.size() > 30) state.historyLog = state.historyLog.take(30)
+    
     log.info "SYSTEM: [${timestamp}] ${cleanMsg}"
 }
 
@@ -4740,10 +4744,18 @@ def getBridge(String type = "general") {
     return bridges[new Random().nextInt(bridges.size())] + " "
 }
 
+// --- MAIL RETRIEVAL HANDLER (Triggered by Switch OFF) ---
 def mailClearedHandler(evt) {
     ensureStateMaps()
     state.reminderCounts["mail"] = 0
-    addToHistory("SYSTEM: Mail retrieved. Escalation counter reset.")
+    
+    def msgs = getDefaultMessages("MailRetrieved")
+    def randomMsg = msgs[new Random().nextInt(msgs.size())]
+    
+    log.info "MAIL Handler: Selected retrieval message: ${randomMsg}"
+    
+    executeRoutedTTS(applyDynamicVars(randomMsg), settings.emailRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, settings.emailVolume ?: settings.globalVolume, 2)
+    addToHistory("MAIL: ${randomMsg}")
 }
 
 def getMaintenanceReport(mDevice, boolean isTest = false) {
@@ -5054,15 +5066,18 @@ def serveNotesPage() {
 
         // --- 0.2 DYNAMICALLY BUILD MAIL STATUS ---
         StringBuilder mailHtml = new StringBuilder()
-        if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
-            def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
-            mailHtml.append("""
-                <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; margin-bottom: 15px;'>
-                    <b style='color:#fff;'>📬 Mail Status</b><br>
-                    <span style='color:#aaa; font-size:13px;'>The mail was delivered at ${mailTimeStr} and is waiting in the mailbox.</span>
-                </div>
-            """)
-        }
+        if (settings.enableMailCheck && settings.mailSwitch) {
+        def isMailWaiting = settings.mailSwitch.currentValue("switch") == "on"
+        def mailTimeStr = (state.lastMailDeliveryTime && state.lastMailDeliveryTime > 0) ? new Date(state.lastMailDeliveryTime).format("h:mm a", location.timeZone) : "earlier today"
+        def mailText = isMailWaiting ? "The mail was delivered at ${mailTimeStr} and is waiting in the mailbox." : "The mailbox is currently empty."
+    
+        mailHtml.append("""
+        <div style='background-color: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid ${isMailWaiting ? '#3498db' : '#27ae60'}; margin-bottom: 15px;'>
+            <b style='color:#fff;'>📬 Mail Status</b><br>
+            <span style='color:#aaa; font-size:13px;'>${mailText}</span>
+        </div>
+    """)
+}
 
         // --- 0. DYNAMICALLY BUILD STAFF SCHEDULE ---
         StringBuilder staffHtml = new StringBuilder()
@@ -7900,7 +7915,9 @@ def tvCmdEndpoint() {
     } catch(Exception e) { 
         log.warn "Voice Butler Portal - TV Cmd Error: ${e}" 
     }
-    return [status: 200, contentType: "text/html", data: getRedirectHtml()]
+    
+    // FIX: Render the response as HTML so the browser executes the redirect
+    return render(contentType: "text/html", data: getRedirectHtml(), status: 200)
 }
 
 def deviceHealthHandler(evt) {
@@ -7934,26 +7951,35 @@ def deviceHealthHandler(evt) {
 
 def weatherAlertHandler(evt) {
     ensureStateMaps()
-    def devId = evt.device.id
+    def devId = evt.deviceId ? evt.deviceId.toString() : evt.device.id.toString()
     def val = evt.value
+    
+    // Diagnostic log to help you match the IDs
+    if (settings.enableDebug) {
+        log.info "WEATHER ALERT: Received event from ${evt.device.displayName} (ID: ${devId})"
+    }
     
     def isCritical = false
     def alertType = ""
     
-    if (settings.swTornadoWarn?.id == devId && val == "on") { alertType = "a Tornado Warning"; isCritical = true }
-    else if (settings.swTstormWarn?.id == devId && val == "on") { alertType = "a Severe Thunderstorm Warning"; isCritical = true }
-    else if (settings.swTornadoWatch?.id == devId && val == "on") { alertType = "a Tornado Watch" }
-    else if (settings.swTstormWatch?.id == devId && val == "on") { alertType = "a Severe Thunderstorm Watch" }
-    else if (settings.swFloodWarn?.id == devId && val == "on") { alertType = "a Flood Warning" }
-    else if (settings.swFloodWatch?.id == devId && val == "on") { alertType = "a Flood Watch" }
-    else if (settings.swHeatWarn?.id == devId && val == "on") { alertType = "a Severe Heat Warning" }
-    else if (settings.swHeatWatch?.id == devId && val == "on") { alertType = "a Severe Heat Watch" }
-    else if (settings.swRain?.id == devId) { alertType = val == "on" ? "Rain Started" : "Rain Stopped" }
-    else if (settings.swSprinkle?.id == devId) { alertType = val == "on" ? "Sprinkling Started" : "Sprinkling Stopped" }
+    // Check if the received ID matches any of your configured sensors
+    if (settings.swTornadoWarn?.id?.toString() == devId && val == "on") { alertType = "a Tornado Warning"; isCritical = true }
+    else if (settings.swTstormWarn?.id?.toString() == devId && val == "on") { alertType = "a Severe Thunderstorm Warning"; isCritical = true }
+    else if (settings.swTornadoWatch?.id?.toString() == devId && val == "on") { alertType = "a Tornado Watch" }
+    else if (settings.swTstormWatch?.id?.toString() == devId && val == "on") { alertType = "a Severe Thunderstorm Watch" }
+    else if (settings.swFloodWarn?.id?.toString() == devId && val == "on") { alertType = "a Flood Warning" }
+    else if (settings.swFloodWatch?.id?.toString() == devId && val == "on") { alertType = "a Flood Watch" }
+    else if (settings.swHeatWarn?.id?.toString() == devId && val == "on") { alertType = "a Severe Heat Warning" }
+    else if (settings.swHeatWatch?.id?.toString() == devId && val == "on") { alertType = "a Severe Heat Watch" }
+    else if (settings.swRain?.id?.toString() == devId) { alertType = val == "on" ? "Rain Started" : "Rain Stopped" }
+    else if (settings.swSprinkle?.id?.toString() == devId) { alertType = val == "on" ? "Sprinkling Started" : "Sprinkling Stopped" }
     
-    if (!alertType) return
+    if (!alertType) {
+        log.warn "WEATHER ALERT: No match found. Received ID ${devId} from ${evt.device.displayName}. Check if this device is selected in the app settings."
+        return
+    }
     
-    // Check allowed modes (skip this check if it's a Critical Warning)
+    // Check allowed modes
     if (!isCritical) {
         def allowedModes = [settings.weatherAlertModes].flatten().findAll { it != null }
         if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
@@ -7962,6 +7988,7 @@ def weatherAlertHandler(evt) {
         }
     }
     
+    // Presence check logic
     def presentFolks = getPresentUsers()
     if (presentFolks.size() == 0 && !isCritical) {
         stashMessage("Weather Alert: ${alertType} occurred while you were out.")
@@ -7980,17 +8007,18 @@ def weatherAlertHandler(evt) {
     }
     
     def finalMsg = applyDynamicVars(msg)
-    def targetVol = settings.weatherVolume != null ? settings.weatherVolume : settings.globalVolume
+    def targetVol = settings.weatherVolume != null ? settings.weatherVolume.toInteger() : (settings.globalVolume ?: 50)
     
     if (isCritical) {
         def targetSpks = []
+        if (globalIndoorSpeaker) targetSpks.addAll([globalIndoorSpeaker].flatten())
         def rMode = settings.weatherRoutingMode ?: "Global Indoor Speaker Only"
-        if (rMode.contains("Global") && globalIndoorSpeaker) targetSpks.addAll([globalIndoorSpeaker].flatten())
         if (rMode.contains("Outdoor") && outdoorSpeaker) targetSpks << outdoorSpeaker
         
-        for (int i = 1; i <= 3; i++) {
-            def gnSwitch = settings["warnRoomSwitch_${i}"]
-            def spk = settings["warnRoomSpeaker_${i}"]
+        def numRoomsSet = settings.numRooms ? settings.numRooms.toInteger() : 0
+        for (int i = 1; i <= numRoomsSet; i++) {
+            def gnSwitch = settings["roomGoodNightSwitch_${i}"]
+            def spk = settings["roomSpeaker_${i}"]
             if (gnSwitch && spk && gnSwitch.currentValue("switch") == "on") {
                 targetSpks << spk
             }
@@ -7998,11 +8026,42 @@ def weatherAlertHandler(evt) {
         
         targetSpks = targetSpks.flatten().findAll { it != null }.unique { it.id }
         
-        if (targetSpks.size() > 0) enqueueTTS(targetSpks, finalMsg, targetVol, 1, false) 
-        addToHistory("CRITICAL WEATHER: ${alertType} broadcasted. Forced overrides applied for sleeping rooms.")
+        if (targetSpks.size() > 0) {
+             enqueueTTS(targetSpks, finalMsg, targetVol, 1, false)
+             addToHistory("CRITICAL WEATHER: ${alertType} broadcasted.")
+        } else {
+             log.warn "WEATHER ALERT: No target speakers identified."
+        }
     } else {
         def rMode = settings.weatherRoutingMode ?: "Global Indoor Speaker Only"
-        executeRoutedTTS(finalMsg, rMode, targetVol, settings.outdoorVolume, 1, false)
+        executeRoutedTTS(finalMsg, rMode, targetVol, settings.outdoorVolume ?: 50, 1, false)
         addToHistory("WEATHER: ${alertType} announced.")
     }
+}
+
+def testWeatherAlerts() {
+    ensureStateMaps()
+    def alertType = "a Severe Thunderstorm Warning"
+    def msg = "Attention %name%. The weather monitoring system has issued ${alertType} for our area. Please take immediate precautions and seek shelter if necessary."
+    def finalMsg = applyDynamicVars(msg)
+    def targetVol = settings.weatherVolume != null ? settings.weatherVolume : settings.globalVolume
+    
+    // Execute as if it's a critical warning (bypassing normal routing to wake up sleeping rooms)
+    def targetSpks = []
+    def rMode = settings.weatherRoutingMode ?: "Global Indoor Speaker Only"
+    if (rMode.contains("Global") && globalIndoorSpeaker) targetSpks.addAll([globalIndoorSpeaker].flatten())
+    if (rMode.contains("Outdoor") && outdoorSpeaker) targetSpks << outdoorSpeaker
+    
+    for (int i = 1; i <= 3; i++) {
+        def gnSwitch = settings["warnRoomSwitch_${i}"]
+        def spk = settings["warnRoomSpeaker_${i}"]
+        if (gnSwitch && spk && gnSwitch.currentValue("switch") == "on") {
+            targetSpks << spk
+        }
+    }
+    
+    targetSpks = targetSpks.flatten().findAll { it != null }.unique { it.id }
+    
+    if (targetSpks.size() > 0) enqueueTTS(targetSpks, finalMsg, targetVol, 1, false) 
+    addToHistory("CRITICAL WEATHER: Test ${alertType} broadcasted. Forced overrides applied for sleeping rooms.")
 }
