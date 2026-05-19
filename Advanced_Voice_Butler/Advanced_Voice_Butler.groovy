@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 2.7
+ * Version 2.8
  */
 definition(
     name: "Advanced Voice Butler",
@@ -17,6 +17,7 @@ definition(
 
 import groovy.transform.Field
 @Field static String PREV_STYLE = "margin-top: 15px; padding: 10px; background-color: #e9ecef; border-left: 4px solid #0b3b60; border-radius: 4px; font-size: 13px; line-height: 1.4;"
+@Field static String VERSION = "2.8"
 
 preferences {
     page(name: "mainPage")
@@ -112,15 +113,22 @@ def mainPage() {
             keysToRemove.each { state.learnedHabits.remove(it) }
         }
 
-        section("Live System Dashboard", hideable: false, hidden: false) {
-            paragraph "<i>Welcome to the Voice Butler command center. Below is a real-time read-only view of your perimeter status, active voice zones, and today's arrival/departure log.</i>"
+        section("App Info & Web Portals", hideable: false) {
+            paragraph "<b>Advanced Voice Butler Version:</b> ${VERSION}"
             
             if (state.accessToken) {
                 def cloudUrl = getFullApiServerUrl()
                 def localUrl = getFullLocalApiServerUrl()
+                
+                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px; margin-bottom: 10px;'><b>📝 Butler Notes & Web Portal (Cloud):</b><br><a href='${cloudUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${cloudUrl}/notes?access_token=${state.accessToken}</a><br><br><b>Local Notes Portal (Use at home):</b><br><a href='${localUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${localUrl}/notes?access_token=${state.accessToken}</a></div>"
+                
                 paragraph "<div style='padding:10px; background-color:#ffeeba; border:1px solid #ffeeba; color:#856404; border-radius:4px;'><b>Your Webhook Base URL (Cloud):</b><br>${cloudUrl}/google?access_token=${state.accessToken}<br><br><b>Your Webhook Base URL (Local):</b><br>${localUrl}/google?access_token=${state.accessToken}</div>"
+            } else {
+                paragraph "<i>Please enable OAuth to generate the portal links.</i>"
             }
-            
+        }
+
+        section("System State & Controls", hideable: false, hidden: false) {
             input "btnRefresh", "button", title: "🔄 Refresh Data Dashboard"
             input "btnQuickSave", "button", title: "💾 Quick Save / Refresh Page"
             input "btnForceSync", "button", title: "🔄 Force Sync Calendar & News Data", description: "Instantly poll all external API feeds to update the dashboard below."
@@ -145,12 +153,14 @@ def mainPage() {
             def inetStatus = (!settings.enableInternetCheck || state.internetActive != false) ? "<span style='color: #27ae60; font-weight: bold;'>ONLINE</span>" : "<span style='color: #c0392b; font-weight: bold;'>OFFLINE (TTS Suppressed)</span>"
             def queueStatus = state.ttsQueue?.size() > 0 ? "<span style='color: #d35400; font-weight: bold;'>${state.ttsQueue.size()} Messages Queued</span>" : "<span style='color: #27ae60;'>Idle</span>"
             
-            def statusText = "<div style='margin-bottom: 10px; padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
+            def statusText = "<div style='padding: 10px; background: #e9e9e9; border-radius: 4px; font-size: 13px; border: 1px solid #ccc;'>"
             statusText += "<b>System State:</b> ${systemState}<br><b>Perimeter Status:</b> ${dndState}<br><b>Internet Connection:</b> ${inetStatus}<br><b>TTS Queue Engine:</b> ${queueStatus}</div>"
             
-            // External Sync Data
-            statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>External Integrations Sync</h4>"
-            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            paragraph statusText
+        }
+        
+        section("🌍 External Integrations Sync", hideable: true, hidden: true) {
+            def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 5px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Service</th><th style='padding: 8px;'>Status / Next Item</th><th style='padding: 8px;'>Last Checked / Time</th></tr>"
             
             def nowMs = new Date().time
@@ -194,10 +204,11 @@ def mainPage() {
                 }
             }
             statusText += "</table>"
-            
-            // AI Habit Tracker
-            statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>🧠 AI Habit & Anomaly Engine</h4>"
-            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            paragraph statusText
+        }
+        
+        section("🧠 AI Habit & Anomaly Engine", hideable: true, hidden: true) {
+            def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 5px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>User</th><th style='padding: 8px;'>Learned Departure Time</th><th style='padding: 8px;'>Current Status</th></tr>"
             if (state.learnedHabits && state.learnedHabits.size() > 0) {
                 state.learnedHabits.each { uName, habitData ->
@@ -214,20 +225,22 @@ def mainPage() {
                 statusText += "<tr><td colspan='3' style='padding: 8px; color: #7f8c8d;'>Gathering initial habit data...</td></tr>"
             }
             statusText += "</table>"
-            
-            // Incident Log
-            statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Butler Incident Log</h4>"
-            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            paragraph statusText
+        }
+        
+        section("📋 Butler Incident Log", hideable: true, hidden: true) {
+            def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 5px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>Event Type</th><th style='padding: 8px;'>Events Tracked</th><th style='padding: 8px;'>Status</th></tr>"
             def nmStatus = state.pendingMorningReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Porch Motion (Night)</b></td><td style='padding: 8px;'>${state.nightMotionCount ?: 0}</td><td style='padding: 8px;'>${nmStatus}</td></tr>"
             def adStatus = state.pendingArrivalReport ? "<span style='color:#d35400;'>Pending Report</span>" : "<span style='color:#27ae60;'>Cleared/Idle</span>"
             statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Doorbell Rings (Away)</b></td><td style='padding: 8px;'>${state.awayDoorbellCount ?: 0}</td><td style='padding: 8px;'>${adStatus}</td></tr>"
             statusText += "</table>"
-            
-            // Presence Roster
-            statusText += "<h4 style='margin-bottom: 5px; color: #333; font-family: sans-serif;'>Live House Roster</h4>"
-            statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+            paragraph statusText
+        }
+        
+        section("👥 Live House Roster", hideable: true, hidden: true) {
+            def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 5px;'>"
             statusText += "<tr style='background-color: #eee; border-bottom: 2px solid #ccc; text-align: left;'><th style='padding: 8px;'>User</th><th style='padding: 8px;'>Status</th><th style='padding: 8px;'>Context</th></tr>"
             
             def allNames = getTrackedUsers()
@@ -240,18 +253,18 @@ def mainPage() {
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>${applyAlias(uName)}</b></td><td style='padding: 8px;'>${arrStatus}</td><td style='padding: 8px; color: #555;'><i>${contextText}</i></td></tr>"
             }
             statusText += "</table>"
+            paragraph statusText
+        }
 
-            // Waste Management Integration
-            if (state.trashData) {
-                statusText += "<h4 style='margin-bottom: 5px; margin-top: 15px; color: #333; font-family: sans-serif;'>🗑️ Waste Management</h4>"
-                statusText += "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 15px;'>"
+        if (state.trashData) {
+            section("🗑️ Waste Management", hideable: true, hidden: true) {
+                def statusText = "<table style='width:100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; background-color: #fcfcfc; border: 1px solid #ccc; margin-bottom: 5px;'>"
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px; width: 30%;'><b>Bin Status</b></td><td style='padding: 8px;'>${state.trashData.status}</td></tr>"
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Capacity & Hygiene</b></td><td style='padding: 8px;'>${state.trashData.fill}% Full | ${state.trashData.hygiene}</td></tr>"
                 statusText += "<tr style='border-bottom: 1px solid #ddd;'><td style='padding: 8px;'><b>Next Collection</b></td><td style='padding: 8px;'><b>${state.trashData.nextPickup}</b></td></tr>"
                 statusText += "</table>"
+                paragraph statusText
             }
-            
-            paragraph statusText
         }
 
         section("System Event History", hideable: true, hidden: true) {
@@ -594,7 +607,9 @@ def pageEstate() {
             input "middayMaintenanceDevice", "capability.sensor", title: "House Maintenance Dashboard Device", required: false, submitOnChange: true
             
             if (middayMaintenanceDevice) {
-                input "taskDashboardUrl", "text", title: "Dashboard Shortcut URL (Adds a link to the Web Portal)", description: "e.g., https://cloud.hubitat.com/api/...", required: false
+                input "taskAppId", "number", title: "Maintenance App ID", description: "e.g., 123", required: false
+                input "taskAppToken", "text", title: "Maintenance Access Token", required: false
+                input "taskAppEndpoint", "text", title: "Maintenance Endpoint Path", description: "Usually 'dashboard' or 'ui'", defaultValue: "dashboard", required: false
                 
                 paragraph "<hr>"
                 input "enableMiddayMaintenance", "bool", title: "Enable Random Midday Reminder (11am-3pm)?", defaultValue: false, submitOnChange: true
@@ -613,6 +628,20 @@ def pageEstate() {
                     input "realTimeTaskRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only", submitOnChange: true
                     input "realTimeTaskVolume", "number", title: "Announcement Volume (0-100)", required: false
                 }
+            }
+            
+            paragraph "<hr>"
+            paragraph "<b>Device Health & Network Status</b>"
+            input "deviceHealthAppId", "number", title: "Device Health App ID", required: false
+            input "deviceHealthToken", "text", title: "Device Health Access Token", required: false
+            input "deviceHealthEndpoint", "text", title: "Device Health Endpoint Path", description: "Usually 'dashboard' or 'ui'", defaultValue: "dashboard", required: false
+            input "enableDeviceHealthAlerts", "bool", title: "Enable Critical Device Health Alerts?", defaultValue: false, submitOnChange: true
+            
+            if (enableDeviceHealthAlerts) {
+                input "deviceHealthDevice", "capability.sensor", title: "Device Health Child Device", required: true
+                input "deviceHealthUser", "enum", title: "Target User for Alerts", options: getLockUsers(), required: true, description: "Who should be notified of network issues?"
+                input "deviceHealthRoutingMode", "enum", title: "Audio Routing Mode (For live alerts)", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "deviceHealthVolume", "number", title: "Alert Volume (0-100)", required: false
             }
         }
         
@@ -711,14 +740,8 @@ def pageEstate() {
 // ==============================================================
 def pageGuests() {
     dynamicPage(name: "pageGuests", title: "🤝 Guest Services & Comms", install: false, uninstall: false) {
-        section("📝 Butler Notes Portal", hideable: true, hidden: true) {
-            paragraph "<i>Access this secure webpage from your phone or computer to leave targeted notes for specific members of the household.</i>"
-            if (state.accessToken) {
-                def cloudUrl = getFullApiServerUrl()
-                def localUrl = getFullLocalApiServerUrl()
-                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px;'><b>Cloud Notes Portal URL (Use anywhere):</b><br><a href='${cloudUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${cloudUrl}/notes?access_token=${state.accessToken}</a><br><br><b>Local Notes Portal URL (Use at home):</b><br><a href='${localUrl}/notes?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; font-weight:bold; word-wrap:break-word;'>${localUrl}/notes?access_token=${state.accessToken}</a></div>"
-            }
-            
+        section("📝 Butler Notes Portal Settings", hideable: true, hidden: true) {
+            paragraph "<i>The link to the Notes Portal is located on the main dashboard page.</i>"
             input "announceNotesArrival", "bool", title: "Announce pending notes on Arrival?", defaultValue: true
             input "announceNotesMorning", "bool", title: "Announce pending notes during Morning Briefing?", defaultValue: true
             
@@ -997,6 +1020,41 @@ def pageSecurity() {
             input "stormSwitch", "capability.switch", title: "Severe Weather / Storm Override Switch", required: false
         }
 
+        section("Severe Weather & Environmental Alerts", hideable: true, hidden: true) {
+            paragraph "<i>Link virtual switches to weather events. The Butler will professionally announce these alerts to present users. Warnings will override room Good Night settings.</i>"
+            input "enableWeatherAlerts", "bool", title: "Enable Weather Alerts?", defaultValue: false, submitOnChange: true
+            if (enableWeatherAlerts) {
+                input "weatherAlertModes", "mode", title: "Allowed Modes (Applies to Watches/Rain, WARNINGS override this)", multiple: true, required: false
+                input "weatherRoutingMode", "enum", title: "Audio Routing Mode", options: getRoutingOptions(), defaultValue: "Global Indoor Speaker Only"
+                input "weatherVolume", "number", title: "Alert Volume (0-100)", required: false
+
+                paragraph "<b>Critical Warnings (Overrides Good Night)</b>"
+                input "swTornadoWarn", "capability.switch", title: "Tornado Warning Switch", required: false
+                input "swTstormWarn", "capability.switch", title: "Thunderstorm Warning Switch", required: false
+                
+                paragraph "<i>Select up to 3 rooms. If a critical warning triggers while their Good Night switch is ON, the alarm will be forced to play on that specific speaker.</i>"
+                for (int i = 1; i <= 3; i++) {
+                    input "warnRoomSwitch_${i}", "capability.switch", title: "Room ${i} Good Night Switch", required: false
+                    input "warnRoomSpeaker_${i}", "capability.speechSynthesis", title: "Room ${i} Speaker", required: false
+                }
+
+                paragraph "<b>Standard Watches & Advisories</b>"
+                input "swTornadoWatch", "capability.switch", title: "Tornado Watch Switch", required: false
+                input "swTstormWatch", "capability.switch", title: "Thunderstorm Watch Switch", required: false
+                input "swFloodWarn", "capability.switch", title: "Flood Warning Switch", required: false
+                input "swFloodWatch", "capability.switch", title: "Flood Watch Switch", required: false
+                input "swHeatWarn", "capability.switch", title: "Severe Heat Warning Switch", required: false
+                input "swHeatWatch", "capability.switch", title: "Severe Heat Watch Switch", required: false
+
+                paragraph "<b>Precipitation Status</b>"
+                input "swRain", "capability.switch", title: "Raining Switch", required: false
+                input "swSprinkle", "capability.switch", title: "Sprinkling Switch", required: false
+                
+                paragraph "<hr>"
+                input "btnTestWeather", "button", title: "▶️ Test Critical Weather Override"
+            }
+        }
+        
         section("Quick Exit (Away Mode Farewell)", hideable: true, hidden: true) {
             paragraph "<i>If the house enters Away Mode, the next door opened within 5 minutes will trigger a farewell message and a gas price scout.</i>"
             input "enableQuickExit", "bool", title: "Enable Quick Exit Farewell?", defaultValue: false, submitOnChange: true
@@ -1294,6 +1352,7 @@ def ensureStateMaps() {
     if (state.habitHeatMap == null) state.habitHeatMap = [:]
     if (state.packageOnPorch == null) state.packageOnPorch = false
     if (state.packageArrivalTime == null) state.packageArrivalTime = 0
+    if (state.lastIssueCount == null) state.lastIssueCount = 0
 }
 
 def initialize() {
@@ -1314,7 +1373,7 @@ def initialize() {
     subscribe(location, "tvManagerSync", "tvSyncHandler")
     subscribe(location, "voiceButlerTvAlert", "tvAlertHandler")
     
-// --- Midday Maintenance Scheduler ---
+    // --- Midday Maintenance Scheduler ---
     if (settings.enableMiddayMaintenance) {
         schedule("0 0 10 * * ?", "scheduleRandomMiddayMaintenance")
         // Failsafe: If you save the app between 10am and 3pm, schedule it for today immediately
@@ -1327,6 +1386,11 @@ def initialize() {
         subscribe(settings.middayMaintenanceDevice, "overdueTasks", realTimeTaskHandler)
     }
 
+    // --- Device Health Alert Subscription ---
+    if (settings.enableDeviceHealthAlerts && settings.deviceHealthDevice) {
+        subscribe(settings.deviceHealthDevice, "issueCount", deviceHealthHandler)
+    }
+
     // --- Health Window Scheduler ---
     if (settings.enableHealthWindow && settings.healthWindowStart && settings.healthWindowEnd) {
         schedule("0 5 0 * * ?", "scheduleHealthWindow")
@@ -1336,6 +1400,28 @@ def initialize() {
     // --- Farmers Market Scheduler ---
     if (settings.enableMarketReminder && settings.marketOpenTime) {
         schedule(settings.marketOpenTime, "executeMarketReminder")
+    }
+    
+    // --- Severe Weather Subscriptions ---
+    if (settings.enableWeatherAlerts) {
+        if (settings.swTornadoWarn) subscribe(settings.swTornadoWarn, "switch.on", weatherAlertHandler)
+        if (settings.swTstormWarn) subscribe(settings.swTstormWarn, "switch.on", weatherAlertHandler)
+        if (settings.swTornadoWatch) subscribe(settings.swTornadoWatch, "switch.on", weatherAlertHandler)
+        if (settings.swTstormWatch) subscribe(settings.swTstormWatch, "switch.on", weatherAlertHandler)
+        if (settings.swFloodWarn) subscribe(settings.swFloodWarn, "switch.on", weatherAlertHandler)
+        if (settings.swFloodWatch) subscribe(settings.swFloodWatch, "switch.on", weatherAlertHandler)
+        if (settings.swHeatWarn) subscribe(settings.swHeatWarn, "switch.on", weatherAlertHandler)
+        if (settings.swHeatWatch) subscribe(settings.swHeatWatch, "switch.on", weatherAlertHandler)
+        
+        // Rain/Sprinkle subscribe to BOTH 'on' and 'off' to announce starting/stopping
+        if (settings.swRain) {
+            subscribe(settings.swRain, "switch.on", weatherAlertHandler)
+            subscribe(settings.swRain, "switch.off", weatherAlertHandler)
+        }
+        if (settings.swSprinkle) {
+            subscribe(settings.swSprinkle, "switch.on", weatherAlertHandler)
+            subscribe(settings.swSprinkle, "switch.off", weatherAlertHandler)
+        }
     }
     
     // --- Cinema & Streaming Scheduler ---
@@ -3001,7 +3087,7 @@ def checkMissedArrival(data) {
             def finalMsg = applyDynamicVars(msg)
             
             def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
-            def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
+            def indoorTargetVol = settings.indoorArrivalVolume != null ? settings.indoorArrivalVolume : settings.globalVolume
             
             // 1. Play on Foyer Speaker (Standard Arrival Behavior)
             if (settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, finalMsg, indoorTargetVol, 3, false)
@@ -3053,7 +3139,7 @@ def pollPresenceSensors() {
         def finalMsg = applyDynamicVars(msg)
         
         def outdoorTargetVol = settings.arrivalVolume != null ? settings.arrivalVolume : settings.outdoorVolume
-        def indoorTargetVol = settings.arrivalIndoorVolume != null ? settings.arrivalIndoorVolume : settings.globalVolume
+        def indoorTargetVol = settings.indoorArrivalVolume != null ? settings.indoorArrivalVolume : settings.globalVolume
         
         // 1. Play on Foyer Speaker (Standard Arrival Behavior)
         if (settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, finalMsg, indoorTargetVol, 3, false)
@@ -3100,7 +3186,7 @@ def arrivalHandler(evt) {
             def outMsg = applyDynamicVars(settings["serviceMsgOutdoor_${i}"])
             def inMsg = applyDynamicVars(settings["serviceMsgIndoor_${i}"])
             def outdoorTargetVol = settings["arrivalVolume"] != null ? settings["arrivalVolume"] : settings["outdoorVolume"]
-            def indoorTargetVol = settings["arrivalIndoorVolume"] != null ? settings["arrivalIndoorVolume"] : settings["globalVolume"]
+            def indoorTargetVol = settings["indoorArrivalVolume"] != null ? settings["indoorArrivalVolume"] : settings["globalVolume"]
             
             if (outMsg && outdoorSpeaker) enqueueTTS(outdoorSpeaker, outMsg, outdoorTargetVol, 3, true)
             if (outMsg && settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, outMsg, indoorTargetVol, 3, true)
@@ -3241,6 +3327,23 @@ def arrivalHandler(evt) {
         }
         // -----------------------------------------------------------
         
+        // --- DEVICE HEALTH ARRIVAL ALERT ---
+        if (settings.enableDeviceHealthAlerts && settings.deviceHealthDevice && settings.deviceHealthUser) {
+            def targetAlias = applyAlias(settings.deviceHealthUser)
+            // Check if the person arriving matches the designated IT/Health user
+            if (displayUserName.equalsIgnoreCase(targetAlias) || actualUserName.equalsIgnoreCase(settings.deviceHealthUser)) {
+                def countVal = settings.deviceHealthDevice.currentValue("issueCount")
+                def count = (countVal != null && countVal.toString().isInteger()) ? countVal.toInteger() : 0
+                
+                if (count > 0) {
+                    def isAre = count == 1 ? "is" : "are"
+                    def devStr = count == 1 ? "device" : "devices"
+                    greetingToPlay += " I should also report that there ${isAre} currently ${count} network ${devStr} in critical status requiring your attention."
+                }
+            }
+        }
+        // -----------------------------------
+
         if (settings.enableMailCheck && settings.mailSwitch && settings.mailSwitch.currentValue("switch") == "on") {
             def allowedMail = [settings.mailAllowedUsers].flatten().findAll { it != null }.collect { it.toLowerCase() }
             if (settings.mailAllowedCustom) allowedMail += settings.mailAllowedCustom.split(',').collect { it.trim().toLowerCase() }
@@ -3289,7 +3392,7 @@ def arrivalHandler(evt) {
         }
         
         def outdoorTargetVol = settings["arrivalVolume"] != null ? settings["arrivalVolume"] : settings["outdoorVolume"]
-        def indoorTargetVol = settings["arrivalIndoorVolume"] != null ? settings["arrivalIndoorVolume"] : settings["globalVolume"]
+        def indoorTargetVol = settings["indoorArrivalVolume"] != null ? settings["indoorArrivalVolume"] : settings["globalVolume"]
         
         if (outdoorSpeaker) enqueueTTS(outdoorSpeaker, greetingToPlay, outdoorTargetVol, 3, true)
         if (settings.arrivalFoyerSpeaker) enqueueTTS(settings.arrivalFoyerSpeaker, greetingToPlay, indoorTargetVol, 3, true)
@@ -3998,7 +4101,7 @@ def testArrivalGreeting() {
         greetingToPlay = applyDynamicVars(greetingToPlay)
         
         def outdoorTargetVol = settings["arrivalVolume"] != null ? settings["arrivalVolume"] : settings["outdoorVolume"]
-        def indoorTargetVol = settings["arrivalIndoorVolume"] != null ? settings["arrivalIndoorVolume"] : settings["globalVolume"]
+        def indoorTargetVol = settings["indoorArrivalVolume"] != null ? settings["indoorArrivalVolume"] : settings["globalVolume"]
         
         def indoorMsg = ""
         if (settings.arrivalIndoorSpeaker) {
@@ -4383,6 +4486,8 @@ def appButtonHandler(btn) {
     else if (btn == "btnTestCinema") executeCinemaScout(true)
     else if (btn == "btnTestGrocery") executeGroceryScout(true) 
     else if (btn == "btnTestVehicleScout") executeVehicleScout(true) 
+    else if (btn == "btnTestIntruder") testIntruderGreeting()
+    else if (btn == "btnTestWeather") testWeatherAlerts()
 }
 
 def testGoogleIntegration() {
@@ -5388,31 +5493,54 @@ def serveNotesPage() {
             """)
         }
 
-        // --- 6. DASHBOARD SHORTCUT ---
+            // --- 6. DASHBOARD SHORTCUT ---
         StringBuilder dashboardBtnHtml = new StringBuilder()
-        if (settings.taskDashboardUrl) {
-            def dueCount = 0
-            if (settings.middayMaintenanceDevice) {
-                def rawVal = settings.middayMaintenanceDevice.currentValue("overdueTasks")
-                def tasks = rawVal ? rawVal.toString() : ""
-                def cleanTasks = tasks.replace("[", "").replace("]", "").trim()
-                
-                // Add the check to completely ignore "none"
-                if (cleanTasks != "" && cleanTasks.toLowerCase() != "null" && cleanTasks.toLowerCase() != "none") {
-                    dueCount = cleanTasks.split(",").findAll { it.trim() != "" && it.toLowerCase() != "none" }.size()
-                }
-            }
-            def badgeHtml = dueCount > 0 ? " <span style='background-color:#e74c3c; color:white; border-radius:12px; padding: 2px 8px; font-size:12px; margin-left:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>${dueCount} Due</span>" : ""
+        if ((settings.taskAppId && settings.taskAppToken) || (settings.deviceHealthAppId && settings.deviceHealthToken)) {
+            dashboardBtnHtml.append("<div style='margin-bottom: 15px;'>")
             
-            dashboardBtnHtml.append("""
-                <div style='margin-bottom: 15px;'>
-                    <a href="${settings.taskDashboardUrl}" style="text-decoration: none;">
-                        <button type="button" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: center; align-items: center;">
+            // Maintenance Dashboard
+            if (settings.taskAppId && settings.taskAppToken) {
+                def dueCount = 0
+                if (settings.middayMaintenanceDevice) {
+                    def rawVal = settings.middayMaintenanceDevice.currentValue("overdueTasks")
+                    def tasks = rawVal ? rawVal.toString() : ""
+                    def cleanTasks = tasks.replace("[", "").replace("]", "").trim()
+                    
+                    if (cleanTasks != "" && cleanTasks.toLowerCase() != "null" && cleanTasks.toLowerCase() != "none") {
+                        dueCount = cleanTasks.split(",").findAll { it.trim() != "" && it.toLowerCase() != "none" }.size()
+                    }
+                }
+                def badgeHtml = dueCount > 0 ? " <span style='background-color:#e74c3c; color:white; border-radius:12px; padding: 2px 8px; font-size:12px; margin-left:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>${dueCount} Due</span>" : ""
+                def ep = settings.taskAppEndpoint ?: "dashboard"
+                
+                dashboardBtnHtml.append("""
+                    <div style="display: block; margin-bottom: 10px;">
+                        <button type="button" onclick="goToDashboard('${settings.taskAppId}', '${ep}', '${settings.taskAppToken}')" style="background-color: #27ae60; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: center; align-items: center;">
                             ✅ Open Maintenance Dashboard${badgeHtml}
                         </button>
-                    </a>
-                </div>
-            """)
+                    </div>
+                """)
+            }
+
+            // Device Health Dashboard
+            if (settings.deviceHealthAppId && settings.deviceHealthToken) {
+                def dhCount = 0
+                if (settings.deviceHealthDevice) {
+                    def rawDh = settings.deviceHealthDevice.currentValue("issueCount")
+                    if (rawDh != null && rawDh.toString().isInteger()) dhCount = rawDh.toInteger()
+                }
+                def dhBadgeHtml = dhCount > 0 ? " <span style='background-color:#e74c3c; color:white; border-radius:12px; padding: 2px 8px; font-size:12px; margin-left:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>${dhCount} Critical</span>" : ""
+                def ep = settings.deviceHealthEndpoint ?: "dashboard"
+                
+                dashboardBtnHtml.append("""
+                    <div style="display: block;">
+                        <button type="button" onclick="goToDashboard('${settings.deviceHealthAppId}', '${ep}', '${settings.deviceHealthToken}')" style="background-color: #34495e; padding: 15px; border-radius: 8px; font-size: 16px; width: 100%; color: white; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: center; align-items: center;">
+                            🩺 Open Device Health Dashboard${dhBadgeHtml}
+                        </button>
+                    </div>
+                """)
+            }
+            dashboardBtnHtml.append("</div>")
         }
 
         StringBuilder paRoutingHtml = new StringBuilder()
@@ -5447,6 +5575,19 @@ def serveNotesPage() {
                 function toggleTime() {
                     var sel = document.getElementById('whenSelect').value;
                     document.getElementById('timeDiv').style.display = (sel === 'Time') ? 'block' : 'none';
+                }
+                function goToDashboard(targetAppId, targetEndpoint, targetToken) {
+                    let currentUrl = window.location.href;
+                    let urlObj = new URL(currentUrl);
+                    let pathParts = urlObj.pathname.split('/');
+                    // Replaces the Voice Butler App ID and Endpoint with the target Dashboard's
+                    if (pathParts.length >= 2) {
+                        pathParts[pathParts.length - 2] = targetAppId;
+                        pathParts[pathParts.length - 1] = targetEndpoint;
+                        urlObj.pathname = pathParts.join('/');
+                        urlObj.search = '?access_token=' + targetToken;
+                        window.location.href = urlObj.toString();
+                    }
                 }
             </script>
         </head><body><div class="container">""")
@@ -7760,4 +7901,108 @@ def tvCmdEndpoint() {
         log.warn "Voice Butler Portal - TV Cmd Error: ${e}" 
     }
     return [status: 200, contentType: "text/html", data: getRedirectHtml()]
+}
+
+def deviceHealthHandler(evt) {
+    if (!settings.enableDeviceHealthAlerts || !settings.deviceHealthUser || !settings.deviceHealthDevice) return
+    
+    ensureStateMaps()
+    def count = evt.value != null && evt.value.toString().isInteger() ? evt.value.toInteger() : 0
+    def lastCount = state.lastIssueCount ?: 0
+    state.lastIssueCount = count
+    
+    // Only alert if the count has INCREASED and is greater than 0
+    if (count > 0 && count > lastCount) {
+        def presentFolks = getPresentUsers()
+        def targetAlias = applyAlias(settings.deviceHealthUser)
+        
+        // Check if the Target User is the ONLY person currently home
+        if (presentFolks.size() == 1 && presentFolks[0].equalsIgnoreCase(targetAlias)) {
+            def devList = settings.deviceHealthDevice.currentValue("issueList") ?: "several devices"
+            def isAre = count == 1 ? "is" : "are"
+            def devStr = count == 1 ? "device" : "devices"
+            
+            def msg = "%interruption%. I need to alert you that there ${isAre} now ${count} network ${devStr} in critical status, including ${devList}. Please check the health dashboard when you have a moment."
+            
+            def targetVol = settings.deviceHealthVolume != null ? settings.deviceHealthVolume : settings.globalVolume
+            executeRoutedTTS(applyDynamicVars(msg), settings.deviceHealthRoutingMode ?: "Global Indoor Speaker Only", settings.globalVolume, targetVol, 2)
+            
+            addToHistory("DEVICE HEALTH: Live alert dispatched to ${targetAlias} for ${count} critical devices.")
+        }
+    }
+}
+
+def weatherAlertHandler(evt) {
+    ensureStateMaps()
+    def devId = evt.device.id
+    def val = evt.value
+    
+    def isCritical = false
+    def alertType = ""
+    
+    if (settings.swTornadoWarn?.id == devId && val == "on") { alertType = "a Tornado Warning"; isCritical = true }
+    else if (settings.swTstormWarn?.id == devId && val == "on") { alertType = "a Severe Thunderstorm Warning"; isCritical = true }
+    else if (settings.swTornadoWatch?.id == devId && val == "on") { alertType = "a Tornado Watch" }
+    else if (settings.swTstormWatch?.id == devId && val == "on") { alertType = "a Severe Thunderstorm Watch" }
+    else if (settings.swFloodWarn?.id == devId && val == "on") { alertType = "a Flood Warning" }
+    else if (settings.swFloodWatch?.id == devId && val == "on") { alertType = "a Flood Watch" }
+    else if (settings.swHeatWarn?.id == devId && val == "on") { alertType = "a Severe Heat Warning" }
+    else if (settings.swHeatWatch?.id == devId && val == "on") { alertType = "a Severe Heat Watch" }
+    else if (settings.swRain?.id == devId) { alertType = val == "on" ? "Rain Started" : "Rain Stopped" }
+    else if (settings.swSprinkle?.id == devId) { alertType = val == "on" ? "Sprinkling Started" : "Sprinkling Stopped" }
+    
+    if (!alertType) return
+    
+    // Check allowed modes (skip this check if it's a Critical Warning)
+    if (!isCritical) {
+        def allowedModes = [settings.weatherAlertModes].flatten().findAll { it != null }
+        if (allowedModes.size() > 0 && !allowedModes.contains(location.mode)) {
+            if (settings.enableDebug) log.debug "WEATHER ALERT: Suppressed due to mode restriction."
+            return
+        }
+    }
+    
+    def presentFolks = getPresentUsers()
+    if (presentFolks.size() == 0 && !isCritical) {
+        stashMessage("Weather Alert: ${alertType} occurred while you were out.")
+        return 
+    }
+    
+    def msg = ""
+    if (alertType == "Rain Started") msg = "%interruption%. Please be advised that the local sensors indicate it has started to rain outside."
+    else if (alertType == "Rain Stopped") msg = "%interruption%. The local sensors indicate the rain has now stopped."
+    else if (alertType == "Sprinkling Started") msg = "%interruption%. The local sensors detect it is currently sprinkling outside."
+    else if (alertType == "Sprinkling Stopped") msg = "%interruption%. The sprinkling has concluded."
+    else if (isCritical) {
+        msg = "Attention %name%. The weather monitoring system has issued ${alertType} for our area. Please take immediate precautions and seek shelter if necessary."
+    } else {
+        msg = "%interruption%. The weather monitoring system has issued ${alertType} for our area. Please remain weather aware."
+    }
+    
+    def finalMsg = applyDynamicVars(msg)
+    def targetVol = settings.weatherVolume != null ? settings.weatherVolume : settings.globalVolume
+    
+    if (isCritical) {
+        def targetSpks = []
+        def rMode = settings.weatherRoutingMode ?: "Global Indoor Speaker Only"
+        if (rMode.contains("Global") && globalIndoorSpeaker) targetSpks.addAll([globalIndoorSpeaker].flatten())
+        if (rMode.contains("Outdoor") && outdoorSpeaker) targetSpks << outdoorSpeaker
+        
+        for (int i = 1; i <= 3; i++) {
+            def gnSwitch = settings["warnRoomSwitch_${i}"]
+            def spk = settings["warnRoomSpeaker_${i}"]
+            if (gnSwitch && spk && gnSwitch.currentValue("switch") == "on") {
+                targetSpks << spk
+            }
+        }
+        
+        targetSpks = targetSpks.flatten().findAll { it != null }.unique { it.id }
+        
+        if (targetSpks.size() > 0) enqueueTTS(targetSpks, finalMsg, targetVol, 1, false) 
+        addToHistory("CRITICAL WEATHER: ${alertType} broadcasted. Forced overrides applied for sleeping rooms.")
+    } else {
+        def rMode = settings.weatherRoutingMode ?: "Global Indoor Speaker Only"
+        executeRoutedTTS(finalMsg, rMode, targetVol, settings.outdoorVolume, 1, false)
+        addToHistory("WEATHER: ${alertType} announced.")
+    }
 }
