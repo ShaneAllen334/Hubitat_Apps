@@ -2,6 +2,8 @@
  * Advanced Device Health Monitor
  *
  * Author: ShaneAllen
+ *
+ * Version 2.0
  */
 definition(
     name: "Advanced Device Health Monitor",
