@@ -3,7 +3,7 @@
  *
  * Author: ShaneAllen
  *
- * Version 1.5
+ * Version 1.0
  */
 
 definition(
@@ -25,12 +25,15 @@ preferences {
 mappings {
     path("/dashboard") { action: [GET: "serveDashboard"] }
     path("/dashboard/complete/:id") { action: [GET: "webCompleteTask"] }
+    path("/mute") { action: [GET: "webMuteTask"] }
+    path("/unmute") { action: [GET: "webUnmuteTask"] }
+    path("/updateFolders") { action: [GET: "updateFoldersEndpoint"] }
 }
 
 def mainPage() {
     dynamicPage(name: "mainPage", title: "<b>Advanced House Maintenance</b>", install: true, uninstall: true) {
         
-        section("<b>Web Dashboard Links</b>", hideable: true, hidden: false) {
+        section("<b>Web Dashboard Links</b>", hideable: true, hidden: true) {
             paragraph "<div style='font-size:13px; color:#555;'><b>Family Dashboard:</b> Share these links with household members. They open a clean, dark-mode webpage showing tracked items that they can check off securely from their phone. Items are sorted into category folders.</div>"
             
             if (!state.accessToken) {
@@ -75,11 +78,12 @@ def mainPage() {
                     def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
                     def remainingDays = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
                     def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > now())
+                    def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > now())
                     
                     enabledTasks << [
                         id: t.id, name: t.name, category: t.category, 
                         days: remainingDays, last: tData.lastCompleted, 
-                        interval: interval, snoozed: isSnoozed
+                        interval: interval, snoozed: isSnoozed, muted: isMuted
                     ]
                 }
             }
@@ -109,7 +113,9 @@ def mainPage() {
                     
                     tasks.each { t ->
                         def statusHtml = ""
-                        if (t.snoozed) {
+                        if (t.muted) {
+                            statusHtml = "<span style='color:#8e44ad; font-weight:bold;'>MUTED</span>"
+                        } else if (t.snoozed) {
                             statusHtml = "<span style='color:purple; font-weight:bold;'>Snoozed to Weekend</span>"
                         } else if (t.days < 0) {
                             statusHtml = "<span style='color:red; font-weight:bold;'>OVERDUE (${Math.abs(t.days)} days ago)</span>"
@@ -129,7 +135,9 @@ def mainPage() {
                     
                     paragraph "<div style='font-size:12px; color:#666; margin-bottom:5px;'><i>Quick Actions for ${catName}:</i></div>"
                     tasks.each { t ->
-                        if (t.days <= warningThreshold && !t.snoozed) {
+                        if (t.muted) {
+                            paragraph "<i>${t.name} is currently muted. Unmute via web portal.</i>"
+                        } else if (t.days <= warningThreshold && !t.snoozed) {
                             input "btnDashComplete_${t.id}", "button", title: "✅ Complete: ${t.name}", width: 6
                             input "btnSnooze_${t.id}", "button", title: "💤 Snooze to Saturday", width: 6
                         } else {
@@ -156,8 +164,9 @@ def mainPage() {
                     def interval = (settings["interval_${t.id}"] ?: t.defaultDays).toInteger()
                     def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
                     def remainingDays = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
+                    def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > now())
                     
-                    if (remainingDays <= 90) {
+                    if (remainingDays <= 90 && !isMuted) {
                         def cost = t.estCost ?: 0.0
                         totalCost += cost
                         forecastTasks << [name: t.name, days: remainingDays, cost: cost]
@@ -193,6 +202,8 @@ def mainPage() {
 
         section("<b>App Control & Global Settings</b>", hideable: true, hidden: true) {
             input "appEnableSwitch", "capability.switch", title: "Master Enable/Disable Switch (Optional)", required: false, multiple: false
+            
+            input "customFolderOrder", "text", title: "Custom Folder Priority Order (Set via Dashboard Edit Layout)", required: false
             
             paragraph "<div style='font-size:13px; color:#555; margin-top:10px;'><b>Task Staggering (Anti-Overload):</b> If you just set up the app and enabled many tasks, press this button. It will randomly scatter the due dates across the year so you don't get hit with 30 tasks on the exact same day.</div>"
             input "btnStaggerTasks", "button", title: "🗓️ Stagger Task Due Dates"
@@ -248,8 +259,22 @@ def mainPage() {
 
 def serveDashboard() {
     ensureStateMaps()
+    
+    // Clear expired mutes
+    def nowMs = new Date().time
+    if (state.muteExpirations) {
+        def keysToRemove = []
+        state.muteExpirations.each { k, v -> if (v < nowMs) keysToRemove << k }
+        if (keysToRemove) keysToRemove.each { state.muteExpirations.remove(it) }
+    }
 
     def allPortalTasks = []
+    def overdueTasks = []
+    def upcomingTasks = []
+    def snoozedTasks = []
+    def mutedTasksList = []
+    def goodTasks = []
+    
     def totalActive = 0
     def warningThreshold = upcomingDays != null ? upcomingDays : 7
 
@@ -258,29 +283,91 @@ def serveDashboard() {
             totalActive++
             def tData = state.taskData[t.id]
             if (tData) {
-                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > now())
+                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > nowMs)
+                def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > nowMs)
                 def interval = (settings["interval_${t.id}"] ?: t.defaultDays).toInteger()
                 def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
-                def remainingDays = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
+                def remainingDays = Math.ceil((dueDateMs - nowMs) / 86400000.0).toInteger()
 
-                allPortalTasks << [
+                def taskObj = [
                     id: t.id, name: t.name, desc: t.description, 
                     category: t.category, days: remainingDays, 
                     interval: interval, last: tData.lastCompleted, 
-                    snoozed: isSnoozed
+                    snoozed: isSnoozed, muted: isMuted,
+                    muteUntil: isMuted ? state.muteExpirations[t.id] : null
                 ]
+                
+                allPortalTasks << taskObj
+                
+                if (isMuted) {
+                    mutedTasksList << taskObj
+                } else if (isSnoozed) {
+                    snoozedTasks << taskObj
+                } else if (remainingDays < 0) {
+                    overdueTasks << taskObj
+                } else if (remainingDays <= warningThreshold) {
+                    upcomingTasks << taskObj
+                } else {
+                    goodTasks << taskObj
+                }
             }
         }
     }
 
-    def overdueCount = allPortalTasks.count { it.days < 0 && !it.snoozed }
-    def upcomingCount = allPortalTasks.count { it.days >= 0 && it.days <= warningThreshold && !it.snoozed }
-    def snoozedCount = allPortalTasks.count { it.snoozed }
-
-    def css = "body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;background:#0d0d0d;color:#e0e0e0}.container{max-width:800px;margin:0 auto;background:#151515;padding:25px;border-radius:12px;box-sizing:border-box}a.main-btn{background:#1f618d;color:#fff;border:none;padding:14px 20px;border-radius:8px;display:block;text-align:center;text-decoration:none;font-weight:600;margin-bottom:30px}a.main-btn:hover{background:#1a5276}.summary-box{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:25px}.summary-card{flex:1;min-width:100px;box-sizing:border-box;background:#1e1e1e;padding:15px;border-radius:8px;text-align:center;border-bottom:3px solid #333}.summary-card b{display:block;font-size:24px;color:#fff;margin-bottom:5px}.summary-card span{font-size:12px;color:#aaa;text-transform:uppercase}details{margin-bottom:15px;background:#1c1c1c;border-radius:6px;}summary{padding:12px 15px;border-radius:6px;border-left:4px solid #3498db;cursor:pointer;color:#fff;font-weight:bold;font-size:16px}summary:hover{background:#252525}.cat-count{float:right;font-size:12px;color:#888;margin-top:3px}.folder-content{padding:15px; background:#181818; border-bottom-left-radius:6px; border-bottom-right-radius:6px;}.dev-card{background:#222;padding:15px;border-radius:8px;margin-bottom:12px;border-left:4px solid #333;transition:all 0.3s ease}.status-Red{border-left-color:#e74c3c;background:linear-gradient(90deg,rgba(231,76,60,.1) 0%,#222 30%)}.status-Purple{border-left-color:#9b59b6;background:linear-gradient(90deg,rgba(155,89,182,.1) 0%,#222 30%)}.status-Yellow{border-left-color:#f1c40f;background:linear-gradient(90deg,rgba(241,196,15,.1) 0%,#222 30%)}.status-Green{border-left-color:#27ae60}.dot{height:12px;width:12px;border-radius:50%;display:inline-block;margin-right:12px;flex-shrink:0}.dot-Red{background:#e74c3c;box-shadow:0 0 6px #e74c3c}.dot-Purple{background:#9b59b6;box-shadow:0 0 6px #9b59b6}.dot-Yellow{background:#f1c40f;box-shadow:0 0 6px #f1c40f}.dot-Green{background:#27ae60}.dev-info{flex-grow:1;min-width:0}.dev-name{font-size:15px;font-weight:bold;color:#fff;margin-bottom:2px}.dev-custom{font-size:11px;color:#888;margin-bottom:5px}.dev-details{font-size:13px;color:#aaa;line-height:1.4;margin-bottom:6px}.dev-subtext{font-size:11px;color:#7f8c8d;margin-top:5px;font-style:italic}.action-btn{background:#27ae60;color:#fff;border:1px solid #219653;padding:8px 14px;font-size:12px;border-radius:4px;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:10px;flex-shrink:0;transition:all 0.2s}.action-btn:hover{background:#219653}.dflex{display:flex;align-items:center;width:100%}.completed-state{opacity:0;transform:scale(0.95);pointer-events:none;transition:all 0.3s ease}"
+    def css = """
+    body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;background:#0d0d0d;color:#e0e0e0;margin:0;}
+    .container{max-width:800px;margin:0 auto;background:#151515;padding:25px;border-radius:12px;box-sizing:border-box;width:100%;}
+    
+    .header-bar { display:flex; justify-content:flex-end; margin-bottom:15px; }
+    .top-btn { background:#1f618d; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-size:12px; cursor:pointer; font-weight:bold; transition:background 0.15s; }
+    .top-btn:hover { background:#1a5276; }
+    
+    .summary-box{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:25px}
+    .summary-card{flex:1;min-width:100px;box-sizing:border-box;background:#1e1e1e;padding:15px;border-radius:8px;text-align:center;border-bottom:3px solid #333}
+    .summary-card b{display:block;font-size:24px;color:#fff;margin-bottom:5px}
+    .summary-card span{font-size:12px;color:#aaa;text-transform:uppercase}
+    details{margin-bottom:15px;background:#1c1c1c;border-radius:6px;}
+    summary{padding:12px 15px;border-radius:6px;border-left:4px solid #3498db;cursor:pointer;color:#fff;font-weight:bold;font-size:16px; user-select:none;}
+    summary:hover{background:#252525}
+    .cat-count{float:right;font-size:12px;color:#888;margin-top:3px}
+    .folder-content{padding:15px; background:#181818; border-bottom-left-radius:6px; border-bottom-right-radius:6px;}
+    
+    .dev-card{background:#222;padding:15px;border-radius:8px;margin-bottom:12px;border-left:4px solid #333;transition:all 0.3s ease; display:flex; align-items:center; width:100%; box-sizing:border-box;}
+    .status-Red{border-left-color:#e74c3c;background:linear-gradient(90deg,rgba(231,76,60,.1) 0%,#222 30%)}
+    .status-Purple{border-left-color:#9b59b6;background:linear-gradient(90deg,rgba(155,89,182,.1) 0%,#222 30%)}
+    .status-Yellow{border-left-color:#f1c40f;background:linear-gradient(90deg,rgba(241,196,15,.1) 0%,#222 30%)}
+    .status-Green{border-left-color:#27ae60}
+    
+    .dot{height:12px;width:12px;border-radius:50%;display:inline-block;margin-right:12px;flex-shrink:0}
+    .dot-Red{background:#e74c3c;box-shadow:0 0 6px #e74c3c}
+    .dot-Purple{background:#9b59b6;box-shadow:0 0 6px #9b59b6}
+    .dot-Yellow{background:#f1c40f;box-shadow:0 0 6px #f1c40f}
+    .dot-Green{background:#27ae60}
+    
+    .dev-info{flex-grow:1;min-width:0}
+    .dev-name{font-size:15px;font-weight:bold;color:#fff;margin-bottom:2px}
+    .dev-details{font-size:13px;color:#aaa;line-height:1.4;margin-bottom:6px}
+    .dev-subtext{font-size:11px;color:#7f8c8d;margin-top:5px;font-style:italic}
+    
+    .card-controls { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; gap: 8px; margin-left:10px; }
+    .action-btn{background:#27ae60;color:#fff;border:1px solid #219653;padding:8px 14px;font-size:12px;border-radius:4px;font-weight:bold;cursor:pointer;white-space:nowrap;transition:all 0.2s}
+    .action-btn:hover{background:#219653}
+    
+    .mute-form { display:inline-flex; align-items:center; margin:0; }
+    .mute-input { width:55px; padding:0 6px; font-size:11px; border-radius:4px 0 0 4px; border:1px solid #8e44ad; background:#111; color:#fff; height:28px; box-sizing:border-box; }
+    .mute-btn { border-radius:0 4px 4px 0; background:#8e44ad; border-color:#8e44ad; height:28px; color:#fff; border-style:solid; border-width:1px; font-size:12px; font-weight:bold; cursor:pointer; padding: 0 8px; }
+    
+    .completed-state{opacity:0;transform:scale(0.95);pointer-events:none;transition:all 0.3s ease}
+    details.folder-group.dragging { opacity: 0.5; }
+    
+    @media (max-width: 650px) {
+        .dev-card { flex-wrap: wrap; }
+        .card-controls { width: 100%; margin-top: 12px; margin-left: 0; justify-content: flex-start; }
+    }
+    """
 
     StringBuilder html = new StringBuilder()
-    html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Maintenance Portal</title><meta name='viewport' content='width=device-width, initial-scale=1'>")
+    html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Maintenance Dashboard</title><meta name='viewport' content='width=device-width, initial-scale=1'>")
 
     html.append("""
     <script>
@@ -307,18 +394,82 @@ def serveDashboard() {
                 setTimeout(() => { btnElement.innerHTML = originalText; btnElement.style.background = ''; btnElement.disabled = false; }, 2000);
             });
         }
+        
+        let isEditMode = false;
+        function toggleFolderEdit() {
+            isEditMode = !isEditMode;
+            document.querySelectorAll('details.folder-group').forEach(el => {
+                el.draggable = isEditMode;
+                el.style.border = isEditMode ? '2px dashed #3498db' : '';
+                el.style.padding = isEditMode ? '5px' : '';
+            });
+            let btn = document.getElementById('editFolderBtn');
+            btn.style.background = isEditMode ? '#e74c3c' : '#1f618d';
+            btn.innerText = isEditMode ? '💾 Save Layout' : '✏️ Edit Layout';
+            
+            if(!isEditMode) {
+                saveFolderOrder();
+            }
+        }
+
+        function saveFolderOrder() {
+            let folders = [];
+            document.querySelectorAll('details.folder-group summary span.folder-title').forEach(el => {
+                folders.push(el.innerText.trim());
+            });
+            fetch('updateFolders?order=' + encodeURIComponent(folders.join(',')) + '&access_token=${state.accessToken}')
+            .then(r => console.log('Saved order'));
+        }
+
+        function initDragAndDrop() {
+            let dragged;
+            document.addEventListener('dragstart', function(e) {
+                if(!isEditMode) return;
+                let target = e.target.closest('details.folder-group');
+                if(target) {
+                    dragged = target;
+                    target.classList.add('dragging');
+                }
+            });
+            document.addEventListener('dragend', function(e) {
+                let target = e.target.closest('details.folder-group');
+                if(target) target.classList.remove('dragging');
+            });
+            document.addEventListener('dragover', function(e) {
+                if(!isEditMode) return;
+                e.preventDefault();
+            });
+            document.addEventListener('drop', function(e) {
+                if(!isEditMode) return;
+                e.preventDefault();
+                let target = e.target.closest('details.folder-group');
+                if (target && target !== dragged && target.classList.contains('folder-group')) {
+                    let container = target.parentNode;
+                    let draggedRect = dragged.getBoundingClientRect();
+                    let targetRect = target.getBoundingClientRect();
+                    if(draggedRect.top > targetRect.top) {
+                        container.insertBefore(dragged, target);
+                    } else {
+                        container.insertBefore(dragged, target.nextSibling);
+                    }
+                }
+            });
+        }
+        document.addEventListener('DOMContentLoaded', initDragAndDrop);
     </script>
     """)
 
     html.append("<style>${css}</style></head><body><div class='container'>")
 
-    html.append("<div style='text-align:center;margin-bottom:15px;display:flex;justify-content:center;'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div><h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Estate Maintenance Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Sync: ${new Date().format("MM/dd/yyyy h:mm a", location.timeZone)}</p>")
+    html.append("<div class='header-bar'><button id='editFolderBtn' class='top-btn' onclick='toggleFolderEdit()'>✏️ Edit Layout</button></div>")
+    html.append("<div style='text-align:center;margin-bottom:15px;display:flex;justify-content:center;'><svg width='70' height='70' viewBox='0 0 100 100' fill='none'><circle cx='50' cy='50' r='48' fill='#151515' stroke='#333' stroke-width='1'/><path d='M 50 20 L 25 30 V 50 C 25 68 35 80 50 85 C 65 80 75 68 75 50 V 30 L 50 20 Z' stroke='#e0e0e0' stroke-width='3' stroke-linejoin='round'/><path d='M 38 52 L 46 60 L 62 42' stroke='#27ae60' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/></svg></div><h2 style='text-align:center;color:#fff;margin:0 0 5px 0;'>Maintenance Dashboard</h2><p style='text-align:center;font-size:13px;color:#888;margin-bottom:25px;'>Last Sync: ${new Date().format("MM/dd/yyyy h:mm a", location.timeZone)}</p>")
 
-    html.append("<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${overdueCount}</b><span>Overdue</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${upcomingCount}</b><span>Upcoming</span></div><div class='summary-card' style='border-bottom-color:#9b59b6;'><b>${snoozedCount}</b><span>Snoozed</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalActive}</b><span>Tracked Tasks</span></div></div>")
+    html.append("<div class='summary-box'><div class='summary-card' style='border-bottom-color:#e74c3c;'><b>${overdueTasks.size()}</b><span>Overdue</span></div><div class='summary-card' style='border-bottom-color:#f1c40f;'><b>${upcomingTasks.size()}</b><span>Upcoming</span></div><div class='summary-card' style='border-bottom-color:#9b59b6;'><b>${snoozedTasks.size() + mutedTasksList.size()}</b><span>Snoozed/Muted</span></div><div class='summary-card' style='border-bottom-color:#3498db;'><b>${totalActive}</b><span>Tracked Tasks</span></div></div>")
 
     def buildTaskCard = { t, statusColor ->
         def metaText = ""
-        if (t.days < 0) metaText = "⚠️ Overdue by ${Math.abs(t.days)} Days"
+        if (t.muted) metaText = "🔕 Muted"
+        else if (t.days < 0) metaText = "⚠️ Overdue by ${Math.abs(t.days)} Days"
         else if (t.days == 0) metaText = "⏰ Due Today"
         else if (statusColor == "Purple") metaText = "💤 Snoozed"
         else metaText = "⏳ Due in ${t.days} Days"
@@ -326,37 +477,99 @@ def serveDashboard() {
         def lastStr = new Date(t.last).format("MM/dd/yyyy", location.timeZone)
         def subtext = "Last Completed: ${lastStr} (Every ${t.interval} Days)"
 
-        return "<div class='dev-card status-${statusColor}' id='card-${t.id}'><div class='dflex'><span class='dot dot-${statusColor}'></span><div class='dev-info'><div class='dev-name'>${t.name}</div><div class='dev-details'>${t.desc}</div><div class='dev-subtext'>${metaText} • ${subtext}</div></div><button class='action-btn' onclick=\"markComplete('${t.id}', this)\">✅ Complete</button></div></div>"
+        def controlsHtml = "<div class='card-controls'>"
+        if (t.muted) {
+            def mDate = new Date(t.muteUntil)
+            def mTime = mDate.format("MM/dd/yy h:mm a", location.timeZone)
+            controlsHtml += "<span style='color:#8e44ad;font-size:11px;margin-right:10px;'>Muted until ${mTime}</span>"
+            controlsHtml += "<a href='unmute?taskId=${t.id}&access_token=${state.accessToken}' class='action-btn' style='background:#8e44ad;border-color:#8e44ad;text-decoration:none;'>Unmute</a>"
+        } else {
+            controlsHtml += "<button class='action-btn' onclick=\"markComplete('${t.id}', this)\">✅ Complete</button>"
+            if (statusColor != "Green") {
+                controlsHtml += "<form action='mute' method='GET' class='mute-form'>"
+                controlsHtml += "<input type='hidden' name='taskId' value='${t.id}'><input type='hidden' name='access_token' value='${state.accessToken}'>"
+                controlsHtml += "<input type='number' name='days' class='mute-input' placeholder='days' required min='1'>"
+                controlsHtml += "<button type='submit' class='mute-btn'>🔕 Mute</button></form>"
+            }
+        }
+        controlsHtml += "</div>"
+
+        return "<div class='dev-card status-${statusColor}' id='card-${t.id}'><span class='dot dot-${statusColor}'></span><div class='dev-info'><div class='dev-name'>${t.name}</div><div class='dev-details'>${t.desc}</div><div class='dev-subtext'>${metaText} • ${subtext}</div></div>${controlsHtml}</div>"
     }
 
-    if (allPortalTasks.size() > 0) {
-        def categorizedTasks = allPortalTasks.groupBy { it.category }
+    // 1. Overdue Action Folder
+    if (overdueTasks.size() > 0) {
+        html.append("<details open><summary style='border-left-color:#e74c3c;'>⚠️ Overdue Tasks <span class='cat-count'>${overdueTasks.size()} Tasks</span></summary><div class='folder-content'>")
+        overdueTasks.sort { it.days }.each { t -> html.append(buildTaskCard(t, "Red")) }
+        html.append("</div></details>")
+    }
+
+    // 2. Upcoming Action Folder
+    if (upcomingTasks.size() > 0) {
+        html.append("<details open><summary style='border-left-color:#f1c40f;'>🟡 Upcoming Tasks <span class='cat-count'>${upcomingTasks.size()} Tasks</span></summary><div class='folder-content'>")
+        upcomingTasks.sort { it.days }.each { t -> html.append(buildTaskCard(t, "Yellow")) }
+        html.append("</div></details>")
+    }
+
+    // 3. Regular Categories (Good Tasks)
+    if (goodTasks.size() > 0) {
+        def categorizedTasks = goodTasks.groupBy { it.category }
+        def customOrderList = settings.customFolderOrder ? settings.customFolderOrder.split(',').collect{it.trim()}.findAll{it != ""} : []
+        def catKeys = categorizedTasks.keySet().toList()
         
-        categorizedTasks.each { catName, tasks ->
-            def hasOverdue = tasks.any { it.days < 0 && !it.snoozed }
-            def folderColor = hasOverdue ? "#e74c3c" : "#3498db"
-            def icon = hasOverdue ? "⚠️" : "📁"
-            def openTag = hasOverdue ? "open" : ""
-            
-            html.append("<details ${openTag}><summary style='border-left-color:${folderColor};'>${icon} ${catName} <span class='cat-count'>${tasks.size()} Tasks</span></summary><div class='folder-content'>")
-            
-            tasks.sort { it.days }.each { t ->
-                def statusColor = "Green"
-                if (t.snoozed) statusColor = "Purple"
-                else if (t.days < 0) statusColor = "Red"
-                else if (t.days <= warningThreshold) statusColor = "Yellow"
-                
-                html.append(buildTaskCard(t, statusColor))
-            }
+        catKeys.sort { a, b ->
+            def idxA = customOrderList.indexOf(a)
+            def idxB = customOrderList.indexOf(b)
+            if (idxA != -1 && idxB != -1) return idxA <=> idxB
+            if (idxA != -1) return -1
+            if (idxB != -1) return 1
+            return a <=> b
+        }
+        
+        html.append("<div id='foldersContainer'>")
+        catKeys.each { catName ->
+            def tasks = categorizedTasks[catName]
+            html.append("<details class='folder-group'><summary style='border-left-color:#3498db;'>📁 <span class='folder-title'>${catName}</span> <span class='cat-count'>${tasks.size()} Tasks</span></summary><div class='folder-content'>")
+            tasks.sort { it.days }.each { t -> html.append(buildTaskCard(t, "Green")) }
             html.append("</div></details>")
         }
-    } else {
+        html.append("</div>")
+    }
+
+    // 4. Snoozed Tasks
+    if (snoozedTasks.size() > 0) {
+        html.append("<details><summary style='border-left-color:#9b59b6;'>💤 Snoozed Tasks <span class='cat-count'>${snoozedTasks.size()} Tasks</span></summary><div class='folder-content'>")
+        snoozedTasks.sort { it.days }.each { t -> html.append(buildTaskCard(t, "Purple")) }
+        html.append("</div></details>")
+    }
+
+    // 5. Muted Tasks
+    if (mutedTasksList.size() > 0) {
+        html.append("<details><summary style='border-left-color:#8e44ad;'>🔕 Muted Tasks <span class='cat-count'>${mutedTasksList.size()} Tasks</span></summary><div class='folder-content'>")
+        mutedTasksList.sort { it.days }.each { t -> html.append(buildTaskCard(t, "Purple")) }
+        html.append("</div></details>")
+    }
+    
+    if (allPortalTasks.size() == 0) {
         html.append("<div style='text-align:center;padding:20px;background:#1e1e1e;border-radius:8px;color:#27ae60;font-weight:bold;margin-bottom:15px;border-left:4px solid #27ae60;'>No tasks are currently enabled.</div>")
     }
 
     html.append("</div></body></html>")
     
     return render(contentType: "text/html", data: html.toString(), status: 200)
+}
+
+def updateFoldersEndpoint() {
+    try {
+        if (params.order != null) {
+            app.updateSetting("customFolderOrder", [type: "text", value: params.order])
+            logAction("PORTAL: Dashboard folder priority layout updated live via Web Portal.")
+        }
+        return render(contentType: "application/json", data: '{"success":true}', status: 200)
+    } catch(e) { 
+        log.error "Portal Folder Update Error: ${e}"
+        return render(contentType: "application/json", data: '{"error":"Error"}', status: 500) 
+    }
 }
 
 def webCompleteTask() {
@@ -369,6 +582,48 @@ def webCompleteTask() {
     }
 }
 
+def webMuteTask() {
+    try {
+        def tId = params.taskId
+        def days = params.days
+        if (tId && days && days.toString().isNumber()) {
+            long muteUntil = new Date().time + (days.toInteger() * 86400000L)
+            if (state.muteExpirations == null) state.muteExpirations = [:]
+            state.muteExpirations[tId] = muteUntil
+            
+            def taskList = getTaskList()
+            def task = taskList.find { it.id == tId }
+            logAction("🔕 Task '${task?.name ?: tId}' muted for ${days} days via Portal.")
+            updateChildDevice()
+        }
+        return render(contentType: "text/html", data: getRedirectHtml(0, "Muting task..."), status: 200)
+    } catch(e) { 
+        log.error "Mute error: ${e}" 
+        return render(contentType: "text/html", data: "Error executing mute: ${e.message}", status: 500)
+    }
+}
+
+def webUnmuteTask() {
+    try {
+        def tId = params.taskId
+        if (tId && state.muteExpirations) {
+            state.muteExpirations.remove(tId)
+            def taskList = getTaskList()
+            def task = taskList.find { it.id == tId }
+            logAction("🔔 Task '${task?.name ?: tId}' unmuted via Portal.")
+            updateChildDevice()
+        }
+        return render(contentType: "text/html", data: getRedirectHtml(0, "Unmuting task..."), status: 200)
+    } catch(e) { 
+        log.error "Unmute error: ${e}"
+        return render(contentType: "text/html", data: "Error executing unmute: ${e.message}", status: 500)
+    }
+}
+
+def getRedirectHtml(delayMs, msgText) {
+    return "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.href='dashboard?access_token=${state.accessToken}';}, ${delayMs});</script></head><body style='background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;'><h3>🔄 Syncing Portal...</h3><p style='color:#666;'>${msgText}</p></body></html>"
+}
+
 // ==============================================================================
 // INTERNAL LOGIC ENGINE
 // ==============================================================================
@@ -379,6 +634,7 @@ def updated() { logInfo("Updated"); unsubscribe(); unschedule(); initialize() }
 def ensureStateMaps() {
     if (state.actionHistory == null) state.actionHistory = []
     if (state.taskData == null) state.taskData = [:]
+    if (state.muteExpirations == null) state.muteExpirations = [:]
 }
 
 def initialize() {
@@ -544,6 +800,7 @@ def updateChildDevice() {
     def child = getChildDevice(childId)
     if (!child) return
     
+    def nowMs = new Date().time
     def enabledTasks = []
     def overdueTasks = []
     def maxOverdueDays = 0
@@ -552,13 +809,15 @@ def updateChildDevice() {
         if (settings["enable_${t.id}"]) {
             def tData = state.taskData[t.id]
             if (tData) {
-                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > now())
+                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > nowMs)
+                def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > nowMs)
                 def interval = (settings["interval_${t.id}"] ?: t.defaultDays).toInteger()
                 def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
-                def remainingDays = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
-                enabledTasks << [name: t.name, days: remainingDays, snoozed: isSnoozed]
+                def remainingDays = Math.ceil((dueDateMs - nowMs) / 86400000.0).toInteger()
                 
-                if (remainingDays < 0 && !isSnoozed) {
+                enabledTasks << [name: t.name, days: remainingDays, snoozed: isSnoozed, muted: isMuted]
+                
+                if (remainingDays < 0 && !isSnoozed && !isMuted) {
                     overdueTasks << t.name
                     if (Math.abs(remainingDays) > maxOverdueDays) maxOverdueDays = Math.abs(remainingDays)
                 }
@@ -583,7 +842,10 @@ def updateChildDevice() {
             def dayStr = "${t.days} Days"
             def threshold = upcomingDays != null ? upcomingDays : 7
             
-            if (t.snoozed) {
+            if (t.muted) {
+                color = "#8e44ad"
+                dayStr = "MUTED"
+            } else if (t.snoozed) {
                 color = "purple"
                 dayStr = "SNOOZED"
             } else if (t.days < 0) {
@@ -607,6 +869,7 @@ def updateChildDevice() {
 }
 
 def dailyMaintenanceCheck() {
+    def nowMs = new Date().time
     if (pauseModes && (pauseModes as List).contains(location.mode)) {
         logInfo("App is in Vacation/Pause Mode. Shifting appliance wear-and-tear timers forward by 1 day.")
         def tempData = state.taskData ?: [:]
@@ -630,12 +893,14 @@ def dailyMaintenanceCheck() {
         if (settings["enable_${t.id}"]) {
             def tData = state.taskData[t.id]
             if (tData) {
-                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > now())
-                if (isSnoozed) return 
+                def isSnoozed = (tData.snoozedUntil != null && tData.snoozedUntil > nowMs)
+                def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > nowMs)
+                
+                if (isSnoozed || isMuted) return 
                 
                 def interval = (settings["interval_${t.id}"] ?: t.defaultDays).toInteger()
                 def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
-                def remainingDays = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
+                def remainingDays = Math.ceil((dueDateMs - nowMs) / 86400000.0).toInteger()
                 
                 if (remainingDays == threshold) alertsGenerated << "UPCOMING: '${t.name}' is due in ${remainingDays} days."
                 else if (remainingDays == 0) alertsGenerated << "DUE TODAY: Time to complete '${t.name}'!"
@@ -659,18 +924,23 @@ String getHumanReadableStatus() {
     def warningCount = 0
     def dueTodayCount = 0
     def snoozeCount = 0
+    def muteCount = 0
     def threshold = upcomingDays != null ? upcomingDays : 7
+    def nowMs = new Date().time
     
     getTaskList().each { t ->
         if (settings["enable_${t.id}"]) {
             def tData = state.taskData[t.id]
             if (tData) {
-                if (tData.snoozedUntil != null && tData.snoozedUntil > now()) {
+                def isMuted = (state.muteExpirations && state.muteExpirations[t.id] != null && state.muteExpirations[t.id] > nowMs)
+                if (isMuted) {
+                    muteCount++
+                } else if (tData.snoozedUntil != null && tData.snoozedUntil > nowMs) {
                     snoozeCount++
                 } else {
                     def interval = (settings["interval_${t.id}"] ?: t.defaultDays).toInteger()
                     def dueDateMs = tData.lastCompleted + ((long)interval * 86400000L)
-                    def days = Math.ceil((dueDateMs - now()) / 86400000.0).toInteger()
+                    def days = Math.ceil((dueDateMs - nowMs) / 86400000.0).toInteger()
                     
                     if (days < 0) overdueCount++
                     else if (days == 0) dueTodayCount++
@@ -684,6 +954,7 @@ String getHumanReadableStatus() {
     if (dueTodayCount > 0) return "<span style='color:orange;'><b>Due Today:</b></span> You have ${dueTodayCount} task(s) that need to be completed today."
     if (warningCount > 0) return "<span style='color:orange;'><b>Upcoming Maintenance:</b></span> You have ${warningCount} task(s) approaching their due date."
     if (snoozeCount > 0) return "<span style='color:purple;'><b>Snoozed:</b></span> You have ${snoozeCount} task(s) deferred to the weekend."
+    if (muteCount > 0) return "<span style='color:#8e44ad;'><b>Muted:</b></span> You have ${muteCount} active tasks currently silenced."
     
     return "<span style='color:green;'><b>All Good:</b></span> All tracked maintenance tasks are up to date."
 }
@@ -703,18 +974,18 @@ def logInfo(msg) { if(txtEnable) log.info "${app.label}: ${msg}" }
 // ==============================================================================
 def getTaskList() {
     return [
-        // Pool & Spa (New)
+        // Pool & Spa 
         [id: "pool1", category: "Pool & Spa", name: "Clean Pool / Spa Filter", defaultDays: 30, description: "Backwash sand/DE filters or hose off cartridge filters to maintain pump flow.", consumable: true, estCost: 5.00],
         [id: "pool2", category: "Pool & Spa", name: "Inspect Pool Pump & O-Rings", defaultDays: 90, description: "Check pump basket for cracks, empty debris, and lubricate the lid O-ring with Teflon gel.", consumable: true, estCost: 10.00],
         [id: "pool3", category: "Pool & Spa", name: "Deep Clean Salt Cell", defaultDays: 180, description: "Soak the saltwater generator cell in a mild acid solution to remove calcium buildup.", consumable: true, estCost: 15.00],
         [id: "pool4", category: "Pool & Spa", name: "Winterize / Open Pool", defaultDays: 365, description: "Blow out plumbing lines, add winterizing chemicals, and securely attach the safety cover."],
 
-        // Outdoor Living & BBQ (New)
+        // Outdoor Living & BBQ 
         [id: "bbq1", category: "Outdoor Living & BBQ", name: "Deep Clean Grill & Grease Trap", defaultDays: 90, description: "Scrub grates, clean burner tubes, and empty the grease catch pan to prevent flare-ups and grease fires."],
         [id: "bbq2", category: "Outdoor Living & BBQ", name: "Inspect Propane Hoses & Fittings", defaultDays: 180, description: "Use soapy water to check the gas regulator and hoses for bubbling/leaks."],
         [id: "bbq3", category: "Outdoor Living & BBQ", name: "Clean & Seal Fire Pit", defaultDays: 365, description: "Clear out old ash to prevent rust, and reseal masonry or metal surfaces."],
 
-        // Photography & Tech Gear (New)
+        // Photography & Tech Gear 
         [id: "camgear1", category: "Photography & Tech Gear", name: "Clean Camera Sensors & Lenses", defaultDays: 180, description: "Use a dedicated sensor swab kit on your mirrorless camera and wipe lenses with optics solution.", consumable: true, estCost: 20.00],
         [id: "camgear2", category: "Photography & Tech Gear", name: "Audit & Format SD / Memory Cards", defaultDays: 90, description: "Backup all media to your PC/NAS, then do a deep format on your camera SD cards to prevent corruption."],
         [id: "camgear3", category: "Photography & Tech Gear", name: "Charge & Cycle Backup Batteries", defaultDays: 90, description: "Top off spare camera and electronics batteries to maintain lithium cell health."],
