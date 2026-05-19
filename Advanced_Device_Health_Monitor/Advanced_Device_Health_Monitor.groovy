@@ -2,8 +2,6 @@
  * Advanced Device Health Monitor
  *
  * Author: ShaneAllen
- *
- * Version 1.5.10
  */
 definition(
     name: "Advanced Device Health Monitor",
@@ -166,14 +164,14 @@ details.folder-group.dragging { opacity: 0.5; }
             <tr><td>Battery Quantity</td><td><input type='number' id='modalBatteryQtyInput' class='modal-input' min='1' max='20'></td></tr>
             <tr><td>Override Critical Batt %</td><td><input type='number' id='modalOverrideThreshInput' class='modal-input' placeholder='Global Default' min='1' max='99'></td></tr>
             <tr><td>Outdoor Thermal Profile</td><td><label style='display:flex;align-items:center;color:var(--text-main);'><input type='checkbox' id='modalOutdoorCheck' style='margin-right:8px;'> Enable EWMA Dampening</label></td></tr>
-            <tr><td>Driver / Device Type</td><td id='modalDriverType'>-</td></tr>
-            <tr><td>Hardware Type</td><td id='modalHardwareSig'>-</td></tr>
-            <tr><td>Firmware Revision</td><td id='modalFirmwareRev'>-</td></tr>
-            <tr><td>Telemetry Diagnostics</td><td id='modalNetworkHealth'>-</td></tr>
-            <tr><td>Signal Quality (RSSI)</td><td id='modalRssi'>-</td></tr>
-            <tr><td>Battery Level</td><td id='modalBatteryHealth'>-</td></tr>
-            <tr><td>EWMA Forecast</td><td id='modalDaysRemaining'>-</td></tr>
-            <tr><td>Last Mesh Check-In</td><td id='modalLastActive'>-</td></tr>
+            <tr class='adv-stat-row'><td>Driver / Device Type</td><td id='modalDriverType'>-</td></tr>
+            <tr class='adv-stat-row'><td>Hardware Type</td><td id='modalHardwareSig'>-</td></tr>
+            <tr class='adv-stat-row'><td>Firmware Revision</td><td id='modalFirmwareRev'>-</td></tr>
+            <tr class='adv-stat-row'><td>Telemetry Diagnostics</td><td id='modalNetworkHealth'>-</td></tr>
+            <tr class='adv-stat-row'><td>Signal Quality (RSSI)</td><td id='modalRssi'>-</td></tr>
+            <tr class='adv-stat-row'><td>Battery Level</td><td id='modalBatteryHealth'>-</td></tr>
+            <tr class='adv-stat-row'><td>EWMA Forecast</td><td id='modalDaysRemaining'>-</td></tr>
+            <tr class='adv-stat-row'><td>Last Mesh Check-In</td><td id='modalLastActive'>-</td></tr>
         </table>
         <canvas id="historyChart" style="max-height: 160px; margin-top: 15px; display: none;"></canvas>
     </div>
@@ -190,7 +188,7 @@ details.folder-group.dragging { opacity: 0.5; }
         <span class='dot' style='background:#8e44ad;box-shadow:0 0 6px #8e44ad;'></span>
         <span>The Battery Locker</span>
     </div>
-    <div id='batteryLockerModalBody' class='modal-body' style='max-height:60vh;overflow-y:auto;padding-right:10px;'>
+    <div id='batteryLockerModalBody' class='modal-body' style='padding-right:10px;'>
         </div>
     <div class='modal-action-row'>
         <button class='close-modal-btn' onclick='closeBatteryLocker()'>Close Inventory</button>
@@ -256,17 +254,20 @@ function silentRefresh() {
 }
 
 function generateCard(dev) {
-    let detailsStr = dev.messages.join(" • ");
+    let detailsStr = dev.messages && dev.messages.length > 0 ? dev.messages.join(" • ") : "Nominal";
     let actStr = dev.lastActive || "Unknown";
     let battStr = dev.battChanged || "";
 
     let safeName = dev.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
     let safeMsgs = detailsStr.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
     let safeLoc = (dev.customLoc || "Unassigned").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-    let safeDesc = (dev.customDesc || "None").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    let safeDesc = (dev.customDesc || "").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
     let safeBattType = (dev.battType || "N/A").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-    let safeHardwareSig = `${dev.manufacturer} (${dev.model})`;
-    let safeDriver = (dev.driverName || "Unknown").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    
+    let safeHardwareSig = (dev.manufacturer && dev.manufacturer !== 'null' && dev.manufacturer !== 'undefined') ? `${dev.manufacturer} (${dev.model})` : "N/A";
+    let safeDriver = (dev.driverName && dev.driverName !== 'null') ? dev.driverName.replace(/'/g, "&#39;").replace(/"/g, "&quot;") : "N/A";
+    let fwStr = (dev.firmware && dev.firmware !== 'null') ? dev.firmware : "N/A";
+    
     let safeOverride = dev.battThreshOverride || "";
     let safeOutdoor = dev.isOutdoor ? "true" : "false";
 
@@ -328,7 +329,7 @@ function generateCard(dev) {
     let battValAttr = dev.battVal !== null && dev.battVal !== undefined ? dev.battVal + "%" : "N/A";
     let bHistData = dev.battHist || "";
 
-    return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${dev.firmware}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}' data-bhist='${bHistData}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
+    return `<div class='dev-card clickable-card status-${dev.status}' onclick='openDeviceModal(this)' data-id='${dev.id}' data-name='${safeName}' data-status='${dev.status}' data-msgs='${safeMsgs}' data-lastactive='${actStr}' data-loc='${safeLoc}' data-desc='${safeDesc}' data-batt='${battValAttr}' data-batttype='${safeBattType}' data-battqty='${dev.battQty}' data-daysleft='${dev.estDaysLeft}' data-rssi='${lastRssiStr}' data-hw='${safeHardwareSig}' data-fw='${fwStr}' data-driver='${safeDriver}' data-override='${safeOverride}' data-outdoor='${safeOutdoor}' data-bhist='${bHistData}'><div class='dflex'><span class='dot dot-${dev.status}'></span><div class='dev-info'><div class='dev-name'>${dev.name}</div>${customText}<div class='dev-details'>${detailsStr}</div><div class='dev-subtext'>Last Active: ${actStr}${battStr}</div>${battBarHtml}${sparklineHtml}</div>${controlsHtml}</div></div>`;
 }
 
 let isEditMode = false;
@@ -576,10 +577,22 @@ function checkCustomBattery(sel) {
 function openDeviceModal(card) {
     document.getElementById('modalDeviceId').value = card.getAttribute('data-id');
     document.getElementById('modalDeviceName').innerText = card.getAttribute('data-name');
-    var status = card.getAttribute('data-status');
-    document.getElementById('modalStatusDot').className = 'dot dot-' + status;
-    document.getElementById('modalNetworkHealth').innerText = card.getAttribute('data-msgs') || 'Nominal';
     
+    var status = card.getAttribute('data-status');
+    var msgs = card.getAttribute('data-msgs') || ''; // Capture messages
+    document.getElementById('modalStatusDot').className = 'dot dot-' + status;
+    document.getElementById('modalNetworkHealth').innerText = msgs || 'Nominal';
+    
+    // UPDATED LOGIC: 
+    // Devices are only considered "healthy" (and therefore hide advanced stats)
+    // if they are Green, or Blue AND NOT reporting a Firmware Mismatch.
+    var isFwMismatch = msgs.includes('FW Mismatch');
+    var isHealthy = (status === 'Green' || (status === 'Blue' && !isFwMismatch));
+    
+    document.querySelectorAll('.adv-stat-row').forEach(function(r) {
+        r.style.display = isHealthy ? 'none' : '';
+    });
+
     let locSel = document.getElementById('modalLocationInput');
     let locOpts = db.locations.map(l => `<option value="${l}">${l}</option>`).join('');
     locSel.innerHTML = `<option value="">Unassigned</option>${locOpts}<option value="_NEW_">➕ Add New Location...</option>`;
@@ -614,7 +627,6 @@ function openDeviceModal(card) {
     document.getElementById('modalBatteryHealth').innerText = card.getAttribute('data-batt');
     document.getElementById('modalLastActive').innerText = card.getAttribute('data-lastactive');
     
-    // Feature 1: Dynamic Chart Rendering
     let canvas = document.getElementById('historyChart');
     let bHistStr = card.getAttribute('data-bhist');
     if (window.myChart) { window.myChart.destroy(); }
@@ -687,10 +699,7 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
-// Start the dashboard on load
 loadData();
-
-// Reverted polling to 60s to save cloud bandwidth
 setInterval(silentRefresh, 60000); 
 '''
 
@@ -731,7 +740,8 @@ def mainPage() {
         try { createAccessToken() } catch (Exception e) { log.error "OAuth is not enabled! Please click 'OAuth' at the top of the app code and enable it." }
     }
     
-    dynamicPage(name: "mainPage", title: "Device Health Command Center", install: true, uninstall: true) {
+    // Title updated to include versioning, removing the need for the manual paragraph header below
+    dynamicPage(name: "mainPage", title: "Advanced Device Health Monitor v2.0", install: true, uninstall: true) {
         
         section("🌐 Web Health Portal", hideable: false, hidden: false) {
             paragraph "<i>Access your beautifully formatted, live device health dashboard from any browser.</i>"
@@ -830,7 +840,6 @@ def pageSettings() {
             input "scanChunkSize", "number", title: "Devices Processed per Async Chunk", defaultValue: 15, required: true
             paragraph "<i>Note: This controls how many devices process in one burst before resting the CPU. 15-20 is ideal for large networks to prevent cloud timeouts.</i>"
             
-            // Feature 2: Added Nighttime Notification Batching UI
             input "enableQuietHours", "bool", title: "Enable Quiet Hours for Auto-Healing & Nighttime Alert Batching?", defaultValue: false, submitOnChange: true
             if (enableQuietHours) {
                 paragraph "<i>During quiet hours, auto-healing pings will be paused, and any alerts triggered will be queued up silently and blasted out once quiet hours end.</i>"
@@ -838,7 +847,6 @@ def pageSettings() {
                 input "quietEnd", "time", title: "Quiet Hours End", required: true
             }
             
-            // Feature 3: Self-terminating debug mode
             input "debugMode", "bool", title: "Enable Debug Logging (Auto-off in 30m)", defaultValue: false
         }
         
@@ -1062,7 +1070,6 @@ def pageBatteryLocker() {
     }
 }
 
-// Feature 3: Configuration Backup and Restore
 def pageBackupRestore() {
     dynamicPage(name: "pageBackupRestore", title: "💾 Configuration Backup & Restore", install: false, uninstall: false) {
         section("System Backup (Copy Text Below)") {
@@ -1355,7 +1362,6 @@ def runHealthCheck() {
     }
 }
 
-// TRUE ASYNC PROCESSING ENGINE WITH SMART SCRAPER
 def processScanChunk() {
     if (!state.isScanning) return
     
@@ -1412,7 +1418,6 @@ def processScanChunk() {
             def dTypeName = "Unknown"
             try { dTypeName = dev.typeName ?: "Unknown" } catch(ignore){}
             
-            // --- SMART SCRAPER OPTIMIZATION ---
             long latestTime = 0
             def lastActiveDate = dev.getLastActivity()
             if (lastActiveDate) latestTime = lastActiveDate.time
@@ -1421,7 +1426,6 @@ def processScanChunk() {
             def inactivityThreshHours = isSleepyDev ? (settings.buttonInactivityThreshold ?: 168) : (settings.inactivityThreshold ?: 24)
             def diffHours = (nowMs - latestTime) / 3600000.0
             
-            // ONLY perform heavy database queries if the device looks like it might be offline
             if (diffHours >= (inactivityThreshHours * 0.75)) {
                 try {
                     dev.currentStates?.each { st ->
@@ -1447,7 +1451,6 @@ def processScanChunk() {
             
             lastActiveDate = latestTime > 0 ? new Date(latestTime) : null
             def lastActiveStr = lastActiveDate ? lastActiveDate.format("MM/dd/yy h:mm a", location.timeZone) : "Unknown"
-            // --- END SMART SCRAPER ---
             
             if (dev.hasAttribute("healthStatus")) {
                 def hStat = dev.currentValue("healthStatus")
@@ -1514,7 +1517,6 @@ def processScanChunk() {
                                 msgs << "Parasitic Drain Detected (-${dropInDay}% / 24h)"
                             }
                             
-                            // Export for Chart.js
                             bHistStr = state.batteryHistory[dev.id].collect { it.val }.join(",")
                         }
                     }
@@ -1741,7 +1743,6 @@ def processScanChunk() {
         }
     }
     
-    // Save state and let the hub breathe before processing the next chunk
     state.tempResults = currentResults
     state.pendingAlerts = currentAlerts
     
@@ -1765,7 +1766,6 @@ def finalizeScan(results, pendingAlerts) {
     
     results = analyzeSpatialInterference(results)
     
-    // Feature 2: Nighttime Notification Batching
     if (settings.enableQuietHours && isQuietTime()) {
         if (pendingAlerts.size() > 0) {
             state.queuedAlerts.addAll(pendingAlerts)
@@ -2029,19 +2029,22 @@ def addToHistory(msg) {
 }
 
 def getRedirectHtml(delayMs, msgText) {
-    return "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.href='dashboard?access_token=${state.accessToken}';}, ${delayMs});</script></head><body style='background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;'><h3>🔄 Standard BMS Syncing...</h3><p style='color:#666;'>${msgText}</p></body></html>"
+    return "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script>setTimeout(function(){window.location.href='dashboard?access_token=${state.accessToken}';}, ${delayMs});</script></head><body style='background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;'><h3>🔄 Standard BMS Syncing...</h3><p style='color:#666;'>${msgText}</p></body></html>"
 }
 
-// --------------------------------------------------------------------------------------
-// SPA AJAX ENDPOINTS (Eliminates 504 and 403 Cloud Timeouts)
-// --------------------------------------------------------------------------------------
 def serveDataEndpoint() {
     try {
         ensureStateMaps()
         def rawResults = state.dashboardData ?: []
         
         def slimResults = rawResults.collect { dev ->
-            def isHealthy = (dev.status == "Green" || dev.status == "Blue")
+            // Check if the device has a firmware mismatch message
+            def hasFwMismatch = dev.messages?.any { it.toString().contains("FW Mismatch") } ?: false
+            
+            // Treat as healthy only if it is truly green, 
+            // or if it is blue WITHOUT a firmware mismatch.
+            def isHealthy = (dev.status == "Green" || (dev.status == "Blue" && !hasFwMismatch))
+            
             [
                 id: dev.id,
                 name: dev.name,
@@ -2057,13 +2060,18 @@ def serveDataEndpoint() {
                 isMuted: state.muteExpirations?.containsKey(dev.id),
                 rssiHistory: dev.rssiHistory ? dev.rssiHistory.takeRight(3) : [], 
                 customLoc: dev.customLoc,
+                customDesc: dev.customDesc,
                 battHist: isHealthy ? "" : dev.battHist, 
                 isOutdoor: dev.isOutdoor,
-                battThreshOverride: dev.battThreshOverride
+                battThreshOverride: dev.battThreshOverride,
+                // These fields will now be included if isHealthy is false
+                manufacturer: isHealthy ? null : dev.manufacturer,
+                model: isHealthy ? null : dev.model,
+                firmware: isHealthy ? null : dev.firmware,
+                driverName: isHealthy ? null : dev.driverName
             ]
         }
 
-        // Re-calculate spares on the fly so the map is always populated but small
         def spareMap = [:]
         slimResults.each { d ->
             if (d.battType && d.battType != "") {
@@ -2079,7 +2087,7 @@ def serveDataEndpoint() {
             customFolderOrder: settings.customFolderOrder ?: "",
             locations: (settings.roomList ?: "").split(',').collect{it.trim()}.findAll{it != ""},
             batteryTypes: ["AA", "AAA", "CR2032", "CR2450", "9V", "Custom"],
-            spares: spareMap, // Re-added the map to fix the 'AA' error
+            spares: spareMap,
             estate: slimResults,
             telemetry: [
                 firmware: state.cachedTelemetry?.firmware ?: "Ok",
@@ -2149,7 +2157,6 @@ def updateDeviceEndpoint() {
                 app.updateSetting("outdoorProfile_${dId}", [type: "bool", value: (params.isOutdoor == "true")])
             }
 
-            // Real-time Dashboard Cache Update
             def tempData = state.dashboardData
             if (tempData) {
                 def devEntry = tempData.find { it.id == dId }
