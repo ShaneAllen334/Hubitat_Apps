@@ -4779,7 +4779,7 @@ boolean part3BoundaryGuard() { return true }
 // ==============================================================================
 
 // ==============================================================================
-// PART 4A OF 7 — PASTE DIRECTLY BELOW PART 3 (FULL FIXED VERSION)
+// PART 4A OF 7 — PASTE DIRECTLY BELOW PART 3 (FULL HARDCORE CLEAN VERSION)
 // ==============================================================================
 
 String buildHeroChunkB() {
@@ -4862,7 +4862,101 @@ function getBoardQuestProgress(q) {
   return hero.materials[q.matName] || 0;
 }
 
-// v18.1 #15: Cross-Slot Co-Op Warrants — Pin a contract so another Hero Slot on your Hub can assist & split rewards!
+function openQuestAcceptModal(qIdx) {
+  ensureHeroV3Fields(hero);
+  var q = hero.boardQuests[qIdx];
+  if (!q) return;
+  showPopupModal(
+    '<div style="margin-bottom:6px;">' + renderEntityAvatar(q.giver, q.giverIcon, 60, false) + '</div>' +
+    '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">📋 Royal Warrant Parley: ' + escapeHtml(q.giver) + '</div>' +
+    '<div style="font-size:12px;color:#7dd3fc;margin-bottom:8px;">Region: <b>' + escapeHtml(q.areaName) + ' (Warrant Tier ' + q.tier + ' / 5)</b></div>' +
+    '<div style="background:#0b0811;border:1px solid #c5a059;border-radius:4px;padding:12px;margin-bottom:10px;text-align:left;font-size:13px;line-height:1.6;color:#e5dec9;">' +
+      '&ldquo;' + escapeHtml(q.desc) + '&rdquo;<br><br>' +
+      '• <b>Objective:</b> ' + (q.qType === "kill" ? "Slay " : "Recover ") + '<b>' + q.reqQty + 'x ' + q.matIcon + ' ' + escapeHtml(q.matName) + '</b><br>' +
+      '• <b>Bounty Payout:</b> <span style="color:#4ade80;">+' + q.rewardXp.toLocaleString() + ' XP, +' + q.rewardGold.toLocaleString() + 'g, +18 Fame &amp; +' + (q.rewardStability || 5) + '% Kingdom Stability</span>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-gold" style="flex:1;" onclick="acceptBoardQuest(' + qIdx + ')">📌 Sign Royal Warrant</button>' +
+      '<button class="btn" onclick="closePopupModal()">Decline</button>' +
+    '</div>'
+  );
+}
+
+function acceptBoardQuest(qIdx) {
+  ensureHeroV3Fields(hero);
+  var q = hero.boardQuests[qIdx];
+  if (!q) return;
+  q.accepted = true;
+  playSfx("coin");
+  addLog("📌 Swore Royal Warrant for <b>" + escapeHtml(q.giver) + "</b>: " + q.reqQty + "x " + q.matIcon + " " + escapeHtml(q.matName) + " in " + escapeHtml(q.areaName) + "!");
+  closePopupModal();
+  queueDeltaSaveHero();
+  renderGameScreen();
+}
+
+function turnInBoardQuest(qIdx) {
+  ensureHeroV3Fields(hero);
+  var q = hero.boardQuests[qIdx];
+  if (!q) return;
+  var prog = getBoardQuestProgress(q);
+  if (prog < q.reqQty) {
+    showRequirementModal(
+      "Warrant Incomplete (" + prog + " / " + q.reqQty + ")", q.matIcon || "📋",
+      "You need <b>" + q.reqQty + "x " + escapeHtml(q.matName) + "</b> to claim this Warrant reward (Currently have <b>" + prog + "</b>).",
+      (q.qType === "kill" && !q.accepted) ? "⚠️ Make sure you click <b>💬 Parley ➔ 📌 Sign Warrant</b> first so your kills are tracked!" : ("Patrol <b>" + escapeHtml(q.areaName) + "</b> in the World tab to finish collecting!"),
+      ""
+    );
+    return;
+  }
+  if (q.qType !== "kill") {
+    hero.materials[q.matName] = Math.max(0, (hero.materials[q.matName] || 0) - q.reqQty);
+  }
+  var st = getHeroStats();
+  var gWon = Math.round(q.rewardGold * st.goldBonusMult);
+  var xpWon = Math.round(q.rewardXp * (serverData.xpMult || 1));
+  hero.gold += gWon;
+  hero.xp += xpWon;
+  addHeroFame(18);
+  if (q.rewardGems) hero.gems = (hero.gems || 0) + q.rewardGems;
+  if (hero.guild && hero.guild.founded) {
+    hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + (q.rewardStability || 5));
+  }
+  var curT = hero.areaQuestTier[q.areaId] || 0;
+  var newT = Math.min(5, curT + 1);
+  hero.areaQuestTier[q.areaId] = newT;
+
+  var nextType = (q.qType === "kill") ? "gather" : "kill";
+  hero.boardQuests[qIdx] = generateSingleBoardQuest(hero, q.areaId, nextType);
+  playSfx("levelup");
+  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 35);
+  var msg = "🏆📜 <b>ROYAL WARRANT COMPLETED (" + escapeHtml(q.areaName) + " Tier " + newT + "/5)!</b><br>" +
+    "• <b>Rewards:</b> +" + xpWon.toLocaleString() + " XP, +" + gWon.toLocaleString() + " Gold &amp; +18 Court Fame" +
+    (q.rewardGems ? (" &amp; <b>+" + q.rewardGems + "💎 Dragon Gem</b>!") : "!") +
+    (newT >= 5 ? "<br>🐉 <b style='color:#4ade80;'>ZONE BOSS WARRANT UNLOCKED (5/5)!</b> You may now confront the Region Boss in the World tab!" : "");
+  addLog(msg);
+  checkLevelUp();
+  saveCurrentHero(null, false, null);
+  renderGameScreen();
+  showOutcomeModal("🏆 Warrant Claimed (Tier " + newT + "/5)!", q.giverIcon || "📋", q.giver, "#4ade80", msg, null);
+}
+
+function rerollTownBoard() {
+  ensureHeroV3Fields(hero);
+  var nowMs = Date.now();
+  var elapsed = nowMs - (hero.lastBoardRerollEpoch || 0);
+  if (elapsed < SIX_HOURS_MS) {
+    var remSec = Math.ceil((SIX_HOURS_MS - elapsed) / 1000);
+    showRequirementModal("Warrant Couriers En Route", "📋⏳", "New Royal Warrants are posted every <b>6 hours</b>. Time remaining: <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b>.", "Complete your current Warrants to advance your Zone Boss tier automatically!", "");
+    return;
+  }
+  hero.lastBoardRerollEpoch = nowMs;
+  hero.boardQuests = generateTownBoardQuests(hero);
+  playSfx("coin");
+  addLog("📋 Royal Heralds posted 4 fresh Warrants on the Town Board!");
+  queueSaveHero();
+  renderGameScreen();
+}
+
 function pinCoOpWarrant(qIdx) {
   ensureHeroV3Fields(hero);
   var q = hero.boardQuests[qIdx];
@@ -4933,7 +5027,6 @@ function assistCoOpWarrant() {
   showOutcomeModal(done ? "🤝 Co-Op Warrant Completed!" : "🤝 Co-Op Progress Added!", "🤝📜", hero.name, "#4ade80", cMsg, null);
 }
 
-// v18.1 #14: Pre-Boss Sabotage Missions (-2⚡ Quests for -15% Boss Starting HP! Capped at 2/day)
 function sabotageBossSupplyCamp() {
   ensureHeroV3Fields(hero);
   if ((hero.sabotagesUsedToday || 0) >= MAX_DAILY_SABOTAGES) {
@@ -5005,762 +5098,443 @@ function prestigeHeroPersonal() {
     showRequirementModal(
       "Level 100+ Required for Rite of Eternal Ascendancy", "👑⏳",
       "Personal Prestige (re-ascending as <b>" + escapeHtml(hero.baseLineageName || hero.name) + " " + toRomanNumeral((hero.prestigeRank || 0) + 2) + "</b>) requires reaching at least <b style='color:#fbbf24;'>Level 100</b> (Currently Lv " + hero.level + ").",
-      "Conquer the higher realms or climb the Abyssal Spire to reach Level 100+, then return to ascend!",
+      "Conquer the higher realms or climb the Abyssal Spire to reach Level 100!",
       ""
     );
     return;
   }
-  var oldName = hero.name;
-  var nextRank = (hero.prestigeRank || 0) + 1;
-  var baseName = (hero.baseLineageName || hero.name).replace(/( +[IVXLCDM]+)$/i, "");
-  var newName = baseName + " " + toRomanNumeral(nextRank + 1);
+  var oldLv = hero.level;
+  var baseN = hero.baseLineageName || hero.name;
+  hero.prestigeRank = (hero.prestigeRank || 0) + 1;
+  var nextRom = toRomanNumeral(hero.prestigeRank + 1);
   if (!hero.ancestors) hero.ancestors = [];
-  hero.ancestors.unshift({ name: oldName, level: hero.level, title: hero.nobleRank, calling: hero.calling, date: getTodayDateStr() });
+  hero.ancestors.unshift({ name: hero.name, level: oldLv, title: hero.nobleRank || "Regent", calling: hero.calling, date: getTodayDateStr() });
   if (hero.ancestors.length > 10) hero.ancestors.pop();
-
-  var pickedMut = LINEAGE_MUTATIONS[nextRank % LINEAGE_MUTATIONS.length];
-  hero.lineageMutation = pickedMut;
-  hero.prestigeRank = nextRank;
-  hero.baseLineageName = baseName;
-  hero.name = newName;
+  hero.name = baseN + " " + nextRom;
   hero.level = 1;
   hero.xp = 0;
-  hero.xpNext = 175;
-  hero.guts = Math.round(hero.guts * 0.35) + 12;
-  hero.wits = Math.round(hero.wits * 0.35) + 12;
-  hero.charm = Math.round(hero.charm * 0.35) + 12;
-  hero.maxHp = 85 + (nextRank * 25) + (pickedMut.id === "titan_marrow" ? 45 : 0);
-  hero.hp = hero.maxHp;
-  hero.maxMp = 35 + (nextRank * 12);
-  hero.mp = hero.maxMp;
-  hero.stress = 0;
-  hero.resolveState = null;
-  hero.valkyrieSeals = Math.max(5, (hero.valkyrieSeals || 0) + 2);
+  hero.xpNext = getXpRequiredForLevel(1);
   hero.gems = (hero.gems || 0) + 5;
   hero.skillPoints = (hero.skillPoints || 0) + 3;
-  recordMemoirMilestone("Ascended through the Rite of Prestige as " + newName + " (Awakened " + pickedMut.name + ").");
+  var muts = [
+    { id: "wyrm_blood", name: "🐉 Dragon-Blooded Scales", desc: "+8% ATK & +8% DEF" },
+    { id: "night_eyes", name: "🌑 Night-Seer Eyes", desc: "+6% Hit & +6% Dodge" },
+    { id: "titan_marrow", name: "🗿 Titan-Marrow Bones", desc: "+6% Parry & +60 Max HP" },
+    { id: "vamp_veins", name: "🩸 Crimson Sovereign Veins", desc: "+6% Lifesteal" }
+  ];
+  hero.lineageMutation = muts[(hero.prestigeRank - 1) % muts.length];
+  if (hero.lineageMutation.id === "titan_marrow") hero.maxHp += 60;
+  syncHeroVitalityMaxHp(hero);
+  hero.hp = hero.maxHp;
+  hero.mp = hero.maxMp;
+  recordMemoirMilestone("Completed the Rite of Eternal Prestige and ascended as " + hero.name + " (★Prestige " + hero.prestigeRank + ").");
   playSfx("levelup");
-  var pMsg = "👑🌟 <b style='color:#fde047;'>RITE OF ETERNAL ASCENDANCY COMPLETE!</b><br><b>" + escapeHtml(oldName) + "</b> has ascended into legend and been reborn as <b>" + escapeHtml(newName) + " (Prestige Rank " + nextRank + ")</b>!<br>• <b>Permanent Prestige Blessing:</b> <span style='color:#4ade80;font-weight:bold;'>+" + (nextRank * 3) + "% All Stats &amp; +" + (nextRank * 2) + "% Gold/Drop Luck</span><br>• <b>Bloodline Mutation Awakened:</b> <span style='color:#c084fc;font-weight:bold;'>" + pickedMut.name + " (" + pickedMut.desc + ")</span><br>• <b>Ghost of the Ancestor:</b> " + escapeHtml(oldName) + " now watches over your battles!";
+  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 55);
+  var pMsg = "👑🌟 <b style='color:#fde047;'>RITE OF ETERNAL PRESTIGE COMPLETE!</b><br>Reborn as <b>" + escapeHtml(hero.name) + " (★Prestige " + hero.prestigeRank + " ➔ +" + (hero.prestigeRank * 3) + "% Permanent All Stats)</b>!<br>• <b>Bloodline Mutation Awakened:</b> " + hero.lineageMutation.name + " (" + hero.lineageMutation.desc + ")<br>• <b>Ascension Tribute:</b> +5💎 Dragon Gems &amp; +3 Skill Points!";
   addLog(pMsg);
-  saveCurrentHero("👑 " + oldName + " ascended through the Rite of Prestige and was reborn as " + newName + "!", false, null);
+  saveCurrentHero("👑 " + hero.name + " ascended to ★Prestige Rank " + hero.prestigeRank + "!", false, null);
   renderGameScreen();
-  showOutcomeModal("👑 Reborn as " + newName + "!", "👑🌟", newName, "#fde047", pMsg, null);
+  showOutcomeModal("👑 Ascended as " + hero.name + "!", "👑🌟", hero.name, "#fde047", pMsg, null);
 }
 
 function prestigeHeroHeirSuccession(childIdx) {
   ensureHeroV3Fields(hero);
-  if (hero.level < 50 || !hero.children || !hero.children[childIdx]) {
-    showRequirementModal(
-      "Cannot Pass the Crown Yet", "👶👑",
-      "Passing the dynasty torch to a Royal Heir requires <b>Hero Level 50+</b> (Currently Lv " + hero.level + ") and a christened Dynasty Child.",
-      "Raise a child in the Velvet Chamber and reach Level 50+ to retire your sovereign to the Hall of Heroes!",
-      ""
-    );
+  if (hero.level < 50) {
+    showRequirementModal("Hero Level 50+ Required for Royal Abdication", "👑👶", "Crowning a Dynasty Heir to succeed your throne requires your current ruler to reach at least <b>Level 50</b> (Currently Lv " + hero.level + ").", "Continue conquering realms until Level 50, then return to pass the crown!", "");
     return;
   }
-  var heir = hero.children.splice(childIdx, 1)[0];
+  var ch = (hero.children && hero.children[childIdx]) ? hero.children[childIdx] : null;
+  if (!ch) return;
   var oldName = hero.name;
-  var nextRank = (hero.prestigeRank || 0) + 1;
+  var oldLv = hero.level;
+  hero.prestigeRank = (hero.prestigeRank || 0) + 1;
   if (!hero.ancestors) hero.ancestors = [];
-  hero.ancestors.unshift({ name: oldName, level: hero.level, title: hero.nobleRank, calling: hero.calling, date: getTodayDateStr() });
-
-  var pickedMut = LINEAGE_MUTATIONS[nextRank % LINEAGE_MUTATIONS.length];
-  hero.lineageMutation = pickedMut;
-  hero.prestigeRank = nextRank;
-  hero.baseLineageName = heir.name;
-  hero.name = heir.name;
-  hero.bio = "Scion of " + oldName + " (" + heir.traitName + ").";
-  hero.level = Math.max(1, heir.level || 1);
+  hero.ancestors.unshift({ name: oldName, level: oldLv, title: hero.nobleRank || "Sovereign", calling: hero.calling, date: getTodayDateStr() });
+  if (hero.ancestors.length > 10) hero.ancestors.pop();
+  hero.name = ch.name;
+  hero.baseLineageName = ch.name;
+  hero.level = Math.max(1, ch.level || 1);
   hero.xp = 0;
   hero.xpNext = getXpRequiredForLevel(hero.level);
-  hero.guts = Math.round(hero.guts * 0.40) + 14;
-  hero.wits = Math.round(hero.wits * 0.40) + 14;
-  hero.charm = Math.round(hero.charm * 0.40) + 14;
-  hero.maxHp = Math.max(110, heir.maxHp || 110) + (pickedMut.id === "titan_marrow" ? 45 : 0);
-  hero.hp = hero.maxHp;
-  hero.stress = 0;
-  hero.resolveState = null;
+  hero.guts += Math.max(4, Math.round((ch.atk || 20) * 0.18));
+  hero.wits += 4;
+  hero.charm += 4;
+  hero.gems = (hero.gems || 0) + 3;
+  hero.children.splice(childIdx, 1);
   hero.activeChildIdx = -1;
-  hero.valkyrieSeals = Math.max(5, (hero.valkyrieSeals || 0) + 2);
-  hero.gems = (hero.gems || 0) + 5;
-  recordMemoirMilestone("Passed the Royal Crown from " + oldName + " to heir " + heir.name + ".");
+  syncHeroVitalityMaxHp(hero);
+  hero.hp = hero.maxHp;
+  hero.mp = hero.maxMp;
+  recordMemoirMilestone(oldName + " abdicated the Dragon Throne, crowning Royal Heir " + hero.name + "!");
   playSfx("levelup");
-  var hMsg = "👑👶 <b style='color:#4ade80;'>ROYAL HEIR SUCCESSION COMPLETE!</b><br><b>" + escapeHtml(oldName) + "</b> has been laid to rest in the Grand Hall of Heroes, passing the crown to <b>" + escapeHtml(heir.name) + "</b>!<br>• <b>Lineage Mutation:</b> <span style='color:#c084fc;font-weight:bold;'>" + pickedMut.name + " (" + pickedMut.desc + ")</span><br>• <b>Permanent Lineage Blessing:</b> +" + (nextRank * 3) + "% All Stats &amp; Ancestral Specter Strikes!";
-  addLog(hMsg);
-  saveCurrentHero("👑 " + oldName + " retired to the Hall of Heroes and passed the crown to heir " + heir.name + "!", false, null);
+  var sMsg = "👑👶 <b style='color:#fde047;'>DYNASTY SUCCESSION COMPLETE!</b><br><b>" + escapeHtml(oldName) + "</b> passed the Dragon Crown to <b>" + escapeHtml(hero.name) + " (★Prestige " + hero.prestigeRank + " • +" + (hero.prestigeRank * 3) + "% All Stats &amp; +3💎 Gems)</b>!";
+  addLog(sMsg);
+  saveCurrentHero("👑 " + oldName + " passed the Dragon Crown to Royal Heir " + hero.name + "!", false, null);
   renderGameScreen();
-  showOutcomeModal("👑 Crown Passed to " + heir.name + "!", heir.icon || "👑", heir.name, "#4ade80", hMsg, null);
-}
-
-function getContestedRollOdds(statName, baseDiff, areaId, isDelve) {
-  var st = getHeroStats();
-  var val = statName === "guts" ? st.effGuts : (statName === "wits" ? st.effWits : st.effCharm);
-  var expectedStat = 12 + (areaId * 8) + Math.round((hero ? hero.level : 1) * 2.55) + Math.round((baseDiff - 12) * 2.5);
-  var basePct = isDelve ? 36 : 50;
-  var maxCap = isDelve ? 62 : 78;
-  var minFloor = isDelve ? 12 : 15;
-  var rawChance = Math.round(basePct + ((val - expectedStat) * 1.4));
-  var clampedChance = Math.max(minFloor, Math.min(maxCap, rawChance));
-  return { val: val, expected: expectedStat, chance: clampedChance };
-}
-
-function formatRiskMeterPill(odds, statName) {
-  var sLabel = statName === "guts" ? "⚔️Guts" : (statName === "wits" ? "🔮Wits" : "👑Charm");
-  if (odds.chance >= 55) {
-    return '<span style="background:#052e16;border:1px solid #15803d;color:#86efac;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800;">🟢 High Odds (' + odds.chance + '% • ' + sLabel + ' ' + odds.val + ')</span>';
-  } else if (odds.chance >= 38) {
-    return '<span style="background:#451a03;border:1px solid #d4af37;color:#fde68a;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800;">🟡 Even Gamble (' + odds.chance + '% • ' + sLabel + ' ' + odds.val + ')</span>';
-  }
-  return '<span style="background:#450a0a;border:1px solid #991b1b;color:#fca5a5;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800;">🔴 Long Shot (' + odds.chance + '% • ' + sLabel + ' ' + odds.val + ')</span>';
-}
-
-function rollContestedStatCheck(statName, baseDiff, areaId, isDelve) {
-  var odds = getContestedRollOdds(statName, baseDiff, areaId, isDelve);
-  var roll = Math.floor(Math.random() * 100) + 1;
-  var passed = (roll <= odds.chance);
-  return { passed: passed, roll: roll, chance: odds.chance, val: odds.val, expected: odds.expected };
-}
-
-function openQuestAcceptModal(qIdx) {
-  ensureHeroV3Fields(hero);
-  var q = hero.boardQuests[qIdx];
-  if (!q) return;
-  var haggleOdds = getContestedRollOdds("charm", 15, q.areaId, false);
-  var intelOdds = getContestedRollOdds("wits", 15, q.areaId, false);
-  var objLabel = (q.qType === "kill") ? ("Slay " + q.reqQty + "x " + q.matIcon + " " + q.matName) : ("Gather " + q.reqQty + "x " + q.matIcon + " " + q.matName);
-  addLog("💬 Speaking with <b>" + escapeHtml(q.giver) + "</b> regarding contract: <b>" + escapeHtml(objLabel) + "</b>...");
-  showPopupModal(
-    '<div style="margin-bottom:6px;">' + renderEntityAvatar(q.giver, q.giverIcon || "🕯️", 64, false) + '</div>' +
-    '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">' + escapeHtml(q.giver) + ' — Kingdom Warrant</div>' +
-    '<div style="font-size:12px;color:#7dd3fc;margin-bottom:10px;">' + escapeHtml(q.areaName) + ' (Warrant Tier ' + q.tier + ' of 5 • +' + (q.rewardStability || 5) + '% Stability)</div>' +
-    '<div style="background:#0b0811;border:1px solid #4a3823;border-radius:4px;padding:12px;margin-bottom:12px;font-size:13.5px;color:#e5dec9;line-height:1.6;text-align:left;">' +
-      '&quot;Greetings, <b>' + escapeHtml(hero.name) + '</b>. ' + escapeHtml(q.desc) + ' How shall we record your oath?&quot;' +
-    '</div>' +
-    '<div style="display:flex;flex-direction:column;gap:8px;">' +
-      '<button class="btn btn-emerald" style="justify-content:space-between;padding:10px;flex-wrap:wrap;" onclick="confirmAcceptQuest(' + qIdx + ',&#39;oath&#39;)"><span>⚜️ Swear a Knightly Oath (+15% XP &amp; +5% Stability)</span><span style="color:#86efac;font-size:11px;">🟢 100% Guaranteed</span></button>' +
-      '<button class="btn btn-gold" style="justify-content:space-between;padding:10px;flex-wrap:wrap;" onclick="confirmAcceptQuest(' + qIdx + ',&#39;haggle&#39;)"><span>👑 Haggle for +25% Hazard Gold</span>' + formatRiskMeterPill(haggleOdds, "charm") + '</button>' +
-      '<button class="btn btn-arcane" style="justify-content:space-between;padding:10px;flex-wrap:wrap;" onclick="confirmAcceptQuest(' + qIdx + ',&#39;advance&#39;)"><span>🔮 Request Scout Intel (+1 Immediate Progress)</span>' + formatRiskMeterPill(intelOdds, "wits") + '</button>' +
-    '</div>'
-  );
-}
-
-function confirmAcceptQuest(qIdx, choiceType) {
-  var q = hero.boardQuests[qIdx];
-  if (!q) return;
-  var chk = rollContestedStatCheck(choiceType === "haggle" ? "charm" : "wits", 15, q.areaId, false);
-  q.accepted = true;
-  var msg = "";
-  if (choiceType === "oath") {
-    q.rewardXp = Math.round(q.rewardXp * 1.15);
-    q.rewardStability = (q.rewardStability || 5) + 5;
-    hero.alignment.Order = (hero.alignment.Order || 0) + 1;
-    msg = "⚜️ Swore a Knightly Oath to <b>" + escapeHtml(q.giver) + "</b> (+15% XP &amp; +5% Stability)!";
-  } else if (choiceType === "haggle") {
-    hero.alignment.Guild = (hero.alignment.Guild || 0) + 1;
-    if (chk.passed) {
-      q.rewardGold = Math.round(q.rewardGold * 1.25);
-      msg = "👑 <b>Haggle Succeeded (" + chk.chance + "% Odds)!</b> " + escapeHtml(q.giver) + " agreed to +25% Hazard Gold!";
-    } else {
-      msg = "👑 <b>Haggle Refused (" + chk.chance + "% Odds)!</b> " + escapeHtml(q.giver) + " kept standard pay, but signed your contract.";
-    }
-  } else if (choiceType === "advance") {
-    hero.alignment.Shadow = (hero.alignment.Shadow || 0) + 1;
-    if (chk.passed) {
-      if (q.qType === "kill") q.progress = (q.progress || 0) + 1;
-      else hero.materials[q.matName] = (hero.materials[q.matName] || 0) + 1;
-      msg = "🔮 <b>Scout Intel Succeeded (" + chk.chance + "% Odds)!</b> Gained +1 immediate progress toward <b>" + escapeHtml(q.matName) + "</b>!";
-    } else {
-      msg = "🔮 <b>Scout Intel Unavailable (" + chk.chance + "% Odds)!</b> Contract signed with standard starting progress.";
-    }
-  }
-  playSfx("coin");
-  addLog("📋 <b>Contract Signed (" + q.areaName + " Tier " + q.tier + "/5):</b> " + msg);
-  queueSaveHero();
-  renderGameScreen();
-  showOutcomeModal("📜 Contract Sealed!", q.giverIcon, q.giver, "#4ade80", msg + "<br><br>📍 <b>Objective:</b> Head to <b>" + escapeHtml(q.areaName) + "</b> and complete your warrant!", null);
-}
-
-function rerollTownBoard() {
-  ensureHeroV3Fields(hero);
-  var nowMs = Date.now();
-  var elapsed = nowMs - (hero.lastBoardRerollEpoch || 0);
-  if (elapsed < SIX_HOURS_MS) {
-    var remSec = Math.ceil((SIX_HOURS_MS - elapsed) / 1000);
-    showRequirementModal(
-      "Quest Board Courier Cooldown", "📋⏳",
-      "Royal Couriers only deliver new Quest Board warrants once every <b>6 hours</b>. Time remaining: <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b>.",
-      "Complete your currently posted contracts on the board, or patrol your highest unlocked region to gather extra Monster Trophies in advance!",
-      ""
-    );
-    return;
-  }
-  hero.lastBoardRerollEpoch = nowMs;
-  var kept = (hero.boardQuests || []).filter(function(q) { return q.accepted; });
-  while (kept.length < 4) {
-    var randA = Math.max(1, Math.min(22, Math.floor(Math.random() * (hero.unlockedArea || 1)) + 1));
-    kept.push(generateSingleBoardQuest(hero, randA, null));
-  }
-  hero.boardQuests = kept;
-  addLog("📋 Fresh Kill &amp; Gather contracts pinned to the Town Quest Board (6-hour lock started)!");
-  saveCurrentHero(null, false, null);
-  renderGameScreen();
-}
-
-function turnInBoardQuest(qIdx) {
-  ensureHeroV3Fields(hero);
-  var q = hero.boardQuests[qIdx];
-  if (!q) return;
-  var haveQty = getBoardQuestProgress(q);
-  if (haveQty < q.reqQty) {
-    showRequirementModal(
-      "Contract Incomplete (" + haveQty + "/" + q.reqQty + ")", "📋⚔️",
-      "You have only completed <b style='color:#fbbf24;'>" + haveQty + " / " + q.reqQty + "</b> of <b>" + q.matIcon + " " + escapeHtml(q.matName) + "</b> for <b>" + escapeHtml(q.giver) + "</b>.",
-      "1. Make sure you clicked <b>💬 Parley</b> on this contract if it is a Kill Quest.<br>2. Go to the <b>🗺️ World</b> tab, select <b>" + escapeHtml(q.areaName) + "</b>, and click <b>⚔️ Patrol Realm</b> to hunt the required targets!",
-      '<button class="btn btn-emerald" style="flex:1;" onclick="closePopupModal();hero.selectedArea=' + q.areaId + ';setTab(&#39;adventure&#39;);">🗺️ Travel to ' + escapeHtml(q.areaName) + '</button>'
-    );
-    return;
-  }
-
-  if (q.qType !== "kill") {
-    hero.materials[q.matName] = Math.max(0, (hero.materials[q.matName] || 0) - q.reqQty);
-  }
-  var mult = serverData.xpMult || 1;
-  var gEarned = q.rewardGold * mult;
-  var xpEarned = q.rewardXp * mult;
-  hero.gold += gEarned;
-  hero.xp += xpEarned;
-  addHeroFame(18);
-  if (q.rewardGems > 0) hero.gems = (hero.gems || 0) + q.rewardGems;
-
-  var stabGain = q.rewardStability || 6;
-  if (hero.guild && hero.guild.founded) {
-    hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + stabGain);
-    hero.guild.timber = (hero.guild.timber || 0) + 8;
-    hero.guild.stone = (hero.guild.stone || 0) + 6;
-    if (hero.guild.decree === "crusade") {
-      hero.quests = Math.min(hero.maxQuests, hero.quests + 2);
-      addLog("📜 <b>Writ of Royal Crusade:</b> +2⚡ Bonus Quests, +8🪵, +6🪨 &amp; +" + stabGain + "% Stability!");
-    } else {
-      addLog("🏰 <b>Border Secured:</b> Stability +" + stabGain + "% (Now " + hero.guild.stability + "%), +8🪵 Timber &amp; +6🪨 Stone!");
-    }
-  }
-
-  var prevTier = hero.areaQuestTier[q.areaId] || 0;
-  var newTier = Math.min(5, Math.max(prevTier, q.tier));
-  hero.areaQuestTier[q.areaId] = newTier;
-
-  var qRewardItem = null;
-  if (newTier === 5 && prevTier < 5) {
-    qRewardItem = generateRandomItem(hero.level, 1, 2);
-    if (hero.inventory.length < 30) hero.inventory.push(qRewardItem);
-  } else if (Math.random() < 0.18) {
-    qRewardItem = generateRandomItem(hero.level, 0, 2);
-    if (hero.inventory.length < 30) hero.inventory.push(qRewardItem);
-  }
-
-  var unlockMsg = "";
-  if (newTier >= 5 && prevTier < 5) {
-    unlockMsg = "🔓 <b style='color:#4ade80;'>ZONE BOSS WARRANT UNLOCKED!</b> Completed all 5 Tiers in <b>" + q.areaName + "</b>!";
-  } else if (newTier > prevTier) {
-    unlockMsg = "⬆️ <b>Quest Warrant Advanced!</b> Unlocked <b>Tier " + (newTier + 1) + "/5</b> for " + q.areaName + "!";
-  }
-
-  var clearCoOp = false;
-  if (serverData.sharedWarrant && serverData.sharedWarrant.id === q.id) {
-    serverData.sharedWarrant = null;
-    clearCoOp = true;
-  }
-
-  hero.boardQuests.splice(qIdx, 1);
-  hero.boardQuests.push(generateSingleBoardQuest(hero, q.areaId, null));
-
-  playSfx("levelup");
-  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 28);
-  addLog("🏆 <b>Contract Completed (" + q.giver + ")!</b> +" + xpEarned + " XP, +" + gEarned + "g &amp; +18 Fame! " + unlockMsg);
-  checkLevelUp();
-  saveCurrentHero(null, false, null, clearCoOp ? { clearSharedWarrant: true } : null);
-  renderGameScreen();
-
-  var upDiff = qRewardItem ? getUpgradeDelta(qRewardItem) : 0;
-  showOutcomeModal(
-    "🏆 Contract Fulfilled!", q.giverIcon, q.giver, "#4ade80",
-    '<div>🌟 <b>Experience:</b> <span style="color:#38bdf8;">+' + xpEarned.toLocaleString() + ' XP</span></div>' +
-    '<div>💰 <b>Gold &amp; Fame:</b> <span style="color:#fbbf24;">+' + gEarned.toLocaleString() + ' Gold &amp; +18 Court Fame (Now ' + hero.fame + '/' + getMaxFameForLevel(hero.level) + ')</span></div>' +
-    (q.rewardGems > 0 ? '<div>💎 <b>Dragon Gems:</b> <span style="color:#38bdf8;">+' + q.rewardGems + '💎 (Total: ' + hero.gems + '💎)</span></div>' : '') +
-    '<div>🏰 <b>Domain Tribute:</b> <span style="color:#4ade80;">+' + stabGain + '% Stability, +8🪵 Timber &amp; +6🪨 Stone</span></div>' +
-    (qRewardItem ? '<div>🎁 <b>Quartermaster Issue:</b> ' + qRewardItem.icon + ' <span class="rarity-' + qRewardItem.rarity + '">' + escapeHtml(qRewardItem.name) + '</span>' + (upDiff > 0 ? ' <span class="upgrade-pill">✨ UPGRADE (+' + upDiff + ')</span>' : '') + '</div>' : '') +
-    '<div style="margin-top:6px;">' + (unlockMsg || '✅ Area Warrant Tier: ' + newTier + '/5') + '</div>',
-    null
-  );
+  showOutcomeModal("👑 Hail Sovereign " + hero.name + "!", "👑👶", hero.name, "#fde047", sMsg, "courting");
 }
 '''
 }
 
 String buildHeroChunkB2() {
     return '''
-// v18.1 #7: Darkest Dungeon Stress & Resolve Check (100% Stress -> 25% Virtue / 75% Affliction)
-function addHeroStress(amt) {
-  if (!hero) return "";
-  if (hero.resolveState && hero.resolveState.isVirtue) return "";
-  var rw = getRealWeather();
-  var weatherStressAdd = (amt > 0 && (rw.lightning || rw.hot)) ? Math.max(1, Math.round(amt * 0.15)) : 0;
-  hero.stress = Math.max(0, Math.min(100, (hero.stress || 0) + amt + weatherStressAdd));
-  if (hero.stress >= 100 && !hero.resolveState) {
-    var isVirt = (Math.random() < 0.25);
-    var pool = isVirt ? RESOLVE_STATES.virtues : RESOLVE_STATES.afflictions;
-    var picked = pool[Math.floor(Math.random() * pool.length)];
-    hero.resolveState = { id: picked.id, name: picked.name, isVirtue: isVirt, statMult: picked.statMult, desc: picked.desc, questsLeft: 6 };
-    if (isVirt) {
-      hero.stress = 0;
-      playSfx("levelup");
-      showGothicToast("🌟 RESOLVE CHECK: " + picked.name + " (+20% Stats)!");
-    } else {
-      playSfx("death");
-      showGothicToast("😰 RESOLVE CHECK: " + picked.name + " (-12% Stats)!");
-    }
-    return " 🕯️ <b>RESOLVE CHECK: " + picked.name + "!</b>";
-  }
-  return "";
-}
-
-function triggerCampfireBanter() {
+function awakenHeroCalling() {
   ensureHeroV3Fields(hero);
-  if ((hero.bantersUsedToday || 0) >= MAX_DAILY_BANTERS) {
-    showRequirementModal("Campfire Banter Daily Limit Reached (3/3 Today)", "🔥⏳", "You have already rested by the campfire <b>3 times today</b>.", "Return after midnight rollover (or use Admin Reset) for fresh campfire stories!", "");
-    return;
-  }
-  var nowMs = Date.now();
-  var elapsed = nowMs - (hero.lastBanterEpoch || 0);
-  if (elapsed < TWO_HOURS_MS) {
-    var remSec = Math.ceil((TWO_HOURS_MS - elapsed) / 1000);
+  if (hero.awakened) { showGothicToast("✅ Your Calling is already Awakened!"); return; }
+  var awk = CLASS_AWAKENINGS[hero.calling] || { title: "Grandmaster", desc: "" };
+  if (hero.level < 20 || hero.gold < 3500 || (hero.gems || 0) < 6) {
     showRequirementModal(
-      "Campfire Banter Cooldown (2-Hour Limit)", "🔥⏳",
-      "You have already rested by the campfire recently. Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before you can heal from Campfire Banter again (1x every 2 hours, Max 3/day).",
-      "Use Healing Potions, the Sanctuary in the Citadel, or Dark Weir Angling if you need additional healing right now!",
+      "Cannot Awaken Calling Yet", "🌟⚔️",
+      "Tier I Class Awakening (<b>" + escapeHtml(awk.title) + "</b>) requires:<br>• <b>Hero Level 20+</b> (Currently Lv " + hero.level + ")<br>• <b>3,500 Gold</b> (Have " + hero.gold.toLocaleString() + "g)<br>• <b>6💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
+      "Defeat Zone Bosses and complete Tier 5 Warrants to earn Dragon Gems!",
       ""
     );
     return;
   }
-  hero.lastBanterEpoch = nowMs;
-  hero.bantersUsedToday = (hero.bantersUsedToday || 0) + 1;
-  var pool = [];
-  if (hero.mercenaries && hero.mercenaries.length > 0) {
-    hero.mercenaries.forEach(function(m) {
-      var match = CAMPFIRE_BANTER.find(function(cb) { return cb.id === m.id; });
-      if (match) pool.push(match);
-      else pool.push({ speaker: m.name, icon: m.icon || "⚔️", quote: "&ldquo;My blade is sharp and my oath is yours, my Liege. Rest by the fire while I keep watch.&rdquo;" });
-    });
-  }
-  if (hero.altBodyguard && hero.altBodyguard.name) {
-    pool.push({ speaker: hero.altBodyguard.name + " (Alt Bodyguard)", icon: "🛡️👑", quote: "&ldquo;Our bloodlines fight as one across Valoria. Catch your breath—I have the perimeter.&rdquo;" });
-  }
-  if (hero.spouse && hero.spouse.name) {
-    pool.push({ speaker: hero.spouse.name, icon: hero.spouse.icon || "🌹", quote: "&ldquo;Even when the ash-winds howl across Valoria, our house stands unbroken. Drink this warm spiced wine, my love.&rdquo;" });
-  }
-  if (hero.children && hero.children.length > 0) {
-    var ch = hero.children[0];
-    pool.push({ speaker: ch.name, icon: ch.icon || "👶", quote: "&ldquo;Watch my sword-form! One day I shall stand beside you at the Throne of Genesis!&rdquo;" });
-  }
-
-  var healAmt = Math.max(5, Math.round(hero.maxHp * 0.10));
-  hero.hp = Math.min(hero.maxHp, hero.hp + healAmt);
-  hero.stress = Math.max(0, (hero.stress || 0) - 25);
-  if (hero.resolveState && !hero.resolveState.isVirtue) hero.resolveState = null;
-  playSfx("magic");
-
-  if (pool.length === 0) {
-    var soloMsg = "🔥🦗 <b>SOLITARY CAMPFIRE (" + hero.bantersUsedToday + "/" + MAX_DAILY_BANTERS + " Today • 2h Cooldown):</b><br><i style='color:#9c8f7a;'>&ldquo;You sit alone beside the crackling embers. No mercenaries or consort share your camp tonight—only the distant chirping of crickets in the dark...&rdquo;</i><br>• <b>Solitary Rest:</b> Restored <b style='color:#4ade80;'>+" + healAmt + " HP</b> &amp; relieved <b style='color:#c084fc;'>-25% Stress</b>!";
-    addLog(soloMsg);
-    queueDeltaSaveHero();
-    renderGameScreen();
-    showOutcomeModal("🔥🦗 Solitary Campfire", "🔥🦗", hero.name, "#9c8f7a", soloMsg, window.currentTownModal);
-    return;
-  }
-
-  var b = pool[Math.floor(Math.random() * pool.length)];
-  var bMsg = "🔥🕯️ <b>CAMPFIRE BANTER (" + escapeHtml(b.speaker) + " • " + hero.bantersUsedToday + "/" + MAX_DAILY_BANTERS + " Today):</b><br><i style='color:#fde68a;'>" + b.quote + "</i><br>• <b>Hearth Morale:</b> Restored <b style='color:#4ade80;'>+" + healAmt + " HP</b>, relieved <b style='color:#c084fc;'>-25% Stress</b> &amp; calmed any Affliction!";
-  addLog(bMsg);
-  queueDeltaSaveHero();
-  renderGameScreen();
-  showOutcomeModal("🔥 Hearthside Banter", b.icon, b.speaker, "#d4af37", bMsg, window.currentTownModal);
-}
-
-function setChildApprenticeship(cIdx, masterKey) {
-  ensureHeroV3Fields(hero);
-  var ch = hero.children[cIdx];
-  if (!ch) return;
-  ch.apprentice = (ch.apprentice === masterKey) ? "none" : masterKey;
-  var roleLbl = ch.apprentice === "brom" ? "🔨 Blacksmith Brom's Forge (+5% All-Gear Durability / 45m tick)" : (ch.apprentice === "mira" ? "🧪 Apothecary Mira's Alembic (+1 Healing Potion / 45m tick)" : "Unassigned");
-  addLog("👶🎓 Assigned <b>" + escapeHtml(ch.name) + "</b> to Apprentice under: <b>" + roleLbl + "</b>!");
-  queueSaveHero();
-  if (window.currentTownModal === "courting") openTownFacilityModal("courting");
-  renderGameScreen();
-}
-
-// Improvement #21: Consort Diplomatic Missions (Halves passive Court Fame decay for 2 hours & grants +20 Fame!)
-function dispatchConsortDiplomacy() {
-  ensureHeroV3Fields(hero);
-  if (!hero.spouse) return;
-  if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
-    showRequirementModal("Velvet Chamber Daily Limit Reached (4/4 Today)", "🕊️⏳", "You have already performed <b>4 Velvet Chamber / Consort actions today</b>.", "Return tomorrow (or use Admin Reset) for fresh diplomatic missions!", "");
-    return;
-  }
-  if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for Diplomatic Envoy", "🕊️👑", "Dispatching <b>" + escapeHtml(hero.spouse.name) + "</b> on a Royal Diplomatic Mission requires <b>3⚡ Quests</b>.", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
-    return;
-  }
-  hero.quests -= 3;
-  hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-  hero.spouse.diplomacyUntil = Date.now() + TWO_HOURS_MS;
-  addHeroFame(20);
+  hero.gold -= 3500;
+  hero.gems -= 6;
+  hero.awakened = true;
+  hero.awakenedTitle = awk.title;
+  hero.maxHp += 55;
+  hero.maxMp += 30;
+  syncHeroVitalityMaxHp(hero);
+  hero.hp = hero.maxHp;
+  hero.mp = hero.maxMp;
+  recordMemoirMilestone("Awakened Tier I Calling as a " + awk.title + "!");
   playSfx("levelup");
-  var dMsg = "🕊️👑 <b>CONSORT DIPLOMATIC MISSION LAUNCHED (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -3⚡):</b><br><b>" + escapeHtml(hero.spouse.name) + "</b> rode out with royal heralds to neighboring courts!<br>• <b>Diplomatic Shield:</b> Passive Court Fame decay is <b>cut in half (-50%) for the next 2 Hours</b>!<br>• <b>Immediate Standing:</b> Earned <b>+20 Court Fame</b>!";
-  addLog(dMsg);
-  queueDeltaSaveHero();
+  var aMsg = "🌟⚔️ <b style='color:#4ade80;'>TIER I CALLING AWAKENED: " + escapeHtml(awk.title.toUpperCase()) + "!</b><br>• <b>Passive Mastery:</b> " + escapeHtml(awk.desc) + "<br>• <b>Vitals Surge:</b> +55 Max HP &amp; +30 Max MP!";
+  addLog(aMsg);
+  saveCurrentHero("🌟 " + hero.name + " awakened as a " + awk.title + "!", false, null);
   renderGameScreen();
-  showOutcomeModal("🕊️ Consort Diplomatic Mission!", hero.spouse.icon, hero.spouse.name, "#38bdf8", dMsg, "courting");
+  showOutcomeModal("🌟 Calling Awakened!", "🌟⚔️", hero.name, "#4ade80", aMsg, null);
 }
 
-// Improvement #20: Heir Coming-of-Age Proving-Ground Trial (At Lv 10+, upgrades Disciplined Squire to Heroic Vanguard or +25% Stats!)
-function undertakeHeirComingOfAgeTrial(cIdx) {
+function ascendMythicCalling() {
   ensureHeroV3Fields(hero);
-  var ch = hero.children[cIdx];
-  if (!ch) return;
-  if ((ch.level || 1) < 10) {
-    showRequirementModal("Heir Level 10+ Required for Coming-of-Age Trial", "⚔️👶", "<b>" + escapeHtml(ch.name) + "</b> must reach at least <b>Heir Level 10</b> (Currently Lv " + (ch.level || 1) + ") before undertaking the Solo Proving-Ground Trial.", "Bring your Heir into battle or send them on 20-minute Heir Expeditions to level them up to Lv 10!", "");
-    return;
-  }
-  if (ch.trialDone) {
-    showGothicToast("🌟 " + ch.name + " has already triumphed in their Coming-of-Age Trial!");
-    return;
-  }
-  if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for Coming-of-Age Trial", "⚔️⚡", "Sponsoring your Heir's Proving-Ground Trial requires <b>3⚡ Quests</b>.", "Wait for the 45m stamina tick or rest at the Inn!", "");
-    return;
-  }
-  hero.quests -= 3;
-  ch.trialDone = true;
-  if (ch.traitName === "Disciplined Squire" || !ch.isStrong) {
-    var vanguard = CHILD_TRAITS[1];
-    ch.traitName = vanguard.tier;
-    ch.icon = vanguard.icon;
-    ch.isStrong = true;
-    ch.atkMult = vanguard.atkMult;
-    ch.wbDmgMult = vanguard.wbDmgMult;
-  }
-  ch.atk = Math.round(ch.atk * 1.30) + 15;
-  ch.maxHp = Math.round(ch.maxHp * 1.30) + 75;
-  ch.hp = ch.maxHp;
-  addHeroFame(30);
-  playSfx("levelup");
-  var tMsg = "⚔️🦁 <b style='color:#4ade80;'>HEIR COMING-OF-AGE PROVING-GROUND TRIUMPH (-3⚡)!</b><br>Before the banners of the Citadel, <b>" + escapeHtml(ch.name) + " (Lv " + ch.level + ")</b> defeated a caged Ironcrag Wyvern solo!<br>• <b>Ascended Lineage Class:</b> <span style='color:#fde047;font-weight:bold;'>" + ch.icon + " " + ch.traitName + "</span><br>• <b>New Combat Stats:</b> 🗡️ <b>" + ch.atk + " ATK (+30%)</b> • ❤️ <b>" + ch.maxHp + " HP (+30%)</b> &amp; +30 Court Fame!";
-  addLog(tMsg);
-  queueSaveHero();
-  renderGameScreen();
-  showOutcomeModal("🦁 Heir Coming-of-Age Triumph!", ch.icon, ch.name, "#4ade80", tMsg, "courting");
-}
-
-function courtNobleCandidate(candId, method) {
-  ensureHeroV3Fields(hero);
-  if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
-    showRequirementModal("Velvet Chamber Daily Limit Reached (4/4 Today)", "🌹⏳", "You have already performed <b>4 Velvet Chamber courting actions today</b>.", "Return tomorrow (or use Admin Reset) to continue your courtship!", "");
-    return;
-  }
-  var cand = COURTING_POOL.find(function(c) { return c.id === candId; });
-  if (!cand) return;
-  if ((hero.nobleIdx || 0) < cand.minNobleIdx) {
-    var reqTitle = NOBLE_RANKS[cand.minNobleIdx].title;
+  if (hero.mythicAscended) { showGothicToast("✅ You have already achieved Tier II Mythic Ascension!"); return; }
+  var awk = CLASS_AWAKENINGS[hero.calling] || { mythicTitle: "Mythic Sovereign" };
+  if (!hero.awakened || hero.level < 75 || hero.gold < 45000 || (hero.gems || 0) < 15) {
     showRequirementModal(
-      "Noble Title Too Low to Court " + cand.name, "🌹👑",
-      "<b>" + escapeHtml(cand.name) + " (" + cand.title + ")</b> only entertains suitors of at least <b style='color:#fbbf24;'>" + reqTitle + "</b> rank (Your current rank: <b>" + hero.nobleRank + "</b>).",
-      "Visit the <b>🏛️ Citadel ➔ 👑 High Court</b> and submit a formal Title Petition!",
-      '<button class="btn btn-gold" style="flex:1;" onclick="openTownFacilityModal(&#39;court&#39;)">👑 Go to High Court</button>'
-    );
-    return;
-  }
-  if (hero.quests < 4) {
-    showRequirementModal("Need 4⚡ Quests Stamina to Court", "⚡🌹", "Courting a noble consort requires <b style='color:#fbbf24;'>4⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45-minute recovery timer or Quick-Rest at the Boar&apos;s Head Inn!", "");
-    return;
-  }
-
-  var curAff = hero.courtingProgress[candId] || 0;
-  if (method === "serenade") {
-    hero.quests -= 4;
-    hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-    var chk = rollContestedStatCheck("charm", 14 + cand.minNobleIdx * 2, cand.minNobleIdx * 2, false);
-    var gain = chk.passed ? (18 + Math.floor(Math.random() * 10)) : 7;
-    curAff = Math.min(100, curAff + gain);
-    hero.courtingProgress[candId] = curAff;
-    playSfx(chk.passed ? "magic" : "coin");
-    var sMsg = "🌹 <b>Velvet Chamber Serenade (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -4⚡):</b> " + (chk.passed ? "<b style='color:#4ade80;'>Your dark ballad enchanted " + escapeHtml(cand.name) + "!</b>" : "<b style='color:#fbbf24;'>Your lute string snapped mid-verse, yet she smiled politely.</b>") + "<br>• <b>Affection Gained:</b> <span style='color:#f472b6;font-weight:bold;'>+" + gain + "% (Now " + curAff + "% / 100%)</span>";
-    addLog(sMsg);
-    queueSaveHero();
-    renderGameScreen();
-    showOutcomeModal(chk.passed ? "🎵 Enchanting Serenade!" : "🎵 Modest Serenade", cand.icon, cand.name, chk.passed ? "#f472b6" : "#d4af37", sMsg, "courting");
-  } else if (method === "gift") {
-    if (hero.gold < cand.giftGold || getTotalMaterialsCount() < 2) {
-      showRequirementModal(
-        "Insufficient Lavish Gift", "🎁💰",
-        "Presenting a Royal Gift to <b>" + escapeHtml(cand.name) + "</b> requires <b style='color:#fbbf24;'>4⚡ Quests</b>, <b style='color:#fbbf24;'>" + cand.giftGold.toLocaleString() + " Gold</b>, and <b style='color:#fbbf24;'>2 Monster Trophies</b>.",
-        "Hunt monsters in the World tab or complete Quest Board contracts to earn Gold and Monster Trophies!",
-        ""
-      );
-      return;
-    }
-    hero.quests -= 4;
-    hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-    hero.gold -= cand.giftGold;
-    consumeAnyMaterials(2);
-    curAff = Math.min(100, curAff + 28);
-    hero.courtingProgress[candId] = curAff;
-    playSfx("coin");
-    var gMsg = "🎁 <b>Lavish Royal Gift Presented (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -4⚡, -" + cand.giftGold.toLocaleString() + "g, -2 Trophies):</b><br><b>" + escapeHtml(cand.name) + "</b> is delighted by your tribute!<br>• <b>Affection Gained:</b> <span style='color:#4ade80;font-weight:bold;'>+28% (Now " + curAff + "% / 100%)</span>";
-    addLog(gMsg);
-    queueSaveHero();
-    renderGameScreen();
-    showOutcomeModal("🎁 Lavish Gift Accepted!", cand.icon, cand.name, "#4ade80", gMsg, "courting");
-  }
-}
-
-function marryNobleCandidate(candId) {
-  ensureHeroV3Fields(hero);
-  var cand = COURTING_POOL.find(function(c) { return c.id === candId; });
-  if (!cand) return;
-  var curAff = hero.courtingProgress[candId] || 0;
-  var weddingCost = cand.giftGold * 2;
-  if (curAff < 100 || hero.gold < weddingCost) {
-    showRequirementModal(
-      "Cannot Wed " + cand.name + " Yet", "💍🌹",
-      "A Royal Wedding requires <b style='color:#fbbf24;'>100% Affection</b> (Currently " + curAff + "%) and a <b style='color:#fbbf24;'>" + weddingCost.toLocaleString() + " Gold</b> Wedding Banquet (You have " + hero.gold.toLocaleString() + "g).",
-      "Use <b>🎵 Serenade (-4⚡)</b>, <b>🎁 Present Gift (-4⚡)</b>, or win <b>🏇 Royal Jousting (-5⚡)</b> tournaments to raise Affection to 100%!",
+      "Cannot Ascend to Mythic Tier II Yet", "☄️👑",
+      "Tier II Mythic Ascension (<b>" + escapeHtml(awk.mythicTitle) + "</b>) requires:<br>• <b>Tier I Awakening Completed</b><br>• <b>Hero Level 75+</b> (Currently Lv " + hero.level + ")<br>• <b>45,000 Gold</b> &amp; <b>15💎 Dragon Gems</b>",
+      "Advance through the mid-game realms and Spire floors to gather 15 Dragon Gems!",
       ""
     );
     return;
   }
-  hero.gold -= weddingCost;
-  hero.spouse = {
-    id: cand.id, name: cand.name, icon: cand.icon, title: cand.title,
-    blessing: cand.blessing, bonusGuts: cand.bonusGuts, bonusWits: cand.bonusWits,
-    bonusCharm: cand.bonusCharm, prodigyAdd: cand.prodigyAdd, love: 100, diplomacyUntil: 0
-  };
-  addHeroFame(60);
-  recordMemoirMilestone("United in Royal Marriage with " + cand.name + " (" + cand.title + ").");
+  hero.gold -= 45000;
+  hero.gems -= 15;
+  hero.mythicAscended = true;
+  hero.mythicTitle = awk.mythicTitle;
+  hero.maxHp += 180;
+  hero.maxMp += 80;
+  syncHeroVitalityMaxHp(hero);
+  hero.hp = hero.maxHp;
+  hero.mp = hero.maxMp;
+  recordMemoirMilestone("Achieved Tier II Mythic Ascension as " + awk.mythicTitle + "!");
   playSfx("levelup");
-  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 42);
-  var wMsg = "💍 <b style='color:#4ade80;'>ROYAL WEDDING BELLS!</b><br>Before the High Court of Valoria, you wed <b>" + cand.icon + " " + escapeHtml(cand.name) + " (" + cand.title + ")</b>!<br>• <b>Spouse Blessing:</b> <span style='color:#fde68a;'>" + escapeHtml(cand.blessing) + "</span><br>• <b>Court Fame:</b> <span style='color:#fbbf24;'>+60 Fame</span><br>• <b>Marital Love:</b> <span style='color:#f472b6;'>100% ❤️ Devoted</span>";
-  addLog(wMsg);
-  saveCurrentHero("💍 " + hero.name + " wed " + cand.name + " in a grand royal ceremony!", false, null);
+  var mMsg = "☄️👑 <b style='color:#c084fc;'>TIER II MYTHIC ASCENSION: " + escapeHtml(awk.mythicTitle.toUpperCase()) + "!</b><br>Granted <b>+25% All Stats, +180 Max HP &amp; +80 Max MP</b>!";
+  addLog(mMsg);
+  saveCurrentHero("☄️ " + hero.name + " ascended to Mythic Tier II (" + awk.mythicTitle + ")!", false, null);
   renderGameScreen();
-  showOutcomeModal("💍 Royal Wedding Celebrated!", cand.icon, cand.name, "#f472b6", wMsg, "courting");
+  showOutcomeModal("☄️ Mythic Ascension Complete!", "☄️👑", hero.name, "#c084fc", mMsg, null);
 }
 
-function embarkConsortRomanceQuest() {
+function unlockEclipseDualClass() {
   ensureHeroV3Fields(hero);
-  if (!hero.spouse) return;
-  if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
-    showRequirementModal("Velvet Chamber Daily Limit Reached (4/4 Today)", "🌹⏳", "You have already performed <b>4 Velvet Chamber courting/romance actions today</b>.", "Return tomorrow (or use Admin Reset) for fresh romance quests!", "");
+  if (hero.hybridClass) { showGothicToast("✅ Dual-Class Hybridization already active (" + hero.hybridClass + ")!"); return; }
+  if (!hero.mythicAscended || hero.level < 125 || (hero.gems || 0) < 20) {
+    showRequirementModal(
+      "Cannot Unlock Tier III Eclipse Dual-Class Yet", "🌑⚔️",
+      "Tier III Eclipse Dual-Classing requires:<br>• <b>Tier II Mythic Ascension Completed</b><br>• <b>Hero Level 125+</b> (Currently Lv " + hero.level + ")<br>• <b>20💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
+      "Conquer the late-game realms to reach Level 125!",
+      ""
+    );
     return;
   }
-  if (hero.quests < 4) {
-    showRequirementModal("Need 4⚡ Quests for Consort Romance Quest", "🌹🗺️", "Embarking on a private Royal Consort Quest requires <b>4⚡ Quests</b>.", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+  var opts = Object.keys(CALLINGS).filter(function(k) { return k !== hero.calling; }).map(function(k) {
+    return '<button class="btn btn-gold" style="width:100%;margin-top:6px;" onclick="applySelectedHybridClass(&#39;' + k + '&#39;)">' + CALLINGS[k].icon + ' Hybridize with ' + k + ' (+15% All Stats &amp; +220 HP)</button>';
+  }).join('');
+  showPopupModal(
+    '<div style="font-size:19px;font-weight:900;color:#fde047;font-family:Cinzel,serif;margin-bottom:6px;">🌑 Select Secondary Eclipse Calling (-20💎)</div>' +
+    opts +
+    '<button class="btn" style="width:100%;margin-top:10px;" onclick="openHeroSheetModal()">Cancel</button>'
+  );
+}
+
+function applySelectedHybridClass(secClass) {
+  if (!CALLINGS[secClass] || (hero.gems || 0) < 20) return;
+  hero.gems -= 20;
+  hero.hybridClass = secClass;
+  hero.maxHp += 220;
+  syncHeroVitalityMaxHp(hero);
+  hero.hp = hero.maxHp;
+  playSfx("levelup");
+  var hMsg = "🌑⚔️ <b style='color:#7dd3fc;'>ECLIPSE DUAL-CLASS UNLOCKED (" + hero.calling + " / " + secClass + ")!</b><br>Granted <b>+15% All Stats &amp; +220 Max HP</b>!";
+  addLog(hMsg);
+  saveCurrentHero("🌑 " + hero.name + " unlocked Eclipse Dual-Class (" + hero.calling + "/" + secClass + ")!", false, null);
+  renderGameScreen();
+  showOutcomeModal("🌑 Dual-Class Hybridized!", "🌑⚔️", hero.name, "#7dd3fc", hMsg, null);
+}
+
+function courtNobleCandidate(candId, actType) {
+  ensureHeroV3Fields(hero);
+  if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
+    showRequirementModal("Velvet Chamber Daily Limit Reached (3/3 Today)", "🌹⏳", "You have already performed <b>3 Courting or Romance actions today</b>.", "Return tomorrow (or use Admin Reset) to continue your courtship!", "");
+    return;
+  }
+  var c = COURTING_POOL.find(function(x) { return x.id === candId; });
+  if (!c) return;
+  if ((hero.nobleIdx || 0) < c.minNobleIdx) {
+    showRequirementModal("Higher Noble Title Required", c.icon, "Courting <b>" + escapeHtml(c.name) + "</b> requires the feudal rank of <b>" + NOBLE_RANKS[c.minNobleIdx].title + "+</b>.", "Petition the High Court in the Citadel to advance your rank!", "");
+    return;
+  }
+  if (hero.quests < 4 || (actType === "gift" && hero.gold < c.giftGold)) {
+    showRequirementModal("Insufficient Stamina or Gold for Courtship", c.icon, "Requires <b>4⚡ Quests</b>" + (actType === "gift" ? (" and <b>" + c.giftGold.toLocaleString() + " Gold</b>") : "") + ".", "Rest at the Inn or collect Kingdom Taxes!", "");
     return;
   }
   hero.quests -= 4;
   hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-  hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 35);
-  hero.hp = hero.maxHp;
-  hero.mp = hero.maxMp;
-  var dowryGold = 180 + hero.level * 45;
-  hero.gold += dowryGold;
-  addHeroFame(25);
-  if (hero.guild && hero.guild.founded) hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + 6);
-  var bonusHeirloom = "";
-  if (Math.random() < 0.28 && hero.inventory.length < 30) {
-    var hItm = generateRandomItem(hero.level + 1, 2, 4);
-    hero.inventory.push(hItm);
-    bonusHeirloom = "<br>• <b>Consort Heirloom Gifted:</b> " + formatItemStats(hItm, true);
-  }
-  playSfx("levelup");
-  var rqMsg = "🌹👑 <b>CONSORT ROMANCE QUEST COMPLETED (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -4⚡):</b><br>You and <b>" + escapeHtml(hero.spouse.name) + "</b> rode beneath the twin moons to renew your bloodline oaths!<br>• <b>Vitals &amp; Devotion:</b> <span style='color:#f472b6;font-weight:bold;'>100% Full HP/MP &amp; +35% ❤️ Love (" + hero.spouse.love + "%)</span><br>• <b>Dowry &amp; Standing:</b> +" + dowryGold.toLocaleString() + "g, +25 Fame &amp; +6% Kingdom Stability" + bonusHeirloom;
-  addLog(rqMsg);
-  queueSaveHero();
+  if (actType === "gift") hero.gold -= c.giftGold;
+  var st = getHeroStats();
+  var gain = (actType === "gift" ? 28 : 18) + Math.min(18, Math.floor(st.effCharm / 8));
+  hero.courtingProgress[c.id] = Math.min(100, (hero.courtingProgress[c.id] || 0) + gain);
+  addHeroFame(10);
+  playSfx("magic");
+  var cMsg = "🌹 <b>Velvet Chamber Courtship (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today):</b><br>Your " + (actType === "gift" ? "lavish gift" : "lute serenade") + " raised <b>" + escapeHtml(c.name) + "&apos;s</b> affection to <b>" + hero.courtingProgress[c.id] + "% / 100%</b> (+10 Fame)!";
+  addLog(cMsg);
+  queueDeltaSaveHero();
   renderGameScreen();
-  showOutcomeModal("🌹 Consort Romance Quest!", hero.spouse.icon, hero.spouse.name, "#f472b6", rqMsg, "courting");
+  showOutcomeModal("🌹 Affection Raised (" + hero.courtingProgress[c.id] + "%)!", c.icon, c.name, "#f472b6", cMsg, "courting");
+}
+
+function marryNobleCandidate(candId) {
+  ensureHeroV3Fields(hero);
+  var c = COURTING_POOL.find(function(x) { return x.id === candId; });
+  if (!c) return;
+  var aff = hero.courtingProgress[c.id] || 0;
+  var wedCost = c.giftGold * 2;
+  if (aff < 100 || hero.gold < wedCost) {
+    showRequirementModal("Cannot Wed " + c.name + " Yet", "💍🌹", "Requires <b>100% Courtship Affection</b> (Have " + aff + "%) and <b>" + wedCost.toLocaleString() + " Gold</b> for the Royal Wedding.", "Serenade or gift " + escapeHtml(c.name) + " until Affection reaches 100%!", "");
+    return;
+  }
+  hero.gold -= wedCost;
+  hero.spouse = { id: c.id, name: c.name, icon: c.icon, blessing: c.blessing, bonusGuts: c.bonusGuts, bonusWits: c.bonusWits, bonusCharm: c.bonusCharm, love: 100, diplomacyUntil: 0 };
+  addHeroFame(50);
+  recordMemoirMilestone("Wed Royal Consort " + c.name + " in the Grand Cathedral of Valoria.");
+  playSfx("levelup");
+  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 45);
+  var wMsg = "💍👑 <b style='color:#f472b6;'>ROYAL WEDDING CELEBRATED!</b><br>You wed <b>" + c.icon + " " + escapeHtml(c.name) + "</b> (" + escapeHtml(c.blessing) + " &amp; +50 Court Fame)!";
+  addLog(wMsg);
+  saveCurrentHero("💍 " + hero.name + " wed Royal Consort " + c.name + "!", false, null);
+  renderGameScreen();
+  showOutcomeModal("💍 Royal Wedding Sealed!", c.icon, c.name, "#f472b6", wMsg, "courting");
 }
 
 function takeWifeOnRoyalDate() {
   ensureHeroV3Fields(hero);
   if (!hero.spouse) return;
   if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
-    showRequirementModal("Velvet Chamber Daily Limit Reached (4/4 Today)", "🌹⏳", "You have already performed <b>4 Velvet Chamber courting/romance actions today</b>.", "Return tomorrow (or use Admin Reset) for another Royal Date!", "");
+    showRequirementModal("Velvet Chamber Daily Limit (3/3 Today)", "🌹⏳", "You have already completed 3 Courting/Romance actions today.", "Return tomorrow!", "");
     return;
   }
-  var dateCost = Math.max(300, hero.level * 45);
-  if (hero.quests < 4 || hero.gold < dateCost) {
-    showRequirementModal(
-      "Cannot Take Wife on Royal Date Yet", "🌹🍷",
-      "Taking <b>" + escapeHtml(hero.spouse.name) + "</b> on a Moonlight Carriage Date requires <b style='color:#fbbf24;'>4⚡ Quests</b> and <b style='color:#fbbf24;'>" + dateCost.toLocaleString() + " Gold</b>.",
-      "Keep your Wife's Love above 80% for 100% of her Stat Blessing (and never let it hit 0% or she may divorce you for 20% of your Gold!).",
-      ""
-    );
+  var cost = Math.max(300, hero.level * 45);
+  if (hero.quests < 4 || hero.gold < cost) {
+    showRequirementModal("Need 4⚡ Quests & " + cost.toLocaleString() + "g", "🌹🍷", "Taking <b>" + escapeHtml(hero.spouse.name) + "</b> on a Royal Date requires <b>4⚡ Quests</b> and <b>" + cost.toLocaleString() + " Gold</b>.", "Collect taxes or rest at the Inn!", "");
+    return;
+  }
+  hero.quests -= 4;
+  hero.gold -= cost;
+  hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
+  hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 25);
+  hero.stress = Math.max(0, (hero.stress || 0) - 20);
+  addHeroFame(15);
+  playSfx("levelup");
+  var dMsg = "🌹🍷 <b>Royal Moonlight Date (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today):</b><br>Restored <b>" + escapeHtml(hero.spouse.name) + "&apos;s</b> Devotion to <b>" + hero.spouse.love + "% ❤️</b> (-20% Stress &amp; +15 Fame)!";
+  addLog(dMsg);
+  queueDeltaSaveHero();
+  renderGameScreen();
+  showOutcomeModal("🌹 Marital Devotion Restored!", hero.spouse.icon, hero.spouse.name, "#f472b6", dMsg, "courting");
+}
+
+function embarkConsortRomanceQuest() {
+  ensureHeroV3Fields(hero);
+  if (!hero.spouse) return;
+  if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
+    showRequirementModal("Velvet Chamber Daily Limit (3/3 Today)", "🗺️⏳", "You have already completed 3 Courting/Romance actions today.", "Return tomorrow!", "");
+    return;
+  }
+  if (hero.quests < 4) {
+    showRequirementModal("Need 4⚡ Quests for Romance Quest", "🗺️🌹", "Embarking on a Consort Romance Quest requires 4⚡ Quests.", "Wait for the 45m tick!", "");
     return;
   }
   hero.quests -= 4;
   hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-  hero.gold -= dateCost;
-  hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 30);
-  addHeroFame(15);
+  hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 20);
+  hero.guts += 1; hero.wits += 1; hero.charm += 1;
+  syncHeroVitalityMaxHp(hero);
+  playSfx("levelup");
+  var rMsg = "🗺️🌹 <b>Consort Romance Quest Complete (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today):</b><br>Adventured alongside <b>" + escapeHtml(hero.spouse.name) + "</b> (+20% ❤️ Devotion &amp; <b>+1 Permanent Guts/Wits/Charm</b>)!";
+  addLog(rMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("🗺️ Consort Quest Triumph!", hero.spouse.icon, hero.spouse.name, "#4ade80", rMsg, "courting");
+}
+
+function dispatchConsortDiplomacy() {
+  ensureHeroV3Fields(hero);
+  if (!hero.spouse) return;
+  if (hero.quests < 3) {
+    showRequirementModal("Need 3⚡ Quests for Diplomatic Envoy", "🕊️👑", "Dispatching your Consort to the High Court requires <b>3⚡ Quests</b>.", "Wait for the 45m tick!", "");
+    return;
+  }
+  hero.quests -= 3;
+  hero.spouse.diplomacyUntil = Date.now() + TWO_HOURS_MS;
+  addHeroFame(22);
   playSfx("magic");
-  var dMsg = "🌹💖 <b>Moonlight Carriage Date (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -4⚡, -" + dateCost.toLocaleString() + "g):</b><br>You spent a romantic evening with <b>" + escapeHtml(hero.spouse.name) + "</b> overlooking the Silver Weald!<br>• <b>Marital Love:</b> <span style='color:#f472b6;font-weight:bold;'>+30% ❤️ (Now " + hero.spouse.love + "% / 100%)</span><br>• <b>Court Fame:</b> <span style='color:#fbbf24;'>+15 Fame</span>";
-  addLog(dMsg);
+  var eMsg = "🕊️👑 <b>Consort Diplomatic Mission Launched (-3⚡):</b><br><b>" + escapeHtml(hero.spouse.name) + "</b> is representing your House at Court (+22 Fame &amp; <b>-50% Passive Fame Decay for 2 Hours</b>)!";
+  addLog(eMsg);
   queueDeltaSaveHero();
   renderGameScreen();
-  showOutcomeModal("🌹 Moonlight Royal Date!", hero.spouse.icon, hero.spouse.name, "#f472b6", dMsg, "courting");
+  showOutcomeModal("🕊️ Diplomatic Envoy Active!", hero.spouse.icon, hero.spouse.name, "#7dd3fc", eMsg, "courting");
 }
 
 function hostGrandRoyalBanquet() {
   ensureHeroV3Fields(hero);
   if ((hero.courtingUsedToday || 0) >= MAX_DAILY_COURTING) {
-    showRequirementModal("Velvet Chamber Daily Limit Reached (4/4 Today)", "🍷⏳", "You have already hosted or performed <b>4 Velvet Chamber actions today</b>.", "Return tomorrow (or use Admin Reset) to host another Grand Banquet!", "");
+    showRequirementModal("Velvet Chamber Daily Limit (3/3 Today)", "🍷⏳", "You have already completed 3 Courting/Banquet actions today.", "Return tomorrow!", "");
     return;
   }
-  var bCost = Math.max(900, hero.level * 110);
-  if (hero.quests < 6 || hero.gold < bCost || (hero.guild && hero.guild.founded && (hero.guild.rations || 0) < 25)) {
-    showRequirementModal(
-      "Cannot Host Grand Royal Banquet Yet", "🍷👑",
-      "Hosting a Grand Royal Banquet for the High Court and your Consort requires:<br>• <b>6⚡ Quests Stamina</b> (Have " + hero.quests + "⚡)<br>• <b>" + bCost.toLocaleString() + " Gold</b> (Have " + hero.gold.toLocaleString() + "g)" + (hero.guild && hero.guild.founded ? "<br>• <b>25🍞 Granary Rations</b> (Have " + (hero.guild.rations || 0) + "🍞)" : ""),
-      "A Grand Banquet restores <b>+35% Wife Love</b>, <b>+45 Court Fame</b>, and <b>+10% Kingdom Stability</b> all at once!",
-      ""
-    );
+  var cost = Math.max(600, hero.level * 85);
+  if (hero.quests < 6 || hero.gold < cost) {
+    showRequirementModal("Need 6⚡ Quests & " + cost.toLocaleString() + "g for Banquet", "🍷👑", "Hosting a Grand Royal Banquet requires <b>6⚡ Quests</b> and <b>" + cost.toLocaleString() + " Gold</b>.", "Collect Kingdom Taxes or patrol regions!", "");
     return;
   }
   hero.quests -= 6;
+  hero.gold -= cost;
   hero.courtingUsedToday = (hero.courtingUsedToday || 0) + 1;
-  hero.gold -= bCost;
-  if (hero.guild && hero.guild.founded) {
-    hero.guild.rations -= 25;
-    hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + 10);
-  }
   addHeroFame(45);
-  if (hero.spouse) hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 35);
+  if (hero.spouse) hero.spouse.love = 100;
+  hero.stress = Math.max(0, (hero.stress || 0) - 35);
   playSfx("levelup");
-  var bMsg = "🍷👑 <b>GRAND ROYAL BANQUET HOSTED (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today • -6⚡, -" + bCost.toLocaleString() + "g):</b><br>Lords, Ladies, and Heralds toasted your house until dawn!<br>• <b>Court Fame:</b> <span style='color:#fbbf24;font-weight:bold;'>+45 Fame (Now " + hero.fame + "/" + getMaxFameForLevel(hero.level) + ")</span>" + (hero.spouse ? "<br>• <b>Wife's Marital Love:</b> <span style='color:#f472b6;font-weight:bold;'>+35% ❤️ (Now " + hero.spouse.love + "%)</span>" : "") + (hero.guild && hero.guild.founded ? "<br>• <b>Domain Stability:</b> <span style='color:#4ade80;font-weight:bold;'>+10% (Now " + hero.guild.stability + "%)</span>" : "");
+  var bMsg = "🍷👑 <b>Grand Royal Banquet Hosted (" + hero.courtingUsedToday + "/" + MAX_DAILY_COURTING + " Today):</b><br>Earned <b>+45 Court Fame</b>, restored <b>100% ❤️ Consort Devotion</b> &amp; relieved -35% Stress!";
   addLog(bMsg);
-  saveCurrentHero("🍷 " + hero.name + " hosted a Grand Royal Banquet for the High Court!", false, null);
+  queueDeltaSaveHero();
   renderGameScreen();
-  showOutcomeModal("🍷 Grand Royal Banquet!", "🍷👑", hero.spouse ? hero.spouse.name : hero.name, "#d4af37", bMsg, window.currentTownModal === "courting" ? "courting" : null);
+  showOutcomeModal("🍷 Grand Banquet Hosted (+45 Fame)!", "🍷👑", hero.name, "#fde047", bMsg, "courting");
 }
 
 function conceiveDynastyChild() {
   ensureHeroV3Fields(hero);
-  if (!hero.spouse) {
-    showRequirementModal("No Royal Spouse", "💍👶", "You must court and marry a Royal Spouse before you can raise Dynasty Heirs!", "Open the <b>🌹 Velvet Chamber</b> in Town and raise a candidate's Affection to 100%.", "");
+  if (!hero.spouse) return;
+  if ((hero.children ? hero.children.length : 0) >= 6) {
+    showRequirementModal("Dynasty Nursery Full (6/6 Heirs)", "👶👑", "Your Royal Estate already houses the maximum of <b>6 Dynasty Heirs</b>.", "You can crown a Level 50+ Heir via Royal Succession to free a slot!", "");
     return;
   }
-  var curLove = hero.spouse.love !== undefined ? hero.spouse.love : 100;
-  if (curLove < 50) {
-    showRequirementModal("Wife's Marital Love Too Low (" + curLove + "%)", "💔👶", "<b>" + escapeHtml(hero.spouse.name) + "</b> refuses to conceive a new heir while her Marital Love is below <b>50%</b>!", "Click <b>🌹 Royal Date (-4⚡)</b> or <b>🗺️ Romance Quest (-4⚡)</b> to rekindle her devotion first!", "");
+  var cost = Math.max(800, hero.level * 120);
+  if (hero.quests < 4 || hero.gold < cost) {
+    showRequirementModal("Need 4⚡ Quests & " + cost.toLocaleString() + "g", "👶🌹", "Welcoming and outfitting a new Royal Heir requires <b>4⚡ Quests</b> and <b>" + cost.toLocaleString() + " Gold</b>.", "Collect Kingdom Taxes first!", "");
     return;
   }
-  if (hero.children.length >= 6) {
-    showRequirementModal("Royal Nursery Full (6/6 Heirs)", "👶🏰", "Your royal household already has 6 Dynasty Heirs!", "Train and deploy your existing children in battle, apprenticeships, expeditions, or Heir Prestige!", "");
-    return;
-  }
-  var nurseryCost = Math.max(800, hero.level * 120);
-  if (hero.gold < nurseryCost || hero.quests < 4) {
-    showRequirementModal(
-      "Cannot Welcome New Heir Yet", "👶🕯️",
-      "Welcoming and christening a new Royal Child requires <b style='color:#fbbf24;'>" + nurseryCost.toLocaleString() + " Gold</b> and <b style='color:#fbbf24;'>4⚡ Quests</b>.",
-      "Earn Gold from quests or taxes and wait for at least 4⚡ Quests stamina.",
-      ""
-    );
-    return;
-  }
-  hero.gold -= nurseryCost;
   hero.quests -= 4;
-
-  var loveBonus = curLove >= 85 ? 0.12 : 0;
-  var prodChance = 0.18 + (hero.spouse.prodigyAdd || 0.15) + loveBonus + Math.min(0.20, (hero.level || 1) * 0.002);
-  var r = Math.random();
-  var pickedTrait = null;
-  if (r < prodChance * 0.55) pickedTrait = CHILD_TRAITS[0];
-  else if (r < prodChance + 0.25) pickedTrait = CHILD_TRAITS[1];
-  else if (r < 0.72) pickedTrait = CHILD_TRAITS[2];
-  else if (r < 0.88) pickedTrait = CHILD_TRAITS[3];
-  else pickedTrait = CHILD_TRAITS[4];
-
-  var firstNames = ["Prince Aldric", "Princess Elowen", "Prince Valerius", "Princess Lyra", "Prince Kaelen", "Princess Isolde", "Prince Roland", "Princess Aurelia", "Prince Theron", "Princess Freya"];
-  var cName = firstNames[Math.floor(Math.random() * firstNames.length)] + " " + (hero.name.split(" ")[0] || "of Valoria");
-  var baseHp = Math.round((85 + hero.level * 18) * pickedTrait.hpMult);
-  var baseAtk = Math.round((14 + hero.level * 2.4) * pickedTrait.atkMult);
-
-  var newChild = {
-    id: "ch_" + Date.now(), name: cName, icon: pickedTrait.icon,
-    traitName: pickedTrait.tier, isStrong: pickedTrait.isStrong, desc: pickedTrait.desc,
-    level: 1, hp: baseHp, maxHp: baseHp, atk: baseAtk, totalDmg: 0, trialDone: false,
-    atkMult: pickedTrait.atkMult, wbDmgMult: pickedTrait.wbDmgMult, expeditionUntil: 0, apprentice: "brom"
+  hero.gold -= cost;
+  var strongRoll = Math.random() < 0.55;
+  var traitPool = strongRoll ?
+    [{ name: "Dragon-Blooded Prodigy", mult: 1.35 }, { name: "Sun-Blessed Scion", mult: 1.30 }, { name: "Iron-Willed Heir", mult: 1.25 }] :
+    [{ name: "Frail Bookworm", mult: 0.85 }, { name: "Pampered Courtier", mult: 0.88 }];
+  var tr = traitPool[Math.floor(Math.random() * traitPool.length)];
+  var cNames = ["Prince Aldric", "Princess Lyra", "Prince Kaelen", "Princess Seraphina", "Prince Valen", "Princess Isolde", "Prince Cassian", "Princess Rowena"];
+  var cIcons = ["🤴", "👸", "⚔️", "🏹", "🔮", "🛡️"];
+  var cIdx = hero.children.length;
+  var newCh = {
+    name: cNames[(cIdx + hero.level) % cNames.length] + " of " + hero.name.split(" ")[0],
+    icon: cIcons[cIdx % cIcons.length],
+    level: Math.max(1, Math.round(hero.level * 0.35)),
+    isStrong: strongRoll,
+    traitName: tr.name,
+    atk: Math.round((14 + hero.level * 2.1) * tr.mult),
+    maxHp: Math.round((65 + hero.level * 12) * tr.mult),
+    hp: Math.round((65 + hero.level * 12) * tr.mult),
+    apprentice: "none",
+    trialDone: false,
+    totalDmg: 0,
+    expeditionUntil: 0
   };
-  hero.children.push(newChild);
+  hero.children.push(newCh);
   if (hero.activeChildIdx < 0) hero.activeChildIdx = hero.children.length - 1;
-  recordMemoirMilestone("Christened Royal Heir " + newChild.name + " (" + newChild.traitName + ").");
-
+  recordMemoirMilestone("Welcomed Royal Dynasty Heir " + newCh.name + " (" + newCh.traitName + ").");
   playSfx("levelup");
-  var cMsg = "👶 <b style='color:#fbbf24;'>A ROYAL HEIR IS BORN!</b><br><b>" + escapeHtml(hero.spouse.name) + "</b> gave birth to <b>" + newChild.icon + " " + escapeHtml(newChild.name) + "</b>!<br>• <b>Lineage Trait:</b> <span style='color:" + (newChild.isStrong ? "#4ade80" : "#f87171") + ";font-weight:bold;'>" + escapeHtml(newChild.traitName) + "</span><br>• <b>Starting Combat Stats:</b> 🗡️ <b>" + newChild.atk + " ATK</b> • ❤️ <b>" + newChild.maxHp + " HP</b><br>• <b>Default Apprenticeship:</b> 🔨 Blacksmith Brom (+5% All-Gear Durability / 45m tick)";
-  addLog(cMsg);
-  saveCurrentHero("👶 A royal heir (" + newChild.name + " — " + newChild.traitName + ") was born to " + hero.name + " & " + hero.spouse.name + "!", false, null);
+  var chMsg = "👶👑 <b style='color:#4ade80;'>ROYAL DYNASTY HEIR BORN!</b><br>Welcomed <b>" + newCh.icon + " " + escapeHtml(newCh.name) + " (Lv " + newCh.level + " • " + escapeHtml(newCh.traitName) + ")</b>!";
+  addLog(chMsg);
+  saveCurrentHero(null, false, null);
   renderGameScreen();
-  showOutcomeModal("👶 Royal Heir Christened!", newChild.icon, newChild.name, newChild.isStrong ? "#4ade80" : "#d4af37", cMsg, "courting");
+  showOutcomeModal("👶 Royal Heir Welcomed!", newCh.icon, newCh.name, "#4ade80", chMsg, "courting");
+}
+
+function setChildApprenticeship(cIdx, role) {
+  ensureHeroV3Fields(hero);
+  var ch = hero.children[cIdx];
+  if (!ch) return;
+  ch.apprentice = (ch.apprentice === role) ? "none" : role;
+  playSfx("coin");
+  addLog("👶 Assigned <b>" + escapeHtml(ch.name) + "</b> to Apprentice Role: <b>" + ch.apprentice.toUpperCase() + "</b>.");
+  queueSaveHero();
+  openTownFacilityModal("courting");
+  renderGameScreen();
 }
 
 function trainChildAtWarAcademy(cIdx) {
   ensureHeroV3Fields(hero);
   var ch = hero.children[cIdx];
   if (!ch || ch.isStrong) return;
-  var acadGold = Math.max(1500, hero.level * 140);
-  if (hero.quests < 4 || hero.gold < acadGold || (hero.guild.iron || 0) < 20 || (hero.gems || 0) < 3) {
-    showRequirementModal(
-      "Cannot Enroll " + ch.name + " in War Academy Yet", "🎓⚔️",
-      "Training a Weak Scion into a <b>⚔️🦁 Heroic Vanguard (Strong Heir)</b> requires:<br>• <b>4⚡ Quests Stamina</b><br>• <b>" + acadGold.toLocaleString() + " Gold</b><br>• <b>20⛏️ Kingdom Iron</b> (Have " + (hero.guild.iron || 0) + "⛏️)<br>• <b>3💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "Salvage unwanted weapons/armor in your Backpack for ⛏️ Iron and defeat Area Bosses for 💎 Gems!",
-      ""
-    );
+  var cost = Math.max(500, hero.level * 75);
+  if (hero.gold < cost || (hero.gems || 0) < 2) {
+    showRequirementModal("Need " + cost.toLocaleString() + "g & 2💎 for War Academy", "🎓⚔️", "Training <b>" + escapeHtml(ch.name) + "</b> at the Royal War Academy requires <b>" + cost.toLocaleString() + " Gold</b> and <b>2💎 Dragon Gems</b>.", "Hunt Bosses for Gems and collect Kingdom Taxes!", "");
     return;
   }
-  hero.quests -= 4;
-  hero.gold -= acadGold;
-  hero.guild.iron -= 20;
-  hero.gems -= 3;
-  var strongTrait = CHILD_TRAITS[1];
-  ch.traitName = strongTrait.tier;
-  ch.icon = strongTrait.icon;
+  hero.gold -= cost;
+  hero.gems -= 2;
   ch.isStrong = true;
-  ch.desc = strongTrait.desc;
-  ch.atkMult = strongTrait.atkMult;
-  ch.wbDmgMult = strongTrait.wbDmgMult;
-  ch.atk = Math.round(ch.atk * 2.1) + 12;
-  ch.maxHp = Math.round(ch.maxHp * 2.1) + 60;
+  ch.traitName = "War-Academy Champion";
+  ch.atk = Math.round(ch.atk * 1.45) + 12;
+  ch.maxHp = Math.round(ch.maxHp * 1.45) + 40;
   ch.hp = ch.maxHp;
   playSfx("levelup");
-  var tMsg = "🎓⚔️ <b style='color:#4ade80;'>ROYAL WAR ACADEMY GRADUATION!</b><br>Through grueling swordplay and dragon-rune conditioning, <b>" + escapeHtml(ch.name) + "</b> overcame their frailty!<br>• <b>New Lineage Class:</b> <span style='color:#4ade80;font-weight:bold;'>" + ch.icon + " " + ch.traitName + " (STRONG HEIR!)</span><br>• <b>Upgraded Stats:</b> 🗡️ <b>" + ch.atk + " ATK</b> • ❤️ <b>" + ch.maxHp + " HP</b>";
-  addLog(tMsg);
-  saveCurrentHero(null, false, null);
+  addLog("🎓⚔️ <b>Royal War Academy Graduation:</b> <b>" + escapeHtml(ch.name) + "</b> became a <b>War-Academy Champion</b> (+45% ATK/HP)!");
+  queueSaveHero();
+  openTownFacilityModal("courting");
   renderGameScreen();
-  showOutcomeModal("🎓 War Academy Graduation!", ch.icon, ch.name, "#4ade80", tMsg, "courting");
+}
+
+function undertakeHeirComingOfAgeTrial(cIdx) {
+  ensureHeroV3Fields(hero);
+  var ch = hero.children[cIdx];
+  if (!ch || ch.trialDone) return;
+  if ((ch.level || 1) < 10 || hero.quests < 3) {
+    showRequirementModal("Requires Heir Level 10+ & 3⚡ Quests", "🦁👶", "The Coming-of-Age Proving Ground Trial requires <b>" + escapeHtml(ch.name) + "</b> to reach <b>Level 10+</b> (Currently Lv " + (ch.level || 1) + ") and costs <b>3⚡ Quests</b>.", "Bring your Heir into battle or send them on Expeditions to level them up!", "");
+    return;
+  }
+  hero.quests -= 3;
+  ch.trialDone = true;
+  ch.isStrong = true;
+  ch.traitName = "Heroic Vanguard Scion";
+  ch.atk = Math.round(ch.atk * 1.30) + 15;
+  ch.maxHp = Math.round(ch.maxHp * 1.30) + 50;
+  ch.hp = ch.maxHp;
+  addHeroFame(25);
+  playSfx("levelup");
+  var tMsg = "🦁👑 <b>HEIR COMING-OF-AGE TRIAL COMPLETE!</b><br><b>" + escapeHtml(ch.name) + "</b> slew a shadow-drake solo in the Proving Grounds, ascending as a <b>Heroic Vanguard Scion (+30% ATK/HP &amp; +25 Fame)</b>!";
+  addLog(tMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("🦁 Heir Proving-Ground Triumph!", ch.icon, ch.name, "#4ade80", tMsg, "courting");
 }
 
 function setActiveBattleChild(cIdx) {
   ensureHeroV3Fields(hero);
-  if (hero.activeChildIdx === cIdx) {
-    hero.activeChildIdx = -1;
-    addLog("👶 Your royal child stepped back from active combat duty.");
-  } else {
-    var ch = hero.children[cIdx];
-    if (!ch) return;
-    hero.activeChildIdx = cIdx;
-    addLog("⚔️👶 <b>" + ch.icon + " " + escapeHtml(ch.name) + " (" + ch.traitName + ")</b> is now accompanying you into every Battle!");
-  }
-  queueSaveHero();
-  if (window.currentTownModal === "courting") openTownFacilityModal("courting");
+  hero.activeChildIdx = (hero.activeChildIdx === cIdx) ? -1 : cIdx;
+  playSfx("coin");
+  openTownFacilityModal("courting");
   renderGameScreen();
 }
 
@@ -5768,54 +5542,46 @@ function sendChildExpedition(cIdx) {
   ensureHeroV3Fields(hero);
   var ch = hero.children[cIdx];
   if (!ch) return;
-  if (ch.expeditionUntil && ch.expeditionUntil > Date.now()) {
-    var remS = Math.ceil((ch.expeditionUntil - Date.now()) / 1000);
-    showRequirementModal("Heir Currently on Expedition", "🗺️👶", "<b>" + escapeHtml(ch.name) + "</b> is campaigning in the wilds for another <b>" + formatCooldownSec(remS) + "</b>.", "Wait for their return to collect their Gold, XP, and Monster Trophy!", "");
-    return;
-  }
-  if (hero.quests < 4 || (hero.guild.rations || 0) < 15) {
-    showRequirementModal(
-      "Need 4⚡ Quests & 15🍞 Rations for Heir Expedition", "🗺️🍞",
-      "Supplying <b>" + escapeHtml(ch.name) + "&apos;s</b> 20-minute expedition requires <b style='color:#fbbf24;'>4⚡ Quests</b> (Have " + hero.quests + "⚡) and <b style='color:#4ade80;'>15🍞 Granary Rations</b> (Have " + (hero.guild.rations || 0) + "🍞).",
-      "Assign Shire Farmers in your Kingdom or angle at the Royal Weir to stock Rations!",
-      ""
-    );
-    return;
-  }
-  hero.quests -= 4;
-  hero.guild.rations -= 15;
-  ch.expeditionUntil = Date.now() + (20 * 60000);
+  if (ch.expeditionUntil && ch.expeditionUntil > Date.now()) return;
+  ch.expeditionUntil = Date.now() + TWO_HOURS_MS;
+  var gFound = 140 + (ch.level || 1) * 35;
+  hero.gold += gFound;
+  ch.level = (ch.level || 1) + 1;
+  ch.atk += 4;
+  ch.maxHp += 15;
   playSfx("coin");
-  var eMsg = "🗺️👶 <b>Heir Expedition Dispatched (-4⚡, -15🍞 Rations):</b><br><b>" + ch.icon + " " + escapeHtml(ch.name) + "</b> rode out into the wilds! In <b>20 minutes</b>, they will return with Gold, XP, +1 Level, and Monster Trophies!";
-  addLog(eMsg);
+  addLog("🗺️👶 Sent <b>" + escapeHtml(ch.name) + "</b> on a 2h Border Expedition (+1 Heir Level &amp; +" + gFound.toLocaleString() + "g upfront spoil)!");
   queueSaveHero();
+  openTownFacilityModal("courting");
   renderGameScreen();
-  showOutcomeModal("🗺️ Heir Expedition Launched!", ch.icon, ch.name, "#38bdf8", eMsg, "courting");
 }
 
-function sendChildWorldBoss(cIdx) {
+// Hardcore Rule #5: Sticky Afflictions (Campfire Banter relieves -20% Stress, but CANNOT cure an active Affliction!)
+function triggerCampfireBanter() {
   ensureHeroV3Fields(hero);
-  var ch = hero.children[cIdx];
-  if (!ch) return;
-  var wb = serverData.worldBoss;
-  if (!wb || !wb.name || wb.hp <= 0) return;
-  if (hero.quests < 6 || (hero.guild.rations || 0) < 15) {
-    showRequirementModal("Need 6⚡ Quests & 15🍞 Rations for World Boss Strike", "🌍👶", "Launching an Heir World Boss Strike requires <b>6⚡ Quests</b> (Have " + hero.quests + "⚡) and <b>15🍞 Rations</b> (Have " + (hero.guild.rations || 0) + "🍞).", "Wait for the 45m recovery tick or rest at the Inn!", "");
+  if ((hero.bantersUsedToday || 0) >= MAX_DAILY_BANTERS) {
+    showRequirementModal("Campfire Banter Daily Limit (3/3 Today)", "🔥⏳", "Your retinue has already shared <b>3 Campfire Banters today</b>.", "Return tomorrow (or use Admin Reset) for fresh hearthside stories!", "");
     return;
   }
-  hero.quests -= 6;
-  hero.guild.rations -= 15;
-  var dmg = Math.max(180, Math.round((ch.atk * 7.0 + hero.level * 40) * (ch.wbDmgMult || 1.0)));
-  ch.level = (ch.level || 1) + 1;
-  ch.atk = Math.round(ch.atk * 1.05) + 2;
-  ch.totalDmg = (ch.totalDmg || 0) + dmg;
-  addHeroFame(25);
-  playSfx("crit");
-  var wbMsg = "🌍👶 <b style='color:#4ade80;'>DYNASTY WORLD BOSS ASSAULT (-6⚡, -15🍞)!</b><br>Your heir <b>" + ch.icon + " " + escapeHtml(ch.name) + "</b> charged <b>" + escapeHtml(wb.name) + "</b>!<br>• <b>World Boss Damage:</b> <span style='color:#fbbf24;font-weight:bold;'>-" + dmg.toLocaleString() + " HP</span><br>• <b>Devastation Pushed Back:</b> <span style='color:#4ade80;font-weight:bold;'>-3% Devastation</span><br>• <b>Heir Promotion:</b> Reached <b>Lv " + ch.level + " (" + ch.atk + " ATK)</b> &amp; +25 Court Fame!";
-  addLog(wbMsg);
-  saveCurrentHero("🌍 " + hero.name + "'s child " + ch.name + " struck " + wb.name + " for " + dmg + " damage (-3% Devastation)!", false, { type: "world", damage: dmg, respawnNew: (wb.hp - dmg <= 0) }, { devastationDelta: -3 });
+  var nowMs = Date.now();
+  var remSec = Math.ceil((TWO_HOURS_MS - (nowMs - (hero.lastBanterEpoch || 0))) / 1000);
+  if (remSec > 0) {
+    showRequirementModal("Campfire Embers Cooling", "🔥⏳", "Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before your next Campfire Banter (2h cooldown).", "Patrol regions or visit the Tavern in the meantime!", "");
+    return;
+  }
+  hero.lastBanterEpoch = nowMs;
+  hero.bantersUsedToday = (hero.bantersUsedToday || 0) + 1;
+  var hpGain = Math.round(hero.maxHp * 0.10);
+  hero.hp = Math.min(hero.maxHp, hero.hp + hpGain);
+  hero.stress = Math.max(0, (hero.stress || 0) - 20);
+  if (hero.spouse) hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 10);
+  var affNote = (hero.resolveState && !hero.resolveState.isVirtue) ? "<br>⚠️ <b style='color:#f87171;'>Sticky Affliction (" + escapeHtml(hero.resolveState.name) + ") Remains:</b> Only a paid <b>🕯️ Sanctuary Rite</b> or <b>🛌 2h Offline Inn Sleep</b> can cure a mental breakdown!" : "";
+  playSfx("magic");
+  var bMsg = "🔥🪕 <b>Hearthside Campfire Banter (" + hero.bantersUsedToday + "/" + MAX_DAILY_BANTERS + " Today):</b><br>Shared ale and war-stories by the fire (+<b>" + hpGain + " HP</b>, <b>-20% Stress</b>" + (hero.spouse ? " &amp; +10% ❤️ Consort Love" : "") + ")!" + affNote;
+  addLog(bMsg);
+  queueDeltaSaveHero();
   renderGameScreen();
-  showOutcomeModal("🌍 Heir World Boss Strike!", ch.icon, ch.name, "#4ade80", wbMsg, "courting");
+  showOutcomeModal("🔥 Campfire Banter Shared!", "🔥🪕", hero.name, "#4ade80", bMsg, window.currentTownModal);
 }
 '''
 }
@@ -5826,91 +5592,13 @@ String buildHeroChunkB3() {
 
 String buildHeroChunkB3a() {
     return '''
-function openEngraveGearModal(slotKey) {
-  ensureHeroV3Fields(hero);
-  var itm = hero[slotKey];
-  if (!itm) return;
-  var wPerk = (slotKey === "weapon") ? getWeaponArchetypePerk(itm) : null;
-  var icons = ["🗡️", "⚔️", "🪓", "🔨", "🔱", "🏹", "🔮", "🛡️", "🐉", "👑", "⚜️", "🥾", "💍", "📿", "🩸", "🌟"];
-  var iconSel = icons.map(function(ic) {
-    return '<option value="' + ic + '" ' + (itm.icon === ic ? 'selected' : '') + '>' + ic + ' Icon</option>';
-  }).join('');
-  showPopupModal(
-    '<div style="font-size:38px;">⚒️💎📜</div>' +
-    '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:6px;">Relic Kill-Counter Scroll &amp; Engraving Anvil (1💎)</div>' +
-    '<div style="background:#14091c;border:1px solid #c5a059;border-radius:4px;padding:8px 10px;margin-bottom:10px;text-align:left;font-size:12px;color:#fde68a;">' +
-      '<div>💀 <b>Lifetime Monsters Slain With This Relic:</b> <b style="color:#4ade80;">' + (itm.kills || 0).toLocaleString() + ' Kills</b> • 🔨 <b>QTE Anvil Boosts:</b> <b>' + (itm.anvilBoosts || 0) + ' / 3</b></div>' +
-      '<div>⚒️ <b>Temper History:</b> +' + (itm.upgrade || 0) + ' • <b>Durability:</b> ' + (itm.dur !== undefined ? itm.dur : 100) + '% • <b>Socket:</b> ' + (itm.socket ? itm.socket.toUpperCase() : 'Empty') + '</div>' +
-      (wPerk ? '<div style="color:#7dd3fc;">⚔️ <b>Weapon Class Archetype Perk:</b> ' + wPerk.name + ' (' + wPerk.desc + ')</div>' : '') +
-      (itm.cursedAffix ? '<div style="color:#f43f5e;">🩸 <b>Sentient Cursed Ego-Relic:</b> Whispers in battle &amp; hungers for blood (+2 ATK per 10 kills up to 100 kills)!</div>' : '') +
-    '</div>' +
-    '<div style="font-size:12px;color:#e5dec9;margin-bottom:10px;">Custom-name your equipped <b>' + escapeHtml(itm.name) + '</b>, choose its icon, and inscribe a personal lore motto (+2 ATK/DEF Heirloom Blessing!):</div>' +
-    '<div style="text-align:left;font-size:12.5px;">' +
-      '<label style="color:#d4af37;font-weight:bold;">Custom Relic Name:</label>' +
-      '<input type="text" id="engraveItemName" value="' + escapeHtml(itm.name) + '" maxlength="36" style="margin-bottom:8px;">' +
-      '<label style="color:#d4af37;font-weight:bold;">Relic Icon:</label>' +
-      '<select id="engraveItemIcon" style="margin-bottom:8px;">' + iconSel + '</select>' +
-      '<label style="color:#d4af37;font-weight:bold;">Engraved Blade Motto (Shown on Tarot Card):</label>' +
-      '<input type="text" id="engraveItemMotto" value="' + escapeHtml(itm.motto || "Forged in the fires of Valoria.") + '" maxlength="70">' +
-    '</div>' +
-    '<div style="display:flex;gap:8px;margin-top:12px;">' +
-      '<button class="btn btn-gold" style="flex:1;" onclick="saveEngravedGear(&#39;' + slotKey + '&#39;)">💎 Engrave Relic (-1💎)</button>' +
-      '<button class="btn" onclick="closePopupModal()">Cancel</button>' +
-    '</div>'
-  );
-}
-
-function saveEngravedGear(slotKey) {
-  var itm = hero[slotKey];
-  if (!itm) return;
-  if ((hero.gems || 0) < 1) {
-    showRequirementModal("Need 1💎 Dragon Gem to Engrave", "💎⚒️", "Inscribing a custom name and motto onto your equipment requires <b>1💎 Dragon Gem</b>.", "Defeat Area Bosses or deliver an Aether-Anchor on the Warrant Board to earn Gems!", "");
-    return;
-  }
-  var newN = ((document.getElementById("engraveItemName") || {}).value || "").trim();
-  var newIc = ((document.getElementById("engraveItemIcon") || {}).value || itm.icon);
-  var newM = ((document.getElementById("engraveItemMotto") || {}).value || "").trim();
-  if (!newN) return;
-  hero.gems -= 1;
-  itm.name = newN;
-  itm.icon = newIc;
-  itm.motto = newM;
-  if (!itm.engravedBonus) {
-    itm.engravedBonus = true;
-    if (itm.atk) itm.atk += 2;
-    if (itm.def) itm.def += 2;
-  }
-  playSfx("levelup");
-  closePopupModal();
-  addLog("⚒️💎 <b>Relic Engraved (-1💎):</b> Named <b>" + itm.icon + " " + escapeHtml(itm.name) + "</b> (&ldquo;" + escapeHtml(itm.motto || "") + "&rdquo;)!");
-  queueSaveHero();
-  renderGameScreen();
-}
-
-function openMemoirModal() {
-  ensureHeroV3Fields(hero);
-  var origObj = HERO_ORIGINS[hero.origin] || HERO_ORIGINS["Disgraced High-Court Noble"];
-  var listHtml = (hero.memoir || []).map(function(m) {
-    return '<div style="padding:6px 8px;border-left:3px solid #d4af37;background:#0b0812;margin-bottom:5px;font-size:12.5px;">🕯️ ' + escapeHtml(m) + '</div>';
-  }).join('');
-  showPopupModal(
-    '<div style="font-size:38px;">📖🖋️👑</div>' +
-    '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">First-Person Memoir of ' + escapeHtml(hero.name) + '</div>' +
-    '<div style="font-size:12px;color:#fde68a;margin-bottom:8px;">' + origObj.icon + ' <b>Origin:</b> ' + escapeHtml(hero.origin) + ' — <i>' + escapeHtml(origObj.desc) + '</i></div>' +
-    (hero.nemesis ? '<div style="background:#450a0a;border:1px solid #ef4444;padding:6px 10px;border-radius:4px;font-size:12px;color:#fecaca;margin-bottom:8px;">💀 <b>Sworn Nemesis at Large (Rank ' + (hero.nemesis.rank || 1) + '):</b> ' + escapeHtml(hero.nemesis.name) + ' in Area #' + hero.nemesis.areaId + ' (Patrol that realm to exact vengeance for +2💎 &amp; +35 Fame!)</div>' : '') +
-    '<div style="max-height:320px;overflow-y:auto;text-align:left;">' + listHtml + '</div>' +
-    '<button class="btn btn-gold" style="width:100%;margin-top:10px;" onclick="openHeroSheetModal()">⬅️ Back to Hero Sheet</button>'
-  );
-}
-
-// Improvement #26: Reliquary Item Lock Toggle (Protects items from selling, vaulting, or bulk salvaging)
 function toggleInventoryItemLock(idx) {
   ensureHeroV3Fields(hero);
   var itm = hero.inventory[idx];
   if (!itm) return;
   itm.locked = !itm.locked;
   playSfx("coin");
-  showGothicToast(itm.locked ? ("🔒 Locked " + itm.name + "!") : ("🔓 Unlocked " + itm.name + "!"));
+  showGothicToast(itm.locked ? ("🔒 Locked " + itm.name) : ("🔓 Unlocked " + itm.name));
   queueSaveHero();
   renderGameScreen();
 }
@@ -5918,94 +5606,30 @@ function toggleInventoryItemLock(idx) {
 function setLootFilter(val) {
   ensureHeroV3Fields(hero);
   hero.lootFilter = val || "none";
-  addLog("🎒 Updated Auto-Salvage Loot Filter to: <b>" + hero.lootFilter.toUpperCase() + "</b>.");
+  addLog("♻️ Set Auto-Salvage Loot Filter to: <b>" + hero.lootFilter.toUpperCase() + "</b>.");
   queueDeltaSaveHero();
   renderGameScreen();
 }
 
-function shouldAutoSalvageDrop(itm) {
-  if (!hero || !itm || !hero.lootFilter || hero.lootFilter === "none") return false;
-  if (itm.locked || itm.isGodTier || itm.setId || itm.rarity === "Mythic" || itm.rarity === "Legendary") return false;
-  if (getUpgradeDelta(itm) > 0) return false;
-  if (hero.lootFilter === "common" && itm.rarity === "Common") return true;
-  if (hero.lootFilter === "below_rare" && (itm.rarity === "Common" || itm.rarity === "Uncommon")) return true;
-  if (hero.lootFilter === "non_upgrades" && getUpgradeDelta(itm) <= 0) return true;
-  return false;
-}
-
-function saveLoadoutPreset(idx) {
-  ensureHeroV3Fields(hero);
-  var pNames = ["I. Boss-Breaker", "II. Trophy Farmer", "III. Arena Duelist"];
-  hero.loadoutPresets[idx] = {
-    name: pNames[idx] || ("Preset #" + (idx + 1)),
-    stance: hero.stance || "balanced",
-    envStance: hero.envStance || "high_ground",
-    recruitOrder: hero.recruitOrder || "auto",
-    companionId: hero.companion ? hero.companion.id : null
-  };
-  playSfx("coin");
-  if (window.showGothicToast) showGothicToast("⚔️ Saved Loadout " + hero.loadoutPresets[idx].name + "!");
-  queueSaveHero();
-  renderGameScreen();
-}
-
-function equipLoadoutPreset(idx) {
-  ensureHeroV3Fields(hero);
-  var p = hero.loadoutPresets ? hero.loadoutPresets[idx] : null;
-  if (!p) { saveLoadoutPreset(idx); return; }
-  hero.stance = p.stance || "balanced";
-  hero.envStance = p.envStance || "high_ground";
-  if (p.recruitOrder) hero.recruitOrder = p.recruitOrder;
-  if (p.companionId && hero.ownedCompanions && hero.ownedCompanions.includes(p.companionId)) {
-    var c = COMPANIONS.find(function(x) { return x.id === p.companionId; });
-    if (c) hero.companion = c;
-  }
-  playSfx("slash");
-  if (window.showGothicToast) showGothicToast("⚔️ Activated " + p.name + " (" + hero.stance.toUpperCase() + ")!");
-  renderGameScreen();
-}
-
-function openJsonBackupModal() {
-  if (!hero) return;
-  var jsonStr = JSON.stringify(hero);
-  showPopupModal(
-    '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:6px;">💾 Lineage JSON Backup &amp; Restore</div>' +
-    '<div style="font-size:12px;color:#e5dec9;margin-bottom:8px;">Copy the JSON below to back up <b>' + escapeHtml(hero.name) + '</b> externally, or paste a saved Hero JSON string to restore:</div>' +
-    '<textarea id="jsonBackupArea" rows="6" style="font-family:monospace;font-size:11px;">' + escapeHtml(jsonStr) + '</textarea>' +
-    '<div style="display:flex;gap:8px;margin-top:10px;">' +
-      '<button class="btn btn-emerald" style="flex:1;" onclick="navigator.clipboard.writeText(document.getElementById(&#39;jsonBackupArea&#39;).value);showGothicToast(&#39;📋 Copied Hero JSON!&#39;);">📋 Copy JSON</button>' +
-      '<button class="btn btn-gold" style="flex:1;" onclick="importHeroJson()">📥 Restore Pasted JSON</button>' +
-      '<button class="btn" onclick="closePopupModal()">Close</button>' +
-    '</div>'
-  );
-}
-
-function importHeroJson() {
-  try {
-    var raw = (document.getElementById("jsonBackupArea") || {}).value || "";
-    var parsed = JSON.parse(raw);
-    if (!parsed || !parsed.name || !parsed.calling) throw new Error("Invalid Hero JSON");
-    hero = parsed;
-    ensureHeroV3Fields(hero);
-    closePopupModal();
-    saveCurrentHero("💾 Restored Hero Backup for " + hero.name + "!", true, null);
-    renderGameScreen();
-  } catch (e) {
-    alert("⚠️ Invalid Hero JSON: " + e.message);
-  }
-}
-
 function getSalvageYield(itm) {
-  if (!itm) return { timber: 1, stone: 1, iron: 1, gold: 5 };
-  var rIdx = RARITIES.findIndex(function(r) { return r.name === itm.rarity; });
-  if (rIdx < 0) rIdx = 5;
-  var mult = rIdx + 1 + (itm.upgrade || 0);
+  if (!itm) return { timber: 1, stone: 1, iron: 1, gold: 10 };
+  var sc = Math.max(1, Math.round(getItemPowerScore(itm) / 14));
   return {
-    timber: 2 * mult,
-    stone: 2 * mult,
-    iron: Math.max(1, Math.round(1.5 * mult)),
-    gold: Math.max(5, Math.round((itm.value || 25) * 0.18))
+    timber: Math.max(2, Math.round(sc * 0.8)),
+    stone:  Math.max(2, Math.round(sc * 0.7)),
+    iron:   Math.max(1, Math.round(sc * 0.5)),
+    gold:   Math.max(12, Math.round((itm.value || 30) * 0.28))
   };
+}
+
+function shouldAutoSalvageDrop(itm) {
+  if (!hero || !itm || itm.isGodTier || itm.setId || itm.locked) return false;
+  var lf = hero.lootFilter || "none";
+  if (lf === "none") return false;
+  if (lf === "common" && itm.rarity === "Common") return true;
+  if (lf === "below_rare" && (itm.rarity === "Common" || itm.rarity === "Uncommon")) return true;
+  if (lf === "non_upgrades" && getUpgradeDelta(itm) <= 0) return true;
+  return false;
 }
 
 function salvageInventoryItem(idx) {
@@ -6017,48 +5641,209 @@ function salvageInventoryItem(idx) {
     return;
   }
   var y = getSalvageYield(itm);
-  var gemBonus = itm.setId ? 2 : 0;
-  hero.inventory.splice(idx, 1);
   hero.guild.timber = (hero.guild.timber || 0) + y.timber;
-  hero.guild.stone = (hero.guild.stone || 0) + y.stone;
-  hero.guild.iron = (hero.guild.iron || 0) + y.iron;
+  hero.guild.stone  = (hero.guild.stone || 0) + y.stone;
+  hero.guild.iron   = (hero.guild.iron || 0) + y.iron;
   hero.gold += y.gold;
-  if (gemBonus > 0) hero.gems = (hero.gems || 0) + gemBonus;
-  playSfx("slash");
-  var sMsg = "♻️ <b>Dismantled " + escapeHtml(itm.name) + ":</b><br>• <b>🪵 Timber:</b> +" + y.timber + " (Total: " + hero.guild.timber + "🪵)<br>• <b>🪨 Stone:</b> +" + y.stone + " (Total: " + hero.guild.stone + "🪨)<br>• <b>⛏️ Iron:</b> +" + y.iron + " (Total: " + hero.guild.iron + "⛏️)<br>• <b>💰 Scrap Gold:</b> +" + y.gold + "g" + (gemBonus > 0 ? "<br>• <b>💎 Set Piece Breakdown:</b> <span style='color:#fde047;'>+" + gemBonus + "💎 Dragon Gems!</span>" : "");
-  addLog(sMsg);
+  var setGemBonus = itm.setId ? 2 : 0;
+  if (setGemBonus > 0) hero.gems = (hero.gems || 0) + setGemBonus;
+  hero.inventory.splice(idx, 1);
+  playSfx("coin");
+  addLog("♻️ Salvaged <b>" + escapeHtml(itm.name) + "</b> into <b>+" + y.timber + "🪵, +" + y.stone + "🪨, +" + y.iron + "⛏️, +" + y.gold + "g</b>" + (setGemBonus ? " &amp; <b>+2💎 Gems</b>!" : "!"));
   queueSaveHero();
   renderGameScreen();
-  showOutcomeModal("♻️ Equipment Salvaged!", itm.icon || "⚒️", null, "#c084fc", sMsg, null);
 }
 
 function salvageAllNonUpgrades() {
   ensureHeroV3Fields(hero);
   if (!hero.inventory || !hero.inventory.length) return;
-  var kept = [], cnt = 0, totT = 0, totS = 0, totI = 0, totG = 0;
+  var kept = [], cnt = 0, tG = 0, sG = 0, iG = 0, gG = 0, gemG = 0;
   hero.inventory.forEach(function(itm) {
-    if (itm.locked || getUpgradeDelta(itm) > 0 || itm.setId || itm.rarity === "Legendary" || itm.rarity === "Mythic" || itm.rarity === "God-Tier") {
+    if (!itm) return;
+    if (itm.locked || itm.isGodTier || getUpgradeDelta(itm) > 0) {
       kept.push(itm);
     } else {
+      cnt++;
       var y = getSalvageYield(itm);
-      cnt++; totT += y.timber; totS += y.stone; totI += y.iron; totG += y.gold;
+      tG += y.timber; sG += y.stone; iG += y.iron; gG += y.gold;
+      if (itm.setId) gemG += 2;
     }
   });
   if (cnt === 0) {
-    showRequirementModal("No Junk Items to Salvage", "♻️🎒", "Your backpack only contains Locked items, Upgrades, Set Pieces, Legendary, Mythic, or God-Tier items (protected from bulk salvage).", "You can still manually unlock or salvage individual items using the ♻️ button on each row.", "");
+    showGothicToast("♻️ No unlocked non-upgrade items to salvage!");
     return;
   }
   hero.inventory = kept;
-  hero.guild.timber = (hero.guild.timber || 0) + totT;
-  hero.guild.stone = (hero.guild.stone || 0) + totS;
-  hero.guild.iron = (hero.guild.iron || 0) + totI;
-  hero.gold += totG;
-  playSfx("coin");
-  var bMsg = "♻️ <b>Bulk Salvaged " + cnt + " Equipment Piece(s):</b><br>• <b>🪵 Timber Gained:</b> +" + totT + "🪵<br>• <b>🪨 Stone Gained:</b> +" + totS + "🪨<br>• <b>⛏️ Iron Gained:</b> +" + totI + "⛏️<br>• <b>💰 Gold Recovered:</b> +" + totG + "g";
-  addLog(bMsg);
+  hero.guild.timber = (hero.guild.timber || 0) + tG;
+  hero.guild.stone  = (hero.guild.stone || 0) + sG;
+  hero.guild.iron   = (hero.guild.iron || 0) + iG;
+  hero.gold += gG;
+  if (gemG > 0) hero.gems = (hero.gems || 0) + gemG;
+  playSfx("levelup");
+  addLog("♻️ Bulk-Salvaged <b>" + cnt + " item(s)</b> into <b>+" + tG + "🪵, +" + sG + "🪨, +" + iG + "⛏️, +" + gG + "g</b>" + (gemG ? (" &amp; +" + gemG + "💎") : "") + "!");
   queueSaveHero();
   renderGameScreen();
-  showOutcomeModal("♻️ Bulk Salvage Complete!", "♻️⚒️", null, "#4ade80", bMsg, null);
+}
+
+function reforgeGearSetPrefix(slotKey) {
+  ensureHeroV3Fields(hero);
+  if ((hero.forgesUsedToday || 0) >= MAX_DAILY_FORGES) {
+    showRequirementModal("Blacksmith Forge Limit Reached (5/5 Today)", "⚜️⏳", "Master Blacksmith Brom has already completed 5 forge operations today.", "Return tomorrow (or use Admin Reset)!", "");
+    return;
+  }
+  var itm = hero[slotKey];
+  if (!itm) return;
+  var hasSlag = (hero.vault && (hero.vault.dulledGems || 0) > 0);
+  if (getTotalMaterialsCount() < 3 || (!hasSlag && (hero.gems || 0) < 2)) {
+    showRequirementModal("Need 3 Monster Trophies + (1🪨 Slag OR 2💎 Gems)", "⚜️🔨", "Reforging <b>" + escapeHtml(itm.name) + "</b> into a matching 3-Piece Class Gear Set prefix requires <b>3 Monster Trophies</b> plus either <b>1🪨 Dulled Gem Slag</b> (preferred) or <b>2💎 Dragon Gems</b>.", "Patrol regions for Monster Trophies!", "");
+    return;
+  }
+  consumeAnyMaterials(3);
+  if (hasSlag) hero.vault.dulledGems -= 1;
+  else hero.gems -= 2;
+  hero.forgesUsedToday = (hero.forgesUsedToday || 0) + 1;
+  var cSet = (window.CLASS_ZONE_SETS && CLASS_ZONE_SETS[hero.calling]) ? CLASS_ZONE_SETS[hero.calling] : { prefix: "Dragonforged", perk: "Set Synergy" };
+  var cleanBase = itm.name.replace(/^(Dragonforged|Eldritch|Sovereign|Celestial|Vampiric|Valiant)[ ]+/i, "");
+  itm.name = cSet.prefix + " " + cleanBase;
+  itm.setPerk = cSet.perk;
+  playSfx("levelup");
+  var sMsg = "⚜️🔨 <b>SET-PREFIX REFORGED (" + hero.forgesUsedToday + "/" + MAX_DAILY_FORGES + " Today):</b><br>Reforged into <b>" + escapeHtml(itm.name) + "</b> (Counts toward the 3-Piece <b>" + cSet.prefix + "</b> Set Bonus)!";
+  addLog(sMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("⚜️ Reforged into " + cSet.prefix + " Set!", itm.icon || "⚜️", "Blacksmith Brom", "#4ade80", sMsg, null);
+}
+
+function openEngraveGearModal(slotKey) {
+  ensureHeroV3Fields(hero);
+  var itm = hero[slotKey];
+  if (!itm) return;
+  showPopupModal(
+    '<div style="font-size:38px;">' + (itm.icon || "🗡️") + '📜</div>' +
+    '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:Cinzel,serif;">📜 Relic Kill-Counter &amp; Runic Engraving</div>' +
+    '<div style="font-size:13px;color:#fde68a;margin:4px 0;"><b>' + escapeHtml(itm.name) + '</b> • 💀 Lifetime Kills: <b>' + (itm.kills || 0) + '</b></div>' +
+    '<div style="font-size:11.5px;color:#e5dec9;margin-bottom:8px;">Inscribe a custom battle-motto onto this relic (First engraving grants <b>+2 ATK &amp; +2 DEF</b> for <b>1💎 Dragon Gem</b>):</div>' +
+    '<input type="text" id="engraveMottoInput" value="' + escapeHtml(itm.motto || "") + '" placeholder="Enter relic motto..." maxlength="60" style="margin-bottom:10px;">' +
+    '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-gold" style="flex:1;" onclick="saveEngravedGearMotto(&#39;' + slotKey + '&#39;)">✒️ Engrave Relic ' + (itm.engravedBonus ? '(Free Edit)' : '(-1💎 ➔ +2 ATK/DEF)') + '</button>' +
+      '<button class="btn" onclick="closePopupModal()">Cancel</button>' +
+    '</div>'
+  );
+}
+
+function saveEngravedGearMotto(slotKey) {
+  ensureHeroV3Fields(hero);
+  var itm = hero[slotKey];
+  if (!itm) return;
+  var txt = ((document.getElementById("engraveMottoInput") || {}).value || "").trim() || "Forged in Dragonfire";
+  if (!itm.engravedBonus) {
+    if ((hero.gems || 0) < 1) {
+      showGothicToast("⚠️ Need 1💎 Dragon Gem for initial runic engraving!");
+      return;
+    }
+    hero.gems -= 1;
+    itm.engravedBonus = true;
+    itm.atk = (itm.atk || 0) + 2;
+    itm.def = (itm.def || 0) + 2;
+  }
+  itm.motto = txt;
+  syncHeroVitalityMaxHp(hero);
+  playSfx("levelup");
+  addLog("✒️📜 Engraved <b>" + escapeHtml(itm.name) + "</b>: <i>&ldquo;" + escapeHtml(txt) + "&rdquo;</i>!");
+  closePopupModal();
+  queueSaveHero();
+  renderGameScreen();
+}
+
+function reforgeHellAnvilRelic(slotKey) {
+  ensureHeroV3Fields(hero);
+  var itm = hero[slotKey];
+  if (!itm) return;
+  if (itm.cursedAffix) {
+    showGothicToast("🩸 This relic is already awakened as a Sentient Ego-Relic!");
+    return;
+  }
+  if ((hero.forgesUsedToday || 0) >= MAX_DAILY_FORGES) {
+    showRequirementModal("Blacksmith Forge Limit Reached (5/5 Today)", "🔥⏳", "Master Blacksmith Brom can only perform 5 forge operations per day.", "Return tomorrow!", "");
+    return;
+  }
+  if ((hero.gems || 0) < 2 || getTotalMaterialsCount() < 3) {
+    showRequirementModal("Need 2💎 Gems & 3 Monster Trophies", "🔥🩸", "Awakening <b>" + escapeHtml(itm.name) + "</b> on the Hell-Anvil requires <b>2💎 Dragon Gems</b> and <b>3 Monster Trophies</b>.", "Hunt Bosses and patrol regions first!", "");
+    return;
+  }
+  hero.gems -= 2;
+  consumeAnyMaterials(3);
+  hero.forgesUsedToday = (hero.forgesUsedToday || 0) + 1;
+  itm.cursedAffix = "Blood-Drinker Ego";
+  if (itm.atk) itm.atk = Math.round(itm.atk * 1.15) + 3;
+  if (itm.def) itm.def = Math.round(itm.def * 1.15) + 3;
+  syncHeroVitalityMaxHp(hero);
+  playSfx("levelup");
+  var hMsg = "🔥🩸 <b>SENTIENT EGO-RELIC AWAKENED (" + hero.forgesUsedToday + "/" + MAX_DAILY_FORGES + " Today):</b><br><b>" + escapeHtml(itm.name) + "</b> now whispers in battle (+15% Base Stats &amp; +2 ATK every 10 kills up to 100)!";
+  addLog(hMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("🩸 Sentient Relic Awakened!", itm.icon || "🗡️", itm.name, "#f43f5e", hMsg, null);
+}
+
+function selectSocketTargetSlot(slotKey) {
+  selectedSocketSlot = slotKey || "weapon";
+  renderGameScreen();
+}
+
+function socketGemIntoGear(slotKey, traitId) {
+  ensureHeroV3Fields(hero);
+  if ((hero.socketsUsedToday || 0) >= MAX_DAILY_SOCKETS) {
+    showRequirementModal("Gem Socketing Limit Reached (3/3 Today)", "💎⏳", "You can only bind <b>3 Dragon Gem sockets per day</b>.", "Return tomorrow (or use Admin Reset)!", "");
+    return;
+  }
+  var itm = hero[slotKey];
+  var tr = GEM_SOCKET_TRAITS.find(function(x) { return x.id === traitId; });
+  if (!itm || !tr) return;
+  if ((hero.gems || 0) < tr.costGems) {
+    showRequirementModal("Need " + tr.costGems + "💎 Dragon Gems", "💎🔮", "Binding <b>" + escapeHtml(tr.name) + "</b> into <b>" + escapeHtml(itm.name) + "</b> requires <b>" + tr.costGems + "💎 Dragon Gems</b>.", "Defeat Zone Bosses, Delve Bosses, or Spire Sentinels to earn Gems!", "");
+    return;
+  }
+  hero.gems -= tr.costGems;
+  hero.socketsUsedToday = (hero.socketsUsedToday || 0) + 1;
+  itm.socket = tr.id;
+  playSfx("magic");
+  var sMsg = "💎✨ <b>DRAGON GEM SOCKETED (" + hero.socketsUsedToday + "/" + MAX_DAILY_SOCKETS + " Today • -" + tr.costGems + "💎):</b><br>Bound <b>" + escapeHtml(tr.name) + "</b> into <b>" + escapeHtml(itm.name) + "</b> (" + escapeHtml(tr.desc) + ")!";
+  addLog(sMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("💎 Gem Socket Bound!", "💎✨", itm.name, "#c084fc", sMsg, null);
+}
+
+function saveLoadoutPreset(idx) {
+  ensureHeroV3Fields(hero);
+  if (!hero.loadoutPresets) hero.loadoutPresets = [null, null, null];
+  hero.loadoutPresets[idx] = {
+    name: "Set #" + (idx + 1),
+    stance: hero.stance || "balanced",
+    envStance: hero.envStance || "high_ground",
+    recruitOrder: hero.recruitOrder || "auto"
+  };
+  playSfx("coin");
+  showGothicToast("💾 Saved Tactical Loadout Preset #" + (idx + 1) + "!");
+  queueDeltaSaveHero();
+  openHeroSheetModal();
+}
+
+function equipLoadoutPreset(idx) {
+  ensureHeroV3Fields(hero);
+  if (!hero.loadoutPresets || !hero.loadoutPresets[idx]) {
+    saveLoadoutPreset(idx);
+    return;
+  }
+  var p = hero.loadoutPresets[idx];
+  hero.stance = p.stance || "balanced";
+  hero.envStance = p.envStance || "high_ground";
+  hero.recruitOrder = p.recruitOrder || "auto";
+  playSfx("coin");
+  showGothicToast("⚔️ Loaded Preset #" + (idx + 1) + " (" + hero.stance.toUpperCase() + ")!");
+  openHeroSheetModal();
+  renderGameScreen();
 }
 '''
 }
@@ -6243,7 +6028,11 @@ function autoEquipAllUpgrades() {
       addLog("✨ Auto-Equipped Upgrade: <b>" + (newItm.icon || "🗡️") + " " + escapeHtml(newItm.name) + " (+" + bestDelta + " Power)</b>!");
     }
   });
-  if (equippedCount > 0) { playSfx("coin"); queueSaveHero(); }
+  if (equippedCount > 0) {
+    syncHeroVitalityMaxHp(hero);
+    playSfx("coin");
+    queueSaveHero();
+  }
   renderGameScreen();
 }
 
@@ -6293,14 +6082,13 @@ function queueDeltaSaveHero() {
   debounceSaveTimer = setTimeout(function() { saveDeltaHero(); }, 8000);
 }
 
-// v18.1 #18: Ring-Buffered Session Logs — Sends only 6 milestone logs in delta/full saves (-15% Hub RAM)!
 async function saveDeltaHero() {
   if (!activeSlotKey || !hero) return;
   if (debounceSaveTimer) { clearTimeout(debounceSaveTimer); debounceSaveTimer = null; }
   try {
     setSyncStatus("⚡ Delta Sync...", "#38bdf8");
     var deltaObj = {
-      hp: hero.hp, mp: hero.mp, gold: hero.gold, xp: hero.xp, level: hero.level, xpNext: hero.xpNext,
+      hp: hero.hp, maxHp: hero.maxHp, mp: hero.mp, maxMp: hero.maxMp, gold: hero.gold, xp: hero.xp, level: hero.level, xpNext: hero.xpNext,
       quests: hero.quests, fame: hero.fame || 0, gems: hero.gems || 0, potions: hero.potions || 0,
       valkyrieSeals: hero.valkyrieSeals, wantedLevel: hero.wantedLevel || 0, recruitOrder: hero.recruitOrder || "auto",
       recruitTargetZone: hero.recruitTargetZone || "torso", overkillSurge: hero.overkillSurge || false, petTreatBattles: hero.petTreatBattles || 0,
@@ -6410,9 +6198,38 @@ function getWarCouncilBonusCount() {
   return cnt;
 }
 
+// Hardcore Rule #1 & #3: Gritty Vitality with 2.20x Level Ceiling & 3-Seal Valkyrie Cap
+function syncHeroVitalityMaxHp(h) {
+  var t = h || hero;
+  if (!t) return;
+  if ((t.valkyrieSeals || 0) > 3) t.valkyrieSeals = 3;
+  var gearG = 0, gearD = 0;
+  ["weapon", "armor", "helm", "boots", "relic", "amulet"].forEach(function(sk) {
+    var itm = t[sk];
+    if (itm && (itm.dur === undefined || itm.dur > 0)) {
+      gearG += (itm.guts || 0);
+      gearD += (itm.def || 0);
+    }
+  });
+  var cathLv = (t.guild && t.guild.buildings && t.guild.buildings.cathedral) ? t.guild.buildings.cathedral : 0;
+  var awkBonus = (t.awakened ? 55 : 0) + (t.mythicAscended ? 180 : 0) + (t.hybridClass ? 220 : 0) + ((t.prestigeRank || 0) * 25);
+  var baseLvHp = 65 + ((t.level || 1) * 16);
+  var rawFormula = baseLvHp + Math.round(((t.guts || 5) + gearG) * 3.5) + Math.round(gearD * 2.0) + (cathLv * 18) + awkBonus;
+  var hardcoreCap = Math.round(baseLvHp * 2.20) + (cathLv * 18) + awkBonus;
+  var targetMax = Math.max(60, Math.min(hardcoreCap, rawFormula));
+  var prevMax = t.maxHp || 50;
+  t.maxHp = targetMax;
+  if (prevMax < targetMax) {
+    t.hp = Math.min(t.maxHp, (t.hp || 50) + (targetMax - prevMax));
+  } else if ((t.hp || 50) > t.maxHp) {
+    t.hp = t.maxHp;
+  }
+}
+
 function getHeroStats(targetHero) {
   var h = targetHero || hero;
   ensureHeroV3Fields(h);
+  syncHeroVitalityMaxHp(h);
   var rMeta = RACES[h.race] || RACES["Human"];
   var origMeta = HERO_ORIGINS[h.origin] || HERO_ORIGINS["Disgraced High-Court Noble"];
   var origG = origMeta.bonusStat === "guts" ? (origMeta.bonusVal || 0) : 0;
@@ -6457,6 +6274,11 @@ function getHeroStats(targetHero) {
   var curse = getActiveRealmCurse();
   var curseAllStatMult = (curse && (curse.id === "wyrm_wrath" || curse.id === "galactic_fallout")) ? 0.82 : 1.0;
   var rw = getRealWeather();
+  var wf = getActiveWeatherFront();
+  var wfDefAdd = (wf && wf.name.indexOf("Blizzard") >= 0) ? 0.12 : 0;
+  var wfMagAdd = (wf && wf.name.indexOf("Aether-Storm") >= 0) ? 0.15 : 0;
+  var wfMpSub  = (wf && wf.name.indexOf("Aether-Storm") >= 0) ? 2 : 0;
+  var wfVampAdd = (wf && wf.name.indexOf("Blood-Mist") >= 0) ? 0.25 : 0;
 
   var slots = [h.weapon, h.armor, h.helm, h.boots, h.relic, h.amulet];
   var gearAtk = 0, gearDef = 0, gearGuts = 0, gearWits = 0, gearCharm = 0, gearEva = 0;
@@ -6516,8 +6338,8 @@ function getHeroStats(targetHero) {
   var recDefBonus = (h.recruitOrder === "defend" && ((h.mercenaries && h.mercenaries.length > 0) || h.altBodyguard)) ? 0.12 : 0;
 
   var wepMasteryMult = 1 + ((sk.precision || 1) * 0.032) + (feastId === "boar_roast" ? 0.15 : 0) + ((blds.barracks || 0) * 0.04) + ((awk.bonusAtkPct || 0) / 100.0) + (decree === "martial" ? 0.12 : 0) + (setBon.atkPct / 100.0) + (mutId === "wyrm_blood" ? 0.08 : 0) + rwAtkMod - (curse && curse.id === "ash_blight" ? 0.15 : 0);
-  var riposteDefMult = 1 + ((sk.riposte || 1) * 0.032) + (martyrWardPct / 100.0) + (decree === "martial" ? 0.10 : (decree === "trade" ? -0.05 : 0)) + (setBon.defPct / 100.0) + (mutId === "wyrm_blood" ? 0.08 : 0) + rwDefMod + recDefBonus - (curse && curse.id === "tectonic" ? 0.20 : 0);
-  var arcaneMult     = 1 + ((sk.arcane || 1) * 0.05) + (feastId === "elven_wine" ? 0.15 : 0) + ((blds.alchemy || 0) * 0.05) + ((awk.bonusMagPct || 0) / 100.0) + (setBon.magPct / 100.0) + rwMagMod - (curse && curse.id === "static_grid" ? 0.15 : 0);
+  var riposteDefMult = 1 + ((sk.riposte || 1) * 0.032) + (martyrWardPct / 100.0) + (decree === "martial" ? 0.10 : (decree === "trade" ? -0.05 : 0)) + (setBon.defPct / 100.0) + (mutId === "wyrm_blood" ? 0.08 : 0) + rwDefMod + recDefBonus + wfDefAdd - (curse && curse.id === "tectonic" ? 0.20 : 0);
+  var arcaneMult     = 1 + ((sk.arcane || 1) * 0.05) + (feastId === "elven_wine" ? 0.15 : 0) + ((blds.alchemy || 0) * 0.05) + ((awk.bonusMagPct || 0) / 100.0) + (setBon.magPct / 100.0) + rwMagMod + wfMagAdd - (curse && curse.id === "static_grid" ? 0.15 : 0);
 
   var stanceAtkMult = 1.0, stanceDefMult = 1.0, stanceAccAdd = 0, stanceEvaAdd = 0, stanceParryAdd = 0, stanceCritAdd = 0;
   if (h.stance === "aggressive") { stanceAtkMult = 1.20; stanceDefMult = 0.85; stanceCritAdd = 8; stanceEvaAdd = -5; }
@@ -6543,9 +6365,14 @@ function getHeroStats(targetHero) {
   var rwEvaMod = (rw.wind ? 10 : 0) + (rw.cold ? -6 : 0) + (rw.cold && frostCount > 0 ? 10 : 0);
   var rwCritMod = (rw.lightning ? 10 : 0) + (rw.hot ? 8 : 0);
 
-  var accuracyPct = Math.min(145, Math.round(83 + ((sk.precision || 1) * 2.0) + (effWits * 0.16) + ((blds.watchtower || 0) * 2.5) + stanceAccAdd + petAccAdd + rwAccMod + (mutId === "night_eyes" ? 6 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0) - (curse && curse.id === "fimbulwinter" ? 12 : 0)));
+  // Hardcore Rule #5: Creeping Dread (50%+ Stress: -5% Hit/Dodge) & Paranoia (75%+ Stress: -10% Hit/Dodge)
+  var curStress = h.stress || 0;
+  var stressHitPen = curStress >= 75 ? 10 : (curStress >= 50 ? 5 : 0);
+  var stressDodgePen = curStress >= 75 ? 10 : (curStress >= 50 ? 5 : 0);
+
+  var accuracyPct = Math.min(145, Math.round(83 + ((sk.precision || 1) * 2.0) + (effWits * 0.16) + ((blds.watchtower || 0) * 2.5) + stanceAccAdd + petAccAdd + rwAccMod + (mutId === "night_eyes" ? 6 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0) - stressHitPen - (curse && curse.id === "fimbulwinter" ? 12 : 0)));
   var dodgePenalty = (h.lodgingBuff && h.lodgingBuff.questsLeft > 0 && h.lodgingBuff.dodgePen) ? h.lodgingBuff.dodgePen : 0;
-  var dodgePct    = Math.min(64, Math.max(2, Math.round(5 + gearEva + (rMeta.eva || 0) + ((sk.evasion || 1) * 1.8) + (effWits * 0.11) + ((blds.watchtower || 0) * 2.5) + (frostCount > 0 ? 5 : 0) + rwEvaMod + (mutId === "night_eyes" ? 6 : (mutId === "glass_walker" ? 10 : 0)) + stanceEvaAdd + petDodgeAdd + setBon.dodgeAdd + (feastId === "elven_wine" ? 10 : 0) - dodgePenalty)));
+  var dodgePct    = Math.min(64, Math.max(2, Math.round(5 + gearEva + (rMeta.eva || 0) + ((sk.evasion || 1) * 1.8) + (effWits * 0.11) + ((blds.watchtower || 0) * 2.5) + (frostCount > 0 ? 5 : 0) + rwEvaMod + (mutId === "night_eyes" ? 6 : (mutId === "glass_walker" ? 10 : 0)) + stanceEvaAdd + petDodgeAdd + setBon.dodgeAdd + (feastId === "elven_wine" ? 10 : 0) - dodgePenalty - stressDodgePen)));
   var parryPct    = Math.min(60, Math.max(2, Math.round(4 + (h.race === "Dwarf" ? 4 : 0) + ((sk.riposte || 1) * 1.8) + (effGuts * 0.09) + (mutId === "titan_marrow" ? 6 : 0) + stanceParryAdd + petParryAdd + setBon.parryAdd + (feastId === "boar_roast" ? 10 : 0) + (decree === "martial" ? 10 : 0))));
   var critPct     = (!targetHero && activeCombat && (activeCombat.avengingWrathTurns || 0) > 0) ? 100 : Math.min(68, Math.round(5 + (rMeta.crit || 0) + (awk.bonusCrit || 0) + ((sk.lethal || 1) * 1.8) + (effWits * 0.14) + (h.calling === "Shadowblade" ? 10 : 0) + rwCritMod + (mutId === "glass_walker" ? 12 : 0) + (h.moonCurseTurns > 0 ? 15 : 0) + (rev.id === "werewolf_moon" ? 12 : 0) + (h.starChart === "draco" ? 5 : 0) + stanceCritAdd + petCritAdd + setBon.critAdd + (feastId === "elven_wine" ? 10 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0)));
 
@@ -6553,8 +6380,8 @@ function getHeroStats(targetHero) {
   var discountPct = Math.min(45, Math.round((effCharm * 0.12) + ((sk.fortune || 1) * 1.5) + (h.calling === "Trader" ? 14 : 0) - (curse && curse.id === "flood_tide" ? 20 : 0)));
   var goldBonusMult = 1 + ((sk.fortune || 1) * 0.04) + ((h.prestigeRank || 0) * 0.02) + ((awk.bonusGoldPct || 0) / 100.0) + (setBon.goldPct / 100.0) + (toastOfCourt ? 0.10 : 0) + festGoldAdd + (h.starChart === "scales" ? 0.12 : 0) + (rev.name.indexOf("Golden") >= 0 ? 0.20 : 0) + (decree === "trade" ? 0.25 : 0);
   var dropLuckBonus = ((sk.fortune || 1) * 0.01) + ((h.prestigeRank || 0) * 0.02) + ((blds.alchemy || 0) * 0.06) + (h.starChart === "chalice" ? 15 / 100.0 : 0) + (feastId === "dragon_stew" ? 0.25 : 0) + (rev.id === "zombie_rising" ? 0.25 : 0) + (decree === "hunt" ? 0.25 : 0);
-  var skillMpCost = (h.awakened && h.calling === "Wizard") ? 0 : Math.max(4, 8 - Math.floor((sk.arcane || 1) / 7) + (rw.cold ? 1 : 0));
-  var totalVamp = Math.min(0.45, (vampCount * 0.10) + setBon.vampAdd + (h.race === "Dhampir" ? 0.05 : 0) + (mutId === "vamp_veins" ? 0.06 : 0) + (rev.id === "vampire_masquerade" ? 0.15 : 0));
+  var skillMpCost = (h.awakened && h.calling === "Wizard") ? 0 : Math.max(2, 8 - Math.floor((sk.arcane || 1) / 7) + (rw.cold ? 1 : 0) - wfMpSub);
+  var totalVamp = Math.min(0.45, (vampCount * 0.10) + setBon.vampAdd + wfVampAdd + (h.race === "Dhampir" ? 0.05 : 0) + (mutId === "vamp_veins" ? 0.06 : 0) + (rev.id === "vampire_masquerade" ? 0.15 : 0));
 
   return { effGuts: effGuts, effWits: effWits, effCharm: effCharm, atk: atk, mag: mag, def: def, accuracyPct: accuracyPct, dodgePct: dodgePct, parryPct: parryPct, critPct: critPct, discountPct: discountPct, goldBonusMult: goldBonusMult, dropLuckBonus: dropLuckBonus, skillMpCost: skillMpCost, hasVampSocket: (totalVamp > 0), vampPct: totalVamp, hasThunderSocket: (thunderCount > 0), hasFrostSocket: (frostCount > 0), hasFireSocket: (fireCount > 0), activeSets: setBon.activeSets, shardPct: shardPct, tarnishedFame: tarnishedFame, toastOfCourt: toastOfCourt, maxFameCap: maxFameCap, regencySuspended: regencySuspended, martyrWardPct: martyrWardPct, brokenGearCount: brokenGearCount, wepPerk: wepPerk, recBond: recBond };
 }
@@ -6570,11 +6397,12 @@ function checkLevelUp() {
     hero.statPoints = (hero.statPoints || 0) + 2;
     hero.skillPoints = (hero.skillPoints || 0) + 1;
     hero.guts += 1; hero.wits += 1; hero.charm += 1;
-    hero.maxHp += 14 + Math.round(hero.guts * 0.22);
-    hero.maxMp += 5 + Math.round(hero.wits * 0.18);
+    hero.maxHp += 18 + Math.round(hero.guts * 0.30);
+    hero.maxMp += 5 + Math.round(hero.wits * 0.20);
+    syncHeroVitalityMaxHp(hero);
     hero.hp = hero.maxHp; hero.mp = hero.maxMp;
     leveled = true;
-    addLog("🌟 <b style='color:#fbbf24;'>LEVEL UP! Reached Lv " + hero.level + " / 150!</b> (+2 Stat Points, +1 Skill Point &amp; Max Fame Cap raised to " + getMaxFameForLevel(hero.level) + "!)");
+    addLog("🌟 <b style='color:#fbbf24;'>LEVEL UP! Reached Lv " + hero.level + " / 150!</b> (+2 Stat Points, +1 Skill Point &amp; Max HP raised to " + hero.maxHp + "!)");
   }
   if (leveled) {
     playSfx("levelup");
@@ -6633,6 +6461,7 @@ function generateRandomItem(targetLevel, forceMinRarityIdx, maxRarityIdx) {
   return itm;
 }
 
+// Balanced Dwarven Caravan: Only restocks on manual 6h button click; 0% Grey junk (Min Uncommon); Epic (~1.8%/slot) & Legendary (~0.55% on slot 5) are rare!
 function restockDwarvenMarket() {
   ensureHeroV3Fields(hero);
   var nowMs = Date.now();
@@ -6649,21 +6478,32 @@ function restockDwarvenMarket() {
   }
   hero.lastShopRestockEpoch = nowMs;
   shopInventory = [];
-  var lv = hero ? hero.level : 1;
+  var lv = hero ? (hero.level || 1) : 1;
   for (var i = 0; i < 5; i++) {
-    shopInventory.push(generateRandomItem(lv, 0, i === 4 ? 3 : 2));
+    var minRar = (i === 4 && Math.random() < 0.35) ? 2 : 1;
+    var maxRar = (i === 4) ? 4 : 3;
+    shopInventory.push(generateRandomItem(lv + (i === 4 ? 2 : 1), minRar, maxRar));
   }
   hero.shopInventory = shopInventory;
-  addLog("⚖️ A new Dwarven Caravan has arrived with fresh wares (6-hour lock started)!");
+  addLog("⚖️ A new Dwarven Caravan has arrived with fresh Uncommon+ wares (6-hour lock started)!");
   saveCurrentHero(null, false, null);
   openTownFacilityModal("market");
+}
+
+if (!window._vitalityAutoHooked) {
+  window._vitalityAutoHooked = true;
+  var _baseEnsureV3 = window.ensureHeroV3Fields;
+  window.ensureHeroV3Fields = function(h) {
+    if (_baseEnsureV3) _baseEnsureV3(h);
+    if (h) syncHeroVitalityMaxHp(h);
+  };
 }
 '''
 }
 
 boolean part4ABoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 4A OF 7 — REPLY "NEXT" FOR PART 4B
+// END OF PART 4A OF 7 — PASTE DIRECTLY ABOVE PART 4B
 // ==============================================================================
 
 // ==============================================================================
@@ -6705,13 +6545,38 @@ function showValkyrieSealPopupModal(sealsRemaining, titleTxt, bodyHtml) {
     '<div class="modal-card" style="border:3px solid #fde047;box-shadow:0 0 55px rgba(250,204,21,0.75);" onclick="event.stopPropagation()">' +
       '<div style="font-size:52px;margin-bottom:4px;">🪽✨🛡️</div>' +
       '<div style="font-size:20px;font-weight:900;color:#fde047;font-family:&#39;Cinzel&#39;,serif;">' + escapeHtml(titleTxt || 'VALKYRIE TOKEN ACTIVATED!') + '</div>' +
-      '<div style="margin:8px auto;display:inline-block;background:linear-gradient(90deg,#451a03,#78350f,#451a03);border:2px solid #fde047;color:#fef08a;padding:6px 16px;border-radius:6px;font-family:&#39;Cinzel&#39;,serif;size:15px;font-weight:900;">' +
+      '<div style="margin:8px auto;display:inline-block;background:linear-gradient(90deg,#451a03,#78350f,#451a03);border:2px solid #fde047;color:#fef08a;padding:6px 16px;border-radius:6px;font-family:&#39;Cinzel&#39;,serif;font-size:15px;font-weight:900;">' +
         '🪽 VALKYRIE TOKENS REMAINING: ' + sealsRemaining + ' / 10' +
       '</div>' +
       '<div style="background:#0d0912;border:1px solid #c5a059;border-left:4px solid #fde047;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
         bodyHtml +
       '</div>' +
       '<button class="btn btn-shine" style="width:100%;justify-content:center;padding:12px;font-size:15px;font-weight:900;" onclick="closePopupModal();renderBattleModal();renderGameScreen();">✅ OK — Continue (' + sealsRemaining + ' 🪽 Left)</button>' +
+    '</div>' +
+  '</div>';
+}
+
+// Blocking Recruit Fallen Popup Modal — Requires player to hit OK when a Mercenary or Bodyguard dies in battle!
+function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHtml) {
+  activeModalHtml = extraHtml;
+  document.body.classList.add("modal-open");
+  var container = document.getElementById("modalContainer");
+  if (!container) return;
+  container.innerHTML = '<div class="modal-overlay" style="z-index:10005;" onclick="event.stopPropagation()">' +
+    '<div class="modal-card" style="border:3px solid #ef4444;box-shadow:0 0 55px rgba(239,68,68,0.75);" onclick="event.stopPropagation()">' +
+      '<div style="font-size:48px;margin-bottom:4px;">⚰️🩸🛡️</div>' +
+      '<div style="margin-bottom:6px;">' + renderEntityAvatar(recName, recIcon || "⚔️", 64, false) + '</div>' +
+      '<div style="font-size:20px;font-weight:900;color:#fca5a5;font-family:&#39;Cinzel&#39;,serif;">RECRUIT FALLEN IN BATTLE!</div>' +
+      '<div style="margin:6px auto;display:inline-block;background:#450a0a;border:1px solid #ef4444;color:#fde047;padding:4px 14px;border-radius:6px;font-family:&#39;Cinzel&#39;,serif;font-size:13.5px;font-weight:900;">' +
+        (recIcon || "⚔️") + ' ' + escapeHtml(recName) + ' (' + escapeHtml(recRole || "Sworn Retinue") + ')' +
+      '</div>' +
+      '<div style="background:#14090e;border:1px solid #991b1b;border-left:4px solid #ef4444;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
+        '<div>💀 <b>Slain By:</b> <span style="color:#fca5a5;font-weight:bold;">' + escapeHtml(slainBy || "Enemy Strike") + '</span></div>' +
+        '<div>🔥 <b>Avenging Wrath Triggered (2 Turns):</b> <span style="color:#fde047;font-weight:bold;">+30% Hero ATK &amp; 100% Critical Strike Chance!</span></div>' +
+        '<div>🗿 <b>Martyr Memorial:</b> <span style="color:#4ade80;font-weight:bold;">Permanent +2% Defense Ward added in the Weeping Graveyard!</span></div>' +
+        (extraHtml ? ('<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #7f1d1d;">' + extraHtml + '</div>') : '') +
+      '</div>' +
+      '<button class="btn btn-crimson" style="width:100%;justify-content:center;padding:12px;font-size:15px;font-weight:900;" onclick="closePopupModal();renderBattleModal();renderGameScreen();">⚔️ Avenge ' + escapeHtml(recName) + ' — Continue Battle</button>' +
     '</div>' +
   '</div>';
 }
@@ -6747,7 +6612,6 @@ function setRecruitOrder(orderKey) {
   else renderGameScreen();
 }
 
-// Improvement #2: Recruit Limb-Focus Targeting (Accelerates Boss 40% Limb Sever!)
 function setRecruitTargetZone(zoneKey) {
   if (!hero) return;
   hero.recruitTargetZone = zoneKey || "torso";
@@ -6756,7 +6620,6 @@ function setRecruitTargetZone(zoneKey) {
   if (activeCombat) renderBattleModal();
 }
 
-// Improvement #27: Combat Ticker Filter Pills
 function setCombatLogFilter(filterKey) {
   if (!hero) return;
   hero.combatLogFilter = filterKey || "all";
@@ -6764,7 +6627,6 @@ function setCombatLogFilter(filterKey) {
   if (activeCombat) renderBattleModal();
 }
 
-// Improvement #1: Enemy Intent Telegraphs
 function rollNextEnemyIntent(cObj) {
   var c = cObj || activeCombat;
   if (!c || !window.ENEMY_INTENT_TYPES) return ENEMY_INTENT_TYPES ? ENEMY_INTENT_TYPES[0] : { id: "strike", name: "🗡️ Fierce Slash", mult: 1.0, color: "#fca5a5" };
@@ -6803,7 +6665,6 @@ function getLevelDeltaModifiers(heroLv, enemyLv) {
   return { delta: delta, hitPen: hitPen, dmgDealtMult: dmgDealtMult, dmgTakenMult: dmgTakenMult, label: label };
 }
 
-// v18.1 #5 & #17: Optional Pre-Battle 50/50 Fate Dice (+10% Player Stats vs +10% Enemy Stats) with Dice-Cup Shake!
 function rollPreBattleGambitDice() {
   if (!activeCombat || activeCombat.gambitDiceUsed) return;
   activeCombat.gambitDiceUsed = true;
@@ -6826,7 +6687,6 @@ function rollPreBattleGambitDice() {
   renderBattleModal();
 }
 
-// v18.1 #5: Optional Pre-Battle Court Card Draw (1-10, Prince=11, Queen=12, King=13 heals 0.5%*rank HP; Joker = -10% Stat Debuff!)
 function drawPreBattleGambitCard() {
   if (!activeCombat || activeCombat.gambitCardUsed) return;
   activeCombat.gambitCardUsed = true;
@@ -6851,7 +6711,6 @@ function drawPreBattleGambitCard() {
   renderBattleModal();
 }
 
-// v18.1 #9: Abyssal Estus Soul-Flask (3 Sips per Gauntlet, refills +1 sip every 3rd wave!)
 function useAbyssalEstusFlask() {
   if (!activeCombat || !activeCombat.isGauntlet || (activeCombat.estusSips || 0) <= 0) return;
   activeCombat.estusSips--;
@@ -7021,7 +6880,6 @@ function renderBattleModal() {
   var badgesHtml = (lastCombatBanner && lastCombatBanner.length) ?
     '<div style="text-align:center;margin-bottom:4px;">' + lastCombatBanner.map(function(b) { return '<span class="combat-badge-pill" style="background:' + b.bg + ';color:#fff;">' + b.text + '</span>'; }).join(' ') + '</div>' : '';
 
-  // Dedicated Under-Arena Recruits Battle Card + Live Party Member Damage & Effectiveness Meters (#7–#11) + Limb Focus (#2)
   var pStats = activeCombat.partyStats;
   var totSessionDmg = Math.max(1, activeCombat.sessionDamage || 0);
   var heroSharePct = activeCombat.sessionDamage > 0 ? Math.round(((pStats.heroDmg || 0) / totSessionDmg) * 100) : 0;
@@ -7106,7 +6964,6 @@ function renderBattleModal() {
     '</div>' +
   '</div>';
 
-  // v18.1 #5: Optional Pre-Battle Dice & Court Card Gambit Bar
   var gambitBarHtml = '<div style="background:rgba(18,10,28,0.94);border:1px solid #c5a059;border-radius:4px;padding:4px 8px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;font-size:10.5px;">' +
     '<span style="color:#fde047;font-family:Cinzel,serif;font-weight:bold;">🎲🃏 Fate&apos;s Gambit (Optional):</span>' +
     '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">' +
@@ -7202,7 +7059,6 @@ function renderBattleModal() {
     '</div>';
   }
 
-  // Improvement #27: Combat Ticker Filter Pills (All | Hero | Recruits | Loot)
   var logFilter = hero.combatLogFilter || "all";
   var filteredLogs = (hero.logs || []).filter(function(l) {
     if (logFilter === "recruits") return (l.indexOf("[RECRUITS]") >= 0 || l.indexOf("Mercenary") >= 0 || l.indexOf("Heir") >= 0 || l.indexOf("Bodyguard") >= 0 || l.indexOf("Companion") >= 0);
@@ -7538,7 +7394,6 @@ function hireMercenaryFighter(mercId) {
   showOutcomeModal("⚔️ Mercenary Hired!", tmpl.icon, tmpl.name, "#4ade80", mMsg, null);
 }
 
-// Improvement #22: Companion Treats & Morale Bar (+50% Companion DMG & +5% Hit/Crit for 3 Battles!)
 function feedCompanionMoraleTreat() {
   ensureHeroV3Fields(hero);
   if (!hero.companion) {
@@ -7738,7 +7593,6 @@ function embarkOnQuest(mode) {
     return;
   }
 
-  // v18.1 #6: Strict Area Boss Lock — Main Area Bosses can ONLY be fought by unlocking 5/5 Warrants!
   if ((mode === "soloBoss" || mode === "zoneRaid") && curTier < 5) {
     showRequirementModal(
       "Tier 5 Zone Boss Warrant Required!", "📋🔒",
@@ -7905,7 +7759,6 @@ function embarkOnQuest(mode) {
 
   var eLv = area.minLv + Math.floor(Math.random() * (area.maxLv - area.minLv + 1));
 
-  // v18.1 #10: Wanted Level & Wanted Lv 5 "The Hound of the High Court" Invasions!
   if ((hero.wantedLevel || 0) > 0 && Math.random() < (hero.wantedLevel >= 5 ? 0.45 : 0.30)) {
     var isHound = (hero.wantedLevel >= 5);
     var exLv = Math.max(eLv + 2, hero.level + hero.wantedLevel);
@@ -7925,7 +7778,6 @@ function embarkOnQuest(mode) {
     renderGameScreen(); return;
   }
 
-  // v18.1 #6: Rare Patrol Roll Spawns a ROAMING MINI-BOSS (Never the Main Area Boss!)
   if (Math.random() < 0.06 && window.ROAMING_MINI_BOSSES) {
     var rmb = ROAMING_MINI_BOSSES[Math.floor(Math.random() * ROAMING_MINI_BOSSES.length)];
     var stormBoost = (rw.lightning || rw.wind) ? 1.18 : 1.0;
@@ -7962,7 +7814,6 @@ function embarkOnQuest(mode) {
     return;
   }
 
-  // Improvement #19: Evolving Nemesis Vendettas (Scales with Nemesis Rank!)
   if (hero.nemesis && hero.nemesis.areaId === area.id && Math.random() < 0.35) {
     var nem = hero.nemesis;
     var nemRank = nem.rank || 1;
@@ -8083,11 +7934,11 @@ function embarkOnQuest(mode) {
 
 boolean part4BBoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 4B OF 7 — REPLY "NEXT" FOR PART 5A
+// END OF PART 4B OF 7 — REPLY "NEXT" FOR PART 5A OF 7
 // ==============================================================================
 
 // ==============================================================================
-// PART 5A OF 7 — PASTE DIRECTLY BELOW PART 4B (FULL FIXED VERSION)
+// PART 5A OF 7 — PASTE DIRECTLY BELOW PART 4B (INTEGRATED & STREAMLINED <32KB)
 // ==============================================================================
 
 String buildCombatChunkB() {
@@ -8096,19 +7947,134 @@ String buildCombatChunkB() {
 
 String buildCombatChunkB1() {
     return '''
+function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHtml) {
+  var horrorNote = (window.addHeroStress && hero) ? addHeroStress(20) : "";
+  if (activeCombat) activeCombat.stressFlashed = true;
+  var fullExtra = (extraHtml || "") + "<br>😱 <b>Survivor&apos;s Horror:</b> <b style=&#39;color:#f87171;&#39;>+20% Stress (Now " + (hero ? (hero.stress || 0) : 0) + "%)</b>" + horrorNote;
+  activeModalHtml = fullExtra;
+  document.body.classList.add("modal-open");
+  var c = document.getElementById("modalContainer");
+  if (!c) return;
+  c.innerHTML = '<div class="modal-overlay" style="z-index:10005;" onclick="event.stopPropagation()">' +
+    '<div class="modal-card" style="border:3px solid #ef4444;box-shadow:0 0 55px rgba(239,68,68,0.75);" onclick="event.stopPropagation()">' +
+      '<div style="font-size:46px;margin-bottom:4px;">⚰️🩸🛡️</div>' +
+      '<div style="margin-bottom:6px;">' + renderEntityAvatar(recName, recIcon || "⚔️", 64, false) + '</div>' +
+      '<div style="font-size:20px;font-weight:900;color:#fca5a5;font-family:&#39;Cinzel&#39;,serif;">RECRUIT FALLEN IN BATTLE!</div>' +
+      '<div style="margin:6px auto;display:inline-block;background:#450a0a;border:1px solid #ef4444;color:#fde047;padding:4px 14px;border-radius:6px;font-family:&#39;Cinzel&#39;,serif;font-size:13.5px;font-weight:900;">' +
+        (recIcon || "⚔️") + ' ' + escapeHtml(recName) + ' (' + escapeHtml(recRole || "Sworn Retinue") + ')' +
+      '</div>' +
+      '<div style="background:#14090e;border:1px solid #991b1b;border-left:4px solid #ef4444;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13px;line-height:1.6;color:#e5dec9;">' +
+        '<div>💀 <b>Slain By:</b> <span style="color:#fca5a5;font-weight:bold;">' + escapeHtml(slainBy || "Enemy Strike") + '</span></div>' +
+        '<div>🔥 <b>Avenging Wrath (2 Turns):</b> <span style="color:#fde047;font-weight:bold;">+30% Hero ATK &amp; 100% Crit!</span></div>' +
+        '<div>🗿 <b>Martyr Memorial:</b> <span style="color:#4ade80;font-weight:bold;">Permanent +2% DEF Ward in Graveyard!</span></div>' +
+        '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #7f1d1d;">' + fullExtra + '</div>' +
+      '</div>' +
+      '<button class="btn btn-crimson" style="width:100%;justify-content:center;padding:12px;font-size:15px;font-weight:900;" onclick="closePopupModal();renderBattleModal();renderGameScreen();">⚔️ Avenge ' + escapeHtml(recName) + ' — Continue Battle</button>' +
+    '</div></div>';
+}
+
+var DD_ANCESTOR_LINES = {
+  crit: ["A singular strike!", "Precision and power!", "The ground quakes!", "A devastating blow!", "Annihilated!"],
+  kill: ["Mortality clarified in a single blow!", "Prodigious size alone does not dissuade the sharpened blade.", "Executed with impunity!", "As the fiend falls, a faint hope blossoms.", "Begone, fiend!"],
+  parry: ["A masterclass in blade-work!", "Turned aside with effortless grace!", "Steel meets steel—and the fiend falters!"],
+  lowHp: ["Ringing ears, blurred vision—the end approaches...", "Remind yourself that overconfidence is a slow and insidious killer."],
+  deathsDoor: ["Teetering on the brink, facing the abyss!", "And now the true test... hold fast, or expire!", "Many fall in the face of chaos; not this one, not today!"],
+  stress: ["The walls close in, the shadows whisper of conspiracy!", "Dazed, reeling, about to break...", "Fear and frailty finally claim their due."]
+};
+
+var DD_RECRUIT_BARKS = [
+  "The shadows are moving!",
+  "Hold the line—do not falter!",
+  "My hands are shaking... strike true!",
+  "Did you hear that whisper in the dark?!",
+  "Keep your shield up! Do not let them flank us!",
+  "Blood and ash... my nerves are frayed!"
+];
+
+function playAncestorChord(isBell) {
+  if (hero && hero.sfxMuted) return;
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!window._ddAudioCtx) window._ddAudioCtx = new AC();
+    var ctx = window._ddAudioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    var now = ctx.currentTime, o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), flt = ctx.createBiquadFilter(), g = ctx.createGain();
+    o1.type = isBell ? "triangle" : "sawtooth"; o2.type = "sine";
+    o1.frequency.setValueAtTime(isBell ? 110 : 65.4, now);
+    o2.frequency.setValueAtTime(isBell ? 220 : 98.0, now);
+    if (isBell) o1.frequency.exponentialRampToValueAtTime(55, now + 0.75);
+    flt.type = "lowpass"; flt.frequency.setValueAtTime(isBell ? 620 : 280, now);
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(isBell ? 0.22 : 0.15, now + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, now + (isBell ? 0.85 : 0.62));
+    o1.connect(flt); o2.connect(flt); flt.connect(g); g.connect(ctx.destination);
+    o1.start(now); o2.start(now); o1.stop(now + 0.88); o2.stop(now + 0.88);
+  } catch (e) {}
+}
+
+function triggerAncestorCallout(cat) {
+  var pool = DD_ANCESTOR_LINES[cat] || DD_ANCESTOR_LINES.crit;
+  var line = pool[Math.floor(Math.random() * pool.length)];
+  if (activeCombat) { activeCombat.ancestorQuote = line; activeCombat.ancestorFlash = true; }
+  playAncestorChord(cat === "deathsDoor");
+  return line;
+}
+
+function renderBloodArcSlashSvg(stype) {
+  var hc = (hero && hero.slashColor) ? hero.slashColor : "Crimson Blood";
+  var m = "#ef4444", gl = "#991b1b", cr = "#fecaca";
+  if (stype === "gold" || hc === "Solar Gold") { m = "#fde047"; gl = "#ca8a04"; cr = "#ffffff"; }
+  else if (stype === "void" || hc === "Abyssal Void") { m = "#c084fc"; gl = "#6b21a8"; cr = "#f3e8ff"; }
+  else if (hc === "Glacial Frost") { m = "#38bdf8"; gl = "#0369a1"; cr = "#e0f2fe"; }
+  else if (hc === "Emerald Venom") { m = "#4ade80"; gl = "#15803d"; cr = "#dcfce7"; }
+  return '<svg viewBox="0 0 120 120" style="width:110px;height:110px;overflow:visible;filter:drop-shadow(0 0 10px ' + m + ') drop-shadow(0 0 16px ' + gl + ');">' +
+    '<path d="M12 98 Q56 42 108 14 Q68 58 22 106 Z" fill="' + m + '" stroke="' + cr + '" stroke-width="1.8"/>' +
+    '<path d="M28 104 Q64 62 104 26" fill="none" stroke="' + cr + '" stroke-width="2.4" stroke-linecap="round"/>' +
+    '<circle cx="62" cy="56" r="4" fill="' + cr + '"/><circle cx="38" cy="80" r="3" fill="' + m + '"/><circle cx="84" cy="34" r="3" fill="' + m + '"/></svg>';
+}
+
+function checkDeathsDoorOrDefeat() {
+  if (!activeCombat || !hero) { handleCombatDefeat(); return; }
+  var odds = (activeCombat.deathsDoorOdds !== undefined) ? activeCombat.deathsDoorOdds : 67;
+  if (!activeCombat.atDeathsDoor) {
+    activeCombat.atDeathsDoor = true;
+    activeCombat.deathsDoorOdds = odds;
+    hero.hp = 1;
+    floatingHeroTag = { text: "🔔 DEATH'S DOOR (1 HP)!", color: "#ef4444" };
+    var q1 = triggerAncestorCallout("deathsDoor");
+    addLog("🔔🩸 <b style='color:#ef4444;'>THE RED BELL TOLLS — DEATH&apos;S DOOR (1 HP)!</b> Clung to life at 1 HP (Next Survival Check: <b>" + odds + "%</b>)! <i style='color:#fde68a;'>&ldquo;" + escapeHtml(q1) + "&rdquo;</i>");
+    renderBattleModal();
+    return;
+  }
+  if ((Math.random() * 100) < odds) {
+    activeCombat.deathsDoorOdds = Math.max(15, odds - 15);
+    hero.hp = 1;
+    floatingHeroTag = { text: "🔔 RESISTED DEATH (" + odds + "%)!", color: "#fde047" };
+    var q2 = triggerAncestorCallout("deathsDoor");
+    addLog("🔔⚡ <b style='color:#fde047;'>DEATH&apos;S DOOR SURVIVED (" + odds + "% Odds)!</b> Defied death at <b>1 HP</b> (Next check: <b>" + activeCombat.deathsDoorOdds + "%</b>)! <i style='color:#fde68a;'>&ldquo;" + escapeHtml(q2) + "&rdquo;</i>");
+    renderBattleModal();
+    return;
+  }
+  activeCombat.atDeathsDoor = false;
+  addLog("💀🔔 <b style='color:#ef4444;'>DEATH&apos;S DOOR CHECK FAILED (" + odds + "% Odds)!</b>");
+  handleCombatDefeat();
+}
+
 function startPvpDuel(opponentType, keyOrIdx) {
   if (activeCombat || activeDelve) return;
   ensureHeroV3Fields(hero);
+  if (window.syncHeroVitalityMaxHp) syncHeroVitalityMaxHp(hero);
   if ((hero.pvpDuelsToday || 0) >= MAX_DAILY_PVP_DUELS) {
-    showRequirementModal("Blood-Lists PvP Daily Limit Reached (5/5 Today)", "🏟️⏳", "You have already fought the maximum of <b>5 Arena PvP Duels today</b>.", "Standard Realm Patrols/Questing have NO daily cap! Return after midnight rollover (or use Admin Reset) for 5 more Arena Duels.", "");
+    showRequirementModal("Blood-Lists PvP Daily Limit Reached (5/5 Today)", "🏟️⏳", "You have already fought <b>5 Arena PvP Duels today</b>.", "Return after midnight rollover!", "");
     return;
   }
   if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for PvP Duel", "🏟️⚡", "Entering the Royal Tournament PvP Arena requires <b>3⚡ Quests</b>.", "Wait for the 45m stamina tick or rest at the Inn!", "");
+    showRequirementModal("Need 3⚡ Quests for PvP Duel", "🏟️⚡", "Entering the PvP Arena requires <b>3⚡ Quests</b>.", "Wait for the 45m stamina tick or rest at the Inn!", "");
     return;
   }
   if (hero.hp <= Math.round(hero.maxHp * 0.2)) {
-    showRequirementModal("Too Wounded for PvP Arena", "🏟️🕯️", "You need at least <b>20% Max HP</b> before entering the Royal Tournament Arena.", "Visit the Sanctuary in Town or drink a Healing Potion first!", "");
+    showRequirementModal("Too Wounded for PvP Arena", "🏟️🕯️", "You need at least <b>20% Max HP</b> before entering the Arena.", "Visit the Sanctuary or drink a Healing Potion!", "");
     return;
   }
   hero.quests -= 3;
@@ -8120,49 +8086,38 @@ function startPvpDuel(opponentType, keyOrIdx) {
     var oppStats = getHeroStats(rawOpp);
     var cMeta = CALLINGS[rawOpp.calling] || { sprite: "⚔️" };
     opp = {
-      slotKey: keyOrIdx,
-      name: rawOpp.name + " (" + (rawOpp.race || "Human") + " " + rawOpp.calling + ")",
+      slotKey: keyOrIdx, name: rawOpp.name + " (" + (rawOpp.race || "Human") + " " + rawOpp.calling + ")",
       rawName: rawOpp.name, icon: cMeta.sprite, level: rawOpp.level || 1,
       hp: (rawOpp.maxHp || 100) + Math.round(rawOpp.level * 15),
-      atk: oppStats.atk, def: oppStats.def, eva: oppStats.dodgePct,
-      parry: oppStats.parryPct, acc: oppStats.accuracyPct, crit: oppStats.critPct, pvpRating: rawOpp.pvpRating || 1000
+      atk: oppStats.atk, def: oppStats.def, eva: oppStats.dodgePct, parry: oppStats.parryPct, acc: oppStats.accuracyPct, crit: oppStats.critPct, pvpRating: rawOpp.pvpRating || 1000
     };
   } else {
     var npc = NPC_CHAMPIONS[keyOrIdx];
     if (!npc) return;
     opp = {
-      slotKey: null,
-      name: npc.name + " (" + npc.race + " " + npc.calling + ")", rawName: npc.name, icon: npc.sprite, level: npc.level,
+      slotKey: null, name: npc.name + " (" + npc.race + " " + npc.calling + ")", rawName: npc.name, icon: npc.sprite, level: npc.level,
       hp: npc.maxHp, atk: npc.atk, def: npc.def, eva: npc.eva, parry: npc.parry, acc: npc.acc, crit: npc.crit, pvpRating: npc.pvpRating
     };
   }
-
   closePopupModal();
   clearTransientCombatFx();
   var pArm = Math.round(opp.hp * 0.35);
   activeCombat = {
-    isBoss: false, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: true,
-    oppSlotKey: opp.slotKey,
-    areaId: hero.selectedArea || 1, trait: "Arena-Challenger",
-    icon: opp.icon, name: "PVP: " + opp.name, rawOpponentName: opp.rawName, baseMobName: opp.rawName,
+    isBoss: false, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: true, oppSlotKey: opp.slotKey,
+    areaId: hero.selectedArea || 1, trait: "Arena-Challenger", icon: opp.icon, name: "PVP: " + opp.name, rawOpponentName: opp.rawName, baseMobName: opp.rawName,
     level: opp.level, hp: opp.hp, maxHp: opp.hp, armor: pArm, maxArmor: pArm, poise: 100, maxPoise: 100,
-    atk: opp.atk, def: opp.def, eva: opp.eva, parry: opp.parry, acc: opp.acc, crit: opp.crit,
-    oppRating: opp.pvpRating, xp: opp.level * 30, gold: opp.level * 40,
+    atk: opp.atk, def: opp.def, eva: opp.eva, parry: opp.parry, acc: opp.acc, crit: opp.crit, oppRating: opp.pvpRating, xp: opp.level * 30, gold: opp.level * 40,
     sessionDamage: 0, alliedUsed: false, tauntUsed: false, tauntedTurns: 0, armorBrokenTurns: 0, hamstrungTurns: 0, silencedTurns: 0, phase2Triggered: false, comboCount: 0, bossCharging: false, partyShield: 0, bleedTurns: 0, heroPoisonTurns: 0, stunned: false
   };
-  addLog("🏟️ <b>PvP Arena Duel Started (" + hero.pvpDuelsToday + "/" + MAX_DAILY_PVP_DUELS + " Today • -3⚡):</b> Challenging <b>" + opp.icon + " " + escapeHtml(opp.name) + "</b>!");
+  addLog("🏟️ <b>PvP Arena Duel (" + hero.pvpDuelsToday + "/" + MAX_DAILY_PVP_DUELS + " Today):</b> Challenging <b>" + opp.icon + " " + escapeHtml(opp.name) + "</b>!");
   renderGameScreen();
 }
 
 function resolveStoryChoice(choiceIdx) {
   if (!activeStory) return;
-  var evTitle = activeStory.event.title;
-  var ch = activeStory.event.choices[choiceIdx];
-  var areaId = activeStory.area.id;
+  var evTitle = activeStory.event.title, ch = activeStory.event.choices[choiceIdx], areaId = activeStory.area.id;
   var chk = rollContestedStatCheck(ch.stat, ch.diff, areaId, false);
-
   if (ch.align && hero.alignment) hero.alignment[ch.align] = (hero.alignment[ch.align] || 0) + 1;
-
   var outcomeTitle = "", outcomeBody = "";
   if (chk.passed) {
     playSfx("coin");
@@ -8171,12 +8126,12 @@ function resolveStoryChoice(choiceIdx) {
     hero.xp += xpEarned;
     var bonusDesc = "+" + xpEarned + " XP";
     if (ch.rewardType === "wits_skill") { hero.wits += ch.rewardVal; hero.skillPoints = (hero.skillPoints || 0) + 1; bonusDesc += ", +" + ch.rewardVal + " Wits &amp; +1 Skill Pt"; }
-    else if (ch.rewardType === "guts_gems") { hero.guts += ch.rewardVal; hero.gems = (hero.gems || 0) + 1; bonusDesc += ", +" + ch.rewardVal + " Guts &amp; +1💎 Gem (Total: " + hero.gems + "💎)"; }
+    else if (ch.rewardType === "guts_gems") { hero.guts += ch.rewardVal; hero.gems = (hero.gems || 0) + 1; bonusDesc += ", +" + ch.rewardVal + " Guts &amp; +1💎 Gem"; }
     else if (ch.rewardType === "skill_hp") { hero.maxHp += ch.rewardVal; hero.hp = Math.min(hero.maxHp, hero.hp + ch.rewardVal); hero.skillPoints = (hero.skillPoints || 0) + 1; bonusDesc += ", +" + ch.rewardVal + " Max HP &amp; +1 Skill Pt"; }
     else if (ch.rewardType === "charm") { hero.charm += ch.rewardVal; hero.hp = Math.min(hero.maxHp, hero.hp + Math.round(hero.maxHp * 0.4)); bonusDesc += ", +" + ch.rewardVal + " Charm &amp; +40% Heal"; }
     else if (ch.rewardType === "gold_fame") { var gAdd = 85 * areaId; hero.gold += gAdd; addHeroFame(25); bonusDesc += ", +" + gAdd + "g &amp; +25 Fame"; }
     else if (ch.rewardType === "item") {
-      var itm = generateRandomItem(hero.level, 1, 2);
+      var itm = generateRandomItem(hero.level + 1, 1, 3);
       if (hero.inventory.length < 30) hero.inventory.push(itm);
       bonusDesc += " &amp; " + itm.icon + " " + escapeHtml(itm.name);
     }
@@ -8186,16 +8141,13 @@ function resolveStoryChoice(choiceIdx) {
     checkLevelUp();
   } else {
     playSfx("slash");
-    var dmg = Math.max(12, Math.round(hero.maxHp * 0.22));
-    var gLost = Math.min(hero.gold, Math.round(hero.level * 15));
-    hero.hp = Math.max(1, hero.hp - dmg);
-    hero.gold = Math.max(0, hero.gold - gLost);
-    var stMsg = addHeroStress(10);
+    var dmg = Math.max(12, Math.round(hero.maxHp * 0.22)), gLost = Math.min(hero.gold, Math.round(hero.level * 15));
+    hero.hp = Math.max(1, hero.hp - dmg); hero.gold = Math.max(0, hero.gold - gLost);
+    var stMsg = addHeroStress(12);
     outcomeTitle = "💀 CHECK FAILED! (" + chk.chance + "% Odds)";
-    outcomeBody = ch.failText + "<br><br>🩸 <b style='color:#f87171;'>Toll: Took -" + dmg + " HP, +10% Stress &amp; lost -" + gLost + " Gold!</b>" + stMsg;
+    outcomeBody = ch.failText + "<br><br>🩸 <b style='color:#f87171;'>Toll: Took -" + dmg + " HP, +12% Stress &amp; lost -" + gLost + "g!</b>" + stMsg;
     addLog("📜 <b>" + escapeHtml(evTitle) + " — " + outcomeTitle + ":</b> " + outcomeBody);
   }
-
   activeStory = null;
   queueSaveHero();
   renderGameScreen();
@@ -8213,6 +8165,7 @@ function checkZombieResilienceOrWin(actUsed, bannerBadges) {
     addLog("🧟🩸 <b>UNDEAD RESILIENCE!</b> <b>" + escapeHtml(activeCombat.name) + "</b> crawled back up at <b>" + activeCombat.hp + " HP (20%)</b>!");
     return false;
   }
+  triggerAncestorCallout("kill");
   lastCombatBanner = bannerBadges;
   handleCombatVictory();
   return true;
@@ -8224,15 +8177,22 @@ String buildCombatChunkB2() {
     return '''
 function combatAction(act) {
   if (!activeCombat) return;
+  if (window.syncHeroVitalityMaxHp) syncHeroVitalityMaxHp(hero);
   ensureCombatPartyStats(activeCombat);
-  var pStats = activeCombat.partyStats;
-  var st = getHeroStats();
-  var rw = getRealWeather();
-  var effRecOrder = getEffectiveRecruitOrder();
-  var wepPerk = st.wepPerk;
-  var recBond = st.recBond;
-  var bannerBadges = [];
+  var pStats = activeCombat.partyStats, st = getHeroStats(), rw = getRealWeather();
+  var effRecOrder = getEffectiveRecruitOrder(), wepPerk = st.wepPerk, recBond = st.recBond, bannerBadges = [];
   clearTransientCombatFx();
+  activeCombat.clashZoom = false;
+  activeCombat.stressFlashed = false;
+
+  activeCombat.battleRound = (activeCombat.battleRound || 0) + 1;
+  var isExhausted = (activeCombat.battleRound >= 10);
+  var exhaustHealMult = isExhausted ? 0.50 : 1.0;
+  if (activeCombat.battleRound === 10) {
+    bannerBadges.push({ text: "⏳ ROUND 10 EXHAUSTION (-50% HEALS &amp; FOE ENRAGE)!", bg: "#7f1d1d" });
+    addLog("⏳💀 <b>BATTLE EXHAUSTION (Round 10+):</b> Passive heals halved &amp; enemy gains +10% ATK/round!");
+  }
+
   var bossBonusMult = ((activeCombat.isBoss && hero.guild && hero.guild.founded && hero.guild.decree === "hunt") ? 1.10 : 1.0) * ((activeCombat.isBoss && wepPerk && wepPerk.armShredMult) ? 1.10 : 1.0);
   var armBreakMult = (activeCombat.armorBrokenTurns > 0) ? 1.40 : 1.0;
   var areaHazardDmgMult = (activeCombat.areaId === 15) ? 1.15 : 1.0;
@@ -8240,22 +8200,16 @@ function combatAction(act) {
   var masteryMult = (speciesKills >= 25) ? 1.05 : 1.0;
   var curse = getActiveRealmCurse();
   var lvMod = getLevelDeltaModifiers(hero.level, activeCombat.level || 1);
-  var inQteSweetSpot = (reflexPos >= 33 && reflexPos <= 67);
-  var inGoldQteSpot = (reflexPos >= 46 && reflexPos <= 54);
+  var inQteSweetSpot = activeCombat.isBoss ? (reflexPos >= 38 && reflexPos <= 62) : (reflexPos >= 33 && reflexPos <= 67);
+  var inGoldQteSpot = activeCombat.isBoss ? (reflexPos >= 48 && reflexPos <= 52) : (reflexPos >= 46 && reflexPos <= 54);
+  var hasGritImmunity = ((activeCombat.stunImmuneTurns || 0) > 0);
   hero.colossusCharge = Math.min(100, (hero.colossusCharge || 0) + 12);
 
-  if ((activeCombat.avengingWrathTurns || 0) > 0) {
-    activeCombat.avengingWrathTurns--;
-  }
-
+  if ((activeCombat.avengingWrathTurns || 0) > 0) activeCombat.avengingWrathTurns--;
   if (hero.weapon && hero.weapon.cursedAffix && Math.random() < 0.25 && window.SENTIENT_WEAPON_WHISPERS) {
-    var sw = SENTIENT_WEAPON_WHISPERS[Math.floor(Math.random() * SENTIENT_WEAPON_WHISPERS.length)];
-    addLog("<i style='color:#f43f5e;'>" + sw + "</i>");
+    addLog("<i style='color:#f43f5e;'>" + SENTIENT_WEAPON_WHISPERS[Math.floor(Math.random() * SENTIENT_WEAPON_WHISPERS.length)] + "</i>");
   }
-
-  if (activeCombat.areaId === 16) {
-    hero.mp = Math.min(hero.maxMp, hero.mp + Math.max(1, Math.round(hero.maxMp * 0.05)));
-  }
+  if (activeCombat.areaId === 16) hero.mp = Math.min(hero.maxMp, hero.mp + Math.max(1, Math.round(hero.maxMp * 0.05)));
 
   var preBlowEnemyHp = Math.max(1, activeCombat.hp);
 
@@ -8263,46 +8217,39 @@ function combatAction(act) {
     if (act === "execute") {
       hero.alignment.Shadow = (hero.alignment.Shadow || 0) + 1;
       activeCombat.finisherBonus = "execute";
-      playSfx("crit");
+      playSfx("crit"); triggerAncestorCallout("kill");
       if (window.triggerHitStopZoom) window.triggerHitStopZoom();
       if (window.spawnCanvasParticles) window.spawnCanvasParticles("void", 48);
-      addLog("🗡️🩸 <b>GORE-FOIL EXECUTION!</b> Sliced <b>" + escapeHtml(activeCombat.name) + "&apos;s</b> Tarot card in half in blue flames (+25% Bonus XP &amp; Guaranteed Trophy)!");
+      addLog("🗡️🩸 <b>GORE-FOIL EXECUTION!</b> Sliced <b>" + escapeHtml(activeCombat.name) + "&apos;s</b> Tarot card in half (+25% XP &amp; Guaranteed Trophy)!");
     } else {
       hero.alignment.Order = (hero.alignment.Order || 0) + 1;
       activeCombat.finisherBonus = "ransom";
-      playSfx("coin");
-      addLog("⛓️👑 <b>ROYAL RANSOM &amp; CLEMENCY!</b> Spared <b>" + escapeHtml(activeCombat.name) + "</b> in exchange for 2x Gold, +12 Fame &amp; +6🪵/+6🪨 Labor!");
+      playSfx("coin"); triggerAncestorCallout("kill");
+      addLog("⛓️👑 <b>ROYAL RANSOM!</b> Spared <b>" + escapeHtml(activeCombat.name) + "</b> for 2x Gold, +12 Fame &amp; +6🪵/+6🪨!");
     }
     pStats.heroDmg = (pStats.heroDmg || 0) + Math.max(0, activeCombat.hp);
     activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + Math.max(0, activeCombat.hp);
-    activeCombat.hp = 0;
-    activeCombat.zombieRevived = true;
+    activeCombat.hp = 0; activeCombat.zombieRevived = true;
     handleCombatVictory();
     return;
   }
 
-  // Improvement #6: 5x Combo Chain Finisher (0 MP, 2.2x DMG, Shreds Armor & Poise Stagger!)
   if (act === "chainFinisher") {
     if ((activeCombat.comboCount || 0) < 5) return;
     activeCombat.comboCount = 0;
-    playSfx("crit");
+    playSfx("crit"); triggerAncestorCallout("crit"); activeCombat.clashZoom = true;
     if (window.triggerHitStopZoom) window.triggerHitStopZoom();
     if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 46);
-    shakeTarget = "enemy";
-    lastFxEmoji = "⚡🗡️";
+    shakeTarget = "enemy"; lastFxEmoji = renderBloodArcSlashSvg("gold");
     var cfDmg = Math.max(30, Math.round(Math.max(st.atk, st.mag) * 2.25 * bossBonusMult * armBreakMult * masteryMult * lvMod.dmgDealtMult));
-    activeCombat.hp -= cfDmg;
-    activeCombat.armor = 0;
-    activeCombat.armorBrokenTurns = 3;
-    activeCombat.poise = 0;
-    activeCombat.poiseBroken = true;
-    activeCombat.stunned = true;
-    activeCombat.bossCharging = false;
+    activeCombat.hp -= cfDmg; activeCombat.armor = 0; activeCombat.armorBrokenTurns = 3;
+    if (!hasGritImmunity) { activeCombat.poise = 0; activeCombat.poiseBroken = true; activeCombat.stunned = true; activeCombat.bossCharging = false; }
+    else bannerBadges.push({ text: "🛡️ UNSTOPPABLE GRIT BLOCKED STUN!", bg: "#44403c" });
     activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + cfDmg;
     pStats.heroDmg = (pStats.heroDmg || 0) + cfDmg;
     floatingEnemyTag = { text: "⚡ 5x CHAIN FINISHER -" + cfDmg + "!", color: "#fde047" };
-    bannerBadges.push({ text: "⚡ 5x COMBO CHAIN FINISHER -" + cfDmg + " (ARMOR &amp; POISE SHATTERED)!", bg: "#b45309" });
-    addLog("⚡🔥 <b>5x COMBO CHAIN FINISHER!</b> Unleashed a zero-mana finisher for <b style='color:#4ade80;'>-" + cfDmg + " HP</b>, shattering Armor &amp; Poise!");
+    bannerBadges.push({ text: "⚡ 5x CHAIN FINISHER -" + cfDmg + "!", bg: "#b45309" });
+    addLog("⚡🔥 <b>5x COMBO CHAIN FINISHER!</b> Dealt <b style='color:#4ade80;'>-" + cfDmg + " HP</b>!");
     if (activeCombat.hp <= 0 && (cfDmg - preBlowEnemyHp) >= Math.round(preBlowEnemyHp * 0.50)) activeCombat.overkillTriggered = true;
     if (checkZombieResilienceOrWin(act, bannerBadges)) return;
   }
@@ -8310,11 +8257,10 @@ function combatAction(act) {
     if (!activeCombat.bossCharging) return;
     activeCombat.bossCharging = false;
     if (inQteSweetSpot) {
-      playSfx("crit");
+      playSfx("crit"); triggerAncestorCallout("parry"); activeCombat.clashZoom = true;
       if (window.triggerHitStopZoom) window.triggerHitStopZoom();
       if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 42);
-      shakeTarget = "enemy";
-      lastFxEmoji = "🛡️⚡";
+      shakeTarget = "enemy"; lastFxEmoji = renderBloodArcSlashSvg("gold");
       var deflectMult = (inGoldQteSpot ? 2.65 : ((activeCombat.areaId === 12) ? 2.25 : 2.0));
       var ripDmg = Math.max(25, Math.round(st.atk * deflectMult * armBreakMult * masteryMult));
       var chipDmg = inGoldQteSpot ? 0 : Math.max(2, Math.round(activeCombat.atk * 0.18));
@@ -8322,76 +8268,72 @@ function combatAction(act) {
       activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + ripDmg;
       pStats.heroDmg = (pStats.heroDmg || 0) + ripDmg;
       activeCombat.armor = Math.max(0, (activeCombat.armor || 0) - Math.round(ripDmg * 0.5));
-      activeCombat.poise = Math.max(0, (activeCombat.poise || 100) - (inGoldQteSpot ? 60 : 35));
-      if (activeCombat.poise <= 0) { activeCombat.poiseBroken = true; activeCombat.stunned = true; }
+      if (!hasGritImmunity) {
+        activeCombat.poise = Math.max(0, (activeCombat.poise || 100) - (inGoldQteSpot ? 60 : 35));
+        if (activeCombat.poise <= 0) { activeCombat.poiseBroken = true; activeCombat.stunned = true; }
+      }
       hero.hp = Math.max(1, hero.hp - chipDmg);
       floatingEnemyTag = { text: (inGoldQteSpot ? "🌟 GOLD RIPOSTE -" : "⚡ PERFECT DEFLECT -") + ripDmg + "!", color: "#fde047" };
-      bannerBadges.push({ text: (inGoldQteSpot ? "🌟 GOLD SWEET-SPOT CHAIN RIPOSTE -" : "⚡ PERFECT DEFLECT -") + ripDmg + "!", bg: "#15803d" });
-      addLog("🛡️⚡ <b style='color:#4ade80;'>" + (inGoldQteSpot ? "GOLD CHAINED RIPOSTE (0 DMG TAKEN)!" : "PERFECT REFLEX DEFLECT!") + "</b> Counter-slashed for <b style='color:#fbbf24;'>-" + ripDmg + " HP</b>!");
+      bannerBadges.push({ text: (inGoldQteSpot ? "🌟 GOLD RIPOSTE -" : "⚡ PERFECT DEFLECT -") + ripDmg + "!", bg: "#15803d" });
+      addLog("🛡️⚡ <b style='color:#4ade80;'>" + (inGoldQteSpot ? "GOLD CHAINED RIPOSTE!" : "PERFECT REFLEX DEFLECT!") + "</b> Counter-slashed for <b style='color:#fbbf24;'>-" + ripDmg + " HP</b>!");
       if (checkZombieResilienceOrWin(act, bannerBadges)) return;
       lastCombatBanner = bannerBadges;
       renderBattleModal();
       return;
     } else {
       playSfx("slash");
-      bannerBadges.push({ text: "❌ MISTIMED DEFLECT! BRACE FOR IMPACT!", bg: "#991b1b" });
-      addLog("❌ <b>Mistimed Reflex Deflect!</b> Your blade was out of position as the boss swings!");
+      activeCombat.whiffedParry = true; activeCombat.stressFlashed = true;
+      var mpDrain = Math.round((hero.mp || 0) * 0.25);
+      hero.mp = Math.max(0, (hero.mp || 0) - mpDrain);
+      addHeroStress(10); triggerAncestorCallout("stress");
+      bannerBadges.push({ text: "❌ WHIFFED PARRY! (+25% CLEAVE DMG, -" + mpDrain + " MP &amp; +10% STRESS!)", bg: "#991b1b" });
+      addLog("❌💀 <b>Whiffed Reflex Deflect!</b> Guard left wide open (+25% Cleave DMG, -" + mpDrain + " MP &amp; +10% Stress)!");
       activeCombat.bossCharging = true;
     }
   }
   else if (act === "taunt") {
     if (activeCombat.tauntUsed) return;
     activeCombat.tauntUsed = true;
-    var extraRounds = (activeCombat.areaId === 17) ? 2 : 0;
-    activeCombat.tauntedTurns = 3 + extraRounds;
+    activeCombat.tauntedTurns = 3 + ((activeCombat.areaId === 17) ? 2 : 0);
     playSfx("magic");
     floatingEnemyTag = { text: "🗣️ TAUNTED (-20% ATK/DEF)!", color: "#c084fc" };
     bannerBadges.push({ text: "🗣️ FOE RATTLED (-20% ATK/DEF &amp; MERCS PROTECTED!)", bg: "#581c87" });
-    addLog("🗣️👑 <b>ROYAL INTIMIDATION!</b> Rattled <b>" + escapeHtml(activeCombat.name) + "</b> (-20% Enemy ATK/DEF &amp; Mercenaries protected from hits for " + activeCombat.tauntedTurns + " turns)!");
+    addLog("🗣️👑 <b>ROYAL INTIMIDATION!</b> Rattled <b>" + escapeHtml(activeCombat.name) + "</b> (-20% ATK/DEF &amp; Mercs protected)!");
   }
   else if (act === "ultimate") {
     var nowMs = Date.now();
     if ((hero.ultReadyEpoch || 0) > nowMs) { addLog("⏳ Class Ultimate is on cooldown!"); renderBattleModal(); return; }
     var uMeta = CLASS_ULTIMATES[hero.calling] || CLASS_ULTIMATES["Warrior"];
     var roostLv = (hero.guild && hero.guild.buildings && hero.guild.buildings.roost) ? hero.guild.buildings.roost : 0;
-    var curseCdAdd = (curse && curse.id === "static_grid") ? 45 : 0;
-    var cdMs = Math.max(45, uMeta.cdSec + curseCdAdd - (roostLv * 5)) * 1000;
+    var cdMs = Math.max(45, uMeta.cdSec + ((curse && curse.id === "static_grid") ? 45 : 0) - (roostLv * 5)) * 1000;
     hero.ultReadyEpoch = nowMs + cdMs;
+    var clashMult = activeCombat.bossCharging ? 1.45 : 1.0;
+    if (activeCombat.bossCharging) bannerBadges.push({ text: "⚔️🔥 BLADE-CLASH OVERPOWER (+45% DMG)!", bg: "#b45309" });
 
-    var clashMult = 1.0;
-    if (activeCombat.bossCharging) {
-      clashMult = 1.45;
-      bannerBadges.push({ text: "⚔️🔥 BLADE-CLASH OVERPOWER (+45% ULTIMATE DMG)!", bg: "#b45309" });
-      addLog("⚔️🔥 <b style='color:#fde047;'>BLADE-CLASH OVERPOWER!</b> Your Ultimate collided head-on with the Boss's Cleave for <b>+45% Clash Damage</b>!");
-    }
-
-    playSfx("magic"); shakeTarget = "enemy"; lastFxEmoji = uMeta.icon;
+    playSfx("magic"); triggerAncestorCallout("crit"); activeCombat.clashZoom = true;
+    shakeTarget = "enemy"; lastFxEmoji = renderBloodArcSlashSvg("void");
     if (window.triggerHitStopZoom) window.triggerHitStopZoom();
     if (window.spawnCanvasParticles) window.spawnCanvasParticles("void", 45);
     var uDmg = Math.max(20, Math.round((Math.max(st.atk, st.mag) * 2.85 * clashMult - activeCombat.def * 0.25) * bossBonusMult * armBreakMult * masteryMult * lvMod.dmgDealtMult));
-    activeCombat.hp -= uDmg;
-    activeCombat.armor = 0;
-    activeCombat.armorBrokenTurns = 3;
-    activeCombat.poise = 0;
-    activeCombat.poiseBroken = true;
+    activeCombat.hp -= uDmg; activeCombat.armor = 0; activeCombat.armorBrokenTurns = 3;
+    if (!hasGritImmunity) { activeCombat.poise = 0; activeCombat.poiseBroken = true; activeCombat.stunned = true; }
     activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + uDmg;
     pStats.heroDmg = (pStats.heroDmg || 0) + uDmg;
-    activeCombat.stunned = true; activeCombat.bossCharging = false; activeCombat.heroPoisonTurns = 0;
+    activeCombat.bossCharging = false; activeCombat.heroPoisonTurns = 0;
     activeCombat.comboCount = (activeCombat.comboCount || 0) + 2;
     floatingEnemyTag = { text: "⚡ -" + uDmg + " ULTIMATE!", color: "#c084fc" };
-    var cryTxt = hero.battleCry ? (" — &ldquo;" + escapeHtml(hero.battleCry) + "&rdquo;") : "";
-    bannerBadges.push({ text: uMeta.icon + " " + uMeta.name.toUpperCase() + " -" + uDmg + " HP!" + cryTxt, bg: "#581c87" });
+    bannerBadges.push({ text: uMeta.icon + " " + uMeta.name.toUpperCase() + " -" + uDmg + " HP!", bg: "#581c87" });
 
     if (hero.calling === "Paladin" || hero.calling === "Sage" || hero.awakened) {
-      var pHeal = Math.round(hero.maxHp * 0.35);
+      var pHeal = Math.round(hero.maxHp * 0.35 * exhaustHealMult);
       hero.hp = Math.min(hero.maxHp, hero.hp + pHeal);
-      (hero.mercenaries || []).forEach(function(m) { m.hp = Math.min(m.maxHp, m.hp + Math.round(m.maxHp * 0.38)); });
+      if (hero.hp > 1) activeCombat.atDeathsDoor = false;
+      (hero.mercenaries || []).forEach(function(m) { m.hp = Math.min(m.maxHp, m.hp + Math.round(m.maxHp * 0.38 * exhaustHealMult)); });
       floatingHeroTag = { text: "⚜️ +" + pHeal + " HP!", color: "#4ade80" };
-      bannerBadges.push({ text: "⚜️ PARTY HEALED +" + pHeal + "!", bg: "#15803d" });
     }
     if (hero.calling === "Warrior" || hero.calling === "Paladin") activeCombat.partyShield = Math.round(hero.maxHp * 0.30);
     if (hero.calling === "Shadowblade" || hero.calling === "Wizard") activeCombat.bleedTurns = 3;
-    addLog("⚡ <b style='color:#c084fc;'>ULTIMATE (" + uMeta.name + ")!</b> <i style='color:#fde68a;'>&ldquo;" + escapeHtml(hero.battleCry || "For Valoria!") + "&rdquo;</i> Dealt <b style='color:#4ade80;'>-" + uDmg + " HP</b>, shattered Armor/Poise &amp; Stunned " + escapeHtml(activeCombat.name) + "!");
+    addLog("⚡ <b style='color:#c084fc;'>ULTIMATE (" + uMeta.name + ")!</b> Dealt <b style='color:#4ade80;'>-" + uDmg + " HP</b> &amp; shattered Armor!");
     if (activeCombat.hp <= 0 && (uDmg - preBlowEnemyHp) >= Math.round(preBlowEnemyHp * 0.50)) activeCombat.overkillTriggered = true;
     if (checkZombieResilienceOrWin(act, bannerBadges)) return;
   }
@@ -8400,11 +8342,9 @@ function combatAction(act) {
     activeCombat.alliedUsed = true;
     var totalAllyDmg = 0, allyNames = [];
     for (var s = 1; s <= 6; s++) {
-      var sKey = "slot_" + s;
-      var ally = serverData.slots ? serverData.slots[sKey] : null;
+      var sKey = "slot_" + s, ally = serverData.slots ? serverData.slots[sKey] : null;
       if (ally && ally.name && sKey !== activeSlotKey) {
-        var aStats = getHeroStats(ally);
-        var aDmg = Math.max(20, Math.round(aStats.atk * 1.15 * armBreakMult));
+        var aDmg = Math.max(20, Math.round(getHeroStats(ally).atk * 1.15 * armBreakMult));
         totalAllyDmg += aDmg; allyNames.push(ally.name + " (-" + aDmg + ")");
       }
     }
@@ -8412,7 +8352,7 @@ function combatAction(act) {
     activeCombat.hp -= totalAllyDmg;
     activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + totalAllyDmg;
     pStats.altDmg = (pStats.altDmg || 0) + totalAllyDmg;
-    shakeTarget = "enemy"; lastFxEmoji = "🎺⚔️"; playSfx("crit");
+    shakeTarget = "enemy"; lastFxEmoji = renderBloodArcSlashSvg("gold"); playSfx("crit");
     floatingEnemyTag = { text: "🎺 -" + totalAllyDmg + " ALLIES!", color: "#fbbf24" };
     bannerBadges.push({ text: "🎺 ALLIED RAID -" + totalAllyDmg + " HP!", bg: "#991b1b" });
     addLog("🎺 [RECRUITS] <b style='color:#fbbf24;'>ALLIED RAID VOLLEY!</b> " + allyNames.join(", ") + " dealt <b style='color:#4ade80;'>-" + totalAllyDmg + " HP</b>!");
@@ -8420,40 +8360,46 @@ function combatAction(act) {
   }
   else if (act === "potion") {
     if (hero.potions <= 0) { addLog("⚠️ No Potions left!"); renderBattleModal(); return; }
-    hero.potions--; activeCombat.heroPoisonTurns = 0;
-    var qteHealMult = inGoldQteSpot ? 1.50 : (inQteSweetSpot ? 1.35 : 1.0);
-    var heal = Math.round((hero.maxHp * 0.50 + 25) * qteHealMult);
-    hero.hp = Math.min(hero.maxHp, hero.hp + heal);
-    (hero.mercenaries || []).forEach(function(m) { m.hp = Math.min(m.maxHp, m.hp + Math.round(m.maxHp * 0.25)); });
-    floatingHeroTag = { text: "🧪 +" + heal + (inQteSweetSpot ? " QTE CRIT HEAL!" : " HP!"), color: "#4ade80" };
-    bannerBadges.push({ text: "🧪 HEALED +" + heal + (inQteSweetSpot ? " (⚡QTE SWEET-SPOT!)" : " &amp; CLEANSED!"), bg: "#15803d" });
-    addLog("🧪 Drank a Healing Potion (+<b>" + heal + " HP</b>" + (inQteSweetSpot ? " ⚡QTE Timing Bonus!" : "") + " &amp; cured Poison)!");
-  }
-  else if (act === "flee") {
-    if ((activeCombat.isBoss && !activeCombat.isRoamingMiniBoss && !activeCombat.isNemesis) || activeCombat.isGauntlet || activeCombat.isWorldRaid || activeCombat.isZoneRaid || activeCombat.isDelveBoss || activeCombat.isMirrorClone) {
-      addLog("🔒 <b>NO RETREAT!</b> The arena gates are sealed—you cannot flee from a Boss or Abyssal Gauntlet!");
+    var usedSips = activeCombat.potionsUsedInBattle || 0;
+    if (usedSips >= 3) {
+      showGothicToast("🧪❌ Combat Flask Limit Reached (3/3 Sips Used)!");
       renderBattleModal();
       return;
     }
-    var weatherFleeBonus = (rw.rain || rw.lightning) ? 10 : 0;
-    var fleeChance = activeCombat.isGuard ? 5 : Math.min(88, 40 + (hero.skills.evasion || 1) * 3 + weatherFleeBonus);
+    hero.potions--;
+    activeCombat.potionsUsedInBattle = usedSips + 1;
+    activeCombat.heroPoisonTurns = 0;
+    var fatigueMult = Math.max(0.70, 1.0 - (usedSips * 0.10));
+    var qteHealMult = inGoldQteSpot ? 1.35 : (inQteSweetSpot ? 1.20 : 1.0);
+    var heal = Math.round((hero.maxHp * 0.45 + 20) * qteHealMult * fatigueMult);
+    hero.hp = Math.min(hero.maxHp, hero.hp + heal);
+    if (hero.hp > 1) activeCombat.atDeathsDoor = false;
+    (hero.mercenaries || []).forEach(function(m) { m.hp = Math.min(m.maxHp, m.hp + Math.round(m.maxHp * 0.20 * fatigueMult)); });
+    floatingHeroTag = { text: "🧪 +" + heal + " HP (" + activeCombat.potionsUsedInBattle + "/3)!", color: "#4ade80" };
+    bannerBadges.push({ text: "🧪 HEALED +" + heal + " (" + activeCombat.potionsUsedInBattle + "/3 SIPS)", bg: "#15803d" });
+    addLog("🧪 Drank Healing Potion (<b>Sip " + activeCombat.potionsUsedInBattle + "/3</b> ➔ +<b>" + heal + " HP</b> &amp; cured Poison)!");
+  }
+  else if (act === "flee") {
+    if ((activeCombat.isBoss && !activeCombat.isRoamingMiniBoss && !activeCombat.isNemesis) || activeCombat.isGauntlet || activeCombat.isWorldRaid || activeCombat.isZoneRaid || activeCombat.isDelveBoss || activeCombat.isMirrorClone) {
+      addLog("🔒 <b>NO RETREAT!</b> You cannot flee from a Boss or Gauntlet!");
+      renderBattleModal();
+      return;
+    }
+    var fleeChance = activeCombat.isGuard ? 5 : Math.min(88, 40 + (hero.skills.evasion || 1) * 3 + ((rw.rain || rw.lightning) ? 10 : 0));
     if ((Math.random() * 100) < fleeChance) {
-      // Improvement #19: Evolving Nemesis Vendettas when fleeing from a Nemesis!
       if (activeCombat.isNemesis && hero.nemesis) {
         hero.nemesis.rank = Math.min(10, (hero.nemesis.rank || 1) + 1);
         var epPool = ["the Undying", "the Dread-Lord", "the Bone-Collector", "the Widow-Maker", "the Ash-Bringer"];
-        hero.nemesis.epithet = epPool[(hero.nemesis.rank - 1) % epPool.length];
         var trPool = ["Lifesteal", "Berserk", "Armored", "Venomous", "Hexing"];
+        hero.nemesis.epithet = epPool[(hero.nemesis.rank - 1) % epPool.length];
         hero.nemesis.trait = trPool[(hero.nemesis.rank - 1) % trPool.length];
-        addLog("💀⬆️ <b style='color:#ef4444;'>NEMESIS EVOLVED TO RANK " + hero.nemesis.rank + "!</b> Because you fled, <b>" + escapeHtml(hero.nemesis.name + " " + hero.nemesis.epithet) + "</b> grew stronger and gained <b>" + hero.nemesis.trait + "</b>!");
+        addLog("💀⬆️ <b style='color:#ef4444;'>NEMESIS EVOLVED TO RANK " + hero.nemesis.rank + "!</b>");
         queueSaveHero();
-      } else {
-        addLog("🏃🌑 You slipped away into the shadows safely!");
-      }
+      } else addLog("🏃🌑 You slipped away into the shadows safely!");
       activeCombat = null; lastCombatBanner = null; renderGameScreen(); return;
     } else {
       bannerBadges.push({ text: "❌ ESCAPE FAILED (" + fleeChance + "% ODDS)!", bg: "#78350f" });
-      addLog("❌ Failed to escape" + (activeCombat.isGuard ? " from the Citadel Guard (5% Flee Cap)!" : "!"));
+      addLog("❌ Failed to escape!");
     }
   }
   else if (act === "attackHead" || act === "attackTorso" || act === "attackLegs" || act === "attack" || act === "skill") {
@@ -8474,7 +8420,7 @@ function combatAction(act) {
     if (!activeCombat.poiseBroken && Math.random() * 100 > netHitChance) {
       activeCombat.comboCount = 0;
       floatingEnemyTag = { text: "🌑 MISS!", color: "#9c8f7a" };
-      bannerBadges.push({ text: "🌑 FOE DODGED!" + (lvMod.hitPen > 0 ? " (LV DELTA -" + lvMod.hitPen + "%)" : ""), bg: "#44403c" });
+      bannerBadges.push({ text: "🌑 FOE DODGED!", bg: "#44403c" });
       addLog("🌑 <b>" + escapeHtml(activeCombat.name) + "</b> dodged your strike!");
     } else {
       shakeTarget = "enemy";
@@ -8482,81 +8428,74 @@ function combatAction(act) {
       var qteSurgeMult = inGoldQteSpot ? 1.35 : (inQteSweetSpot ? 1.18 : 1.0);
       var overkillFirstMult = 1.0;
       if (hero.overkillSurge) {
-        overkillFirstMult = 1.15;
-        hero.overkillSurge = false;
-        bannerBadges.push({ text: "⚡ OVERKILL SURGE (+15% FIRST-STRIKE DMG)!", bg: "#052e16" });
+        overkillFirstMult = 1.15; hero.overkillSurge = false;
+        bannerBadges.push({ text: "⚡ OVERKILL SURGE (+15% DMG)!", bg: "#052e16" });
       }
       var deltaPenaltyMult = (activeCombat.armorBrokenTurns > 0 || activeCombat.poiseBroken) ? Math.min(1.0, lvMod.dmgDealtMult + 0.35) : lvMod.dmgDealtMult;
       var comboMult = (1 + Math.min(0.45, (activeCombat.comboCount - 1) * 0.08)) * bossBonusMult * armBreakMult * areaHazardDmgMult * qteSurgeMult * masteryMult * deltaPenaltyMult * overkillFirstMult;
       var zoneMult = (act === "attackHead") ? (hero.envStance === "high_ground" ? 1.50 : 1.35) : (act === "attackLegs" ? (activeCombat.areaId === 6 ? 1.05 : 0.85) : 1.0);
       var rawDmg = (st.atk * zoneMult - Math.round(effEnemyDef * 0.52)) * comboMult;
 
-      if (inGoldQteSpot) bannerBadges.push({ text: "🌟 GOLD QTE PERFECT TIMING (+35% DMG &amp; POISE SHATTER!)", bg: "#b45309" });
-      else if (inQteSweetSpot) bannerBadges.push({ text: "⚡ QTE TIMING SURGE (+18% DMG!)", bg: "#15803d" });
+      if (inGoldQteSpot) bannerBadges.push({ text: "🌟 GOLD QTE (+35% DMG)!", bg: "#b45309" });
+      else if (inQteSweetSpot) bannerBadges.push({ text: "⚡ QTE SURGE (+18% DMG)!", bg: "#15803d" });
 
-      var poiseDrain = (act === "attackTorso" ? 32 : 20) + (inGoldQteSpot ? 25 : 0) + (wepPerk && wepPerk.poiseAdd ? wepPerk.poiseAdd : 0);
-      activeCombat.poise = Math.max(0, (activeCombat.poise !== undefined ? activeCombat.poise : 100) - poiseDrain);
-      if (activeCombat.poise <= 0 && !activeCombat.poiseBroken) {
-        activeCombat.poiseBroken = true;
-        activeCombat.stunned = true;
-        bannerBadges.push({ text: "💫 POISE BROKEN (STAGGERED &amp; 100% CRIT)!", bg: "#ca8a04" });
-        addLog("💫⚡ <b>POISE SHATTERED!</b> <b>" + escapeHtml(activeCombat.name) + "</b> is Staggered (Stunned &amp; Guaranteed 100% Critical Strike)!");
+      if (!hasGritImmunity) {
+        var poiseDrain = (act === "attackTorso" ? 32 : 20) + (inGoldQteSpot ? 25 : 0) + (wepPerk && wepPerk.poiseAdd ? wepPerk.poiseAdd : 0);
+        activeCombat.poise = Math.max(0, (activeCombat.poise !== undefined ? activeCombat.poise : 100) - poiseDrain);
+        if (activeCombat.poise <= 0 && !activeCombat.poiseBroken) {
+          activeCombat.poiseBroken = true; activeCombat.stunned = true;
+          bannerBadges.push({ text: "💫 POISE BROKEN (100% CRIT)!", bg: "#ca8a04" });
+        }
       }
 
       if (act === "skill") {
-        playSfx("magic"); lastFxEmoji = "🔮⚡";
+        playSfx("magic"); lastFxEmoji = renderBloodArcSlashSvg("void");
         var isComboChain = (activeCombat.armorBrokenTurns > 0 || activeCombat.bleedTurns > 0 || activeCombat.hamstrungTurns > 0 || activeCombat.wetTurns > 0);
         var shatterMult = isComboChain ? (activeCombat.areaId === 9 ? 1.75 : (activeCombat.areaId === 22 ? 1.85 : 1.65)) : 1.0;
-
         if (activeCombat.wetTurns > 0) {
           activeCombat.wetTurns = 0;
-          activeCombat.stunned = true;
+          if (!hasGritImmunity) activeCombat.stunned = true;
           shatterMult *= 1.35;
           if (window.spawnCanvasParticles) window.spawnCanvasParticles("ice", 36);
-          bannerBadges.push({ text: "🌊⚡ SUPERCONDUCT SYNERGY (STUN &amp; +35% DMG)!", bg: "#0284c7" });
-          addLog("🌊⚡ <b>ELEMENTAL SYNERGY: SUPERCONDUCT!</b> Arc-mana detonated across the Wet foe, Stunning it!");
+          bannerBadges.push({ text: "🌊⚡ SUPERCONDUCT (+35% DMG)!", bg: "#0284c7" });
         } else if (activeCombat.bleedTurns > 0 && st.hasFireSocket) {
-          shatterMult *= 1.35;
-          activeCombat.scorched = true;
+          shatterMult *= 1.35; activeCombat.scorched = true;
           if (window.spawnCanvasParticles) window.spawnCanvasParticles("fire", 36);
-          bannerBadges.push({ text: "🩸🔥 CAUTERIZE SYNERGY (+35% BURST DMG)!", bg: "#ea580c" });
+          bannerBadges.push({ text: "🩸🔥 CAUTERIZE (+35% DMG)!", bg: "#ea580c" });
         }
-
         rawDmg = (Math.max(st.atk, st.mag) * (1.45 + (hero.skills.arcane || 1) * 0.05) * shatterMult - Math.round(effEnemyDef * 0.28)) * comboMult;
         if (isComboChain) {
           var refundMp = Math.round(mpReq * (activeCombat.areaId === 18 ? 0.75 : 0.50));
           hero.mp = Math.min(hero.maxMp, hero.mp + refundMp);
-          bannerBadges.push({ text: "💥 SHATTER COMBO (+65% DMG &amp; +" + refundMp + " MP!)", bg: "#831843" });
+          bannerBadges.push({ text: "💥 SHATTER COMBO (+" + refundMp + " MP)!", bg: "#831843" });
         }
-        if (hero.calling === "Paladin") hero.hp = Math.min(hero.maxHp, hero.hp + Math.round(hero.maxHp * 0.12));
-        if ((Math.random() * 100) < (12 + (hero.skills.arcane || 1) * 1.5)) {
+        if (hero.calling === "Paladin") {
+          hero.hp = Math.min(hero.maxHp, hero.hp + Math.round(hero.maxHp * 0.12 * exhaustHealMult));
+          if (hero.hp > 1) activeCombat.atDeathsDoor = false;
+        }
+        if (!hasGritImmunity && (Math.random() * 100) < (12 + (hero.skills.arcane || 1) * 1.5)) {
           activeCombat.stunned = true; activeCombat.bossCharging = false;
           bannerBadges.push({ text: "⚡ STUNNED FOE!", bg: "#581c87" });
         }
       } else {
-        playSfx("slash"); lastFxEmoji = "⚔️🩸";
+        playSfx("slash"); lastFxEmoji = renderBloodArcSlashSvg("crimson");
         if (act === "attackHead") {
           activeCombat.silencedTurns = 2;
-          if (Math.random() < 0.30) {
-            activeCombat.stunned = true;
-            activeCombat.bossCharging = false;
+          if (!hasGritImmunity && Math.random() < 0.30) {
+            activeCombat.stunned = true; activeCombat.bossCharging = false;
             bannerBadges.push({ text: "👑 HEADSHOT STUN &amp; SILENCE!", bg: "#991b1b" });
-          } else {
-            bannerBadges.push({ text: "🔇 SPELLCASTER SILENCED (2t)!", bg: "#1e1b4b" });
-          }
+          } else bannerBadges.push({ text: "🔇 SILENCED (2t)!", bg: "#1e1b4b" });
         } else if (act === "attackLegs") {
           activeCombat.hamstrungTurns = 3;
-          bannerBadges.push({ text: "🦵 CRIPPLED (-18% DODGE/ACC!)", bg: "#075985" });
+          bannerBadges.push({ text: "🦵 CRIPPLED (-18% EVA/ACC)!", bg: "#075985" });
         } else if (act === "attackTorso" || act === "attack") {
           var shredMult = (wepPerk && wepPerk.armShredMult) ? wepPerk.armShredMult : 1.0;
           var armShred = Math.max(15, Math.round(st.atk * (activeCombat.areaId === 14 ? 1.25 : 0.95) * shredMult));
           if ((activeCombat.armor || 0) > 0) {
             activeCombat.armor = Math.max(0, activeCombat.armor - armShred);
             if (activeCombat.armor <= 0) {
-              activeCombat.armorBrokenTurns = 3;
-              playSfx("crit");
-              bannerBadges.push({ text: "🔓 ARMOR SHATTERED (+40% DMG TAKEN!)", bg: "#b45309" });
-              addLog("🔓💥 <b>ARMOR BROKEN!</b> You shattered <b>" + escapeHtml(activeCombat.name) + "&apos;s</b> guard (+40% Damage Taken &amp; pierces Level-Delta resistance)!");
+              activeCombat.armorBrokenTurns = 3; playSfx("crit");
+              bannerBadges.push({ text: "🔓 ARMOR SHATTERED (+40% DMG)!", bg: "#b45309" });
             }
           }
         }
@@ -8564,40 +8503,40 @@ function combatAction(act) {
 
       rawDmg = Math.max(3, Math.round(rawDmg * (0.88 + Math.random() * 0.22)));
       var isCrit = activeCombat.poiseBroken || ((Math.random() * 100) < st.critPct);
-      if (activeCombat.poiseBroken) {
-        activeCombat.poiseBroken = false;
-        activeCombat.poise = 100;
-      }
+      if (activeCombat.poiseBroken) { activeCombat.poiseBroken = false; activeCombat.poise = 100; }
       if (isCrit) {
-        playSfx("crit"); lastFxEmoji = "🩸🔥";
+        playSfx("crit"); triggerAncestorCallout("crit"); activeCombat.clashZoom = true;
+        lastFxEmoji = renderBloodArcSlashSvg("gold");
         if (window.triggerHitStopZoom) window.triggerHitStopZoom();
         if (window.spawnCanvasParticles) window.spawnCanvasParticles("blood", 36);
-        var critMult = 1.58 + (wepPerk && wepPerk.critDmgAdd ? wepPerk.critDmgAdd : 0) + (st.hasFireSocket ? (rw.hot ? 0.25 : 0.15) : 0) + (activeCombat.areaId === 5 || activeCombat.areaId === 11 ? 0.20 : 0) + (hero.tarotBuff && hero.tarotBuff.id === "tower" ? 0.30 : 0);
+        var critMult = 1.58 + (wFront && wFront.name.indexOf("Eclipse") >= 0 ? 0.15 : 0) + (wepPerk && wepPerk.critDmgAdd ? wepPerk.critDmgAdd : 0) + (st.hasFireSocket ? (rw.hot ? 0.25 : 0.15) : 0) + (activeCombat.areaId === 5 || activeCombat.areaId === 11 ? 0.20 : 0) + (hero.tarotBuff && hero.tarotBuff.id === "tower" ? 0.30 : 0);
         rawDmg = Math.round(rawDmg * critMult);
         floatingEnemyTag = { text: "🩸 -" + rawDmg + " CRIT!", color: "#fde047" };
         bannerBadges.push({ text: "🩸 CRIT -" + rawDmg + " (" + activeCombat.comboCount + "x!)", bg: "#991b1b" });
         if ((hero.skills.lethal || 1) >= 2) activeCombat.bleedTurns = 3 + (wepPerk && wepPerk.bleedAdd ? wepPerk.bleedAdd : 0);
       } else {
+        if (inGoldQteSpot) activeCombat.clashZoom = true;
         if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 16);
         floatingEnemyTag = { text: "⚔️ -" + rawDmg + " HP", color: "#fde68a" };
         bannerBadges.push({ text: "⚔️ HIT -" + rawDmg, bg: "#1e293b" });
       }
       if (st.hasThunderSocket) rawDmg += Math.round(rawDmg * (rw.lightning ? 0.25 : 0.12));
-      if (st.hasVampSocket) hero.hp = Math.min(hero.maxHp, hero.hp + Math.max(2, Math.round(rawDmg * st.vampPct)));
+      if (st.hasVampSocket) {
+        var leechResist = activeCombat.isBoss ? 0.50 : 1.0;
+        hero.hp = Math.min(hero.maxHp, hero.hp + Math.max(1, Math.round(rawDmg * st.vampPct * leechResist * exhaustHealMult)));
+        if (hero.hp > 1) activeCombat.atDeathsDoor = false;
+      }
 
-      // v18.1 #12: Royal Bloodline Dual-Tech (Spouse Love >= 90% + Active Heir + Gold QTE = +50% True Damage Volley!)
       if (inGoldQteSpot && hero.spouse && (hero.spouse.love !== undefined ? hero.spouse.love : 100) >= 90 && hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) {
         var famDmg = Math.round(rawDmg * 0.50);
         rawDmg += famDmg;
-        bannerBadges.push({ text: "👑💍👶 ROYAL BLOODLINE DUAL-TECH (+" + famDmg + " TRUE DMG)!", bg: "#db2777" });
-        addLog("👑💍👶 [RECRUITS] <b style='color:#f472b6;'>ROYAL BLOODLINE DUAL-TECH!</b> <b>" + escapeHtml(hero.spouse.name) + "</b> &amp; <b>" + escapeHtml(hero.children[hero.activeChildIdx].name) + "</b> struck in unison for <b>+" + famDmg + " True Damage</b>!");
+        bannerBadges.push({ text: "👑💍👶 DUAL-TECH (+" + famDmg + " DMG)!", bg: "#db2777" });
       }
 
       activeCombat.hp -= rawDmg;
       activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + rawDmg;
       pStats.heroDmg = (pStats.heroDmg || 0) + rawDmg;
 
-      // v18.1 #8: Boss Limb Severing (40%+ Max HP dealt via V.A.T.S. Head or Leg strikes severs Horn/Tail!)
       if (activeCombat.isBoss && !activeCombat.limbSevered && (act === "attackHead" || act === "attackLegs")) {
         activeCombat.limbDmgAccum = (activeCombat.limbDmgAccum || 0) + rawDmg;
         if (activeCombat.limbDmgAccum >= Math.round(activeCombat.maxHp * 0.40)) {
@@ -8605,83 +8544,69 @@ function combatAction(act) {
           activeCombat.atk = Math.max(10, Math.round(activeCombat.atk * 0.80));
           activeCombat.eva = Math.max(0, activeCombat.eva - 10);
           activeCombat.bossCharging = false;
-          bannerBadges.push({ text: "🩸🪓 BOSS LIMB SEVERED (-20% BOSS ATK &amp; BONUS TROPHY)!", bg: "#991b1b" });
-          addLog("🩸🪓 <b style='color:#fde047;'>BOSS LIMB SEVERED!</b> Your targeted V.A.T.S. strikes hacked off <b>" + escapeHtml(activeCombat.name) + "&apos;s</b> appendage (-20% Boss ATK/Dodge &amp; +1 Bonus Trophy on Victory)!");
+          bannerBadges.push({ text: "🩸🪓 LIMB SEVERED (-20% BOSS ATK)!", bg: "#991b1b" });
         }
       }
-
       addLog("⚔️ Struck <b>" + escapeHtml(activeCombat.name) + "</b> for <b style='color:#4ade80;'>-" + rawDmg + " HP</b>!");
-      if (activeCombat.hp <= 0 && (rawDmg - preBlowEnemyHp) >= Math.round(preBlowEnemyHp * 0.50)) {
-        activeCombat.overkillTriggered = true;
-      }
+      if (activeCombat.hp <= 0 && (rawDmg - preBlowEnemyHp) >= Math.round(preBlowEnemyHp * 0.50)) activeCombat.overkillTriggered = true;
     }
   }
 
   if (activeCombat && activeCombat.hp > 0 && (hero.prestigeRank || 0) > 0 && Math.random() < 0.35) {
     var ancName = (hero.ancestors && hero.ancestors[0]) ? hero.ancestors[0].name : (hero.baseLineageName + " I");
     var ancDmg = Math.max(10, Math.round(st.atk * 0.45 * (hero.prestigeRank || 1)));
-    activeCombat.hp -= ancDmg;
-    activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + ancDmg;
+    activeCombat.hp -= ancDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + ancDmg;
     pStats.ancDmg = (pStats.ancDmg || 0) + ancDmg;
-    bannerBadges.push({ text: "👻 SPECTER MENTOR (" + ancName + ") -" + ancDmg + "!", bg: "#3b0764" });
+    bannerBadges.push({ text: "👻 SPECTER (" + ancName + ") -" + ancDmg + "!", bg: "#3b0764" });
   }
 
-  // Execute Under-Arena Recruits Tactical Orders + Live Party Effectiveness Tracking (#7–#11) + Limb Focus (#2)
   var bondAtkMult = (recBond && recBond.atkPct) ? (1 + recBond.atkPct / 100.0) : 1.0;
   var recOrderDmgMult = ((effRecOrder === "attack") ? 1.30 : (effRecOrder === "defend" || effRecOrder === "protect" ? 0.80 : 1.0)) * bondAtkMult;
-  if (inGoldQteSpot && (effRecOrder === "attack" || effRecOrder === "mix")) {
-    recOrderDmgMult *= 1.25;
-  }
+  if (inGoldQteSpot && (effRecOrder === "attack" || effRecOrder === "mix")) recOrderDmgMult *= 1.25;
 
   if (activeCombat && activeCombat.hp > 0 && ((hero.mercenaries && hero.mercenaries.length > 0) || (hero.altBodyguard && hero.altBodyguard.atk))) {
     if (effRecOrder === "defend") {
-      var shAdd = Math.max(6, Math.round(hero.maxHp * (hero.envStance === "chokepoint" ? 0.12 : 0.08)));
+      var shAdd = Math.max(4, Math.round(hero.maxHp * (hero.envStance === "chokepoint" ? 0.12 : 0.08) * exhaustHealMult));
       activeCombat.partyShield = Math.min(hero.maxHp, (activeCombat.partyShield || 0) + shAdd);
     } else if (effRecOrder === "mix") {
-      var mixHeal = Math.max(4, Math.round(hero.maxHp * 0.05));
-      hero.hp = Math.min(hero.maxHp, hero.hp + mixHeal);
+      hero.hp = Math.min(hero.maxHp, hero.hp + Math.max(2, Math.round(hero.maxHp * 0.05 * exhaustHealMult)));
+      if (hero.hp > 1) activeCombat.atDeathsDoor = false;
     }
     if (recBond && recBond.healPct) {
-      var bHeal = Math.max(4, Math.round(hero.maxHp * recBond.healPct));
-      hero.hp = Math.min(hero.maxHp, hero.hp + bHeal);
+      hero.hp = Math.min(hero.maxHp, hero.hp + Math.max(2, Math.round(hero.maxHp * recBond.healPct * exhaustHealMult)));
+      if (hero.hp > 1) activeCombat.atDeathsDoor = false;
     }
   }
 
   var totalRecruitRoundLimbDmg = 0;
-
   if (activeCombat && activeCombat.hp > 0 && hero.altBodyguard && hero.altBodyguard.atk) {
     var bgDmg = Math.max(6, Math.round(hero.altBodyguard.atk * recOrderDmgMult * armBreakMult * 0.85 - activeCombat.def * 0.25));
-    activeCombat.hp -= bgDmg;
-    activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + bgDmg;
-    pStats.altDmg = (pStats.altDmg || 0) + bgDmg;
-    pStats.altLast = bgDmg;
-    totalRecruitRoundLimbDmg += bgDmg;
+    activeCombat.hp -= bgDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + bgDmg;
+    pStats.altDmg = (pStats.altDmg || 0) + bgDmg; pStats.altLast = bgDmg; totalRecruitRoundLimbDmg += bgDmg;
     bannerBadges.push({ text: "🛡️ " + hero.altBodyguard.name.toUpperCase() + " -" + bgDmg, bg: "#0c4a6e" });
-    addLog("🛡️ [RECRUITS] Alt Bodyguard <b>" + escapeHtml(hero.altBodyguard.name) + "</b> struck for <b style='color:#7dd3fc;'>-" + bgDmg + " HP</b> (Total: " + pStats.altDmg + ")!");
   }
 
   if (activeCombat && activeCombat.hp > 0 && hero.mercenaries && hero.mercenaries.length > 0) {
     hero.mercenaries.forEach(function(m) {
       if (m.hp > 0) {
-        var vetMult = 1 + ((m.vetRank || 0) * 0.15);
-        var eqAtk = (m.gear && m.gear.atk) ? m.gear.atk : 0;
-        var qMult = (m.quirk && m.quirk.atkMult) ? m.quirk.atkMult : 1.0;
+        if ((hero.stress || 0) >= 75 && Math.random() < 0.15) {
+          activeCombat.stressFlashed = true;
+          bannerBadges.push({ text: "😱 " + m.name.split(" ")[0].toUpperCase() + " HESITATED!", bg: "#581c87" });
+          return;
+        }
+        var vetMult = 1 + ((m.vetRank || 0) * 0.15), eqAtk = (m.gear && m.gear.atk) ? m.gear.atk : 0, qMult = (m.quirk && m.quirk.atkMult) ? m.quirk.atkMult : 1.0;
         if (m.id === "beatrice" || effRecOrder === "mix") {
-          var cHeal = Math.round((8 + hero.level * 2.0) * vetMult * (m.id === "beatrice" ? 1.0 : 0.55));
+          var cHeal = Math.max(2, Math.round((8 + hero.level * 2.0) * vetMult * (m.id === "beatrice" ? 1.0 : 0.55) * exhaustHealMult));
           hero.hp = Math.min(hero.maxHp, hero.hp + cHeal);
+          if (hero.hp > 1) activeCombat.atDeathsDoor = false;
           m.hp = Math.min(m.maxHp, m.hp + cHeal);
-          pStats.mercHeals[m.id] = (pStats.mercHeals[m.id] || 0) + cHeal;
-          m.totalHeals = (m.totalHeals || 0) + cHeal;
+          pStats.mercHeals[m.id] = (pStats.mercHeals[m.id] || 0) + cHeal; m.totalHeals = (m.totalHeals || 0) + cHeal;
         }
         var mDmg = Math.max(3, Math.round(((m.atk + eqAtk) * vetMult * qMult * recOrderDmgMult * armBreakMult) * (0.88 + Math.random() * 0.22) - activeCombat.def * 0.30));
-        activeCombat.hp -= mDmg;
-        activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + mDmg;
-        pStats.mercDmg[m.id] = (pStats.mercDmg[m.id] || 0) + mDmg;
-        pStats.mercLast[m.id] = mDmg;
-        m.totalDmg = (m.totalDmg || 0) + mDmg;
-        totalRecruitRoundLimbDmg += mDmg;
+        activeCombat.hp -= mDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + mDmg;
+        pStats.mercDmg[m.id] = (pStats.mercDmg[m.id] || 0) + mDmg; pStats.mercLast[m.id] = mDmg;
+        m.totalDmg = (m.totalDmg || 0) + mDmg; totalRecruitRoundLimbDmg += mDmg;
         bannerBadges.push({ text: m.icon + " " + m.name.split(" ")[0].toUpperCase() + " -" + mDmg, bg: "#14532d" });
-        addLog(m.icon + " [RECRUITS] Mercenary <b>" + escapeHtml(m.name) + "</b> dealt <b style='color:#86efac;'>-" + mDmg + " HP</b> (Battle Total: " + pStats.mercDmg[m.id] + ")!");
       }
     });
   }
@@ -8689,27 +8614,19 @@ function combatAction(act) {
     var ch = hero.children[hero.activeChildIdx];
     if (!ch.expeditionUntil || ch.expeditionUntil <= Date.now()) {
       var chDmg = Math.max(4, Math.round(ch.atk * recOrderDmgMult * armBreakMult * (0.90 + Math.random() * 0.25) - activeCombat.def * 0.25));
-      activeCombat.hp -= chDmg;
-      activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + chDmg;
-      pStats.childDmg = (pStats.childDmg || 0) + chDmg;
-      pStats.childLast = chDmg;
-      ch.totalDmg = (ch.totalDmg || 0) + chDmg;
+      activeCombat.hp -= chDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + chDmg;
+      pStats.childDmg = (pStats.childDmg || 0) + chDmg; pStats.childLast = chDmg; ch.totalDmg = (ch.totalDmg || 0) + chDmg;
       totalRecruitRoundLimbDmg += chDmg;
       bannerBadges.push({ text: "👶 " + ch.name.split(" ")[0].toUpperCase() + " -" + chDmg, bg: "#78350f" });
-      addLog("👶 [RECRUITS] Royal Heir <b>" + escapeHtml(ch.name) + "</b> struck for <b style='color:#fde68a;'>-" + chDmg + " HP</b> (Battle Total: " + pStats.childDmg + ")!");
     }
   }
 
-  // Improvement #2: Recruit Limb-Focus Targeting contributes to Boss Limb Severing!
   if (activeCombat && activeCombat.isBoss && !activeCombat.limbSevered && totalRecruitRoundLimbDmg > 0 && (hero.recruitTargetZone === "head" || hero.recruitTargetZone === "legs")) {
     activeCombat.limbDmgAccum = (activeCombat.limbDmgAccum || 0) + Math.round(totalRecruitRoundLimbDmg * 0.75);
     if (activeCombat.limbDmgAccum >= Math.round(activeCombat.maxHp * 0.40)) {
-      activeCombat.limbSevered = true;
-      activeCombat.atk = Math.max(10, Math.round(activeCombat.atk * 0.80));
-      activeCombat.eva = Math.max(0, activeCombat.eva - 10);
-      activeCombat.bossCharging = false;
-      bannerBadges.push({ text: "🩸🪓 RECRUITS SEVERED BOSS LIMB (-20% BOSS ATK)!", bg: "#991b1b" });
-      addLog("🩸🪓 [RECRUITS] <b style='color:#fde047;'>RECRUIT LIMB-FOCUS SEVER!</b> Your retinue hacked off <b>" + escapeHtml(activeCombat.name) + "&apos;s</b> appendage (-20% Boss ATK/Dodge &amp; +1 Bonus Trophy)!");
+      activeCombat.limbSevered = true; activeCombat.atk = Math.max(10, Math.round(activeCombat.atk * 0.80));
+      activeCombat.eva = Math.max(0, activeCombat.eva - 10); activeCombat.bossCharging = false;
+      bannerBadges.push({ text: "🩸🪓 RECRUITS SEVERED LIMB (-20% ATK)!", bg: "#991b1b" });
     }
   }
 
@@ -8720,18 +8637,15 @@ function combatAction(act) {
     pStats.heroDmg = (pStats.heroDmg || 0) + bDmg;
   }
   if (activeCombat && activeCombat.hp > 0 && hero.companion) {
-    var pet = hero.companion;
-    var pEvo = (hero.petEvo && hero.petEvo[pet.id]) ? hero.petEvo[pet.id] : 1;
+    var pet = hero.companion, pEvo = (hero.petEvo && hero.petEvo[pet.id]) ? hero.petEvo[pet.id] : 1;
     var treatMult = (hero.petTreatBattles && hero.petTreatBattles > 0) ? 1.50 : 1.0;
     if (pet.id === "pixie") {
-      var pixHeal = Math.round((5 + hero.level * 1.8) * pEvo * treatMult);
-      hero.hp = Math.min(hero.maxHp, hero.hp + pixHeal);
+      hero.hp = Math.min(hero.maxHp, hero.hp + Math.max(2, Math.round((5 + hero.level * 1.8) * pEvo * treatMult * exhaustHealMult)));
+      if (hero.hp > 1) activeCombat.atDeathsDoor = false;
     } else {
       var pDmg = Math.round((4 + (hero.level * 2.2) + (st.atk * 0.18)) * (1 + (pEvo - 1) * 0.35) * treatMult);
       activeCombat.hp -= pDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + pDmg;
-      pStats.petDmg = (pStats.petDmg || 0) + pDmg;
-      pStats.petLast = pDmg;
-      addLog(pet.icon + " [RECRUITS] Companion <b>" + escapeHtml(pet.name) + "</b> dealt <b style='color:#c084fc;'>-" + pDmg + " HP</b> (Battle Total: " + pStats.petDmg + ")!");
+      pStats.petDmg = (pStats.petDmg || 0) + pDmg; pStats.petLast = pDmg;
     }
   }
 
@@ -8742,18 +8656,16 @@ function combatAction(act) {
     activeCombat.armor = Math.round((activeCombat.maxArmor || 200) * 0.60);
     activeCombat.armorBrokenTurns = 0;
     if (window.updateDynamicSoundscape) window.updateDynamicSoundscape();
-    bannerBadges.push({ text: "🐉 PHASE II ENRAGE! TAROT FRAME FRACTURED, ARMOR REFORGED &amp; QTE ACCELERATED!", bg: "#7f1d1d" });
-    addLog("🐉🔥 <b style='color:#fbbf24;'>BOSS PHASE II TRANSITION!</b> <b>" + escapeHtml(activeCombat.name) + "</b> roars: <i>&ldquo;Your mortal steel shall shatter against my eternal scales!&rdquo;</i>");
-  } else if (activeCombat.isBoss && Math.random() < 0.25) {
-    var bossTaunts = [
-      "Kneel before the throne of ash, mortal!",
-      "Your Valkyrie Seals will not save your bloodline today!",
-      "A thousand champions have bled upon these stones before you!"
-    ];
-    addLog("🗣️💀 <b>" + escapeHtml(activeCombat.name) + ":</b> <i style='color:#fca5a5;'>&ldquo;" + bossTaunts[Math.floor(Math.random() * bossTaunts.length)] + "&rdquo;</i>");
+    bannerBadges.push({ text: "🐉 PHASE II ENRAGE! ARMOR REFORGED &amp; QTE ACCELERATED!", bg: "#7f1d1d" });
   }
 
-  if (activeCombat.armorBrokenTurns > 0) activeCombat.armorBrokenTurns--;
+  if (activeCombat.armorBrokenTurns > 0) {
+    activeCombat.armorBrokenTurns--;
+    if (activeCombat.armorBrokenTurns === 0 && (activeCombat.maxArmor || 0) > 0) {
+      activeCombat.armor = Math.round(activeCombat.maxArmor * 0.35);
+      bannerBadges.push({ text: "🛡️ FOE REFORMED GUARD (+35% ARMOR)!", bg: "#57534e" });
+    }
+  }
   if (activeCombat.hamstrungTurns > 0) activeCombat.hamstrungTurns--;
   if (activeCombat.silencedTurns > 0) activeCombat.silencedTurns--;
   if (activeCombat.tauntedTurns > 0) activeCombat.tauntedTurns--;
@@ -8768,14 +8680,16 @@ function combatAction(act) {
 
   if (activeCombat.stunned) {
     activeCombat.stunned = false;
-    bannerBadges.push({ text: "⚡ FOE STUNNED", bg: "#581c87" });
+    if (activeCombat.isBoss || activeCombat.isSpire || activeCombat.isGauntlet || activeCombat.isNemesis) {
+      activeCombat.stunImmuneTurns = 1;
+      bannerBadges.push({ text: "⚡ FOE STUNNED (🛡️UNSTOPPABLE GRIT NEXT TURN!)", bg: "#581c87" });
+    } else bannerBadges.push({ text: "⚡ FOE STUNNED", bg: "#581c87" });
   } else if (activeCombat.isBoss && !activeCombat.limbSevered && !activeCombat.bossCharging && Math.random() < 0.34) {
-    activeCombat.bossCharging = true;
-    reflexPos = 15;
-    triggerHaptic(160);
-    bannerBadges.push({ text: "⚠️ BOSS CHARGING CLEAVE! USE REFLEX DEFLECT OR ULTIMATE CLASH!", bg: "#991b1b" });
-    addLog("⚠️ <b style='color:#fbbf24;'>WARNING! " + escapeHtml(activeCombat.name) + " is charging an Annihilation Cleave!</b> Time your <b>🛡️ PERFECT DEFLECT</b> or fire your <b>⚡ ULTIMATE</b> to clash blades!");
+    if ((activeCombat.stunImmuneTurns || 0) > 0) activeCombat.stunImmuneTurns--;
+    activeCombat.bossCharging = true; reflexPos = 15; triggerHaptic(160);
+    bannerBadges.push({ text: "⚠️ BOSS CHARGING CLEAVE! DEFLECT OR ULTIMATE!", bg: "#991b1b" });
   } else {
+    if ((activeCombat.stunImmuneTurns || 0) > 0) activeCombat.stunImmuneTurns--;
     var curIntent = activeCombat.nextIntent || { id: "strike", name: "🗡️ Fierce Slash", mult: 1.0 };
     var isSuperCleave = activeCombat.bossCharging;
     activeCombat.bossCharging = false;
@@ -8786,9 +8700,10 @@ function combatAction(act) {
       bannerBadges.push({ text: "🌑 YOU DODGED!", bg: "#15803d" });
     } else if (!isSuperCleave && (Math.random() * 100) < st.parryPct) {
       var counterDmg = Math.max(4, Math.round(st.atk * 0.75 * armBreakMult));
-      activeCombat.hp -= counterDmg;
-      activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + counterDmg;
+      activeCombat.hp -= counterDmg; activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + counterDmg;
       pStats.heroDmg = (pStats.heroDmg || 0) + counterDmg;
+      activeCombat.clashZoom = true; lastFxEmoji = renderBloodArcSlashSvg("gold");
+      triggerAncestorCallout("parry");
       floatingHeroTag = { text: "⚔️ RIPOSTE -" + counterDmg, color: "#fbbf24" };
       bannerBadges.push({ text: "⚔️ PARRY &amp; RIPOSTE -" + counterDmg + "!", bg: "#b45309" });
       if (checkZombieResilienceOrWin("riposte", bannerBadges)) return;
@@ -8797,14 +8712,17 @@ function combatAction(act) {
       var isLowHpEnrage = (activeCombat.hp < activeCombat.maxHp * 0.50) && (activeCombat.trait === "Berserk" || activeCombat.trait === "Savage" || activeCombat.phase2Triggered);
       var curseDmgMult = (curse && curse.id === "blood_tithe") ? 1.15 : 1.0;
       var tauntAtkMult = (activeCombat.tauntedTurns > 0) ? 0.80 : 1.0;
-      var intentMult = curIntent.mult || 1.0;
-      var mult = (isSuperCleave ? (hero.stance === "defensive" ? 1.18 : 1.90) : intentMult) * (isLowHpEnrage ? 1.30 : 1.0) * curseDmgMult * tauntAtkMult * lvMod.dmgTakenMult;
+      var exhaustAtkMult = isExhausted ? (1 + Math.min(1.0, (activeCombat.battleRound - 9) * 0.10)) : 1.0;
+      var whiffMult = activeCombat.whiffedParry ? 1.25 : 1.0;
+      activeCombat.whiffedParry = false;
+      var mult = (isSuperCleave ? (hero.stance === "defensive" ? 1.18 : 1.90) : (curIntent.mult || 1.0)) * (isLowHpEnrage ? 1.30 : 1.0) * curseDmgMult * tauntAtkMult * lvMod.dmgTakenMult * exhaustAtkMult * whiffMult;
       var eDmg = Math.max(5, Math.round(((activeCombat.atk * mult) - st.def * 0.50) * (0.90 + Math.random() * 0.25)));
 
       if (isSuperCleave || curIntent.id === "hex" || Math.random() < 0.20) {
         addHeroStress(curIntent.id === "hex" ? 15 : 12);
+        activeCombat.stressFlashed = true;
+        if (!activeCombat.ancestorFlash) triggerAncestorCallout("stress");
       }
-
       if (activeCombat.partyShield && activeCombat.partyShield > 0) {
         var absorbed = Math.min(activeCombat.partyShield, eDmg);
         activeCombat.partyShield -= absorbed; eDmg -= absorbed;
@@ -8813,8 +8731,7 @@ function combatAction(act) {
       if (activeCombat.trait === "Lifesteal" && eDmg > 0) activeCombat.hp = Math.min(activeCombat.maxHp, activeCombat.hp + Math.round(eDmg * 0.35));
       if (activeCombat.isWerewolf && Math.random() < 0.35 && (hero.moonCurseTurns || 0) <= 0) {
         hero.moonCurseTurns = 6;
-        bannerBadges.push({ text: "🐺 INFECTED WITH LYCAN MOON-CURSE (+25% GUTS / -15% WITS)!", bg: "#7f1d1d" });
-        addLog("🐺🌕 <b>LYCANTHROPIC BITE!</b> Infected with the <b>Hunter's Moon Curse</b> (+25% Guts &amp; +15% Crit, -15% Wits for 6 Quests)!");
+        bannerBadges.push({ text: "🐺 LYCAN MOON-CURSE!", bg: "#7f1d1d" });
       }
       if ((curIntent.id === "hex" || activeCombat.trait === "Hexing") && (activeCombat.silencedTurns || 0) <= 0 && hero.mp > 0) hero.mp = Math.max(0, hero.mp - (3 + Math.floor(activeCombat.level * 0.15)));
 
@@ -8825,19 +8742,30 @@ function combatAction(act) {
         var targetMercIdx = Math.floor(Math.random() * hero.mercenaries.length);
         var mTarget = hero.mercenaries[targetMercIdx];
         var mercDmg = Math.round((isSuperCleave ? Math.round(eDmg * 0.78) : eDmg) * mercDmgTakenMult);
-        mTarget.hp -= mercDmg;
-        mTarget.dmgAbsorbed = (mTarget.dmgAbsorbed || 0) + mercDmg;
+        mTarget.hp -= mercDmg; mTarget.dmgAbsorbed = (mTarget.dmgAbsorbed || 0) + mercDmg;
         floatingHeroTag = { text: "🩸 RECRUIT -" + mercDmg + " HP", color: "#f87171" };
+        if (isSuperCleave) {
+          var tramplePct = (effRecOrder === "protect") ? 0.25 : 0.55;
+          hero.hp -= Math.max(4, Math.round(eDmg * tramplePct));
+        }
         if (mTarget.hp <= 0) {
           var mercDiedObj = hero.mercenaries.splice(targetMercIdx, 1)[0];
+          var gearRetNote = "";
+          if (mercDiedObj.gear && hero.inventory.length < 30) {
+            hero.inventory.push(mercDiedObj.gear);
+            gearRetNote = "🎒 <b>" + escapeHtml(mercDiedObj.gear.name) + "</b> returned to Backpack.";
+          }
           hero.fallenHeroes.unshift({ name: mercDiedObj.name, role: mercDiedObj.role, icon: mercDiedObj.icon, slainBy: activeCombat.name });
           if (hero.fallenHeroes.length > 15) hero.fallenHeroes.pop();
-          activeCombat.avengingWrathTurns = 2;
-          playSfx("death");
-          bannerBadges.push({ text: "⚰️ " + mercDiedObj.name.toUpperCase() + " FELL PROTECTING YOU (+AVENGING WRATH)!", bg: "#000000" });
-          addLog("⚰️ [RECRUITS] <b style='color:#ef4444;'>RECRUIT SACRIFICE! " + mercDiedObj.icon + " " + escapeHtml(mercDiedObj.name) + " fell in battle (+2% Martyr DEF &amp; granted Avenging Wrath: +30% ATK / 100% Crit for 2 turns)!</b>");
+          activeCombat.avengingWrathTurns = 2; playSfx("death");
+          bannerBadges.push({ text: "⚰️ " + mercDiedObj.name.toUpperCase() + " FELL (+AVENGING WRATH)!", bg: "#000000" });
+          var extraLifetimeTxt = "📊 <b>Service:</b> " + (mercDiedObj.kills || 0) + " Kills • 💥 " + (mercDiedObj.totalDmg || 0).toLocaleString() + " DMG • 🛡️ " + (mercDiedObj.dmgAbsorbed || 0).toLocaleString() + " Tanked" + (gearRetNote ? ("<br>" + gearRetNote) : "");
+          lastCombatBanner = bannerBadges;
+          if (hero.hp <= 0) { checkDeathsDoorOrDefeat(); return; }
+          renderBattleModal();
+          showRecruitFallenPopupModal(mercDiedObj.name, mercDiedObj.icon, mercDiedObj.role, activeCombat.name, extraLifetimeTxt);
+          return;
         }
-        if (isSuperCleave && effRecOrder !== "protect") hero.hp -= Math.round(eDmg * 0.55);
       } else {
         hero.hp -= eDmg;
         floatingHeroTag = { text: "🩸 -" + eDmg + " HP", color: "#ef4444" };
@@ -8849,7 +8777,8 @@ function combatAction(act) {
   }
 
   lastCombatBanner = bannerBadges;
-  if (hero.hp <= 0) { handleCombatDefeat(); return; }
+  if (hero.hp <= 0) { checkDeathsDoorOrDefeat(); return; }
+  if (!activeCombat.ancestorFlash && hero.hp > 1 && hero.hp <= Math.round(hero.maxHp * 0.25)) triggerAncestorCallout("lowHp");
   renderBattleModal();
 }
 '''
@@ -8870,143 +8799,93 @@ function handleCombatDefeat() {
   if (hero.ancestors && hero.ancestors.length > 0 && Math.random() < 0.05) {
     var anc = hero.ancestors[0];
     hero.hp = Math.round(hero.maxHp * 0.60);
+    if (activeCombat) activeCombat.atDeathsDoor = false;
     playSfx("levelup");
-    if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 40);
     floatingHeroTag = { text: "🗿 ANCESTOR MIRACLE!", color: "#fde047" };
-    addLog("🗿🌟 <b style='color:#fde047;'>GHOST OF THE ANCESTOR!</b> The marble statue of <b>" + escapeHtml(anc.name) + "</b> shattered to intercept the killing blow, restoring you to <b>60% HP</b>!");
+    addLog("🗿🌟 <b style='color:#fde047;'>GHOST OF THE ANCESTOR (" + escapeHtml(anc.name) + ")!</b> Restored to <b>60% HP</b>!");
     renderBattleModal();
     return;
   }
 
-  // 1) RECRUIT SACRIFICE INTERCESSION ("Protect" Order OR Brother Lazarus sacrifices themselves BEFORE the player dies or uses a Valkyrie Token!)
   var lazIdx = (hero.mercenaries || []).findIndex(function(m) { return m.id === "lazarus"; });
   if (lazIdx >= 0 || (effRecOrder === "protect" && ((hero.mercenaries && hero.mercenaries.length > 0) || (hero.altBodyguard && hero.altBodyguard.name)))) {
-    var sacName = "";
-    var sacIcon = "🩸⛓️";
+    var sacName = "", sacIcon = "🩸⛓️", sacRole = "Sacrificial Protector", gearSavedTxt = "";
     if (lazIdx >= 0) {
       var laz = hero.mercenaries.splice(lazIdx, 1)[0];
-      sacName = laz.name;
-      sacIcon = laz.icon || "🩸⛓️";
+      sacName = laz.name; sacIcon = laz.icon || "🩸⛓️"; sacRole = laz.role || "Blood-Martyr";
+      if (laz.gear && hero.inventory.length < 30) { hero.inventory.push(laz.gear); gearSavedTxt = "<br>🎒 <b>Recovered Gear:</b> " + escapeHtml(laz.gear.name); }
       hero.fallenHeroes.unshift({ name: laz.name, role: laz.role, icon: laz.icon, slainBy: defeatedBy });
     } else if (hero.mercenaries && hero.mercenaries.length > 0) {
       var sacMerc = hero.mercenaries.shift();
-      sacName = sacMerc.name;
-      sacIcon = sacMerc.icon || "🛡️⚔️";
+      sacName = sacMerc.name; sacIcon = sacMerc.icon || "🛡️⚔️"; sacRole = sacMerc.role || "Sworn Mercenary";
+      if (sacMerc.gear && hero.inventory.length < 30) { hero.inventory.push(sacMerc.gear); gearSavedTxt = "<br>🎒 <b>Recovered Gear:</b> " + escapeHtml(sacMerc.gear.name); }
       hero.fallenHeroes.unshift({ name: sacMerc.name, role: sacMerc.role, icon: sacMerc.icon, slainBy: defeatedBy });
     } else if (hero.altBodyguard && hero.altBodyguard.name) {
-      sacName = hero.altBodyguard.name + " (Alt Bodyguard)";
-      sacIcon = "🛡️👑";
-      hero.altBodyguard = null;
+      sacName = hero.altBodyguard.name; sacIcon = "🛡️👑"; sacRole = "Alt Bodyguard"; hero.altBodyguard = null;
     }
     if (hero.fallenHeroes && hero.fallenHeroes.length > 15) hero.fallenHeroes.pop();
     hero.hp = Math.round(hero.maxHp * 0.55);
-    if (activeCombat) activeCombat.avengingWrathTurns = 2;
+    if (activeCombat) { activeCombat.atDeathsDoor = false; activeCombat.avengingWrathTurns = 2; }
     playSfx("levelup");
-    floatingHeroTag = { text: "🩸 " + sacName.toUpperCase() + " SACRIFICED FOR YOU!", color: "#fde047" };
-    addLog("🩸🛡️ [RECRUITS] <b style='color:#fde047;'>RECRUIT SACRIFICIAL PROTECT INTERCESSION!</b> <b>" + sacIcon + " " + escapeHtml(sacName) + "</b> threw themselves in front of <b>" + escapeHtml(defeatedBy) + "&apos;s</b> killing blow, sacrificing their life to restore you to <b>" + hero.hp + " HP (55%)</b> with <b>Avenging Wrath (+30% ATK &amp; 100% Crit)</b>!");
-    renderBattleModal();
+    floatingHeroTag = { text: "🩸 " + sacName.toUpperCase() + " SACRIFICED!", color: "#fde047" };
+    addLog("🩸🛡️ [RECRUITS] <b>" + sacIcon + " " + escapeHtml(sacName) + "</b> sacrificed their life to restore you to <b>" + hero.hp + " HP (55%)</b>!");
+    queueDeltaSaveHero(); renderBattleModal();
+    showRecruitFallenPopupModal(sacName, sacIcon, sacRole, defeatedBy, "🩸 <b>Mortal Blow Intercepted:</b> Restored Hero to <b style='color:#4ade80;'>" + hero.hp + "/" + hero.maxHp + " HP (55%)</b> • 🪽 <b>0 Seals Used</b>" + gearSavedTxt);
     return;
   }
 
-  // 2) ABYSSAL GAUNTLET VALKYRIE TOKEN RESCUE (Triggers Blocking Valkyrie Popup Modal!)
-  if (activeCombat && activeCombat.isGauntlet) {
-    if ((hero.valkyrieSeals || 0) > 0) {
-      hero.valkyrieSeals--;
-      hero.hp = Math.round(hero.maxHp * 0.40);
-      var gWave = activeCombat.gauntletWave || 1;
-      activeCombat = null; lastCombatBanner = null;
-      playSfx("death");
-      renderBattleModal();
-      var gFailMsg = "🕳️🪽 <b style='color:#fbbf24;'>VALKYRIE TOKEN USED — DRAGGED FROM ABYSSAL GAUNTLET (Wave " + gWave + "/10)!</b><br>" +
-        "Your Valkyrie Token shattered to save your life before <b>" + escapeHtml(defeatedBy) + "</b> could finish you!<br>" +
-        "• <b>Valkyrie Token Consumed:</b> <b style='color:#ef4444;'>-1🪽 Seal of the Valkyrie</b><br>" +
-        "• <b>Valkyrie Tokens Remaining:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 10 Remaining</b>";
-      addLog(gFailMsg);
-      saveCurrentHero(null, false, null);
-      renderGameScreen();
-      showValkyrieSealPopupModal(hero.valkyrieSeals, "🪽 VALKYRIE TOKEN USED (GAUNTLET RESCUE)!", gFailMsg);
-      return;
-    }
+  if (activeCombat && activeCombat.isGauntlet && (hero.valkyrieSeals || 0) > 0) {
+    hero.valkyrieSeals--; hero.deathsDoorTrauma = true; addHeroStress(20);
+    hero.hp = Math.round(hero.maxHp * 0.40);
+    var gWave = activeCombat.gauntletWave || 1;
+    activeCombat = null; lastCombatBanner = null; playSfx("death"); renderBattleModal();
+    var gFailMsg = "🕳️🪽 <b style='color:#fbbf24;'>VALKYRIE TOKEN USED (Wave " + gWave + "/10)!</b><br>• <b>Remaining:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 3</b><br>• 🕯️ <b style='color:#ef4444;'>DEATH&apos;S DOOR TRAUMA:</b> +20% Stress &amp; -10% Stats until rested!";
+    addLog(gFailMsg); saveCurrentHero(null, false, null); renderGameScreen();
+    showValkyrieSealPopupModal(hero.valkyrieSeals, "🪽 VALKYRIE TOKEN USED (GAUNTLET)!", gFailMsg);
+    return;
   }
 
-  // 3) WORLD BOSS FREE DAILY CITADEL AEGIS (Does not consume a Valkyrie Token)
   if (activeCombat && activeCombat.isWorldRaid && (hero.wbDefeatsToday || 0) < MAX_DAILY_WB_AEGIS) {
     hero.wbDefeatsToday = (hero.wbDefeatsToday || 0) + 1;
     var remFree = Math.max(0, MAX_DAILY_WB_AEGIS - hero.wbDefeatsToday);
     var syncedDmg = activeCombat.sessionDamage || 0;
     var rUp = syncedDmg > 0 ? { type: "world", areaId: activeCombat.areaId, damage: syncedDmg, maxHp: activeCombat.maxHp } : null;
-    hero.hp = Math.round(hero.maxHp * 0.50);
-    hero.mp = Math.round(hero.maxMp * 0.50);
-    activeCombat = null;
-    lastCombatBanner = null;
-    playSfx("magic");
-    renderBattleModal();
-    var aegisMsg = "🌍🛡️ <b style='color:#4ade80;'>CITADEL CALAMITY AEGIS INTERVENED (" + hero.wbDefeatsToday + "/3 Free Daily World Boss Defeats Used)!</b><br>" +
-      "You were knocked back by <b>" + escapeHtml(defeatedBy) + "</b>, but the High Citadel's daily ward teleported you to safety at <b>50% HP/MP</b>!<br>" +
-      "• <b>Valkyrie Seals Used:</b> <span style='color:#fde047;font-weight:bold;'>0 (All " + (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 5) + "🪽 Seals Preserved!)</span><br>" +
-      "• <b>World Boss Damage Banked:</b> <span style='color:#fbbf24;font-weight:bold;'>" + syncedDmg.toLocaleString() + " Damage</span><br>" +
-      "• <b>Remaining Free World Boss Defeats Today:</b> <span style='color:#4ade80;font-weight:bold;'>" + remFree + " / 3</span> (Resets daily!)";
-    addLog(aegisMsg);
-    saveCurrentHero(null, false, rUp, null);
-    renderGameScreen();
-    showOutcomeModal("🌍 Saved by Daily World Boss Aegis!", "🌍🛡️", defeatedBy, "#4ade80", aegisMsg, null);
+    hero.hp = Math.round(hero.maxHp * 0.50); hero.mp = Math.round(hero.maxMp * 0.50);
+    activeCombat = null; lastCombatBanner = null; playSfx("magic"); renderBattleModal();
+    var aegisMsg = "🌍🛡️ <b style='color:#4ade80;'>CITADEL AEGIS (" + hero.wbDefeatsToday + "/3 Free Daily WB Defeats)!</b><br>Banked <b>" + syncedDmg.toLocaleString() + " DMG</b> (" + remFree + "/3 Free left today).";
+    addLog(aegisMsg); saveCurrentHero(null, false, rUp, null); renderGameScreen();
+    showOutcomeModal("🌍 Saved by World Boss Aegis!", "🌍🛡️", defeatedBy, "#4ade80", aegisMsg, null);
     return;
   }
 
-  // 4) VALKYRIE TOKEN ACTIVATION (1-Seal Boss Evacuation OR Field Resurrection — Always Pops Up Blocking Modal with OK Button & Remaining Count!)
   if ((hero.valkyrieSeals || 0) > 0) {
     hero.valkyrieSeals--;
+    hero.deathsDoorTrauma = true;
+    addHeroStress(20);
     hero.hp = Math.round(hero.maxHp * 0.50);
     hero.mp = Math.round(hero.maxMp * 0.50);
+    if (activeCombat) activeCombat.atDeathsDoor = false;
 
     var isLockedBoss = activeCombat && ((activeCombat.isBoss && !activeCombat.isRoamingMiniBoss) || activeCombat.isWorldRaid || activeCombat.isZoneRaid || activeCombat.isDelveBoss || activeCombat.isSpire || activeCombat.isMirrorClone || activeCombat.isWeatherApex);
     if (isLockedBoss) {
-      var wasWR = activeCombat.isWorldRaid;
-      var wasZR = activeCombat.isZoneRaid;
-      var bDmg = activeCombat.sessionDamage || 0;
+      var wasWR = activeCombat.isWorldRaid, wasZR = activeCombat.isZoneRaid, bDmg = activeCombat.sessionDamage || 0;
       var raidSync = ((wasWR || wasZR) && bDmg > 0) ? { type: wasWR ? "world" : "zone", areaId: activeCombat.areaId, damage: bDmg, maxHp: activeCombat.maxHp } : null;
-
-      activeCombat = null;
-      activeDelve = null;
-      lastCombatBanner = null;
-      playSfx("death");
-      renderBattleModal();
-
-      var evacMsg = "🪽🛡️ <b style='color:#fde047;'>VALKYRIE TOKEN ACTIVATED: 1-SEAL BOSS EVACUATION!</b><br>" +
-        "A golden Valkyrie Token shattered to intercept the killing blow of <b>" + escapeHtml(defeatedBy) + "</b> and dragged your unconscious body back to town at <b>50% HP/MP</b>!<br>" +
-        "• <b>Token Consumed:</b> <b style='color:#ef4444;'>-1🪽 Seal of the Valkyrie</b><br>" +
-        "• <b>Valkyrie Tokens Remaining:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 10 Remaining</b>" +
-        (raidSync ? "<br>• <b>Raid Damage Banked:</b> <b style='color:#4ade80;'>" + bDmg.toLocaleString() + " Damage</b>" : "");
-      addLog(evacMsg);
-      saveCurrentHero(null, false, raidSync, null);
-      renderGameScreen();
-      showValkyrieSealPopupModal(hero.valkyrieSeals, "🪽 VALKYRIE TOKEN USED (BOSS EVACUATION)!", evacMsg);
+      activeCombat = null; activeDelve = null; lastCombatBanner = null; playSfx("death"); renderBattleModal();
+      var evacMsg = "🪽🛡️ <b style='color:#fde047;'>VALKYRIE BOSS EVACUATION!</b><br>Dragged back to town at <b>50% HP/MP</b>!<br>• <b>Seals Left:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 3</b><br>• 🕯️ <b style='color:#ef4444;'>DEATH&apos;S DOOR TRAUMA:</b> +20% Stress &amp; -10% Stats until rested at Inn/Sanctuary!";
+      addLog(evacMsg); saveCurrentHero(null, false, raidSync, null); renderGameScreen();
+      showValkyrieSealPopupModal(hero.valkyrieSeals, "🪽 VALKYRIE BOSS EVACUATION!", evacMsg);
       return;
     }
 
     if (activeCombat && !activeCombat.isBoss && !activeCombat.isPvp && !activeCombat.isSpire && !activeCombat.isGuard) {
       var prevRank = (hero.nemesis && hero.nemesis.rank) ? hero.nemesis.rank : 0;
-      hero.nemesis = {
-        name: activeCombat.baseMobName || defeatedBy,
-        baseMobName: activeCombat.baseMobName || defeatedBy,
-        icon: defeatedIcon,
-        rank: prevRank + 1,
-        epithet: "the Seal-Breaker",
-        trait: activeCombat.trait || "Savage",
-        areaId: activeCombat.areaId || (hero.selectedArea || 1)
-      };
-      recordMemoirMilestone("Valkyrie Seal shattered by " + defeatedBy + " — swore a blood-vendetta!");
+      hero.nemesis = { name: activeCombat.baseMobName || defeatedBy, baseMobName: activeCombat.baseMobName || defeatedBy, icon: defeatedIcon, rank: prevRank + 1, epithet: "the Seal-Breaker", trait: activeCombat.trait || "Savage", areaId: activeCombat.areaId || (hero.selectedArea || 1) };
+      recordMemoirMilestone("Valkyrie Seal shattered by " + defeatedBy + "!");
     }
     playSfx("levelup");
-    floatingHeroTag = { text: "🪽 VALKYRIE SEAL (" + hero.valkyrieSeals + " LEFT)!", color: "#fde047" };
-    var fieldSealMsg = "🪽✨ <b style='color:#fde047;'>VALKYRIE TOKEN SHATTERED TO SAVE YOUR LIFE!</b><br>" +
-      "A golden Valkyrie ward intercepted the fatal blow from <b>" + escapeHtml(defeatedBy) + "</b>, resurrecting you mid-battle at <b>50% HP &amp; MP (" + hero.hp + "/" + hero.maxHp + " HP)</b>!<br>" +
-      "• <b>Token Consumed:</b> <b style='color:#ef4444;'>-1🪽 Seal of the Valkyrie</b><br>" +
-      "• <b>Valkyrie Tokens Remaining:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 10 Remaining</b>" +
-      (hero.nemesis ? ("<br>• 💀 <b>Sworn Nemesis Marked (Rank " + hero.nemesis.rank + "):</b> <b>" + escapeHtml(hero.nemesis.name) + "</b> has become your Sworn Nemesis!") : "");
-    addLog(fieldSealMsg);
-    queueDeltaSaveHero();
-    renderBattleModal();
+    floatingHeroTag = { text: "🪽 VALKYRIE SEAL (" + hero.valkyrieSeals + "/3)!", color: "#fde047" };
+    var fieldSealMsg = "🪽✨ <b style='color:#fde047;'>VALKYRIE TOKEN SHATTERED!</b><br>Resurrected mid-battle at <b>50% HP/MP</b>!<br>• <b>Seals Left:</b> <b style='color:#fde047;'>" + hero.valkyrieSeals + " / 3</b><br>• 🕯️ <b style='color:#ef4444;'>DEATH&apos;S DOOR TRAUMA:</b> +20% Stress &amp; -10% Stats until rested!";
+    addLog(fieldSealMsg); queueDeltaSaveHero(); renderBattleModal();
     showValkyrieSealPopupModal(hero.valkyrieSeals, "🪽 VALKYRIE TOKEN ACTIVATED!", fieldSealMsg);
     return;
   }
@@ -9015,92 +8894,67 @@ function handleCombatDefeat() {
     playSfx("death");
     document.body.classList.add("shatter-permadeath");
     setTimeout(function() { document.body.classList.remove("shatter-permadeath"); }, 1400);
-    var fatalFoe = defeatedBy;
-    var fallenHeroName = hero.name;
+    var fatalFoe = defeatedBy, fallenHeroName = hero.name;
     var mourner = hero.spouse ? hero.spouse.name : ((hero.mercenaries && hero.mercenaries[0]) ? hero.mercenaries[0].name : "Bailiff Rowan");
-    activeCombat = null;
-    activeDelve = null;
-    lastCombatBanner = null;
-    renderBattleModal();
+    activeCombat = null; activeDelve = null; lastCombatBanner = null; renderBattleModal();
     confirmHardcorePermadeath("Slain with 0 Valkyrie Seals vs " + fatalFoe);
     showPopupModal(
       '<div style="font-size:52px;">⚰️🌧️🕯️</div>' +
       '<div style="font-size:21px;font-weight:900;color:#ef4444;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">SHATTERED GLASS: TRUE PERMADEATH FUNERAL</div>' +
       '<div style="background:#14090e;border:2px solid #ef4444;border-radius:4px;padding:12px;margin:12px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#fecaca;">' +
         '<b>' + escapeHtml(fallenHeroName) + '</b> fell before <b>' + escapeHtml(fatalFoe) + '</b> with zero Valkyrie Seals!<br><br>' +
-        '🌧️ <b>Rain-Soaked Funeral Eulogy (' + escapeHtml(mourner) + '):</b> <i style="color:#fde68a;">&ldquo;Lay their broken sword beneath the weeping oaks of Valoria. Though the darkness took them today, their spirit awaits exhumation in our graveyard!&rdquo;</i><br><br>' +
-        '• Buried in <b>' + (activeSlotKey ? activeSlotKey.toUpperCase() : 'Your Slot') + '&apos;s Grave Plot</b>! Create a new hero on this same slot and visit <b>⚰️ The Weeping Graveyard at Level 5+</b> to dig up their soul (+20% Stats &amp; 50% chance to unearth their best Relic)!' +
-      '</div>' +
-      '<button class="btn btn-crimson" style="width:100%;justify-content:center;" onclick="closePopupModal()">⚰️ Return to Crypt Roster</button>'
+        '🌧️ <b>Funeral Eulogy (' + escapeHtml(mourner) + '):</b> <i style="color:#fde68a;">&ldquo;Lay their broken sword beneath the weeping oaks of Valoria.&rdquo;</i><br><br>' +
+        '• Buried in <b>' + (activeSlotKey ? activeSlotKey.toUpperCase() : 'Slot') + '&apos;s Grave Plot</b>! Visit <b>⚰️ The Weeping Graveyard at Lv 5+</b> on a new hero to exhume their soul (+20% Stats &amp; Relic)!' +
+      '</div><button class="btn btn-crimson" style="width:100%;justify-content:center;" onclick="closePopupModal()">⚰️ Return to Crypt Roster</button>'
     );
     return;
   }
 
   playSfx("death");
-  var wasPvp = activeCombat && activeCombat.isPvp;
-  var pvpSlotTarget = activeCombat ? activeCombat.oppSlotKey : null;
-  var wasWorldRaid = activeCombat && activeCombat.isWorldRaid;
-  var wasRaid = activeCombat && (activeCombat.isWorldRaid || activeCombat.isZoneRaid);
+  var wasPvp = activeCombat && activeCombat.isPvp, pvpSlotTarget = activeCombat ? activeCombat.oppSlotKey : null;
+  var wasWorldRaid = activeCombat && activeCombat.isWorldRaid, wasRaid = activeCombat && (activeCombat.isWorldRaid || activeCombat.isZoneRaid);
   var raidDmg = activeCombat ? (activeCombat.sessionDamage || 0) : 0;
   var rUpdate = (wasRaid && raidDmg > 0) ? { type: wasWorldRaid ? "world" : "zone", areaId: activeCombat.areaId, damage: raidDmg, maxHp: activeCombat.maxHp } : null;
 
   hero.hp = Math.round(hero.maxHp * 0.45);
-  var lostQuests = Math.min(hero.quests, 3);
-  hero.quests = Math.max(0, hero.quests - lostQuests);
+  hero.quests = Math.max(0, hero.quests - Math.min(hero.quests, 3));
   var lostGold = Math.round(hero.gold * 0.25);
   hero.gold = Math.max(0, hero.gold - lostGold);
   if (hero.guild && hero.guild.founded) hero.guild.stability = Math.max(10, (hero.guild.stability || 75) - 4);
 
-  var droppedItem = null;
-  var lostItemText = "None (Backpack was empty)";
+  var droppedItem = null, lostItemText = "None (Backpack was empty)";
   if (!wasRaid && hero.inventory && hero.inventory.length > 0) {
     var dropIdx = Math.floor(Math.random() * hero.inventory.length);
     droppedItem = hero.inventory.splice(dropIdx, 1)[0];
     lostItemText = (droppedItem.icon || "🗡️") + " <span class='rarity-" + droppedItem.rarity + "'>" + escapeHtml(droppedItem.name) + "</span>";
   }
-
-  hero.deathMarker = {
-    areaId: activeCombat ? (activeCombat.areaId || 1) : 1,
-    slainBy: defeatedBy,
-    gold: lostGold,
-    item: droppedItem,
-    droppedEpoch: Date.now()
-  };
+  hero.deathMarker = { areaId: activeCombat ? (activeCombat.areaId || 1) : 1, slainBy: defeatedBy, gold: lostGold, item: droppedItem, droppedEpoch: Date.now() };
 
   var extraSave = wasWorldRaid ? { devastationDelta: 3 } : {};
   if (wasPvp) {
-    hero.pvpLosses = (hero.pvpLosses || 0) + 1;
-    hero.pvpRating = Math.max(800, (hero.pvpRating || 1000) - 15);
-    if (pvpSlotTarget) {
-      extraSave.pvpLog = { targetSlot: pvpSlotTarget, attackerName: hero.name, attackerWon: false, bountyGold: Math.max(200, hero.level * 35), bountyXp: Math.max(150, hero.level * 25) };
-    }
+    hero.pvpLosses = (hero.pvpLosses || 0) + 1; hero.pvpRating = Math.max(800, (hero.pvpRating || 1000) - 15);
+    if (pvpSlotTarget) extraSave.pvpLog = { targetSlot: pvpSlotTarget, attackerName: hero.name, attackerWon: false, bountyGold: Math.max(200, hero.level * 35), bountyXp: Math.max(150, hero.level * 25) };
   }
-  activeCombat = null; activeDelve = null; lastCombatBanner = null;
-  renderBattleModal();
-  addLog("💀 <b style='color:#ef4444;'>FALLEN WITH ZERO VALKYRIE SEALS vs " + escapeHtml(defeatedBy) + "!</b> Dropped Soul-Urn (" + lostGold.toLocaleString() + "g)! Succeed in your One-Chance Rescue Delve (100% Full Heal before Boss!) or face Permadeath!");
-  saveCurrentHero(null, false, rUpdate, extraSave);
-  renderGameScreen();
+  activeCombat = null; activeDelve = null; lastCombatBanner = null; renderBattleModal();
+  addLog("💀 <b style='color:#ef4444;'>FALLEN AT ZERO SEALS vs " + escapeHtml(defeatedBy) + "!</b> Dropped Soul-Urn (" + lostGold.toLocaleString() + "g)!");
+  saveCurrentHero(null, false, rUpdate, extraSave); renderGameScreen();
 
   var bloodOptionsHtml = "";
-  if (hero.children && hero.children.length > 0) {
-    bloodOptionsHtml += '<button class="btn btn-crimson" style="width:100%;margin-top:6px;" onclick="executeBloodPriceSacrifice(&#39;heir&#39;)">🩸 Blood-Price: Sacrifice Dynasty Heir (' + escapeHtml(hero.children[0].name) + ') ➔ Reclaim Urn &amp; +2🪽 Seals</button>';
+  if (hero.children && hero.children.length > 0 && (hero.children[0].level || 1) >= 10) {
+    bloodOptionsHtml += '<button class="btn btn-crimson" style="width:100%;margin-top:6px;" onclick="executeBloodPriceSacrifice(&#39;heir&#39;)">🩸 Blood-Price: Sacrifice Lv 10+ Heir (' + escapeHtml(hero.children[0].name) + ') ➔ Reclaim Urn &amp; +1🪽 Seal</button>';
   }
   if (hero.spouse) {
-    bloodOptionsHtml += '<button class="btn btn-crimson" style="width:100%;margin-top:6px;" onclick="executeBloodPriceSacrifice(&#39;spouse&#39;)">🩸 Blood-Price: Sacrifice Royal Consort (' + escapeHtml(hero.spouse.name) + ') ➔ Reclaim Urn &amp; +2🪽 Seals</button>';
-  }
-  if (hero.guild && hero.guild.founded) {
-    bloodOptionsHtml += '<button class="btn btn-gold" style="width:100%;margin-top:6px;" onclick="executeBloodPriceSacrifice(&#39;kingdom&#39;)">🏰 Blood-Price: Burn 25% Kingdom Stockpiles ➔ Reclaim Urn &amp; +1🪽 Seal</button>';
+    bloodOptionsHtml += '<button class="btn btn-crimson" style="width:100%;margin-top:6px;" onclick="executeBloodPriceSacrifice(&#39;spouse&#39;)">🩸 Blood-Price: Sacrifice Royal Consort (' + escapeHtml(hero.spouse.name) + ') ➔ Reclaim Urn &amp; +1🪽 Seal</button>';
   }
 
   showPopupModal(
     '<div style="font-size:46px;">⚱️💀🔦</div>' +
     '<div style="font-size:20px;font-weight:900;color:#ef4444;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">FALLEN AT ZERO SEALS — SOUL-URN DROPPED!</div>' +
-    '<div style="font-size:13px;color:#e5dec9;margin-top:4px;"><b>' + escapeHtml(hero.name) + '</b> fell before <b>' + defeatedIcon + ' ' + escapeHtml(defeatedBy) + '</b> with <b>0🪽 Seals</b>!</div>' +
     '<div style="background:#14090e;border:1px solid #991b1b;border-radius:4px;padding:10px;margin:10px 0;text-align:left;font-size:13px;line-height:1.6;">' +
       '<div>⚱️ <b>Soul-Urn Left in Crypt:</b> <span style="color:#fbbf24;">' + lostGold.toLocaleString() + ' Gold</span> &amp; ' + lostItemText + '</div>' +
-      '<div>❤️ <b>100% PRE-BOSS HEAL BLESSING:</b> Reaching Chamber 5 of your Rescue Delve automatically restores <b>100% of your HP, MP &amp; Mercenaries</b> before the Boss fight! (⚠️ Leaving your Urn uncollected for 12+ hours mutates it into a Corrupted Mimic!)</div>' +
+      '<div>🔥 <b>TORCHLIGHT SANCTUM CAMP:</b> Preserve at least <b>1🔥 Torch</b> through Chambers 1–4 to camp for <b>+30% HP/MP</b> before the Boss!</div>' +
     '</div>' +
-    '<button class="btn btn-shine" style="width:100%;padding:12px;font-size:13.5px;" onclick="closePopupModal();startDungeonDelve(true);">⚱️🔦 Launch One-Chance Soul-Urn Rescue Delve Now (100% Pre-Boss Heal!)</button>' +
+    '<button class="btn btn-shine" style="width:100%;padding:12px;font-size:13.5px;" onclick="closePopupModal();startDungeonDelve(true);">⚱️🔦 Launch One-Chance Soul-Urn Rescue Delve Now</button>' +
     bloodOptionsHtml
   );
 }
@@ -9108,59 +8962,43 @@ function handleCombatDefeat() {
 function executeBloodPriceSacrifice(sacType) {
   ensureHeroV3Fields(hero);
   var sacDesc = "";
-  if (sacType === "heir" && hero.children && hero.children.length > 0) {
+  if (sacType === "heir" && hero.children && hero.children.length > 0 && (hero.children[0].level || 1) >= 10) {
     var lostChild = hero.children.shift();
-    hero.activeChildIdx = -1;
-    hero.valkyrieSeals = (hero.valkyrieSeals || 0) + 2;
-    sacDesc = "Sacrificed Dynasty Heir <b>" + escapeHtml(lostChild.name) + "</b> upon the Obsidian Altar (+2🪽 Valkyrie Seals)!";
+    hero.activeChildIdx = -1; hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals || 0) + 1);
+    sacDesc = "Sacrificed Dynasty Heir <b>" + escapeHtml(lostChild.name) + "</b> (+1🪽 Seal)!";
   } else if (sacType === "spouse" && hero.spouse) {
     var lostWife = hero.spouse.name;
-    hero.spouse = null;
-    hero.valkyrieSeals = (hero.valkyrieSeals || 0) + 2;
-    sacDesc = "Sacrificed Royal Consort <b>" + escapeHtml(lostWife) + "</b> to the Valkyries (+2🪽 Valkyrie Seals)!";
-  } else if (sacType === "kingdom" && hero.guild && hero.guild.founded) {
-    hero.guild.timber = Math.round((hero.guild.timber || 0) * 0.75);
-    hero.guild.stone = Math.round((hero.guild.stone || 0) * 0.75);
-    hero.guild.iron = Math.round((hero.guild.iron || 0) * 0.75);
-    hero.valkyrieSeals = (hero.valkyrieSeals || 0) + 1;
-    sacDesc = "Surrendered 25% of your Kingdom's stockpiles as a Blood-Tithe (+1🪽 Valkyrie Seal)!";
+    hero.spouse = null; hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals || 0) + 1);
+    sacDesc = "Sacrificed Royal Consort <b>" + escapeHtml(lostWife) + "</b> (+1🪽 Seal)!";
+  } else {
+    showGothicToast("⚠️ Requires a Royal Consort or Level 10+ Heir!"); return;
   }
   if (hero.deathMarker) {
     hero.gold += (hero.deathMarker.gold || 0);
     if (hero.deathMarker.item && hero.inventory.length < 30) hero.inventory.push(hero.deathMarker.item);
     hero.deathMarker = null;
   }
-  hero.hp = hero.maxHp;
-  hero.mp = hero.maxMp;
-  playSfx("levelup");
-  addLog("🩸⚖️ <b style='color:#fde047;'>BLOOD-PRICE PAID!</b> " + sacDesc + " Your Soul-Urn and full vitals have been restored!");
-  saveCurrentHero("🩸 " + hero.name + " paid the Blood-Price to defy death!", false, null);
-  closePopupModal();
-  renderGameScreen();
+  hero.hp = hero.maxHp; hero.mp = hero.maxMp; playSfx("levelup");
+  addLog("🩸⚖️ <b style='color:#fde047;'>BLOOD-PRICE PAID!</b> " + sacDesc);
+  saveCurrentHero("🩸 " + hero.name + " paid the Blood-Price!", false, null);
+  closePopupModal(); renderGameScreen();
 }
 
 async function confirmHardcorePermadeath(defeatedBy) {
   if (!hero || !activeSlotKey) return;
-  await saveCurrentHero("⚰️ PERMADEATH: " + hero.name + " (Lv " + hero.level + ") fell (" + defeatedBy + ") and was buried in " + activeSlotKey.toUpperCase() + "'s Grave!", false, null, { permadeath: true, deathCause: defeatedBy });
-  hero = null;
-  switchScreen("slots");
+  await saveCurrentHero("⚰️ PERMADEATH: " + hero.name + " (Lv " + hero.level + ") fell (" + defeatedBy + ")!", false, null, { permadeath: true, deathCause: defeatedBy });
+  hero = null; switchScreen("slots");
 }
 
 function pickSmartGodTierDrop(defeatedAreaId) {
   var slotOrder = ["weapon", "armor", "helm", "boots", "relic", "amulet"];
-  if (defeatedAreaId >= 17 && defeatedAreaId <= 21 && BOSS_UNIQUES[defeatedAreaId]) {
-    return JSON.parse(JSON.stringify(BOSS_UNIQUES[defeatedAreaId]));
-  }
+  if (defeatedAreaId >= 17 && defeatedAreaId <= 21 && BOSS_UNIQUES[defeatedAreaId]) return JSON.parse(JSON.stringify(BOSS_UNIQUES[defeatedAreaId]));
   for (var i = 0; i < slotOrder.length; i++) {
-    var sKey = slotOrder[i];
-    var eq = hero[sKey];
+    var sKey = slotOrder[i], eq = hero[sKey];
     var inBag = (hero.inventory || []).some(function(x) { return x && x.type === sKey && x.isGodTier; });
-    if ((!eq || !eq.isGodTier) && !inBag) {
-      return JSON.parse(JSON.stringify(GOD_TIER_PANOPLY[sKey]));
-    }
+    if ((!eq || !eq.isGodTier) && !inBag) return JSON.parse(JSON.stringify(GOD_TIER_PANOPLY[sKey]));
   }
-  var randSlot = slotOrder[Math.floor(Math.random() * slotOrder.length)];
-  return JSON.parse(JSON.stringify(GOD_TIER_PANOPLY[randSlot]));
+  return JSON.parse(JSON.stringify(GOD_TIER_PANOPLY[slotOrder[Math.floor(Math.random() * slotOrder.length)]]));
 }
 '''
 }
@@ -9177,246 +9015,147 @@ function renderBossShatterSvg(foeName, foeIcon, lootHtml) {
       '<text x="72" y="54" text-anchor="middle" font-size="24">' + (foeIcon || "🐉") + '</text>' +
       '<text x="182" y="54" text-anchor="middle" font-size="24">💥✨</text>' +
       '<text x="128" y="22" text-anchor="middle" fill="#fef08a" font-family="Cinzel,serif" font-size="9.5" font-weight="900">TAROT SHATTERED</text>' +
-    '</svg>' +
-    '<div style="font-size:11.5px;color:#fde68a;margin-top:4px;">🎁 <b>Relic Unsealed:</b> ' + lootHtml + '</div>' +
-  '</div>';
+    '</svg><div style="font-size:11.5px;color:#fde68a;margin-top:4px;">🎁 <b>Relic Unsealed:</b> ' + lootHtml + '</div></div>';
 }
 
-// Improvement #8: Post-Battle Party MVP & Effectiveness Breakdown
 function buildPartyMvpBreakdownHtml(cObj) {
   if (!cObj || !cObj.partyStats) return "";
-  var ps = cObj.partyStats;
-  var tot = Math.max(1, cObj.sessionDamage || 1);
-  var rows = [];
-  var hDmg = ps.heroDmg || 0;
-  rows.push('<div>⚔️ <b>' + escapeHtml(hero.name) + ' (Hero):</b> <span style="color:#fde047;">' + hDmg.toLocaleString() + ' DMG (' + Math.round((hDmg / tot) * 100) + '%)</span></div>');
-
+  var ps = cObj.partyStats, tot = Math.max(1, cObj.sessionDamage || 1), rows = [], hDmg = ps.heroDmg || 0;
+  rows.push('<div>⚔️ <b>' + escapeHtml(hero.name) + ':</b> <span style="color:#fde047;">' + hDmg.toLocaleString() + ' DMG (' + Math.round((hDmg / tot) * 100) + '%)</span></div>');
   (hero.mercenaries || []).forEach(function(m) {
-    var mD = (ps.mercDmg && ps.mercDmg[m.id]) ? ps.mercDmg[m.id] : 0;
-    var mH = (ps.mercHeals && ps.mercHeals[m.id]) ? ps.mercHeals[m.id] : 0;
-    if (mD > 0 || mH > 0) {
-      rows.push('<div>' + m.icon + ' <b>' + escapeHtml(m.name) + ':</b> <span style="color:#86efac;">' + mD.toLocaleString() + ' DMG (' + Math.round((mD / tot) * 100) + '%)' + (mH > 0 ? ' • 💚+' + mH + ' Healed' : '') + '</span></div>');
-    }
+    var mD = (ps.mercDmg && ps.mercDmg[m.id]) ? ps.mercDmg[m.id] : 0, mH = (ps.mercHeals && ps.mercHeals[m.id]) ? ps.mercHeals[m.id] : 0;
+    if (mD > 0 || mH > 0) rows.push('<div>' + m.icon + ' <b>' + escapeHtml(m.name) + ':</b> <span style="color:#86efac;">' + mD.toLocaleString() + ' DMG (' + Math.round((mD / tot) * 100) + '%)' + (mH > 0 ? ' • 💚+' + mH : '') + '</span></div>');
   });
-  if (ps.altDmg > 0 && hero.altBodyguard) {
-    rows.push('<div>🛡️ <b>Alt ' + escapeHtml(hero.altBodyguard.name) + ':</b> <span style="color:#7dd3fc;">' + ps.altDmg.toLocaleString() + ' DMG (' + Math.round((ps.altDmg / tot) * 100) + '%)</span></div>');
-  }
-  if (ps.childDmg > 0 && hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) {
-    rows.push('<div>👶 <b>Heir ' + escapeHtml(hero.children[hero.activeChildIdx].name) + ':</b> <span style="color:#f472b6;">' + ps.childDmg.toLocaleString() + ' DMG (' + Math.round((ps.childDmg / tot) * 100) + '%)</span></div>');
-  }
-  if (ps.petDmg > 0 && hero.companion) {
-    rows.push('<div>' + hero.companion.icon + ' <b>' + escapeHtml(hero.companion.name) + ':</b> <span style="color:#c084fc;">' + ps.petDmg.toLocaleString() + ' DMG (' + Math.round((ps.petDmg / tot) * 100) + '%)</span></div>');
-  }
-  if (ps.ancDmg > 0) {
-    rows.push('<div>👻 <b>Ancestral Specter:</b> <span style="color:#e9d5ff;">' + ps.ancDmg.toLocaleString() + ' DMG (' + Math.round((ps.ancDmg / tot) * 100) + '%)</span></div>');
-  }
-  return '<div style="margin-top:8px;padding:8px;background:#090d16;border:1px solid #38bdf8;border-radius:4px;font-size:12px;">' +
-    '<div style="font-weight:900;color:#7dd3fc;font-family:Cinzel,serif;margin-bottom:4px;">📊 Party Combat Effectiveness &amp; Damage Share (' + (cObj.sessionDamage || 0).toLocaleString() + ' Total DMG):</div>' +
-    rows.join('') +
-  '</div>';
+  if (ps.altDmg > 0 && hero.altBodyguard) rows.push('<div>🛡️ <b>Alt ' + escapeHtml(hero.altBodyguard.name) + ':</b> <span style="color:#7dd3fc;">' + ps.altDmg.toLocaleString() + ' DMG</span></div>');
+  if (ps.childDmg > 0 && hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) rows.push('<div>👶 <b>Heir ' + escapeHtml(hero.children[hero.activeChildIdx].name) + ':</b> <span style="color:#f472b6;">' + ps.childDmg.toLocaleString() + ' DMG</span></div>');
+  if (ps.petDmg > 0 && hero.companion) rows.push('<div>' + hero.companion.icon + ' <b>' + escapeHtml(hero.companion.name) + ':</b> <span style="color:#c084fc;">' + ps.petDmg.toLocaleString() + ' DMG</span></div>');
+  return '<div style="margin-top:8px;padding:8px;background:#090d16;border:1px solid #38bdf8;border-radius:4px;font-size:12px;"><div style="font-weight:900;color:#7dd3fc;font-family:Cinzel,serif;margin-bottom:4px;">📊 Party Damage Share (' + (cObj.sessionDamage || 0).toLocaleString() + ' Total):</div>' + rows.join('') + '</div>';
 }
 
 function handleCombatVictory() {
   playSfx("coin");
   if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 30);
-
-  if (activeCombat && activeCombat.isGauntlet && activeCombat.gauntletWave < 10) {
-    if (window.advanceAbyssalGauntletWave) {
-      window.advanceAbyssalGauntletWave();
-      return;
-    }
+  if (activeCombat && activeCombat.isGauntlet && activeCombat.gauntletWave < 10 && window.advanceAbyssalGauntletWave) {
+    window.advanceAbyssalGauntletWave(); return;
   }
-
+  var killQuote = (activeCombat && activeCombat.ancestorQuote) ? activeCombat.ancestorQuote : triggerAncestorCallout("kill");
+  var killAncHtml = '<div class="dd-ancestor-box" style="margin:6px 0;">🎙️ <b>The Ancestor:</b> <i>&ldquo;' + escapeHtml(killQuote) + '&rdquo;</i></div>';
   var partyMvpHtml = buildPartyMvpBreakdownHtml(activeCombat);
-
-  var brokenPopupMsg = "";
-  if (window.degradeEquippedGearAfterBattle) {
-    brokenPopupMsg = window.degradeEquippedGearAfterBattle();
-  }
-
-  if (hero.petTreatBattles && hero.petTreatBattles > 0) {
-    hero.petTreatBattles--;
-  }
+  var brokenPopupMsg = window.degradeEquippedGearAfterBattle ? window.degradeEquippedGearAfterBattle() : "";
+  if (hero.petTreatBattles && hero.petTreatBattles > 0) hero.petTreatBattles--;
 
   if (hero && hero.weapon) {
     hero.weapon.kills = (hero.weapon.kills || 0) + 1;
     if (hero.weapon.cursedAffix && hero.weapon.kills <= 100 && hero.weapon.kills % 10 === 0) {
       hero.weapon.atk = (hero.weapon.atk || 5) + 2;
-      addLog("🩸🗡️ <b>SENTIENT EGO-RELIC AWAKENED (" + hero.weapon.kills + "/100 Kills)!</b> <b>" + escapeHtml(hero.weapon.name) + "</b> drank deep and gained <b>+2 Permanent ATK</b>!");
+      addLog("🩸🗡️ <b>SENTIENT EGO-RELIC (" + hero.weapon.kills + "/100 Kills):</b> +2 Permanent ATK!");
     }
   }
 
-  var st = getHeroStats(), rev = getActiveRealmEvent(), curse = getActiveRealmCurse();
+  var st = getHeroStats(), rev = getActiveRealmEvent(), wFront = getActiveWeatherFront(), curse = getActiveRealmCurse();
   var decree = (hero.guild && hero.guild.founded) ? (hero.guild.decree || "martial") : "";
   var lodgeXpBonus = (hero.lodgingBuff && hero.lodgingBuff.questsLeft > 0 && hero.lodgingBuff.xpBonusPct) ? (1 + hero.lodgingBuff.xpBonusPct / 100.0) : 1.0;
   var echoBonusMult = 1 + (((serverData.echoes && serverData.echoes.bonusXpPct) ? serverData.echoes.bonusXpPct : 0) / 100.0);
-  var curseXpMult = (curse && curse.id === "stasis") ? 0.80 : 1.0;
-  var festXpMult = (hero.guild && hero.guild.festivalBoom) ? 1.15 : 1.0;
   var finType = activeCombat.finisherBonus || "";
-  var execXpMult = (finType === "execute") ? (activeCombat.areaId === 19 ? 1.35 : 1.25) : 1.0;
-  var ransomGoldMult = (finType === "ransom") ? 2.0 : 1.0;
-
-  var xpEventMult = (rev.id === "vampire_masquerade" ? 1.20 : 1.0) * (hero.activeFeast && hero.activeFeast.id === "dragon_stew" ? 1.15 : 1.0) * (decree === "crusade" ? 1.20 : 1.0) * lodgeXpBonus * echoBonusMult * curseXpMult * festXpMult * execXpMult;
-  var mult = (serverData.xpMult || 1) * (hero.calling === "Sage" ? 1.15 : 1.0) * xpEventMult;
-  var xpGain = Math.round(activeCombat.xp * mult);
-  var goldGain = Math.round(activeCombat.gold * (serverData.xpMult || 1) * st.goldBonusMult * ransomGoldMult);
-  var foeName = activeCombat.name, foeIcon = activeCombat.icon || "👹";
-  var baseSpecies = activeCombat.baseMobName || foeName;
+  var xpEventMult = (rev.id === "vampire_masquerade" ? 1.20 : 1.0) * (hero.activeFeast && hero.activeFeast.id === "dragon_stew" ? 1.15 : 1.0) * (decree === "crusade" ? 1.20 : 1.0) * lodgeXpBonus * echoBonusMult * (curse && curse.id === "stasis" ? 0.80 : 1.0) * (hero.guild && hero.guild.festivalBoom ? 1.15 : 1.0) * (wFront && wFront.name.indexOf("Blood-Mist") >= 0 ? 1.20 : 1.0) * (finType === "execute" ? 1.25 : 1.0);
+  var xpGain = Math.round(activeCombat.xp * (serverData.xpMult || 1) * (hero.calling === "Sage" ? 1.15 : 1.0) * xpEventMult);
+  var goldGain = Math.round(activeCombat.gold * (serverData.xpMult || 1) * st.goldBonusMult * (finType === "ransom" ? 2.0 : 1.0));
+  var foeName = activeCombat.name, foeIcon = activeCombat.icon || "👹", baseSpecies = activeCombat.baseMobName || foeName;
   var wasBoss = activeCombat.isBoss, wasWorldRaid = activeCombat.isWorldRaid, wasGalactic = activeCombat.isGalactic;
   var wasZoneRaid = activeCombat.isZoneRaid, wasDelveBoss = activeCombat.isDelveBoss, wasSpire = activeCombat.isSpire, wasHerald = activeCombat.isHerald, wasPvp = activeCombat.isPvp, wasNemesis = activeCombat.isNemesis;
   var wasGauntlet = activeCombat.isGauntlet, wasRevenant = activeCombat.isRevenant, wasMirrorClone = activeCombat.isMirrorClone, wasGuard = activeCombat.isGuard, wasWeatherApex = activeCombat.isWeatherApex;
-  var wasRoamingMini = activeCombat.isRoamingMiniBoss, wasTrophyEcho = activeCombat.isTrophyEcho;
-  var hadLimbSever = activeCombat.limbSevered;
-  var mirrorMultWon = activeCombat.mirrorMult || 4;
-  var pvpSlotTarget = activeCombat.oppSlotKey || null;
-  var defeatedAreaId = activeCombat.areaId, raidUpdate = null, extraSavePayload = {};
-  var gotNewInventoryItem = false;
+  var wasRoamingMini = activeCombat.isRoamingMiniBoss, wasTrophyEcho = activeCombat.isTrophyEcho, hadLimbSever = activeCombat.limbSevered;
+  var mirrorMultWon = activeCombat.mirrorMult || 4, pvpSlotTarget = activeCombat.oppSlotKey || null, defeatedAreaId = activeCombat.areaId;
+  var raidUpdate = null, extraSavePayload = {}, gotNewInventoryItem = false;
 
-  // v18.1 #13: Kleptomaniac Mercenary Quirk skims 5% of Battle Gold!
-  (hero.mercenaries || []).forEach(function(m) {
-    if (m.quirk && m.quirk.id === "kleptomaniac") {
-      goldGain = Math.max(1, Math.round(goldGain * 0.95));
-    }
-  });
-
+  (hero.mercenaries || []).forEach(function(m) { if (m.quirk && m.quirk.id === "kleptomaniac") goldGain = Math.max(1, Math.round(goldGain * 0.95)); });
   hero.xp += xpGain; hero.gold += goldGain; hero.kills = (hero.kills || 0) + 1;
   if (!hero.bestiaryKills) hero.bestiaryKills = {};
   hero.bestiaryKills[baseSpecies] = (hero.bestiaryKills[baseSpecies] || 0) + 1;
 
-  var chronicleMsg = null, lootFoundHtml = "None this battle", matDropHtml = "", extraRewardsHtml = "";
-  var firstTimeZoneBossKill = false;
+  var chronicleMsg = null, lootFoundHtml = "None this battle", matDropHtml = "", extraRewardsHtml = "", firstTimeZoneBossKill = false;
 
-  // Improvement #4: Overkill Momentum Surge
   if (activeCombat.overkillTriggered || activeCombat.hp <= -Math.round(activeCombat.maxHp * 0.15)) {
     hero.overkillSurge = true;
     var mpRef = Math.max(2, Math.round(hero.maxMp * 0.15));
     hero.mp = Math.min(hero.maxMp, hero.mp + mpRef);
     hero.colossusCharge = Math.min(100, (hero.colossusCharge || 0) + 10);
-    extraRewardsHtml += '<div>⚡ <b>OVERKILL MOMENTUM SURGE:</b> <span style="color:#4ade80;">Refunded +' + mpRef + ' MP, +10% Colossus Charge &amp; +15% First-Strike DMG on next battle!</span></div>';
+    extraRewardsHtml += '<div>⚡ <b>OVERKILL SURGE:</b> <span style="color:#4ade80;">+' + mpRef + ' MP &amp; +15% Next First-Strike!</span></div>';
   }
-
   if (wasGuard) {
     var famePen = activeCombat.guardFameLoss || 35;
     hero.fame = Math.max(0, (hero.fame || 0) - famePen);
     hero.wantedLevel = Math.min(5, (hero.wantedLevel || 0) + 1);
-    extraRewardsHtml += '<div style="color:#f87171;font-weight:bold;">🚨 <b>CITADEL GUARD SLAIN:</b> Lost <b style="color:#ef4444;">-' + famePen + ' Court Fame</b> &amp; gained <b style="color:#fde047;">Wanted Level ' + hero.wantedLevel + '</b>!</div>';
-    if (activeCombat.stolenRewardDesc) {
-      lootFoundHtml = activeCombat.stolenRewardDesc;
-      gotNewInventoryItem = true;
-    }
+    extraRewardsHtml += '<div style="color:#f87171;font-weight:bold;">🚨 <b>GUARD SLAIN:</b> -' + famePen + ' Fame &amp; Wanted Lv ' + hero.wantedLevel + '!</div>';
+    if (activeCombat.stolenRewardDesc) { lootFoundHtml = activeCombat.stolenRewardDesc; gotNewInventoryItem = true; }
     chronicleMsg = "🚨 " + hero.name + " cut down " + baseSpecies + " (Wanted Lv " + hero.wantedLevel + ")!";
-  } else {
-    addHeroFame(wasTrophyEcho ? 35 : (wasBoss ? 25 : (wasNemesis ? 35 : (wasHerald ? 10 : (finType === "ransom" ? 12 : 2)))));
-  }
+  } else addHeroFame(wasTrophyEcho ? 35 : (wasBoss ? 25 : (wasNemesis ? 35 : (wasHerald ? 10 : (finType === "ransom" ? 12 : 2)))));
 
-  if (wasTrophyEcho) {
-    hero.gems = (hero.gems || 0) + 1;
-    extraRewardsHtml += '<div>🦌 <b>THRONE ROOM TROPHY ECHO REMATCH WON:</b> <span style="color:#fde047;">+35 Court Fame &amp; +1💎 Dragon Gem!</span></div>';
-  }
-
+  if (wasTrophyEcho) { hero.gems = (hero.gems || 0) + 1; extraRewardsHtml += '<div>🦌 <b>TROPHY ECHO WON:</b> +35 Fame &amp; +1💎 Gem!</div>'; }
   if (wasRoamingMini) {
     hero.gems = (hero.gems || 0) + 1;
     var rmDrop = generateRandomItem(hero.level + 1, 1, 3);
     if (hero.inventory.length < 30) { hero.inventory.push(rmDrop); gotNewInventoryItem = true; }
     lootFoundHtml = rmDrop.icon + " <span class='rarity-" + rmDrop.rarity + "'>" + escapeHtml(rmDrop.name) + "</span>";
-    extraRewardsHtml += '<div>👹 <b>ROAMING FIELD MINI-BOSS SLAIN:</b> <span style="color:#fde047;">+1💎 Dragon Gem &amp; Field Relic!</span></div>';
+    extraRewardsHtml += '<div>👹 <b>ROAMING MINI-BOSS SLAIN:</b> +1💎 Gem!</div>';
   }
-
   if (wasWeatherApex) {
     var apGems = activeCombat.rewardGems || 3;
     hero.gems = (hero.gems || 0) + apGems;
     var apDrop = generateRandomItem(hero.level + 2, 3, 5);
     if (hero.inventory.length < 30) { hero.inventory.push(apDrop); gotNewInventoryItem = true; }
     lootFoundHtml = apDrop.icon + " <span class='rarity-" + apDrop.rarity + "'>" + escapeHtml(apDrop.name) + "</span>";
-    extraRewardsHtml += '<div>🌩️ <b>WEATHER-LOCKED APEX VANQUISHED:</b> <span style="color:#38bdf8;">+' + apGems + '💎 Dragon Gems &amp; Apex Relic!</span></div>';
-    chronicleMsg = "🌩️ " + hero.name + " vanquished Weather-Locked " + foeName + "!";
+    extraRewardsHtml += '<div>🌩️ <b>WEATHER APEX SLAIN:</b> +' + apGems + '💎 Gems!</div>';
   }
-
-  if (brokenPopupMsg) {
-    extraRewardsHtml += '<div style="color:#ef4444;font-weight:bold;">⚠️ ' + brokenPopupMsg + '</div>';
-  }
-
+  if (brokenPopupMsg) extraRewardsHtml += '<div style="color:#ef4444;font-weight:bold;">⚠️ ' + brokenPopupMsg + '</div>';
   if (wasMirrorClone) {
-    hero.lineageMutation = { id: "glass_walker", name: "🪞 Glass-Walker Reflection", desc: "+12% Crit Chance, +10% Dodge & +10% All Stats" };
+    hero.lineageMutation = { id: "glass_walker", name: "🪞 Glass-Walker Reflection", desc: "+12% Crit, +10% Dodge & +10% Stats" };
     var mGems = Math.max(4, mirrorMultWon);
-    hero.gems = (hero.gems || 0) + mGems;
-    hero.cosmicRunes = Math.min(15, (hero.cosmicRunes || 0) + 1);
-    chronicleMsg = "🪞 " + hero.name + " conquered their " + mirrorMultWon + "x Shadow-Clone in the Mirror of the First King!";
-    extraRewardsHtml += '<div>🪞 <b>MIRROR OF THE FIRST KING (' + mirrorMultWon + 'x CLONE) CONQUERED:</b> <span style="color:#fde047;">Awakened Glass-Walker Mutation (+12% Crit, +10% Dodge &amp; +10% All Stats), +' + mGems + '💎 Gems &amp; +1🌌 Cosmic Rune!</span></div>';
+    hero.gems = (hero.gems || 0) + mGems; hero.cosmicRunes = Math.min(15, (hero.cosmicRunes || 0) + 1);
+    extraRewardsHtml += '<div>🪞 <b>MIRROR CONQUERED:</b> Glass-Walker Mutation, +' + mGems + '💎 &amp; +1🌌 Rune!</div>';
   }
-
   if (wasRevenant && activeCombat.revenantSlotKey) {
     var revGold = activeCombat.revenantGold || 2500;
-    hero.gold += revGold;
-    hero.gems = (hero.gems || 0) + 3;
+    hero.gold += revGold; hero.gems = (hero.gems || 0) + 3;
     extraSavePayload.clearCryptSlot = activeCombat.revenantSlotKey;
-    extraRewardsHtml += '<div>💀 <b>REVENANT BOUNTY AVENGED:</b> <span style="color:#fde047;">Recovered +' + revGold.toLocaleString() + ' Heirloom Gold &amp; +3💎 Gems!</span></div>';
+    extraRewardsHtml += '<div>💀 <b>REVENANT AVENGED:</b> +' + revGold.toLocaleString() + 'g &amp; +3💎!</div>';
   }
-
   if (wasGauntlet) {
-    hero.valkyrieSeals = Math.min(10, (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 5) + 2);
-    hero.gems = (hero.gems || 0) + 5;
-    hero.cosmicRunes = Math.min(15, (hero.cosmicRunes || 0) + 1);
+    hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + 1);
+    hero.gems = (hero.gems || 0) + 5; hero.cosmicRunes = Math.min(15, (hero.cosmicRunes || 0) + 1);
     var gDrop = pickSmartGodTierDrop(Math.min(22, 16 + (activeCombat.gauntletId || 1)));
     if (hero.inventory.length < 30) { hero.inventory.push(gDrop); gotNewInventoryItem = true; }
     lootFoundHtml = gDrop.icon + " <span class='rarity-" + gDrop.rarity + "'>" + escapeHtml(gDrop.name) + "</span>";
-    extraRewardsHtml += '<div>🕳️ <b>10-WAVE ABYSSAL GAUNTLET CONQUERED:</b> <span style="color:#fde047;">+2🪽 Valkyrie Seals, +5💎 Gems &amp; +1🌌 Cosmic Rune!</span></div>';
-    chronicleMsg = "🕳️ " + hero.name + " conquered all 10 Waves of " + foeName + "!";
+    extraRewardsHtml += '<div>🕳️ <b>GAUNTLET CONQUERED:</b> +1🪽 Seal, +5💎 &amp; +1🌌 Rune!</div>';
   }
-
   if (wasNemesis) {
     var nGems = 1 + ((hero.nemesis && hero.nemesis.rank) ? hero.nemesis.rank : 1);
-    hero.gems = (hero.gems || 0) + nGems;
-    hero.nemesis = null;
-    recordMemoirMilestone("Avenged my shattered Valkyrie Seal by slaying Nemesis " + foeName + "!");
-    extraRewardsHtml += '<div>💀 <b>SWORN NEMESIS SLAIN:</b> <span style="color:#fde047;">+' + nGems + '💎 Dragon Gems &amp; +35 Court Fame!</span></div>';
+    hero.gems = (hero.gems || 0) + nGems; hero.nemesis = null;
+    extraRewardsHtml += '<div>💀 <b>NEMESIS SLAIN:</b> +' + nGems + '💎 Gems &amp; +35 Fame!</div>';
   }
-
-  if (hero.bestiaryKills[baseSpecies] === 25) {
-    extraRewardsHtml += '<div>🎯 <b>Hunter&apos;s Bestiary Mastery Unlocked:</b> <span style="color:#4ade80;">Permanent +5% Damage vs ' + escapeHtml(baseSpecies) + '!</span></div>';
-  }
-
-  if (finType === "ransom" && hero.guild) {
-    hero.guild.timber = (hero.guild.timber || 0) + 6;
-    hero.guild.stone = (hero.guild.stone || 0) + 6;
-    extraRewardsHtml += '<div>⛓️ <b>Ransom Tribute:</b> <span style="color:#4ade80;">2x Gold, +12 Fame, +6🪵 Timber &amp; +6🪨 Stone!</span></div>';
-  }
+  if (finType === "ransom" && hero.guild) { hero.guild.timber = (hero.guild.timber || 0) + 6; hero.guild.stone = (hero.guild.stone || 0) + 6; }
 
   if (hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) {
     var actCh = hero.children[hero.activeChildIdx];
     if (wasBoss || Math.random() < 0.35) {
-      actCh.level = (actCh.level || 1) + 1;
-      actCh.atk = Math.round(actCh.atk * 1.05) + 2;
-      actCh.maxHp = Math.round(actCh.maxHp * 1.05) + 8;
-      actCh.hp = actCh.maxHp;
-      extraRewardsHtml += '<div>👶 <b>Heir Grew Stronger:</b> <span style="color:#fde68a;">' + escapeHtml(actCh.name) + ' reached Lv ' + actCh.level + ' (' + actCh.atk + ' ATK)!</span></div>';
+      actCh.level = (actCh.level || 1) + 1; actCh.atk = Math.round(actCh.atk * 1.05) + 2;
+      actCh.maxHp = Math.round(actCh.maxHp * 1.05) + 8; actCh.hp = actCh.maxHp;
     }
   }
-
-  // v18.1 #13 & #10: Mercenary Promotions, Bosses Assisted & Post-Boss Quirks!
   (hero.mercenaries || []).forEach(function(m) {
     if (m.hp > 0) {
       m.kills = (m.kills || 0) + 1;
       if (wasBoss) m.bossesAssisted = (m.bossesAssisted || 0) + 1;
       var newR = m.kills >= 30 ? 3 : (m.kills >= 15 ? 2 : (m.kills >= 5 ? 1 : 0));
-      if (newR > (m.vetRank || 0)) {
-        m.vetRank = newR; m.maxHp += 25; m.hp += 25;
-        addLog("🎖️ [RECRUITS] <b>Mercenary Promoted!</b> <b>" + m.icon + " " + escapeHtml(m.name) + "</b> reached Rank " + newR + "★!");
-      }
-      if (wasBoss && !m.quirk && window.MERCENARY_QUIRKS && Math.random() < 0.35) {
-        var qk = MERCENARY_QUIRKS[Math.floor(Math.random() * MERCENARY_QUIRKS.length)];
-        m.quirk = qk;
-        extraRewardsHtml += '<div>🎖️ <b>Mercenary Quirk Developed (' + escapeHtml(m.name) + '):</b> <span style="color:' + (qk.isPositive ? '#4ade80' : '#f87171') + ';">' + qk.name + ' (' + qk.desc + ')</span></div>';
-      }
+      if (newR > (m.vetRank || 0)) { m.vetRank = newR; m.maxHp += 25; m.hp += 25; }
+      if (wasBoss && !m.quirk && window.MERCENARY_QUIRKS && Math.random() < 0.35) m.quirk = MERCENARY_QUIRKS[Math.floor(Math.random() * MERCENARY_QUIRKS.length)];
     }
   });
 
   if (!wasPvp && !wasGuard && hero.boardQuests && hero.boardQuests.length) {
     hero.boardQuests.forEach(function(q) {
       if (q.accepted && q.qType === "kill" && q.areaId === defeatedAreaId && (q.progress || 0) < q.reqQty) {
-        if (activeCombat.baseMobName === q.targetMob || wasBoss || Math.random() < 0.65) {
-          q.progress = (q.progress || 0) + 1;
-        }
+        if (activeCombat.baseMobName === q.targetMob || wasBoss || Math.random() < 0.65) q.progress = (q.progress || 0) + 1;
       }
     });
   }
@@ -9429,14 +9168,13 @@ function handleCombatVictory() {
       if (activeQ && Math.random() < 0.70) pickedMat = { name: activeQ.matName, icon: activeQ.matIcon };
       var matQty = (wasBoss || activeCombat.isZombie ? 2 : 1) + (hadLimbSever ? 1 : 0);
       hero.materials[pickedMat.name] = (hero.materials[pickedMat.name] || 0) + matQty;
-      matDropHtml = '<div>📦 <b>Monster Material:</b> <span style="color:#fde68a;">+' + matQty + 'x ' + pickedMat.icon + ' ' + escapeHtml(pickedMat.name) + (hadLimbSever ? ' (🩸+1 Severed Limb Bonus!)' : '') + '</span></div>';
+      matDropHtml = '<div>📦 <b>Material:</b> <span style="color:#fde68a;">+' + matQty + 'x ' + pickedMat.icon + ' ' + escapeHtml(pickedMat.name) + '</span></div>';
     }
   }
 
   if (wasHerald) {
     extraSavePayload.devastationDelta = -4;
-    extraRewardsHtml += '<div>🌍 <b>World Devastation Pushed Back:</b> <span style="color:#4ade80;">-4% World Devastation Gauge &amp; +10 Fame!</span></div>';
-    chronicleMsg = "⚔️ " + hero.name + " slew a World Boss Herald (-4% Devastation)!";
+    extraRewardsHtml += '<div>🌍 <b>Devastation Pushed Back:</b> -4% Gauge &amp; +10 Fame!</div>';
   } else if (wasSpire) {
     var clearedFl = hero.spireFloor || 1;
     hero.spireFloor = clearedFl + 1;
@@ -9445,208 +9183,267 @@ function handleCombatVictory() {
       var spDrop = generateRandomItem(hero.level + 1, 2, 4);
       if (hero.inventory.length < 30) { hero.inventory.push(spDrop); gotNewInventoryItem = true; }
       lootFoundHtml = spDrop.icon + " <span class='rarity-" + spDrop.rarity + "'>" + escapeHtml(spDrop.name) + "</span>";
-      extraRewardsHtml += '<div>💎 <b>Spire Milestone Gems:</b> <span style="color:#fde68a;">+2💎 Dragon Gems (Total: ' + hero.gems + '💎)</span></div>';
     }
-    extraRewardsHtml += '<div>🗼 <b>Abyssal Spire:</b> <span style="color:#c084fc;">Unlocked Floor ' + hero.spireFloor + '!</span></div>';
+    extraRewardsHtml += '<div>🗼 <b>Abyssal Spire:</b> Unlocked Floor ' + hero.spireFloor + '!</div>';
   } else if (wasDelveBoss) {
     var chestGold = (activeCombat.delveLootGold || 0) + defeatedAreaId * 160;
-    hero.gold += chestGold; hero.gems = (hero.gems || 0) + 1;
-    hero.cipherPages = (hero.cipherPages || 0) + 1;
-    extraRewardsHtml += '<div>📜 <b>Sunken Library of Elowen:</b> <span style="color:#7dd3fc;">Recovered Torn Cipher Page (' + hero.cipherPages + '/5 for +6% All Stats)!</span></div>';
+    hero.gold += chestGold; hero.gems = (hero.gems || 0) + 1; hero.cipherPages = (hero.cipherPages || 0) + 1;
     if (hero.deathMarker) {
       var urnG = hero.deathMarker.gold || 0;
       hero.gold += urnG;
       if (hero.deathMarker.item && hero.inventory.length < 30) { hero.inventory.push(hero.deathMarker.item); gotNewInventoryItem = true; }
-      hero.valkyrieSeals = (hero.valkyrieSeals || 0) + 1;
-      extraRewardsHtml += '<div>⚱️ <b>SOUL-URN RECLAIMED:</b> <span style="color:#4ade80;">Recovered +' + urnG.toLocaleString() + 'g, Lost Gear &amp; +1🪽 Valkyrie Seal! Your Permadeath Slate is Wiped Clean!</span></div>';
+      hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals || 0) + 1);
+      extraRewardsHtml += '<div>⚱️ <b>SOUL-URN RECLAIMED:</b> +' + urnG.toLocaleString() + 'g, Gear &amp; +1🪽 Seal!</div>';
       hero.deathMarker = null;
-    } else if (Math.random() < 0.35) {
-      hero.valkyrieSeals = (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 5) + 1;
-      extraRewardsHtml += '<div>🪽 <b>Sanctum Reliquary Seal:</b> <span style="color:#fde047;">Found +1 Seal of the Valkyrie!</span></div>';
-    }
-    if (hero.guild && hero.guild.founded) {
-      hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + 6);
-      hero.guild.iron = (hero.guild.iron || 0) + 12;
+    } else if (Math.random() < 0.25) {
+      hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + 1);
     }
     var delveDrop = (Math.random() < 0.35 && BOSS_UNIQUES[defeatedAreaId]) ? JSON.parse(JSON.stringify(BOSS_UNIQUES[defeatedAreaId])) : generateRandomItem(hero.level + 1, 2, 4);
     if (hero.inventory.length < 30) { hero.inventory.push(delveDrop); gotNewInventoryItem = true; }
-    var dUp = getUpgradeDelta(delveDrop);
-    lootFoundHtml = delveDrop.icon + " <span class='rarity-" + delveDrop.rarity + "'>" + escapeHtml(delveDrop.name) + "</span>" + (dUp > 0 ? " <span class='upgrade-pill'>✨ UPGRADE (+" + dUp + ")</span>" : "");
-    extraRewardsHtml += '<div>🔦 <b>Delve Hoard Banked:</b> <span style="color:#fbbf24;">+' + chestGold.toLocaleString() + 'g, +12⛏️ Iron &amp; +1💎 Gem (Total: ' + hero.gems + '💎)!</span></div>';
+    lootFoundHtml = delveDrop.icon + " <span class='rarity-" + delveDrop.rarity + "'>" + escapeHtml(delveDrop.name) + "</span>";
+    extraRewardsHtml += '<div>🔦 <b>Delve Hoard:</b> +' + chestGold.toLocaleString() + 'g &amp; +1💎 Gem!</div>';
     activeDelve = null;
   } else if (wasWorldRaid) {
     var wbGems = activeCombat.rewardGems || 4;
     hero.gems = (hero.gems || 0) + wbGems; hero.skillPoints = (hero.skillPoints || 0) + 2;
-    hero.valkyrieSeals = (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 5) + 1;
+    hero.valkyrieSeals = Math.min(3, (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + 1);
     var wbDrop = wasGalactic ? pickSmartGodTierDrop(22) : generateRandomItem(hero.level + 1, 3, 5);
     if (hero.inventory.length < 30) { hero.inventory.push(wbDrop); gotNewInventoryItem = true; }
     lootFoundHtml = wbDrop.icon + " <span class='rarity-" + wbDrop.rarity + "'>" + escapeHtml(wbDrop.name) + "</span>";
-    extraRewardsHtml += '<div>💎 <b>World Calamity Gems:</b> <span style="color:#fde68a;">+' + wbGems + '💎 Gems, +1🪽 Valkyrie Seal &amp; +2 Skill Pts!</span></div>';
     raidUpdate = { type: "world", damage: activeCombat.sessionDamage || activeCombat.maxHp, respawnNew: true };
     extraSavePayload.unmakingAnchors = 3;
-    recordMemoirMilestone("Vanquished World Raid Calamity " + foeName + "!");
-    chronicleMsg = wasGalactic ? ("🌌 COSMIC MIRACLE! " + hero.name + " VANQUISHED VORTEX-OMEGA: THE GALACTIC DESTROYER AND SAVED ALL KINGDOMS OF VALORIA!") : ("🌍 WORLD RAID VICTORY! " + hero.name + " slew " + foeName + " (+18h Unmaking Delay)!");
+    chronicleMsg = "🌍 WORLD RAID VICTORY! " + hero.name + " slew " + foeName + "!";
   } else if (wasPvp) {
     hero.pvpWins = (hero.pvpWins || 0) + 1; hero.pvpRating = (hero.pvpRating || 1000) + 25; hero.gems = (hero.gems || 0) + 1;
-    if (pvpSlotTarget) {
-      extraSavePayload.pvpLog = { targetSlot: pvpSlotTarget, attackerName: hero.name, attackerWon: true };
-    }
-    extraRewardsHtml += '<div>🏆 <b>Rival / PvP Victory:</b> <span style="color:#4ade80;">+25 Rating &amp; +1💎 Gem (Total: ' + hero.gems + '💎)!</span></div>';
+    if (pvpSlotTarget) extraSavePayload.pvpLog = { targetSlot: pvpSlotTarget, attackerName: hero.name, attackerWon: true };
+    extraRewardsHtml += '<div>🏆 <b>PvP Victory:</b> +25 Rating &amp; +1💎 Gem!</div>';
   } else if (wasBoss && !wasGauntlet && !wasRevenant && !wasMirrorClone && !wasGuard && !wasWeatherApex && !wasRoamingMini && !wasTrophyEcho) {
     if (!hero.zoneBossDaily) hero.zoneBossDaily = {};
     hero.zoneBossDaily[defeatedAreaId] = 1;
-
     var bGems = wasZoneRaid ? 3 : 2;
     hero.gems = (hero.gems || 0) + bGems; hero.skillPoints = (hero.skillPoints || 0) + 1;
-    extraRewardsHtml += '<div>💎 <b>Boss Bounty Gems:</b> <span style="color:#fde68a;">+' + bGems + '💎 Dragon Gems (Total: ' + hero.gems + '💎) &amp; +1 Skill Pt!</span></div>';
-    if (hero.guild && hero.guild.founded) {
-      hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + 8);
-      hero.guild.timber = (hero.guild.timber || 0) + 15;
-      hero.guild.stone = (hero.guild.stone || 0) + 15;
-      hero.guild.iron = (hero.guild.iron || 0) + 10;
-    }
+    extraRewardsHtml += '<div>💎 <b>Boss Bounty:</b> +' + bGems + '💎 Gems &amp; +1 Skill Pt!</div>';
     if (wasZoneRaid) raidUpdate = { type: "zone", areaId: defeatedAreaId, damage: activeCombat.sessionDamage || activeCombat.maxHp, maxHp: activeCombat.maxHp };
-    if (!hero.bossesDefeated.includes(defeatedAreaId)) {
-      hero.bossesDefeated.push(defeatedAreaId);
-      firstTimeZoneBossKill = true;
-      recordMemoirMilestone("Conquered Region #" + defeatedAreaId + " Boss: " + foeName + ".");
-    }
+    if (!hero.bossesDefeated.includes(defeatedAreaId)) { hero.bossesDefeated.push(defeatedAreaId); firstTimeZoneBossKill = true; }
     if (!hero.unlockedChapters.includes(defeatedAreaId)) hero.unlockedChapters.push(defeatedAreaId);
-    if (!hero.trophyWall.includes(defeatedAreaId)) {
-      hero.trophyWall.push(defeatedAreaId);
-      extraRewardsHtml += '<div>🦌 <b>Throne Room Trophy Mounted:</b> <span style="color:#4ade80;">Permanent +2% All Stats Aura!</span></div>';
-    }
+    if (!hero.trophyWall.includes(defeatedAreaId)) hero.trophyWall.push(defeatedAreaId);
     if (defeatedAreaId >= hero.unlockedArea && hero.unlockedArea < 22) {
       hero.unlockedArea = defeatedAreaId + 1;
       hero.boardQuests.push(generateSingleBoardQuest(hero, hero.unlockedArea, null));
-      extraRewardsHtml += '<div>🗺️ <b>New Area Unlocked:</b> <span style="color:#fbbf24;">' + AREAS[hero.unlockedArea - 1].name + '</span></div>';
+      extraRewardsHtml += '<div>🗺️ <b>Unlocked:</b> <span style="color:#fbbf24;">' + AREAS[hero.unlockedArea - 1].name + '</span></div>';
     }
-
     var bossDrop = null;
     if (window.rollSmartClassZoneSetDrop && Math.random() < 0.55) {
       var setRes = window.rollSmartClassZoneSetDrop(defeatedAreaId);
-      if (setRes.scrappedGems) {
-        hero.gems += setRes.scrappedGems;
-        extraRewardsHtml += '<div>♻️💎 <b>Duplicate Set Protection:</b> <span style="color:#fde047;">Auto-Scrapped duplicate set piece into +' + setRes.scrappedGems + '💎 Dragon Gems!</span></div>';
-      } else if (setRes.item) {
-        bossDrop = setRes.item;
-      }
+      if (setRes.scrappedGems) hero.gems += setRes.scrappedGems;
+      else if (setRes.item) bossDrop = setRes.item;
     }
     if (!bossDrop) {
-      if (defeatedAreaId >= 17 && (Math.random() < 0.65 || defeatedAreaId === 22)) {
-        bossDrop = pickSmartGodTierDrop(defeatedAreaId);
-      } else if (Math.random() < 0.45 && BOSS_UNIQUES[defeatedAreaId]) {
-        bossDrop = JSON.parse(JSON.stringify(BOSS_UNIQUES[defeatedAreaId]));
-      } else {
-        bossDrop = generateRandomItem(hero.level + 1, wasZoneRaid ? 2 : 1, wasZoneRaid ? 5 : 4);
-      }
+      if (defeatedAreaId >= 17 && (Math.random() < 0.65 || defeatedAreaId === 22)) bossDrop = pickSmartGodTierDrop(defeatedAreaId);
+      else if (Math.random() < 0.45 && BOSS_UNIQUES[defeatedAreaId]) bossDrop = JSON.parse(JSON.stringify(BOSS_UNIQUES[defeatedAreaId]));
+      else bossDrop = generateRandomItem(hero.level + 1, wasZoneRaid ? 2 : 1, wasZoneRaid ? 5 : 4);
     }
     if (bossDrop && hero.inventory.length < 30) {
       bossDrop = sanitizeGearItem(bossDrop, bossDrop.type || "weapon");
-      hero.inventory.push(bossDrop);
-      gotNewInventoryItem = true;
-      var upDiff = getUpgradeDelta(bossDrop);
-      lootFoundHtml = bossDrop.icon + " <span class='rarity-" + bossDrop.rarity + "'>" + escapeHtml(bossDrop.name) + "</span>" + (upDiff > 0 ? " <span class='upgrade-pill'>✨ UPGRADE (+" + upDiff + ")</span>" : "");
+      hero.inventory.push(bossDrop); gotNewInventoryItem = true;
+      lootFoundHtml = bossDrop.icon + " <span class='rarity-" + bossDrop.rarity + "'>" + escapeHtml(bossDrop.name) + "</span>";
     }
-    chronicleMsg = "🐉 " + hero.name + " (Lv " + hero.level + ") conquered " + foeName + "!";
+    chronicleMsg = "🐉 " + hero.name + " conquered " + foeName + "!";
   } else if (!wasGauntlet && !wasRevenant && !wasMirrorClone && !wasGuard && !wasWeatherApex && !wasRoamingMini && !wasTrophyEcho) {
     var isEliteMob = (foeName.indexOf("Elder") >= 0 || foeName.indexOf("Golden") >= 0 || foeName.indexOf("Infernal") >= 0);
     if (Math.random() < (0.12 + st.dropLuckBonus * 0.35)) {
       var drop = generateRandomItem(activeCombat.level || hero.level, 0, isEliteMob ? 4 : 2);
       if (shouldAutoSalvageDrop(drop)) {
         var sy = getSalvageYield(drop);
-        hero.guild.timber = (hero.guild.timber || 0) + sy.timber;
-        hero.guild.stone = (hero.guild.stone || 0) + sy.stone;
-        hero.guild.iron = (hero.guild.iron || 0) + sy.iron;
-        hero.gold += sy.gold;
-        lootFoundHtml = "♻️ Auto-Salvaged " + escapeHtml(drop.name) + " (+" + sy.timber + "🪵 +" + sy.stone + "🪨 +" + sy.iron + "⛏️ +" + sy.gold + "g)";
+        hero.guild.timber = (hero.guild.timber || 0) + sy.timber; hero.guild.stone = (hero.guild.stone || 0) + sy.stone;
+        hero.guild.iron = (hero.guild.iron || 0) + sy.iron; hero.gold += sy.gold;
+        lootFoundHtml = "♻️ Salvaged " + escapeHtml(drop.name);
       } else if (hero.inventory.length < 30) {
-        hero.inventory.push(drop);
-        gotNewInventoryItem = true;
-        var upDiff2 = getUpgradeDelta(drop);
-        lootFoundHtml = drop.icon + " <span class='rarity-" + drop.rarity + "'>" + escapeHtml(drop.name) + "</span>" + (upDiff2 > 0 ? " <span class='upgrade-pill'>✨ UPGRADE (+" + upDiff2 + ")</span>" : "");
+        hero.inventory.push(drop); gotNewInventoryItem = true;
+        lootFoundHtml = drop.icon + " <span class='rarity-" + drop.rarity + "'>" + escapeHtml(drop.name) + "</span>";
       }
-    }
-    if (Math.random() < 0.015 && window.discoverAbyssalGauntletNode && (hero.unlockedGauntlets || []).length < 8) {
-      activeCombat = null;
-      renderBattleModal();
-      checkLevelUp();
-      saveCurrentHero(null, false, null);
-      window.discoverAbyssalGauntletNode(areaObj);
-      return;
     }
   }
 
-  activeCombat = null;
-  renderBattleModal();
+  activeCombat = null; renderBattleModal();
   var didLevel = checkLevelUp();
   addLog("🏆 <b>VICTORY vs " + escapeHtml(foeName) + "!</b> +" + xpGain.toLocaleString() + " XP, +" + goldGain.toLocaleString() + "g &amp; Loot: " + lootFoundHtml);
 
-  if (!wasBoss && !gotNewInventoryItem && !chronicleMsg && !raidUpdate && Object.keys(extraSavePayload).length === 0) {
-    queueDeltaSaveHero();
-  } else {
-    saveCurrentHero(chronicleMsg, false, raidUpdate, Object.keys(extraSavePayload).length ? extraSavePayload : null);
-  }
+  if (!wasBoss && !gotNewInventoryItem && !chronicleMsg && !raidUpdate && Object.keys(extraSavePayload).length === 0) queueDeltaSaveHero();
+  else saveCurrentHero(chronicleMsg, false, raidUpdate, Object.keys(extraSavePayload).length ? extraSavePayload : null);
   renderGameScreen();
 
   var shatterCutsceneHtml = wasBoss ? renderBossShatterSvg(foeName, foeIcon, lootFoundHtml) : ('<div style="margin-bottom:6px;">' + renderEntityAvatar(foeName, foeIcon, 64, true) + '</div>');
 
-  if (firstTimeZoneBossKill && areaObj && areaObj.storyChapter) {
-    var ch = areaObj.storyChapter;
-    showPopupModal(
-      shatterCutsceneHtml +
-      '<div style="font-size:20px;font-weight:900;color:#fde047;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">LIVING STORYBOOK CHRONICLE UNSEALED!</div>' +
-      '<div style="font-size:15px;font-weight:bold;color:#d4af37;margin:4px 0;">' + escapeHtml(ch.title) + '</div>' +
-      '<div style="background:#0b0811;border:2px solid #c5a059;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
-        ch.text +
-      '</div>' +
-      '<div style="background:#0b1610;border:1px solid #15803d;border-radius:4px;padding:10px;margin-bottom:10px;text-align:left;font-size:12.5px;">' +
-        '<div>🌟 <b>Victory Spoils:</b> +' + xpGain.toLocaleString() + ' XP • 💰 +' + goldGain.toLocaleString() + 'g • 🎁 ' + lootFoundHtml + '</div>' +
-        extraRewardsHtml + partyMvpHtml +
-      '</div>' +
-      '<button class="btn btn-shine" style="width:100%;padding:12px;font-size:14px;" onclick="closePopupModal()">📖 Seal Chapter &amp; March Onward</button>'
-    );
-    return;
-  }
-
-  if (wasGalactic) {
-    showPopupModal(
-      shatterCutsceneHtml +
-      '<div style="font-size:21px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">CHRONICLE OF THE COSMOS: THE GALACTIC DESTROYER SLAIN!</div>' +
-      '<div style="background:#0b0811;border:2px solid #c5a059;border-radius:4px;padding:14px;margin:12px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
-        'As your final blow pierces the singularity heart of <b>VORTEX-OMEGA: THE GALACTIC DESTROYER</b>, the black hole above the High Citadel collapses into a fountain of ten thousand reborn stars!<br><br>' +
-        'From the cooling stardust of the Destroyer&apos;s core descends a relic of pure creation: <b>' + lootFoundHtml + '</b>, alongside <b>+15💎 Dragon Gems (Total: ' + hero.gems + '💎)</b> and <b>+' + goldGain.toLocaleString() + ' Gold</b>!' +
-        partyMvpHtml +
-      '</div>' +
-      '<button class="btn btn-shine" style="width:100%;justify-content:center;padding:12px;font-size:15px;" onclick="closePopupModal()">🌟 Claim Eternal Cosmic Glory</button>'
-    );
-    return;
-  }
-
   showPopupModal(
-    shatterCutsceneHtml +
+    shatterCutsceneHtml + killAncHtml +
     '<div style="font-size:21px;font-weight:900;color:#4ade80;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">VICTORY IN BATTLE!</div>' +
     '<div style="font-size:13.5px;color:#e5dec9;margin-top:6px;"><b>' + escapeHtml(hero.name) + '</b> triumphed over <b>' + foeIcon + ' ' + escapeHtml(foeName) + '</b>!</div>' +
-    '<div style="background:#0b1610;border:1px solid #15803d;border-radius:4px;padding:12px;margin:14px 0;text-align:left;font-size:13.5px;line-height:1.7;">' +
-      '<div>🌟 <b>Experience:</b> <span style="color:#7dd3fc;">+' + xpGain.toLocaleString() + ' XP</span> • 💰 <b>Gold:</b> <span style="color:#fbbf24;">+' + goldGain.toLocaleString() + 'g</span></div>' +
-      matDropHtml +
-      '<div>🎁 <b>Equipment Drop:</b> ' + lootFoundHtml + '</div>' +
-      extraRewardsHtml +
-      (didLevel ? '<div style="color:#fbbf24;font-weight:900;margin-top:4px;">🌟 LEVEL UP! You are now Level ' + hero.level + '!</div>' : '') +
+    '<div style="background:#0b1610;border:1px solid #15803d;border-radius:4px;padding:12px;margin:12px 0;text-align:left;font-size:13px;line-height:1.65;">' +
+      '<div>🌟 <b>XP:</b> <span style="color:#7dd3fc;">+' + xpGain.toLocaleString() + '</span> • 💰 <b>Gold:</b> <span style="color:#fbbf24;">+' + goldGain.toLocaleString() + 'g</span></div>' +
+      matDropHtml + '<div>🎁 <b>Loot:</b> ' + lootFoundHtml + '</div>' + extraRewardsHtml +
+      (didLevel ? '<div style="color:#fbbf24;font-weight:900;margin-top:4px;">🌟 LEVEL UP! Reached Lv ' + hero.level + '!</div>' : '') +
       partyMvpHtml +
     '</div>' +
     '<div style="display:flex;gap:8px;">' +
-      (wasBoss && !wasWorldRaid && !wasDelveBoss && !wasSpire && !wasGuard && !wasWeatherApex && !wasRoamingMini && !wasTrophyEcho ? '<button class="btn btn-sky" style="flex:1;justify-content:center;" onclick="openStoryChapterModal(' + defeatedAreaId + ')">📖 Read Chapter</button>' : '') +
+      (wasBoss && !wasWorldRaid && !wasDelveBoss && !wasSpire && !wasGuard ? '<button class="btn btn-sky" style="flex:1;justify-content:center;" onclick="openStoryChapterModal(' + defeatedAreaId + ')">📖 Read Chapter</button>' : '') +
       '<button class="btn btn-gold" style="flex:1;justify-content:center;padding:10px;font-size:14px;" onclick="closePopupModal()">⚔️ Continue</button>' +
     '</div>'
   );
 }
+
+// ============================================================================
+// LIVING SPRITES, DARKEST DUNGEON CHOREOGRAPHY & HARDCORE HOOKS
+// ============================================================================
+setTimeout(function() {
+  if (!document.getElementById("ddAtmosphereStyles")) {
+    var s = document.createElement("style");
+    s.id = "ddAtmosphereStyles";
+    s.innerHTML =
+      "@keyframes ddBreathe{0%,100%{transform:translateY(0) scale(1,1);}50%{transform:translateY(-3px) scale(0.985,1.035);}}" +
+      "@keyframes ddBerserk{0%,100%{transform:translateY(0) rotate(-1deg);filter:drop-shadow(0 0 6px #ef4444);}50%{transform:translateY(-4px) scale(1.03,1.05) rotate(1.5deg);filter:drop-shadow(0 0 12px #ef4444);}}" +
+      "@keyframes ddWeave{0%,100%{transform:translateX(-2px);}50%{transform:translateX(3px) translateY(-2px);}}" +
+      "@keyframes ddShiver{0%,100%{transform:translate(0,1px) scale(0.98);}50%{transform:translate(-1.5px,2px) scale(0.97);}}" +
+      "@keyframes ddFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px) rotate(2deg);}}" +
+      "@keyframes ddProwl{0%,100%{transform:translateX(0);}35%{transform:translateX(-5px) scale(1.03,0.97);}70%{transform:translateX(4px);}}" +
+      "@keyframes ddWindup{0%,100%{transform:translate(0,0) scale(1.05);}50%{transform:translate(-3px,1px) scale(1.08);}}" +
+      "@keyframes ddSpin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}" +
+      "@keyframes ddSway{0%,100%{transform:translateY(0) rotate(-6deg);}50%{transform:translateY(-4px) rotate(8deg) scale(1.08);}}" +
+      "@keyframes ddHop{0%,100%{transform:translateY(0);}40%{transform:translateY(-4px) scale(1.02);}}" +
+      "@keyframes ddClashR{0%{transform:scale(1);}35%{transform:scale(1.09) translateX(15px);box-shadow:0 0 34px #fde047;}100%{transform:scale(1);}}" +
+      "@keyframes ddLungeL{0%{transform:scale(1);}35%{transform:scale(1.08) translateX(-15px);box-shadow:0 0 32px #ef4444;}100%{transform:scale(1);}}" +
+      "@keyframes ddDodgeL{0%,100%{transform:translateX(0);opacity:1;}30%{transform:translateX(-20px) skewX(8deg);opacity:0.55;}}" +
+      "@keyframes ddDodgeR{0%,100%{transform:translateX(0);opacity:1;}30%{transform:translateX(20px) skewX(-8deg);opacity:0.55;}}" +
+      "@keyframes ddDim{0%,100%{box-shadow:none;}35%{box-shadow:inset 0 0 110px 45px rgba(0,0,0,0.88),0 0 26px #fde047;}}" +
+      "@keyframes ddDeathDoor{0%,100%{box-shadow:inset 0 0 35px rgba(220,38,38,0.85);}50%{box-shadow:inset 0 0 65px rgba(153,27,27,0.98),0 0 28px #ef4444;}}" +
+      ".dd-hero-bal>div:first-child{animation:ddBreathe 2.8s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-hero-ber>div:first-child{animation:ddBerserk 1.45s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-hero-def>div:first-child{animation:ddWeave 2.4s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-hero-wnd>div:first-child{animation:ddShiver 0.9s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-foe-flt>div:first-child{animation:ddFloat 2.6s ease-in-out infinite;}" +
+      ".dd-foe-prw>div:first-child{animation:ddProwl 2.2s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-foe-hvy>div:first-child{animation:ddBreathe 3.1s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".dd-foe-wnd>div:first-child{animation:ddWindup 0.45s infinite !important;filter:drop-shadow(0 0 12px #ef4444) !important;}" +
+      ".fighter-sprite>span{display:inline-block;animation:ddSway 2.1s ease-in-out infinite;transform-origin:bottom center;}" +
+      ".fighter-sprite svg circle[stroke-dasharray]{transform-origin:50px 50px;animation:ddSpin 14s linear infinite;}" +
+      ".merc-mini-card{animation:ddBreathe 3.2s ease-in-out infinite;}" +
+      ".dd-hop{animation:ddHop 0.36s ease-out !important;}" +
+      ".dd-clash-zoom{animation:ddClashR 0.3s ease-out !important;z-index:35 !important;}" +
+      ".dd-enemy-lunge{animation:ddLungeL 0.3s ease-out !important;z-index:35 !important;}" +
+      ".dd-dodge-l{animation:ddDodgeL 0.36s ease-out !important;}" +
+      ".dd-dodge-r{animation:ddDodgeR 0.36s ease-out !important;}" +
+      ".dd-dim-flash{animation:ddDim 0.28s ease-out !important;}" +
+      ".dd-ancestor-box{background:linear-gradient(90deg,#09050e,#260e1a,#09050e);border-top:1.5px solid #d4af37;border-bottom:1.5px solid #d4af37;padding:5px 10px;margin-bottom:5px;text-align:center;font-family:Cinzel,serif;font-size:11.5px;color:#fde68a;}" +
+      ".dd-dd-card{animation:ddDeathDoor 1.05s infinite !important;border:2px solid #ef4444 !important;}" +
+      ".dd-bark{background:#0f0718;border:1px solid #a855f7;border-left:3px solid #fde047;color:#f3e8ff;font-size:9px;font-style:italic;padding:2px 6px;border-radius:3px;margin:2px 0;}";
+    document.head.appendChild(s);
+  }
+
+  if (window.renderBattleModal && !window._ddRenderBattleHooked) {
+    window._ddRenderBattleHooked = true;
+    var _baseRB = window.renderBattleModal;
+    window.renderBattleModal = function() {
+      _baseRB();
+      if (!activeCombat || !hero) return;
+      var arena = document.querySelector(".battle-arena");
+      if (!arena) return;
+      if (activeCombat.clashZoom || activeCombat.ancestorFlash) {
+        arena.classList.add("dd-dim-flash");
+        activeCombat.ancestorFlash = false;
+      }
+      var topHtml = "";
+      if (activeCombat.atDeathsDoor || hero.hp === 1) {
+        var odds = (activeCombat.deathsDoorOdds !== undefined) ? activeCombat.deathsDoorOdds : 67;
+        topHtml += '<div style="background:linear-gradient(90deg,#450a0a,#7f1d1d,#450a0a);border:1.5px solid #ef4444;border-radius:4px;padding:4px 8px;margin-bottom:5px;text-align:center;font-family:Cinzel,serif;font-size:11px;font-weight:900;color:#fecaca;">🔔 AT DEATH&apos;S DOOR (1 HP) — SURVIVAL CHECK ODDS: <span style="color:#fde047;">' + odds + '%</span>!</div>';
+      }
+      if (activeCombat.ancestorQuote) {
+        topHtml += '<div class="dd-ancestor-box">🎙️ <b>The Ancestor:</b> <i>&ldquo;' + escapeHtml(activeCombat.ancestorQuote) + '&rdquo;</i></div>';
+      }
+      if (topHtml) arena.insertAdjacentHTML("afterbegin", topHtml);
+
+      var cards = arena.querySelectorAll(".fighter-box");
+      var hCard = cards && cards.length > 0 ? cards[0] : null;
+      var eCard = cards && cards.length > 1 ? cards[1] : null;
+      if (hCard) {
+        var hSp = hCard.querySelector(".fighter-sprite");
+        if (hSp) {
+          var hpR = hero.hp / Math.max(1, hero.maxHp);
+          hSp.classList.add(hpR <= 0.30 ? "dd-hero-wnd" : (hero.stance === "aggressive" ? "dd-hero-ber" : (hero.stance === "defensive" ? "dd-hero-def" : "dd-hero-bal")));
+        }
+        if (hero.hp === 1 || activeCombat.atDeathsDoor) hCard.classList.add("dd-dd-card");
+        if (floatingHeroTag && floatingHeroTag.text && (floatingHeroTag.text.indexOf("DODGE") >= 0 || floatingHeroTag.text.indexOf("RIPOSTE") >= 0)) hCard.classList.add("dd-dodge-l");
+        else if (activeCombat.clashZoom) { hCard.classList.add("dd-clash-zoom"); activeCombat.clashZoom = false; }
+        if ((hero.stress || 0) >= 50 || activeCombat.stressFlashed) {
+          hCard.insertAdjacentHTML("afterbegin", '<div style="margin:-2px auto 2px auto;width:72px;height:22px;"><svg viewBox="0 0 110 34" style="width:100%;height:100%;filter:drop-shadow(0 0 7px #a855f7);"><path d="M8 30 L20 9 L37 24 L55 3 L73 24 L90 9 L102 30" fill="none" stroke="#c084fc" stroke-width="2.6"/></svg></div>');
+        }
+      }
+      if (eCard) {
+        var eSp = eCard.querySelector(".fighter-sprite");
+        if (eSp && !activeCombat.stunned) {
+          var fn = (activeCombat.name || "").toLowerCase();
+          var eCls = activeCombat.bossCharging ? "dd-foe-wnd" : ((fn.indexOf("wraith") >= 0 || fn.indexOf("drake") >= 0 || fn.indexOf("dragon") >= 0 || fn.indexOf("harpy") >= 0) ? "dd-foe-flt" : ((fn.indexOf("wolf") >= 0 || fn.indexOf("spider") >= 0 || fn.indexOf("hound") >= 0) ? "dd-foe-prw" : "dd-foe-hvy"));
+          eSp.classList.add(eCls);
+        }
+        if (floatingEnemyTag && floatingEnemyTag.text && floatingEnemyTag.text.indexOf("MISS") >= 0) eCard.classList.add("dd-dodge-r");
+        else if (shakeTarget === "hero") eCard.classList.add("dd-enemy-lunge");
+      }
+      var mCards = arena.querySelectorAll(".merc-mini-card");
+      for (var i = 0; i < mCards.length; i++) {
+        if ((activeCombat.battleRound || 0) > 0) mCards[i].classList.add("dd-hop");
+        if ((hero.stress || 0) >= 40 || activeCombat.stressFlashed) {
+          var bTxt = DD_RECRUIT_BARKS[((activeCombat.battleRound || 1) + i) % DD_RECRUIT_BARKS.length];
+          mCards[i].insertAdjacentHTML("beforeend", '<div class="dd-bark">👑 💬 &ldquo;' + escapeHtml(bTxt) + '&rdquo;</div>');
+        }
+      }
+      activeCombat.stressFlashed = false;
+    };
+  }
+
+  if (window.hireMercenaryFighter && !window._hardcoreMercCapPatched) {
+    window._hardcoreMercCapPatched = true;
+    var _origHM = window.hireMercenaryFighter;
+    window.hireMercenaryFighter = function(mercId) {
+      ensureHeroV3Fields(hero);
+      if ((hero.mercHiresToday || 0) >= 2) {
+        showRequirementModal("Mercenary Guild Daily Cap (2/2 Today)", "⚔️⏳", "Only <b>2 sellsword contracts</b> may be signed per day.", "Protect your living retinue!", "");
+        return;
+      }
+      var bLen = hero.mercenaries ? hero.mercenaries.length : 0;
+      _origHM(mercId);
+      if ((hero.mercenaries ? hero.mercenaries.length : 0) > bLen) hero.mercHiresToday = (hero.mercHiresToday || 0) + 1;
+    };
+  }
+
+  if (window.healAtSanctuary && !window._hardcoreSanctClear) {
+    window._hardcoreSanctClear = true;
+    var _origSH = window.healAtSanctuary;
+    window.healAtSanctuary = function() { if (hero) hero.deathsDoorTrauma = false; _origSH(); };
+  }
+  if (window.restAtTavernInn && !window._hardcoreInnClear) {
+    window._hardcoreInnClear = true;
+    var _origIR = window.restAtTavernInn;
+    window.restAtTavernInn = function() { if (hero) hero.deathsDoorTrauma = false; _origIR(); };
+  }
+  if (window.getHeroStats && !window._hardcoreTraumaStats) {
+    window._hardcoreTraumaStats = true;
+    var _origGHS = window.getHeroStats;
+    window.getHeroStats = function(th) {
+      var res = _origGHS(th), h = th || hero;
+      if (h && h.deathsDoorTrauma && res) {
+        res.atk = Math.max(2, Math.round(res.atk * 0.90));
+        res.mag = Math.max(2, Math.round(res.mag * 0.90));
+        res.def = Math.max(1, Math.round(res.def * 0.90));
+      }
+      return res;
+    };
+  }
+}, 50);
 '''
 }
 
 boolean part5ABoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 5A OF 7 — REPLY "NEXT" FOR FULL FIXED PART 5B
+// END OF PART 5A OF 7 — PASTE DIRECTLY ABOVE PART 5B
 // ==============================================================================
 
 // ==============================================================================
