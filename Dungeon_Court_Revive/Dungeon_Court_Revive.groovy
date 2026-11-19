@@ -1,20 +1,20 @@
 /**
- *  Dungeon Court Revive: Legends of the Dragon Realm (v18.3 — Hardcore Balance, 2-Helper Cap, 6-Buff FIFO & Darkest Afflictions Edition)
+ *  Dungeon Court Revive: Legends of the Dragon Realm (v18.4.1 — Sister Vespera, Royal Library & Plague Diagnosis Edition)
  *  Full OAuth Remote Webpage RPG for Hubitat Elevation (C-8 Pro Zero-Bloat 16-Chunk Architecture)
  *
- *  v18.3 Highlights:
+ *  v18.4.1 Highlights:
+ *  - CITADEL SANCTUMS FIXED: Sister Vespera (15💎 Dragon-Glass Disease Chirurgeon) & The Grand Royal Library render natively in the Citadel & Cathedral.
+ *  - POST-BATTLE DISEASE DIAGNOSIS POPUP: Detailed medical popup after combat whenever the Hero or a Sellsword Recruit has an active disease (What, How, Effects & Cure).
  *  - DYNAMIC LEVEL-SCALED QTE WINDOWS: QTE sweet-spot and gold center shrink as you approach or face enemies at/above your level and Bosses.
  *  - STRICT 2-HELPER PARTY CAP: Bring at most 2 total helpers (2 Recruits, 1 Recruit + 1 Companion/Heir, or 1 Companion + 1 Heir).
- *  - 6-BUFF FIFO QUEUE: Maximum of 6 active positive buffs at one time (First-In, First-Out); all Debuffs/Afflictions/Diseases apply without limit.
- *  - 7-DAY RECRUIT RESURRECTION LORE & REPUTATION TAX: Fallen recruits take 7 days for the Resurrectionists to stitch back together; each death raises recruit & Lazarus costs.
- *  - COURTSHIP AFFECTION DECAY & SINGLE ACTIVE CONSORT BLESSING: Courtship affection degrades over time; if wed/courting multiple ladies, choose 1 active Consort Blessing.
- *  - ALT BODYGUARD PAYOUT & BATTLE REPORT: Hiring an Alt Slot Bodyguard transfers the gold directly to that character slot and sends a Raven Battle Report (Survived or Fell!).
+ *  - 6-BUFF FIFO QUEUE: Maximum of 6 active temporary buffs at one time (First-In, First-Out); Innate Passives & Debuffs/Diseases never displace.
+ *  - 7-DAY RECRUIT RESURRECTION LORE & REPUTATION TAX: Fallen recruits take 7 days for the Resurrectionists to stitch back together.
  */
 import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "v18.3"
+@Field static final String APP_VERSION = "v18.4.1"
 @Field static final long FORTY_EIGHT_HOURS_MS = 172800000L
 @Field static final long UNMAKING_DURATION_MS = 168L * 3600000L
 @Field static final long SEVEN_DAYS_MS = 7L * 24L * 3600000L
@@ -23,7 +23,7 @@ definition(
     name: "Dungeon Court Revive (OAuth RPG)",
     namespace: "shaneallen",
     author: "ShaneAllen",
-    description: "v18.3 Hardcore Edition: Dynamic Shrinking QTEs, 2-Helper Cap, 6-Buff FIFO, 7-Day Recruit Resurrection, Alt Guard Payouts & Darkest Afflictions.",
+    description: "v18.4.1 Edition: Sister Vespera Citadel Clinic, Grand Royal Library, Post-Battle Hero/Recruit Disease Diagnosis Popups & Hardcore Balance.",
     category: "Fun & Games",
     iconUrl: "",
     iconX2Url: "",
@@ -37,25 +37,26 @@ preferences {
 }
 
 mappings {
-    path("/play")        { action: [GET: "renderGamePage"] }
-    path("/js/data1")    { action: [GET: "renderJsData1"] }
-    path("/js/data2")    { action: [GET: "renderJsData2"] }
-    path("/js/data3")    { action: [GET: "renderJsData3"] }
-    path("/js/hero1")    { action: [GET: "renderJsHero1"] }
-    path("/js/hero2")    { action: [GET: "renderJsHero2"] }
-    path("/js/hero3")    { action: [GET: "renderJsHero3"] }
-    path("/js/combat1")  { action: [GET: "renderJsCombat1"] }
-    path("/js/combat2")  { action: [GET: "renderJsCombat2"] }
-    path("/js/kingdom1") { action: [GET: "renderJsKingdom1"] }
-    path("/js/kingdom2") { action: [GET: "renderJsKingdom2"] }
-    path("/js/ui1")      { action: [GET: "renderJsUi1"] }
-    path("/js/ui2")      { action: [GET: "renderJsUi2"] }
-    path("/js/ui3")      { action: [GET: "renderJsUi3"] }
-    path("/js/v16a")     { action: [GET: "renderJsV16A"] }
-    path("/js/v16b")     { action: [GET: "renderJsV16B"] }
-    path("/api/state")   { action: [GET: "apiGetState"] }
-    path("/api/save")    { action: [POST: "apiSaveSlot"] }
-    path("/api/delete")  { action: [POST: "apiDeleteSlot"] }
+    path("/play")         { action: [GET: "renderGamePage"] }
+    path("/js/data1")     { action: [GET: "renderJsData1"] }
+    path("/js/data2")     { action: [GET: "renderJsData2"] }
+    path("/js/data3")     { action: [GET: "renderJsData3"] }
+    path("/js/hero1")     { action: [GET: "renderJsHero1"] }
+    path("/js/hero2")     { action: [GET: "renderJsHero2"] }
+    path("/js/hero3")     { action: [GET: "renderJsHero3"] }
+    path("/js/combat1")   { action: [GET: "renderJsCombat1"] }
+    path("/js/combat2")   { action: [GET: "renderJsCombat2"] }
+    path("/js/kingdom1")  { action: [GET: "renderJsKingdom1"] }
+    path("/js/kingdom2")  { action: [GET: "renderJsKingdom2"] }
+    path("/js/ui1")       { action: [GET: "renderJsUi1"] }
+    path("/js/ui2")       { action: [GET: "renderJsUi2"] }
+    path("/js/ui3")       { action: [GET: "renderJsUi3"] }
+    path("/js/v16a")      { action: [GET: "renderJsV16A"] }
+    path("/js/v16b")      { action: [GET: "renderJsV16B"] }
+    path("/api/state")    { action: [GET: "apiGetState"] }
+    path("/api/save")     { action: [POST: "apiSaveSlot"] }
+    path("/api/saveHero") { action: [POST: "apiSaveSlot"] }
+    path("/api/delete")   { action: [POST: "apiDeleteSlot"] }
 }
 
 // ==============================================================================
@@ -227,8 +228,8 @@ def mainPage() {
 
             paragraph """
             <div style='background:linear-gradient(135deg,#09070d 0%,#1f0d1d 100%);color:#e2d9c8;padding:16px 18px;border-radius:8px;border:2px solid #c5a059;box-shadow:0 6px 18px rgba(0,0,0,0.65);font-family:Georgia,serif;'>
-                <div style='font-size:20px;font-weight:bold;color:#d4af37;letter-spacing:1px;'>🐉 DUNGEON COURT REVIVE (${APP_VERSION} — Hardcore Balance, 2-Helper Cap &amp; 6-Buff FIFO Edition)</div>
-                <div style='font-size:12px;color:#a89f91;margin-top:4px;'>⚡ Shrinking Boss QTEs • 2-Helper Limit • 6-Buff FIFO • 7-Day Recruit Revival • Alt Guard Payouts &amp; Darkest Afflictions</div>
+                <div style='font-size:20px;font-weight:bold;color:#d4af37;letter-spacing:1px;'>🐉 DUNGEON COURT REVIVE (${APP_VERSION} — Sister Vespera, Royal Library &amp; Disease Diagnosis Edition)</div>
+                <div style='font-size:12px;color:#a89f91;margin-top:4px;'>💎 Sister Vespera Clinic • 📚 Grand Royal Library • 🦠 Hero &amp; Recruit Disease Diagnosis Popups • ⚡ Shrinking Boss QTEs</div>
                 <div style='margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;'>
                     <a href='${localUrl}' target='_blank' style='background:#4c0519;color:#f5d0fe;border:1px solid #c5a059;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;'>⚔️ Enter Realm (Local LAN)</a>
                     <a href='${cloudUrl}' target='_blank' style='background:#1e1b4b;color:#e2d9c8;border:1px solid #c5a059;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;'>🌑 Enter Realm (Remote Cloud)</a>
@@ -373,7 +374,7 @@ def mainPage() {
                 }
             }
 
-            input "btnRefillAllQuests", "button", title: "⚡ Admin Reset: Refill Quests, Heals, All Daily Caps, Stress, Wanted &amp; Timers", width: 6
+            input "btnRefillAllQuests", "button", title: "⚡ Admin Reset: Refill Quests, Heals, All Daily Caps, Diseases, Stress &amp; Timers", width: 6
             input "btnResetAllSlots", "button", title: "🗑️ Wipe All Character Slots", width: 6
         }
 
@@ -755,10 +756,22 @@ def midnightQuestRefresh(boolean isAdminButton = true) {
             }
             if (isAdminButton) {
                 h.mercCooldowns = [:]
+                h.petCooldowns = [:]
                 h.diseases = []
+                if (h.mercenaries instanceof List) {
+                    h.mercenaries = (h.mercenaries as List).collect { Object mObj ->
+                        if (mObj instanceof Map) {
+                            Map mMap = new LinkedHashMap(mObj as Map)
+                            mMap.disease = null
+                            return mMap
+                        }
+                        return mObj
+                    }
+                }
                 h.resolveState = null
                 h.stress = 0
                 h.deathsDoorTrauma = false
+                h.wantedLevel = 0
             }
             h.lastQuestRegenEpoch = nowTs
             h.healsUsedToday = 0
@@ -931,7 +944,7 @@ def apiSaveSlot() {
         try { body = new JsonSlurper().parseText(request.body ?: "{}") as Map } catch (Exception ignored) {}
     }
 
-    String slotKey = (body?.slotKey ?: "").toString()
+    String slotKey = (body?.slotKey ?: body?.slot ?: "").toString()
     String clientSessionId = (body?.sessionId ?: "").toString()
     Map heroData = (body?.hero instanceof Map) ? new LinkedHashMap(body.hero as Map) : null
     Map heroDelta = (body?.heroDelta instanceof Map) ? new LinkedHashMap(body.heroDelta as Map) : null
@@ -964,7 +977,15 @@ def apiSaveSlot() {
         heroData.valkyrieSeals = Math.max(0, Math.min(3, (heroData.valkyrieSeals ?: 0) as int))
     }
 
-    String chronicleEvent = body?.chronicleEvent?.toString()?.trim()
+    if (body?.fullServerRestore instanceof Map) {
+        Map fsr = body.fullServerRestore as Map
+        if (fsr.fallenCrypt instanceof Map) state.fallenCrypt = new LinkedHashMap(fsr.fallenCrypt as Map)
+        if (fsr.spireRecord instanceof Map) state.spireRecord = new LinkedHashMap(fsr.spireRecord as Map)
+        if (fsr.echoes instanceof Map) state.echoesOfPast = new LinkedHashMap(fsr.echoes as Map)
+        if (fsr.worldBoss instanceof Map && (fsr.worldBoss as Map).name) state.worldBoss = new LinkedHashMap(fsr.worldBoss as Map)
+    }
+
+    String chronicleEvent = (body?.chronicleEvent ?: body?.chronicleEntry)?.toString()?.trim()
     Map raidUpdate = (body?.raidUpdate instanceof Map) ? (body.raidUpdate as Map) : null
     Map wonderUpdate = (body?.wonderUpdate instanceof Map) ? (body.wonderUpdate as Map) : null
     Map mailTransfer = (body?.mailTransfer instanceof Map) ? (body.mailTransfer as Map) : null
@@ -1299,7 +1320,7 @@ boolean part1BoundaryGuard() { return true }
 // ==============================================================================
 
 String buildCssChunk() {
-    return buildCssChunk1() + "\n" + buildCssChunk2() //[cite: 2]
+    return buildCssChunk1() + "\n" + buildCssChunk2()
 }
 
 String buildCssChunk1() {
@@ -1308,7 +1329,7 @@ String buildCssChunk1() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Dungeon Court Revive — v18.3 Hardcore Edition</title>
+<title>Dungeon Court Revive — v18.4.1 Hardcore Edition</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -1415,7 +1436,7 @@ String buildCssChunk1() {
   .iso-tile { background: linear-gradient(145deg, #241930 0%, #0e0a14 100%); border: 1px solid #785a28; border-radius: 6px; padding: 8px 6px; text-align: center; transform: rotateX(12deg); transition: transform 0.2s, border-color 0.2s; box-shadow: 0 6px 14px rgba(0,0,0,0.75); animation: isoDropIn 0.35s ease-out; cursor: pointer; }
   .iso-tile:hover { transform: rotateX(0deg) translateY(-3px); border-color: #fde047; }
   @keyframes isoDropIn { 0% { transform: translateY(-22px) scale(0.85); opacity: 0; } 100% { transform: rotateX(12deg) scale(1); opacity: 1; } }
-''' //[cite: 2]
+'''
 }
 
 String buildCssChunk2() {
@@ -1768,7 +1789,7 @@ String buildCssChunk2() {
   .reel-spinning { animation: reelBlur 0.12s infinite linear; border-color: #991b1b; }
   @keyframes reelBlur { 0% { transform: translateY(-3px); } 50% { transform: translateY(3px); } 100% { transform: translateY(-3px); } }
 </style>
-</head>''' //[cite: 2]
+</head>'''
 }
 
 String buildLoaderHtmlChunk(String fallbackToken) {
@@ -1779,15 +1800,16 @@ String buildLoaderHtmlChunk(String fallbackToken) {
 <div id="toastBannerBox"></div>
 <div class="app-wrap">
   <div class="top-banner">
-    <div class="brand-title">⚜️ DUNGEON COURT v18.3</div>
+    <div class="brand-title">⚜️ DUNGEON COURT v18.4.1</div>
     <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
       <span id="realWeatherPill" class="weather-station-pill" title="Tap to inspect Live Hubitat Weather Station &amp; Holiday Event Perks" onclick="if(window.openHourlyOmenInspectorModal)openHourlyOmenInspectorModal()">🌤️ Weather</span>
       <span id="ultTimerPill" class="ult-pill">⚡ Ult Ready!</span>
       <span id="questTimerPill" class="timer-pill">⏱️ +5⚡ &amp; Tick in 45:00</span>
       <span id="syncStatus" style="font-size:11px;color:#4ade80;">🟢 Synced</span>
-      <button class="btn btn-emerald" style="min-height:30px;padding:3px 7px;" title="Inspect Active Buffs (6 Max FIFO) &amp; Debuffs" onclick="if(window.openActiveBuffsModal)openActiveBuffsModal()">✨ Buffs</button>
+      <button class="btn btn-emerald" style="min-height:30px;padding:3px 7px;" title="Inspect Active Buffs (6 Max FIFO), Innate Passives &amp; Debuffs" onclick="if(window.openActiveBuffsModal)openActiveBuffsModal()">✨ Buffs</button>
       <button class="btn btn-sky" style="min-height:30px;padding:3px 7px;" title="View All Daily Activity Limits &amp; Royal Commendation Cache" onclick="if(window.openDailyLimitsTrackerModal)openDailyLimitsTrackerModal()">📅 Caps</button>
       <button class="btn btn-arcane" style="min-height:30px;padding:3px 7px;" title="Open Your Hero's Personal Vault (20💎 7-Day Lock)" onclick="if(window.openTownFacilityModal)openTownFacilityModal('post')">🏦 My Vault</button>
+      <button id="dcrTopLibraryBtn" class="btn btn-sky" style="min-height:30px;padding:3px 7px;" title="Open The Grand Royal Library &amp; Disease/Sanity Encyclopedia" onclick="if(window.openGrandRoyalLibraryModal)openGrandRoyalLibraryModal('ui')">📚 Library</button>
       <button class="btn" style="min-height:30px;padding:3px 7px;" title="Tavern Bard Soundscape Selector" onclick="if(window.cycleBardJukebox)cycleBardJukebox()">🎼</button>
       <button class="btn" style="min-height:30px;padding:3px 7px;" title="Cycle 5 Gothic UI Color Themes" onclick="if(window.cycleUiTheme)cycleUiTheme()">🎨</button>
       <button class="btn" style="min-height:30px;padding:3px 7px;" id="btnMusicToggle" title="Toggle Dynamic Zone &amp; Phase 2 Boss Choir Music" onclick="if(window.toggleMusicMute)toggleMusicMute()">🎵</button>
@@ -1800,8 +1822,8 @@ String buildLoaderHtmlChunk(String fallbackToken) {
   </div>
 
   <div id="cloudLoaderBox" class="card" style="margin-top:20px;text-align:center;padding:24px;">
-    <div style="font-size:19px;font-weight:900;color:#d4af37;font-family:'Cinzel',serif;" id="loaderTitle">🕯️ Unsealing v18.3 Hardcore Balance &amp; Darkest Afflictions Engine...</div>
-    <div style="font-size:13.5px;color:#e5dec9;margin-top:6px;" id="loaderSub">Loading Shrinking QTEs, 2-Helper Cap, 6-Buff FIFO, 7-Day Recruit Revival &amp; Alt Guard Payouts</div>
+    <div style="font-size:19px;font-weight:900;color:#d4af37;font-family:'Cinzel',serif;" id="loaderTitle">🕯️ Unsealing v18.4.1 Sister Vespera, Royal Library &amp; Plague Engine...</div>
+    <div style="font-size:13.5px;color:#e5dec9;margin-top:6px;" id="loaderSub">Loading Citadel Sanctums, Hero/Recruit Disease Diagnosis Popups, Shrinking QTEs &amp; 6-Buff FIFO</div>
     <div class="bar-wrap" style="max-width:420px;margin:14px auto;height:18px;">
       <div id="loaderBar" class="bar-fill" style="width:8%;background:#991b1b;"></div>
       <div id="loaderPct" class="bar-text">8%</div>
@@ -1926,7 +1948,7 @@ function updateDynamicSoundscape() {
         var choir = audioCtx.createOscillator();
         var cGain = audioCtx.createGain();
         choir.connect(cGain); cGain.connect(audioCtx.destination);
-          choir.type = "sine"; choir.frequency.setValueAtTime(cNotes[step % 5] * 4.0, now);
+        choir.type = "sine"; choir.frequency.setValueAtTime(cNotes[step % 5] * 4.0, now);
         cGain.gain.setValueAtTime(0.02, now); cGain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
         choir.start(now); choir.stop(now + 0.8);
       } else if (currentBgmMode === "boss" || currentBgmMode === "bard_drums") {
@@ -1997,21 +2019,21 @@ function playSfx(type) {
 }
 
 var CHUNKS = [
-  { key: "dcr_v187_data1",    path: "/js/data1",    label: "Engraving Portraits, Lazarus Perks & Darkest Diseases (1/15)...", pct: 6 },
-  { key: "dcr_v187_data2",    path: "/js/data2",    label: "Loading 22 Vector Realms (1.68x Hardcore) & Holiday Weeks (2/15)...", pct: 13 },
-  { key: "dcr_v187_data3",    path: "/js/data3",    label: "Loading 16 Story Encounters & Campfire Banter (3/15)...", pct: 20 },
-  { key: "dcr_v187_hero1",    path: "/js/hero1",    label: "Loading 6-Buff FIFO Ledger & Affection Decay (4/15)...", pct: 27 },
-  { key: "dcr_v187_hero2",    path: "/js/hero2",    label: "Loading Single Consort Blessing & 2-Helper Cap (5/15)...", pct: 34 },
-  { key: "dcr_v187_hero3",    path: "/js/hero3",    label: "Loading Item Locks, Ring-Buffered Logs & Delta Saves (6/15)...", pct: 41 },
-  { key: "dcr_v187_combat1",  path: "/js/combat1",  label: "Loading Dynamic Shrinking QTEs & Animated Recruits (7/15)...", pct: 48 },
-  { key: "dcr_v187_combat2",  path: "/js/combat2",  label: "Loading 7-Day Recruit Revival & Alt Guard Reports (8/15)...", pct: 55 },
-  { key: "dcr_v187_kingdom1", path: "/js/kingdom1",  label: "Loading Trade Treaties, Auto-Caravans & Torch Sanctum Camp (9/15)...", pct: 62 },
-  { key: "dcr_v187_kingdom2", path: "/js/kingdom2", label: "Loading Scaled Wits/Charm Challenges & Armada Boarding (10/15)...", pct: 69 },
-  { key: "dcr_v187_ui1",      path: "/js/ui1",      label: "Loading Clean Login Cards & Confessional Booth (11/15)...", pct: 76 },
-  { key: "dcr_v187_ui2",      path: "/js/ui2",      label: "Loading Collapsible Warrants & Lore Sanctums (12/15)...", pct: 83 },
-  { key: "dcr_v187_ui3",      path: "/js/ui3",      label: "Loading Unequipped Gear Badges & Resource Totals (13/15)...", pct: 90 },
-  { key: "dcr_v187_v16a",     path: "/js/v16a",     label: "Loading Alt Bodyguard Payouts & Rarer Class Sets (14/15)...", pct: 95 },
-  { key: "dcr_v187_v16b",     path: "/js/v16b",     label: "Activating 3-Lane Sieges, Heir Trials & Soul Exhumation (15/15)...", pct: 99 }
+  { key: "dcr_v188_data1",    path: "/js/data1",    label: "Engraving Portraits, Lazarus Perks & Disease Lore (1/15)...", pct: 6 },
+  { key: "dcr_v188_data2",    path: "/js/data2",    label: "Loading 22 Vector Realms (1.68x Hardcore) & Holiday Weeks (2/15)...", pct: 13 },
+  { key: "dcr_v188_data3",    path: "/js/data3",    label: "Loading 16 Story Encounters & Campfire Banter (3/15)...", pct: 20 },
+  { key: "dcr_v188_hero1",    path: "/js/hero1",    label: "Loading 6-Buff FIFO Ledger & Affection Decay (4/15)...", pct: 27 },
+  { key: "dcr_v188_hero2",    path: "/js/hero2",    label: "Loading Single Consort Blessing & 2-Helper Cap (5/15)...", pct: 34 },
+  { key: "dcr_v188_hero3",    path: "/js/hero3",    label: "Loading Item Locks, Ring-Buffered Logs & Delta Saves (6/15)...", pct: 41 },
+  { key: "dcr_v188_combat1",  path: "/js/combat1",  label: "Loading Dynamic Shrinking QTEs & Animated Recruits (7/15)...", pct: 48 },
+  { key: "dcr_v188_combat2",  path: "/js/combat2",  label: "Loading Post-Battle Disease Diagnosis & 7-Day Revival (8/15)...", pct: 55 },
+  { key: "dcr_v188_kingdom1", path: "/js/kingdom1", label: "Loading Trade Treaties, Auto-Caravans & Torch Sanctum Camp (9/15)...", pct: 62 },
+  { key: "dcr_v188_kingdom2", path: "/js/kingdom2", label: "Loading Scaled Wits/Charm Challenges & Leech Ward (10/15)...", pct: 69 },
+  { key: "dcr_v188_ui1",      path: "/js/ui1",      label: "Loading Clean Login Cards & Confessional Booth (11/15)...", pct: 76 },
+  { key: "dcr_v188_ui2",      path: "/js/ui2",      label: "Loading Collapsible Warrants & Lore Sanctums (12/15)...", pct: 83 },
+  { key: "dcr_v188_ui3",      path: "/js/ui3",      label: "Loading Citadel Sister Vespera & Grand Royal Library (13/15)...", pct: 90 },
+  { key: "dcr_v188_v16a",     path: "/js/v16a",     label: "Loading Alt Bodyguard Payouts & Rarer Class Sets (14/15)...", pct: 95 },
+  { key: "dcr_v188_v16b",     path: "/js/v16b",     label: "Activating Sister Vespera Clinic, Royal Library & Soul Exhumation (15/15)...", pct: 99 }
 ];
 
 async function fetchChunkPaged(chunkPath) {
@@ -2037,6 +2059,14 @@ async function bootCloudGame() {
   var pct = document.getElementById("loaderPct");
   var sub = document.getElementById("loaderSub");
   var forceRefresh = new URLSearchParams(window.location.search).get("nocache") === "1";
+
+  try {
+    Object.keys(localStorage).forEach(function(k) {
+      if (k.indexOf("dcr_v") === 0 && k.indexOf("dcr_v188_") !== 0) {
+        try { localStorage.removeItem(k); } catch (e) {}
+      }
+    });
+  } catch (e) {}
 
   try {
     for (var i = 0; i < CHUNKS.length; i++) {
@@ -2074,11 +2104,11 @@ async function bootCloudGame() {
 window.addEventListener("DOMContentLoaded", bootCloudGame);
 </script>
 </body>
-</html>""" //[cite: 2]
+</html>"""
 }
 
 String buildDataChunkA() {
-    return buildDataChunkA1() + "\n" + buildDataChunkA2() //[cite: 2]
+    return buildDataChunkA1() + "\n" + buildDataChunkA2()
 }
 
 String buildDataChunkA1() {
@@ -2088,6 +2118,8 @@ var RPG_BANNERS = {
   town_courting:  "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=700&q=75",
   town_vault:     "https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=700&q=75",
   town_sanctuary: "https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=700&q=75",
+  town_vespera:   "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=700&q=75",
+  town_library:   "https://images.unsplash.com/photo-1507842217343-583bb7270b66?auto=format&fit=crop&w=700&q=75",
   town_graveyard: "https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=700&q=75",
   town_legends:   "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=700&q=75",
   town_inn:       "https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=700&q=75",
@@ -2208,7 +2240,15 @@ function renderEntityAvatar(seedName, fallbackEmoji, size, isMonster) {
     affixOverlay += '<polygon points="20,12 24,3 29,10 32,2 35,10 40,3 44,12" fill="#fde047" stroke="#991b1b" stroke-width="0.9"/>';
   }
 
-  if (s.indexOf("krampus") >= 0 || s.indexOf("yule") >= 0 || s.indexOf("perchten") >= 0) {
+  if (s.indexOf("library") >= 0 || s.indexOf("archivist") >= 0 || s.indexOf("archive") >= 0) {
+    archSvg = '<rect x="14" y="16" width="36" height="36" rx="3" fill="#1e293b" stroke="#7dd3fc" stroke-width="1.8"/>' +
+      '<line x1="32" y1="16" x2="32" y2="52" stroke="#d4af37" stroke-width="2.2"/>' +
+      '<line x1="18" y1="24" x2="28" y2="24" stroke="#bae6fd" stroke-width="1.5"/>' +
+      '<line x1="18" y1="31" x2="28" y2="31" stroke="#bae6fd" stroke-width="1.5"/>' +
+      '<line x1="36" y1="24" x2="46" y2="24" stroke="#fde047" stroke-width="1.5"/>' +
+      '<line x1="36" y1="31" x2="46" y2="31" stroke="#fde047" stroke-width="1.5"/>' +
+      '<circle cx="32" cy="11" r="3" fill="#38bdf8"/>';
+  } else if (s.indexOf("krampus") >= 0 || s.indexOf("yule") >= 0 || s.indexOf("perchten") >= 0) {
     archSvg = '<path d="M18 22 C8 4 2 14 14 28 M46 22 C56 4 62 14 50 28" stroke="#d4af37" stroke-width="3.2" fill="none"/>' +
       '<path d="M16 20 L32 12 L48 20 L44 48 L32 56 L20 48 Z" fill="#2b070c" stroke="#ef4444" stroke-width="1.6"/>' +
       '<polygon points="22,28 29,31 23,33" fill="#fde047"/><polygon points="42,28 35,31 41,33" fill="#fde047"/>' +
@@ -2449,7 +2489,7 @@ var AURA_STYLES = {
   "Necrotic Ossuary": "Floating Bone-Runes",
   "Emerald Viper": "Venomous Serpent Ouroboros"
 };
-''' //[cite: 2]
+'''
 }
 
 String buildDataChunkA2() {
@@ -2472,7 +2512,7 @@ var RECRUIT_ORDERS = {
   protect: { id: "protect", name: "🩸 Protect", atkMult: 0.85, defBonus: 0.05, desc: "Bodyguard Sacrifice: Recruits intercept enemy blows & SACRIFICE THEMSELVES before the Hero dies!" }
 };
 
-// Improvement #3: Weapon Class Archetype Perks
+// Weapon Class Archetype Perks
 var WEAPON_ARCHETYPE_PERKS = {
   "Warhammer":      { name: "🔨 Crushing Blows",   poiseAdd: 12, desc: "+20% Poise Stagger Damage on every strike" },
   "Battleaxe":      { name: "🪓 Cleaving Edge",    bleedAdd: 1,  critDmgAdd: 0.12, desc: "+12% Crit DMG & +1 Turn Bleed Duration" },
@@ -2484,7 +2524,7 @@ var WEAPON_ARCHETYPE_PERKS = {
   "Spear":          { name: "🔱 First-Age Reach",  atkAddPct: 8, parryAdd: 5, desc: "+8% ATK & +5% Parry Chance" }
 };
 
-// Improvement #18: Recruit Synergy Battle-Bonds (Upgraded Brother Lazarus!)
+// Recruit Synergy Battle-Bonds (Upgraded Brother Lazarus!)
 var RECRUIT_SYNERGY_BONDS = [
   { ids: ["garrick", "beatrice"],  name: "🛡️🕯️ Sacred Phalanx Bond",   defPct: 10, healPct: 0.04, atkPct: 0,  desc: "Garrick + Sister Beatrice: +10% Party DEF & +4% Party Heal every round!" },
   { ids: ["korg", "whisper"],      name: "🪓🗡️ Blood-Pit Executioners", defPct: 0,  healPct: 0,    atkPct: 18, desc: "Korg + Whisper: +18% Recruit ATK Damage & guaranteed Bleed on crits!" },
@@ -2492,12 +2532,12 @@ var RECRUIT_SYNERGY_BONDS = [
   { ids: ["lazarus"],              name: "🩸⛓️ Covenant of the Undying Martyr", defPct: 12, healPct: 0.03, atkPct: 10, vampAdd: 0.10, stressRed: 0.20, desc: "Brother Lazarus Active: +12% Party DEF, +10% Hero Lifesteal, -20% Stress Gain & 100% Full HP/MP Trauma-Free Resurrection!" }
 ];
 
-// Improvement #1: Enemy Intent Telegraphs
+// Enemy Intent Telegraphs
 var ENEMY_INTENT_TYPES = [
   { id: "strike", name: "🗡️ Fierce Slash",      mult: 1.0,  color: "#fca5a5", desc: "Standard melee strike incoming." },
   { id: "heavy",  name: "🪓 Crushing Overhead", mult: 1.35, color: "#ef4444", desc: "+35% DMG heavy blow incoming — Defend or Chokepoint recommended!" },
   { id: "hex",    name: "🔮 Soul-Hex Drain",    mult: 0.90, color: "#c084fc", desc: "Arcane strike that drains MP & raises Stress — Headshot to Silence!" },
-  { id: "venom",  name: "🧪 Venomous Fang",     mult: 0.95, color: "#4ade80", desc: "Inflicts 3-turn Poison & risks Disease — keep a Potion ready!" },
+  { id: "venom",  name: "🧪 Venomous Fang",     mult: 0.95, color: "#4ade80", desc: "Inflicts 3-turn Poison & risks Disease on Hero or Recruits — keep a Potion ready!" },
   { id: "flurry", name: "⚡ Twin-Claw Flurry",  mult: 1.20, color: "#fde047", desc: "High-accuracy double strike incoming — Leg strike to Cripple!" }
 ];
 
@@ -2510,7 +2550,7 @@ var SHOPLIFT_GUARDS = [
     lore: "An elite juggernaut of the Royal Guard sworn to execute thieves on sight!" }
 ];
 
-// Roaming Mini-Bosses for Patrols (Main Area Boss is strictly locked behind 5/5 Warrants!)
+// Roaming Mini-Bosses for Patrols (Main Area Boss is strictly locked behind 10/10 Warrants!)
 var ROAMING_MINI_BOSSES = [
   { name: "Vanguard Butcher Krav", icon: "🪓🩸", trait: "Berserk", lore: "A wandering warlord who ambushes patrols—distinct from the main Area Boss!" },
   { name: "Wandering Bone-Behemoth", icon: "🦴💀", trait: "Armored", lore: "An ossuary colossus roaming the border roads in search of fresh marrow!" },
@@ -2518,7 +2558,7 @@ var ROAMING_MINI_BOSSES = [
   { name: "Covenant Blood-Inquisitor", icon: "🗡️🌑", trait: "Lifesteal", lore: "An elite Shadow Covenant hunter patrolling the wilds!" }
 ];
 
-// Pre-Battle Court Card Deck (1-10, Prince=11, Queen=12, King=13 heal 0.5% * rank HP; Joker = -10% Stat Debuff!)
+// Pre-Battle Court Card Deck
 var GAMBIT_CARDS = [
   { name: "Ace of Chalices (I)", rank: 1, icon: "🂱", isJoker: false },
   { name: "Two of Swords (II)", rank: 2, icon: "🂢", isJoker: false },
@@ -2552,12 +2592,32 @@ var RESOLVE_STATES = {
   ]
 };
 
-// Darkest Dungeon Physical Diseases & Plagues (Contracted from Venomous/Undead/Swamp/Rat foes; Cured via Leech Therapy!)
+// Darkest Dungeon Physical Diseases & Plagues (Contracted by Hero or Recruits; Cured via Leech Ward or Sister Vespera 15💎!)
 var DISEASE_STATES = [
-  { id: "red_plague",    name: "🦠 DISEASE: The Red Plague",      gutsPen: 0.12, hpPen: 0.10, accPen: 0,  desc: "-12% Guts & -10% Max HP (Cure with Plague-Doctor Leech Therapy at Cathedral!)" },
-  { id: "rabies",        name: "🐕 DISEASE: Creeping Rabies",     gutsPen: -0.10, hpPen: 0,   accPen: 12, desc: "+10% Reckless Guts, but -12% Hit Accuracy (Cure with Leech Therapy!)" },
-  { id: "spore_lung",    name: "🍄 DISEASE: Weald Spore-Lung",    gutsPen: 0.10, hpPen: 0.08, accPen: 6,  desc: "-10% Guts, -8% Max HP & -6% Accuracy (Cure with Leech Therapy!)" },
-  { id: "crypt_tetanus", name: "🦴 DISEASE: Catacomb Lockjaw",    gutsPen: 0.08, hpPen: 0,    accPen: 10, desc: "-8% Guts & -10% Hit/Dodge Speed (Cure with Leech Therapy!)" }
+  { id: "red_plague",    name: "🦠 DISEASE: The Red Plague",      gutsPen: 0.12, hpPen: 0.10, accPen: 0,  mercAtkMult: 0.85,
+    desc: "-12% Guts & -10% Max HP",
+    recruitEffect: "-15% Recruit Attack Power & -10% Max Vitality",
+    what: "A virulent crimson blood-fever born in the plague-pits of Ash-Hollow that boils the marrow and weakens mortal sinew.",
+    originLore: "Contracted from corpse-rats, plague-zombies, blood-sucking fiends, or infected blades.",
+    cureHow: "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel/Cathedral (15💎 Dragon Gems per disease, no daily limit)!" },
+  { id: "rabies",        name: "🐕 DISEASE: Creeping Rabies",     gutsPen: -0.10, hpPen: 0,   accPen: 12, mercAtkMult: 0.92,
+    desc: "+10% Reckless Guts, but -12% Hit Accuracy",
+    recruitEffect: "-8% Effective Recruit Precision & foaming battle-frenzy",
+    what: "A foaming neurological contagion of feral hounds and lycanthropes that drives muscles into erratic spasms while clouding aim.",
+    originLore: "Contracted from rabid hounds, dire wolves, feral werewolves, or venomous fangs.",
+    cureHow: "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel/Cathedral (15💎 Dragon Gems per disease, no daily limit)!" },
+  { id: "spore_lung",    name: "🍄 DISEASE: Weald Spore-Lung",    gutsPen: 0.10, hpPen: 0.08, accPen: 6,  mercAtkMult: 0.86,
+    desc: "-10% Guts, -8% Max HP & -6% Hit Accuracy",
+    recruitEffect: "-14% Recruit Attack Power & choking breathlessness",
+    what: "Parasitic black-sap fungal spores that take root inside the lungs, choking stamina and dulling battlefield reflexes.",
+    originLore: "Contracted from Festering Fen miasma, caustic oozes, blighted treants, or damp dungeon traps.",
+    cureHow: "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel/Cathedral (15💎 Dragon Gems per disease, no daily limit)!" },
+  { id: "crypt_tetanus", name: "🦴 DISEASE: Catacomb Lockjaw",    gutsPen: 0.08, hpPen: 0,    accPen: 10, mercAtkMult: 0.88,
+    desc: "-8% Guts & -10% Hit/Dodge Speed",
+    recruitEffect: "-12% Recruit Attack Power & stiffened iron-rust joints",
+    what: "An ossuary nerve-toxin carried on rusted crypt-iron and skeletal claws that locks the jaw and stiffens sword-arms.",
+    originLore: "Contracted from undead skeletons, rusted dungeon spike-traps, or catacomb horrors.",
+    cureHow: "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel/Cathedral (15💎 Dragon Gems per disease, no daily limit)!" }
 ];
 
 // Mercenary Combat Quirks & Sanitarium
@@ -2567,6 +2627,7 @@ var MERCENARY_QUIRKS = [
   { id: "kleptomaniac",  name: "🥷 Kleptomaniac",  isPositive: false, atkMult: 0.92, desc: "-8% ATK & skims 5% battle gold (Cure at Cathedral Sanitarium!)" },
   { id: "night_blind",   name: "🌑 Night-Blind",   isPositive: false, atkMult: 0.88, desc: "-12% Mercenary ATK in dark realms (Cure at Cathedral Sanitarium!)" }
 ];
+var MERC_QUIRKS = MERCENARY_QUIRKS;
 
 var WEATHER_APEX_BOSSES = [
   { weatherMatch: "Eclipse", areaId: 7, name: "APEX: Nocturnus the Eclipse-Reaver", icon: "🌑🦇", minLv: 20, rewardGems: 3, desc: "A phantom vampire-dragon that only materializes in the Catacombs during the Eclipse of the Black Sun!" },
@@ -2876,16 +2937,16 @@ var LORE_CODEX = [
     body: "By royal decree, a champion may march into battle with <b>at most two active companions</b> (two Sellswords, or one Sellsword alongside an Animal Companion or Dynasty Heir). When a sworn recruit falls in battle, the <b>Resurrectionist Order of the Weeping Graveyard requires 7 full days</b> to stitch their soul back into mortal flesh—and each death under your banner permanently raises sellsword hazard pay across Valoria." },
   { id: "v7", title: "VII. Skarsnik's Blackpowder Syndicate", icon: "👺💣", unlockLv: 14,
     body: "Beneath the Shire's eastern hills, High Warlord Skarsnik united the twelve subterranean goblin clans after breaking into Durin's abandoned sulfur vaults. With royal gold funnelled from the High Court, his sappers are tunneling directly beneath the capital's walls." },
-  { id: "v8", title: "VIII. The Plague-Brewers & Darkest Afflictions", icon: "🐍🧪", unlockLv: 18,
-    body: "In the sunken ossuaries of the Festering Fen, venomous fangs and necrotic spores inflict <b>mortal diseases</b> (*The Red Plague*, *Creeping Rabies*, *Weald Spore-Lung*, *Catacomb Lockjaw*), while mounting dread fractures the mind into <b>Afflictions</b>. Visit the Cathedral's <b>Confessional Booth</b> or <b>Plague-Doctor Leech Ward</b> to purge your body and soul." },
+  { id: "v8", title: "VIII. Sister Vespera, Plague-Doctors & Darkest Afflictions", icon: "🐍🧪", unlockLv: 18,
+    body: "In the sunken ossuaries of the Festering Fen, venomous fangs and necrotic spores inflict <b>mortal diseases</b> (*The Red Plague*, *Creeping Rabies*, *Weald Spore-Lung*, *Catacomb Lockjaw*) on both Heroes and Sellsword Recruits. Visit the Cathedral's <b>Plague-Doctor Leech Ward</b> (2/day) or <b>Sister Vespera the Dragon-Glass Chirurgeon</b> in the Citadel (15💎 per disease, unlimited) to purge your blood." },
   { id: "v9", title: "IX. Royal Estates & Armada Contraband Smuggling", icon: "🏰⚓", unlockLv: 20,
-    body: "Once your Sovereign Kingdom is chartered at Level 20, recruiting <b>Admiral Kaelen Vance</b> opens the Royal Shipyard. Beyond naval voyages, outlaws can load stolen Bazaar contraband onto the Armada to smuggle across the Maelstrom for 150% value in untraceable Dragon Gems." },
+    body: "Once your Sovereign Kingdom is chartered at Level 20, recruiting <b>Admiral Kaelen Vance</b> opens the Royal Shipyard. Beyond naval voyages, outlaws can load stolen Bazaar contraband onto the Armada to smuggle across the Maelstrom for untraceable Gold and Dragon Gems." },
   { id: "v10", title: "X. The Glass Sepulchers of Amon-Set", icon: "🏜️⚱️", unlockLv: 28,
     body: "Before the First Wyrm fell, dragonfire vitrified the southern plains into blinding dunes of black glass. Beneath that scorching mirror sleeps Pharaoh Amon-Set and the Basalt Sun Tablet—the only surviving map to the Three Dragon Shards." },
   { id: "v11", title: "XI. Master Blacksmith Brom & Dulled Gem Slag", icon: "🏔️🔨", unlockLv: 36,
     body: "Exiled from Ironcrag when Grommash seized the glacier gates, Master Blacksmith Brom Iron-Thumb brought his dwarven whetstones to the High Citadel. Brom can crush expired 7-day Vault Slag into Whetstone Grit for +40% durability repairs, or reforge Epic/Legendary relics into matching 3-piece Gear Sets." },
   { id: "v12", title: "XII. The Six-Blessing Law & Consort Favor", icon: "💍🕯️", unlockLv: 45,
-    body: "Mortal blood can channel at most <b>Six Active Positive Blessings (6-Buff FIFO)</b> at one time—any seventh blessing pushes out the oldest, though Curses, Diseases, and Afflictions know no limit. Likewise, if a sovereign courts or weds multiple noble ladies in the Velvet Chamber, only <b>one chosen Consort Blessing</b> may empower your banner at a time." },
+    body: "Mortal blood can channel at most <b>Six Active Temporary Blessings (6-Buff FIFO)</b> at one time—any seventh temporary blessing pushes out the oldest, while Innate Passives, Curses, Diseases, and Afflictions never displace. Likewise, if a sovereign weds multiple noble ladies, only <b>one chosen Consort Blessing</b> may empower your banner at a time." },
   { id: "v13", title: "XIII. Grandmaster Solaris & The Hall of Legends", icon: "🌟⚔️", unlockLv: 50,
     body: "Only champions who reach the 50th season of war are admitted to the Citadel's Hall of Legends. Within its star-domed rotunda, Grandmaster Solaris the Oath-Keeper tests each calling across five mythic trials to forge their Ultimate Class Relic." },
   { id: "v14", title: "XIV. Sunken Atlantis & Jonah the Star-Swallowed", icon: "🔱🐳", unlockLv: 85,
@@ -2903,12 +2964,12 @@ var LORE_CODEX = [
   { id: "v20", title: "XX. The God-Tier Panoply of First Genesis", icon: "🌟🔱", unlockLv: 145,
     body: "At the 22nd Finale—the birth-crater of the cosmos—Aethelgard the Reborn Progenitor awaits. He who collects all six pieces of the <b>God-Tier Genesis Panoply</b> doubles the divine set blessing and rules forever as God-Monarch of Eternal Genesis." }
 ];
-''' //[cite: 2]
+'''
 }
 
-boolean part2BoundaryGuard() { return true } //[cite: 2]
+boolean part2BoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 2 OF 7 — REPLY "NEXT" FOR PART 3[cite: 2]
+// END OF PART 2 OF 7 — REPLY "NEXT" FOR PART 3
 // ==============================================================================
 
 // ==============================================================================
@@ -2922,7 +2983,7 @@ String buildDataChunkB() {
 String buildDataChunkB1() {
     return '''
 var AREAS = [
-  { id: 1, name: "1. The Blighted Shire Fields", icon: "🌾", scenery: "🌾🕯️⚰️🥀", mapX: 75, mapY: 340, biome: "plains", bg: "linear-gradient(135deg, #141c12 0%, #080c07 100%)", minLv: 1, maxLv: 8, reqQuests: 5,
+  { id: 1, name: "1. The Blighted Shire Fields", icon: "🌾", scenery: "🌾🕯️⚰️🥀", mapX: 75, mapY: 340, biome: "plains", bg: "linear-gradient(135deg, #141c12 0%, #080c07 100%)", minLv: 1, maxLv: 8, reqQuests: 10,
     hazard: "🌾 Ash-Choked Hedgerows: +5% Dodge for all combatants",
     desc: "Once-peaceful crown farmlands now choked with gallows-weeds, cutthroats, and Grimgor's blood-tusk herd.",
     kingdomRole: "Securing the Shire Fields feeds your Kingdom's granaries (+Rations) and protects peasant tithe caravans.",
@@ -2940,7 +3001,7 @@ var AREAS = [
     storyChapter: { title: "Chapter I: The Blood-Stained Signet of Ash-Hollow", icon: "📜👑",
       text: "<b>Act I — The Mud of Ash-Hollow:</b> As Grimgor the Boar King collapses into the blood-soaked mire of his stockade, the surviving Shire militiamen lower their pikes in stunned silence. For three moons, the beast had terrorized the south road, driven mad by alchemical slag dumped into the brooks.<br><br><b>Act II — The Outrider's Last Secret:</b> Prying open the spiked iron collar bolted around the boar's neck, you uncover the half-buried saddlebag of Sir Caelen, Captain of Queen Isolde's Outriders. Inside rests her cracked gold signet ring and a ciphered parchment written in her own blood: <i>'Grand Vizier Malakor poisoned King Aldric IX at the Solstice Feast. The King's soul is locked beneath the Catacombs, and Malakor's agents already march to seize the Three Dragon Shards. Trust no one in the High Court who wears the Violet Seal.'</i>" }
   },
-  { id: 2, name: "2. The Whispering Weald", icon: "🌲", scenery: "🌲🕸️🦉🌑", mapX: 145, mapY: 275, biome: "forest", bg: "linear-gradient(135deg, #0c1c1a 0%, #050c0b 100%)", minLv: 8, maxLv: 16, reqQuests: 5,
+  { id: 2, name: "2. The Whispering Weald", icon: "🌲", scenery: "🌲🕸️🦉🌑", mapX: 145, mapY: 275, biome: "forest", bg: "linear-gradient(135deg, #0c1c1a 0%, #050c0b 100%)", minLv: 8, maxLv: 16, reqQuests: 10,
     hazard: "🌫️ Gallows Mist & Spore-Miasma: -5% Hit Accuracy unless enemy is Hamstrung; 1.68x Hardcore Realm Scaling Active",
     desc: "An ancient twilight forest where dead silver oaks weep black sap and blood-druids chant in the fog.",
     kingdomRole: "Purging the Weald supplies your Lumberjacks with ancient Ironwood timber.",
@@ -2958,7 +3019,7 @@ var AREAS = [
     storyChapter: { title: "Chapter II: Whispers in the Weeping Heartwood", icon: "🌲🔮",
       text: "<b>Act I — The Sundered Warden:</b> With a groan that shakes the twilight canopy of the Whispering Weald, Sylvanus splits down his ancient silver trunk. As you wrench the two-foot spike of necrotic black iron from his heartwood, the boiling pitch turns back into clear starlight sap.<br><br><b>Act II — Elenya's Oath:</b> High Ranger Elenya kneels beside the fallen colossus, reading the foundry mark stamped into the iron spike: <i>'Smelted in the Goblin Warrens under Warlord Skarsnik—paid for with Royal Mint bullion.'</i> Before Sylvanus's spirit fades into the roots, the ancient treant whispers of a secret tunnel beneath the eastern ash-pits where the goblins are boring directly under the capital's walls." }
   },
-  { id: 3, name: "3. Goblin Warrens & Ash-Pits", icon: "👺", scenery: "⛏️🕯️💣🔥", mapX: 220, mapY: 335, biome: "caves", bg: "linear-gradient(135deg, #24160b 0%, #0d0804 100%)", minLv: 16, maxLv: 24, reqQuests: 5,
+  { id: 3, name: "3. Goblin Warrens & Ash-Pits", icon: "👺", scenery: "⛏️🕯️💣🔥", mapX: 220, mapY: 335, biome: "caves", bg: "linear-gradient(135deg, #24160b 0%, #0d0804 100%)", minLv: 16, maxLv: 24, reqQuests: 10,
     hazard: "💣 Sulfur Fumes: Fire-Bombs & Crits deal +15% bonus damage (1.68x Hardcore Scaling)",
     desc: "Suffocating subterranean tunnels echoing with iron war-drums, sulfur fumes, and blood-stained siege-works.",
     kingdomRole: "Collapsing the Goblin tunnels yields deep-mined Stone and Iron for your strongholds.",
@@ -2976,7 +3037,7 @@ var AREAS = [
     storyChapter: { title: "Chapter III: The Blackpowder Conspiracy", icon: "💣📖",
       text: "<b>Act I — The Subterranean Siege:</b> Sparks shower across the cavern as Skarsnik's crown of fused coins clatters across the stone floor. Sapper Master Torg rushes forward with his shears, severing the burning fuse-cord inches before forty barrels of dwarven blackpowder can vaporize the capital's eastern reservoir.<br><br><b>Act II — The Venom Ledger:</b> Locked inside Skarsnik's iron strongbox, you discover royal promissory notes bearing Grand Vizier Malakor's seal—alongside a manifest of alchemical glassware shipped south into the <b>Festering Fen</b>, where the Shadow Covenant is distilling the slumber-plague from Vilemaw the Swamp Hydra." }
   },
-  { id: 4, name: "4. The Festering Fen", icon: "🐍", scenery: "🐍🧪🕯️⚰️", mapX: 295, mapY: 265, biome: "swamp", bg: "linear-gradient(135deg, #15210d 0%, #080d05 100%)", minLv: 24, maxLv: 32, reqQuests: 5,
+  { id: 4, name: "4. The Festering Fen", icon: "🐍", scenery: "🐍🧪🕯️⚰️", mapX: 295, mapY: 265, biome: "swamp", bg: "linear-gradient(135deg, #15210d 0%, #080d05 100%)", minLv: 24, maxLv: 32, reqQuests: 10,
     hazard: "🧪 Corpse-Gas Miasma: Venomous foes have a higher chance to poison & spread Disease (1.68x Hardcore Scaling)",
     desc: "A drowning mire of sunken ossuaries, green corpse-gas, and multi-headed serpents.",
     kingdomRole: "Harvesting Fen reagents stocks your Alchemist Spire and cures border plagues.",
@@ -2994,7 +3055,7 @@ var AREAS = [
     storyChapter: { title: "Chapter IV: The Elixir of Awakening", icon: "🧪🐍",
       text: "<b>Act I — The Sevenfold Slaughter:</b> Cauterizing each severed neck with torch-fire, you drive your blade through Vilemaw's central heart. Apothecary Mira wades through the steaming bog-water to draw a vial of pure golden ichor from the beast's aorta.<br><br><b>Act II — The King's Whisper:</b> Smuggled into the royal bedchamber at midnight, a single drop of Mira's antidote parts King Aldric IX's pale lips. Though his soul remains tethered to Malakor's phylactery, the King grips your gauntlet: <i>'Seek the Sun Tablet in the Sepulcher Dunes... find the Three Dragon Shards before the Eclipse...'</i>" }
   },
-  { id: 5, name: "5. Sunscorched Sepulcher Dunes", icon: "🏜️", scenery: "🏜️🦂⚱️☀️", mapX: 370, mapY: 340, biome: "desert", bg: "linear-gradient(135deg, #2b1d0b 0%, #120b04 100%)", minLv: 32, maxLv: 40, reqQuests: 5,
+  { id: 5, name: "5. Sunscorched Sepulcher Dunes", icon: "🏜️", scenery: "🏜️🦂⚱️☀️", mapX: 370, mapY: 340, biome: "desert", bg: "linear-gradient(135deg, #2b1d0b 0%, #120b04 100%)", minLv: 32, maxLv: 40, reqQuests: 10,
     hazard: "☀️ Blinding Glass-Sand: Head strikes have -5% accuracy but +20% Crit DMG (1.68x Hardcore Scaling)",
     desc: "Blinding wastes of black glass-sand where buried First-Age tombs rise from the dunes.",
     kingdomRole: "Opening southern desert trade routes enriches your Grand Bazaar with gold and spice.",
@@ -3011,7 +3072,7 @@ var AREAS = [
     storyChapter: { title: "Chapter V: The Sun Tablet Prophecy", icon: "☀️⚱️",
       text: "<b>Act I — The Vitrified Vault:</b> Pharaoh Amon-Set's golden death-mask clatters across the obsidian tiles of his sepulcher. As the sandstorm outside subsides, Prince Zahir helps you lift the ancient <b>Basalt Sun Tablet</b> from the sarcophagus altar.<br><br><b>Act II — Map of the Three Locks:</b> Inscribed in First-Age draconic runes, the tablet reveals where the Three Dragon Shards were hidden after the Battle of the Sundered Sky: the <b>Sapphire Frost Shard</b> in Ironcrag Peaks, the <b>Topaz Storm Stone</b> in the Clockwork Citadel, and the <b>Ruby Cinder Shard</b> in Obsidian Caldera." }
   },
-  { id: 6, name: "6. Ironcrag Glacier Peaks", icon: "🏔️", scenery: "🏔️❄️🦅⚡", mapX: 435, mapY: 245, biome: "peaks", bg: "linear-gradient(135deg, #121924 0%, #070a0f 100%)", minLv: 40, maxLv: 48, reqQuests: 5,
+  { id: 6, name: "6. Ironcrag Glacier Peaks", icon: "🏔️", scenery: "🏔️❄️🦅⚡", mapX: 435, mapY: 245, biome: "peaks", bg: "linear-gradient(135deg, #121924 0%, #070a0f 100%)", minLv: 40, maxLv: 48, reqQuests: 10,
     hazard: "❄️ Howling Glacier Gale: Leg sweeps deal +20% bonus damage (1.68x Hardcore Scaling)",
     desc: "Howling glacier-citadels besieged by Grommash's Uruk war-host and frost wyverns.",
     kingdomRole: "Breaking the Uruk siege secures Dwarven iron-ore shipments for your Kingdom.",
@@ -3035,7 +3096,7 @@ var AREAS = [
 String buildDataChunkB2() {
     return '''
 AREAS = AREAS.concat([
-  { id: 7, name: "7. Catacombs of the Fallen", icon: "💀", scenery: "⚰️🕯️💀🦇", mapX: 505, mapY: 315, biome: "crypt", bg: "linear-gradient(135deg, #1c0d24 0%, #09040d 100%)", minLv: 48, maxLv: 56, reqQuests: 5,
+  { id: 7, name: "7. Catacombs of the Fallen", icon: "💀", scenery: "⚰️🕯️💀🦇", mapX: 505, mapY: 315, biome: "crypt", bg: "linear-gradient(135deg, #1c0d24 0%, #09040d 100%)", minLv: 48, maxLv: 56, reqQuests: 10,
     hazard: "🕯️ Necrotic Miasma: Undead foes start with reinforced Bone-Armor (1.68x Hardcore Scaling)",
     desc: "Miles of ossuary tunnels beneath the capital where fallen kings march under necromantic chains.",
     kingdomRole: "Cleansing the Royal Crypts sanctifies your Cathedral and rallies paladins to your banner.",
@@ -3052,7 +3113,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter VII: Rescue in the Royal Mausoleum", icon: "💀🕯️",
       text: "<b>Act I — The Phylactery Sundered:</b> Your final blow cleaves Arch-Lich Malakor's obsidian phylactery in twain! A shockwave of violet soul-fire blows open the iron bars of Queen Isolde's cage, and King Aldric IX's stolen spirit rushes back into the palace above.<br><br><b>Act II — Malakor's Dying Curse:</b> As Malakor's skull dissolves into ash, his hollow voice echoes through the vault: <i>'Fools! I sought the Shards not to rule Valoria, but to weld the Astral Locks shut! Omega Prime is already overloading in the Clockwork Citadel—if the Second Shard shatters, the sky itself will bleed!'</i>" }
   },
-  { id: 8, name: "8. The Clockwork Citadel", icon: "⚙️", scenery: "⚙️⛓️⚡🕰️", mapX: 575, mapY: 230, biome: "spire", bg: "linear-gradient(135deg, #1f1b12 0%, #0c0a07 100%)", minLv: 56, maxLv: 64, reqQuests: 5,
+  { id: 8, name: "8. The Clockwork Citadel", icon: "⚙️", scenery: "⚙️⛓️⚡🕰️", mapX: 575, mapY: 230, biome: "spire", bg: "linear-gradient(135deg, #1f1b12 0%, #0c0a07 100%)", minLv: 56, maxLv: 64, reqQuests: 10,
     hazard: "⚡ Arc-Dynamo Static: Shattering enemy Armor deals bonus shock damage (1.68x Hardcore Scaling)",
     desc: "A mile-high brass spire of roaring steam-turbines, arc-lightning, and soulless iron constructs.",
     kingdomRole: "Capturing Clockwork dynamos upgrades your siege defenses and forge efficiency.",
@@ -3069,7 +3130,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter VIII: The Heart of Brass & Lightning", icon: "⚙️💎",
       text: "<b>Act I — The God-Engine Halted:</b> Steam and arc-lightning vent from Omega Prime's ruptured chassis as the colossus crashes across the brass causeway. Reaching into its cooling reactor core, you claim the Second Dragon Shard: <b>The Topaz Storm Stone (+5% All Stats)</b>.<br><br><b>Act II — The Crystalline Resonance:</b> Chief Artificer Lyss reads the colossus's brass punch-cards in horror: the vibration of the turbines has already cracked open the subterranean star-caverns of the <b>Crystalline Abyss</b>." }
   },
-  { id: 9, name: "9. The Crystalline Abyss", icon: "💎", scenery: "💎🔮🌑⚡", mapX: 650, mapY: 310, biome: "crystal", bg: "linear-gradient(135deg, #10182e 0%, #060914 100%)", minLv: 64, maxLv: 72, reqQuests: 5,
+  { id: 9, name: "9. The Crystalline Abyss", icon: "💎", scenery: "💎🔮🌑⚡", mapX: 650, mapY: 310, biome: "crystal", bg: "linear-gradient(135deg, #10182e 0%, #060914 100%)", minLv: 64, maxLv: 72, reqQuests: 10,
     hazard: "💎 Prism Refraction: Heroic Skill Combos deal +15% extra damage (1.68x Hardcore Scaling)",
     desc: "Subterranean star-caverns where reality thins and void-horrors seep through crystalline rifts.",
     kingdomRole: "Stabilizing the Crystalline rifts empowers your war-mages with pure astral mana.",
@@ -3086,7 +3147,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter IX: Mirrors of the Astral Sea", icon: "💎🌑",
       text: "<b>Act I — The Shattered Prism:</b> Xylarion's central facet fractures with a chime heard across twelve leagues. As the refracted illusions fade, the two Dragon Shards on your belt project a beam of starlight toward the eastern coast.<br><br><b>Act II — The Admiral's Summons:</b> Archmage Caelum traces the beam across his astrolabe: to reach the volcanic crater of Obsidian Caldera where the final Shard rests, your fleet must force a passage through the <b>Tempest Coast &amp; Maelstrom</b>." }
   },
-  { id: 10, name: "10. Tempest Coast & Maelstrom", icon: "🌊", scenery: "🌊⚓🦑⛈️", mapX: 730, mapY: 235, biome: "sea", bg: "linear-gradient(135deg, #09222c 0%, #040e14 100%)", minLv: 72, maxLv: 80, reqQuests: 5,
+  { id: 10, name: "10. Tempest Coast & Maelstrom", icon: "🌊", scenery: "🌊⚓🦑⛈️", mapX: 730, mapY: 235, biome: "sea", bg: "linear-gradient(135deg, #09222c 0%, #040e14 100%)", minLv: 72, maxLv: 80, reqQuests: 10,
     hazard: "⛈️ Storm-Tide Deck: Pitching decks make Iron Nets 100% lethal (1.68x Hardcore Scaling)",
     desc: "A roaring abyssal whirlpool littered with the hulls of a hundred sunken armadas.",
     kingdomRole: "Commanding the Tempest Coast gives your Kingdom an unstoppable naval armada.",
@@ -3103,7 +3164,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter X: Grave of the First Armada", icon: "⚓🌊",
       text: "<b>Act I — The Whirlpool Calmed:</b> Harpooned through its abyssal maw, the Leviathan sinks into the trench below. For the first time in a thousand years, the roaring whirlpool of the Tempest Coast flattens into black glass.<br><br><b>Act II — Landfall at the Caldera:</b> Admiral Valerius orders the fleet full-sail toward the smoking basalt cliffs of <b>Obsidian Caldera</b>, where Ignisrath the Cinder Lord guards the third and final Dragon Shard." }
   },
-  { id: 11, name: "11. Obsidian Caldera", icon: "🌋", scenery: "🌋🔥☄️👹", mapX: 810, mapY: 315, biome: "volcano", bg: "linear-gradient(135deg, #2e0c08 0%, #120403 100%)", minLv: 80, maxLv: 86, reqQuests: 5,
+  { id: 11, name: "11. Obsidian Caldera", icon: "🌋", scenery: "🌋🔥☄️👹", mapX: 810, mapY: 315, biome: "volcano", bg: "linear-gradient(135deg, #2e0c08 0%, #120403 100%)", minLv: 80, maxLv: 86, reqQuests: 10,
     hazard: "🌋 Magma Vents: Critical Strikes deal +20% searing damage (1.68x Hardcore Scaling)",
     desc: "Rivers of white-hot magma surrounding the crater where Aethelgard the First Wyrm fell.",
     kingdomRole: "Taming Obsidian Caldera supplies your Sky-Dragon Roost with elder drakes.",
@@ -3135,7 +3196,7 @@ String buildDataChunkC1() {
 String buildDataChunkC1a() {
     return '''
 AREAS = AREAS.concat([
-  { id: 12, name: "12. The Dragon's Court & Astral Throne", icon: "🐉", scenery: "🐉👑🌑⚜️", mapX: 830, mapY: 185, biome: "astral", bg: "linear-gradient(135deg, #241033 0%, #0d0514 100%)", minLv: 86, maxLv: 90, reqQuests: 5,
+  { id: 12, name: "12. The Dragon's Court & Astral Throne", icon: "🐉", scenery: "🐉👑🌑⚜️", mapX: 830, mapY: 185, biome: "astral", bg: "linear-gradient(135deg, #241033 0%, #0d0514 100%)", minLv: 86, maxLv: 90, reqQuests: 10,
     hazard: "🌌 Starlight Aegis: Perfect Deflects deal +25% bonus counter damage (1.68x Hardcore Scaling)",
     desc: "The obsidian celestial citadel above the clouds where Vaelthazar guards the seal of the Shattered Firmament.",
     kingdomRole: "Ascension to the Astral Throne crowns your domain as the Sovereign Kingdom of Valoria.",
@@ -3152,7 +3213,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XII: The Cracking of the Firmament", icon: "🐉🌑",
       text: "<b>Act I — The Emperor's Trial:</b> Vaelthazar bows his golden horned head before your blade, his voice resonating inside your very bones.<br><br><b>Act II — The Ten Fallen Realms:</b> <i>'Mortal Sovereign,'</i> the Dragon Emperor rumbles as the stars above the throne room split open like glass, <i>'the Three Dragon Shards were never weapons. They were the warden-keys holding back the Ten Fallen Wyrm-Realms! By bringing them together after Malakor's blood-ritual, the seal has opened. March beyond the Shattered Firmament and slay Aethelgard's Reborn Avatar before creation itself is unmade!'</i>" }
   },
-  { id: 13, name: "13. The Shattered Firmament", icon: "☄️", scenery: "☄️🌑🪨⚡", mapX: 750, mapY: 115, biome: "astral", bg: "linear-gradient(135deg, #14112e 0%, #060512 100%)", minLv: 90, maxLv: 96, reqQuests: 5,
+  { id: 13, name: "13. The Shattered Firmament", icon: "☄️", scenery: "☄️🌑🪨⚡", mapX: 750, mapY: 115, biome: "astral", bg: "linear-gradient(135deg, #14112e 0%, #060512 100%)", minLv: 90, maxLv: 96, reqQuests: 10,
     hazard: "☄️ Low-Gravity Ether: Head Strikes have +10% higher accuracy (1.68x Hardcore Scaling)",
     desc: "Floating islands of broken star-stone drifting in the upper ether where celestial titans wage war.",
     kingdomRole: "Harvesting fallen star-metal unlocks +16 to +25 Celestial Tempering in your Forge.",
@@ -3168,7 +3229,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XIII: The First Astral Seal", icon: "☄️📜",
       text: "Hyperion collapses into stardust, surrendering the <b>Seal of the Shattered Sky (+4% All Stats)</b>, unlocking <b>+25 Star-Metal Forging</b>, and opening the abyssal trench to Sunken Atlantis." }
   },
-  { id: 14, name: "14. Sunken Atlantis of the First Elves", icon: "🔱", scenery: "🔱🏛️🌑🌊", mapX: 665, mapY: 80, biome: "sea", bg: "linear-gradient(135deg, #06212b 0%, #030d12 100%)", minLv: 96, maxLv: 102, reqQuests: 5,
+  { id: 14, name: "14. Sunken Atlantis of the First Elves", icon: "🔱", scenery: "🔱🏛️🌑🌊", mapX: 665, mapY: 80, biome: "sea", bg: "linear-gradient(135deg, #06212b 0%, #030d12 100%)", minLv: 96, maxLv: 102, reqQuests: 10,
     hazard: "🌊 Abyssal Pressure: Torso strikes shred +25% more Enemy Armor (1.68x Hardcore Scaling)",
     desc: "Drowned marble cathedrals ten leagues beneath the ocean where the First Elves perished in the Wyrm-War.",
     kingdomRole: "Recovering Atlantean hydro-engines doubles your Kingdom's maritime trade wealth.",
@@ -3184,7 +3245,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XIV: Song of the Drowned Empire", icon: "🔱🌊",
       text: "Thalassa's trident parts the abyssal floor, revealing the subterranean lava-lift descending into the Blood-Iron Foundry of Gehenna." }
   },
-  { id: 15, name: "15. Blood-Iron Foundry of Gehenna", icon: "🔥", scenery: "🔥⚒️⛓️👹", mapX: 575, mapY: 115, biome: "volcano", bg: "linear-gradient(135deg, #2e0707 0%, #120202 100%)", minLv: 102, maxLv: 108, reqQuests: 5,
+  { id: 15, name: "15. Blood-Iron Foundry of Gehenna", icon: "🔥", scenery: "🔥⚒️⛓️👹", mapX: 575, mapY: 115, biome: "volcano", bg: "linear-gradient(135deg, #2e0707 0%, #120202 100%)", minLv: 102, maxLv: 108, reqQuests: 10,
     hazard: "🔥 Hell-Forge Heat: Both sides deal +15% melee damage (1.68x Hardcore Scaling)",
     desc: "A continent-spanning subterranean hell-forge where chained titans hammer weapons for the Outer Void.",
     kingdomRole: "Seizing Gehenna's blood-anvils supplies your Kingdom with unbreakable Hell-Iron.",
@@ -3200,7 +3261,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XV: The Seal of Blood-Iron", icon: "🔥⛓️",
       text: "From Vulkor's shattered anvil you claim the <b>Seal of Blood-Iron (+4% All Stats)</b> and free the chained forge-titans." }
   },
-  { id: 16, name: "16. Blighted World-Tree Yggdrasil", icon: "🌲", scenery: "🌲🐍🥀🌑", mapX: 485, mapY: 80, biome: "forest", bg: "linear-gradient(135deg, #0d210d 0%, #040a04 100%)", minLv: 108, maxLv: 114, reqQuests: 5,
+  { id: 16, name: "16. Blighted World-Tree Yggdrasil", icon: "🌲", scenery: "🌲🐍🥀🌑", mapX: 485, mapY: 80, biome: "forest", bg: "linear-gradient(135deg, #0d210d 0%, #040a04 100%)", minLv: 108, maxLv: 114, reqQuests: 10,
     hazard: "🌿 World-Root Spores: Regenerates +5% MP per combat round (1.68x Hardcore Scaling)",
     desc: "The colossal planetary root-system of Valoria, gnawed from within by Nidhogg's void-brood.",
     kingdomRole: "Healing the World-Tree's roots doubles your Kingdom's agricultural Rations and Stability.",
@@ -3223,7 +3284,7 @@ AREAS = AREAS.concat([
 String buildDataChunkC1b() {
     return '''
 AREAS = AREAS.concat([
-  { id: 17, name: "17. Necropolis of the First Kings", icon: "👑", scenery: "👑⚰️💀🕯️", mapX: 395, mapY: 120, biome: "crypt", bg: "linear-gradient(135deg, #1f0a26 0%, #0b030e 100%)", minLv: 114, maxLv: 120, reqQuests: 5,
+  { id: 17, name: "17. Necropolis of the First Kings", icon: "👑", scenery: "👑⚰️💀🕯️", mapX: 395, mapY: 120, biome: "crypt", bg: "linear-gradient(135deg, #1f0a26 0%, #0b030e 100%)", minLv: 114, maxLv: 120, reqQuests: 10,
     hazard: "👑 Royal Tomb Aura: Intimidate & Taunt last +2 extra rounds (1.68x Hardcore Scaling)",
     desc: "The forbidden city of black marble mausoleums where Aldric the First and the Dragon-Slayers were entombed.",
     kingdomRole: "Drops the GOD-TIER AMULET (Genesis Eye of the First Wyrm)!",
@@ -3239,7 +3300,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XVII: The First King's Blessing", icon: "👑📿",
       text: "Freed from his void-corruption, the spirit of Aldric the First bestows upon you the <b>Seal of the First King</b> and the <b>God-Tier Genesis Amulet</b>!" }
   },
-  { id: 18, name: "18. The Chrono-Shattered Wastes", icon: "⏳", scenery: "⏳🏜️⚡🌑", mapX: 305, mapY: 80, biome: "desert", bg: "linear-gradient(135deg, #261a0d 0%, #0f0a05 100%)", minLv: 120, maxLv: 126, reqQuests: 5,
+  { id: 18, name: "18. The Chrono-Shattered Wastes", icon: "⏳", scenery: "⏳🏜️⚡🌑", mapX: 305, mapY: 80, biome: "desert", bg: "linear-gradient(135deg, #261a0d 0%, #0f0a05 100%)", minLv: 120, maxLv: 126, reqQuests: 10,
     hazard: "⏳ Time-Rift Winds: Skill Shatter Combos refund 75% MP (1.68x Hardcore Scaling)",
     desc: "A fractured waste where past, present, and future overlap in violent tempests of frozen time.",
     kingdomRole: "Drops the GOD-TIER RELIC (Genesis Heart of the Astral Conduit)!",
@@ -3255,7 +3316,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XVIII: Master of Eternity", icon: "⏳🔮",
       text: "Chronos shatters into a million golden gears, revealing the <b>God-Tier Genesis Relic</b>!" }
   },
-  { id: 19, name: "19. Citadel of the Eclipse Seraphim", icon: "⚜️", scenery: "⚜️🌑🗡️🔥", mapX: 215, mapY: 125, biome: "spire", bg: "linear-gradient(135deg, #240d1c 0%, #0d040a 100%)", minLv: 126, maxLv: 132, reqQuests: 5,
+  { id: 19, name: "19. Citadel of the Eclipse Seraphim", icon: "⚜️", scenery: "⚜️🌑🗡️🔥", mapX: 215, mapY: 125, biome: "spire", bg: "linear-gradient(135deg, #240d1c 0%, #0d040a 100%)", minLv: 126, maxLv: 132, reqQuests: 10,
     hazard: "🌑 Black-Sun Eclipse: Execute finishers grant +35% XP (1.68x Hardcore Scaling)",
     desc: "A cathedral of black glass orbiting a dying sun, ruled by six-winged fallen seraphim.",
     kingdomRole: "Drops the GOD-TIER BOOTS (Genesis Treads of the Shattered Firmament)!",
@@ -3271,7 +3332,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XIX: Wings of the Eclipse", icon: "⚜️🥾",
       text: "Luciferon's six wings fold in defeat as you claim the <b>Seal of the Eclipse Seraph</b> and the <b>God-Tier Genesis Boots</b>!" }
   },
-  { id: 20, name: "20. Primordial Dragon Graveyard", icon: "🦴", scenery: "🦴🐉💀🌋", mapX: 130, mapY: 85, biome: "peaks", bg: "linear-gradient(135deg, #1c1710 0%, #0a0805 100%)", minLv: 132, maxLv: 138, reqQuests: 5,
+  { id: 20, name: "20. Primordial Dragon Graveyard", icon: "🦴", scenery: "🦴🐉💀🌋", mapX: 130, mapY: 85, biome: "peaks", bg: "linear-gradient(135deg, #1c1710 0%, #0a0805 100%)", minLv: 132, maxLv: 138, reqQuests: 10,
     hazard: "🦴 Elder Dragon Bones: Heavy Armor Bars require Torso strikes or Bombs (1.68x Hardcore Scaling)",
     desc: "A valley of mountain-sized dragon skulls where the first brood of Aethelgard rises in undead fury.",
     kingdomRole: "Drops the GOD-TIER HELM (Genesis Crown of the Eternal Creator)!",
@@ -3287,7 +3348,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XX: Crown of the Elder Wyrms", icon: "👑🐉",
       text: "Ancalagon's colossal skull crashes into the dust, revealing the <b>God-Tier Genesis Helm</b>!" }
   },
-  { id: 21, name: "21. The Outer Void Maw", icon: "🕳️", scenery: "🕳️🌑🦑👁️", mapX: 65, mapY: 165, biome: "astral", bg: "linear-gradient(135deg, #0d071c 0%, #040208 100%)", minLv: 138, maxLv: 144, reqQuests: 5,
+  { id: 21, name: "21. The Outer Void Maw", icon: "🕳️", scenery: "🕳️🌑🦑👁️", mapX: 65, mapY: 165, biome: "astral", bg: "linear-gradient(135deg, #0d071c 0%, #040208 100%)", minLv: 138, maxLv: 144, reqQuests: 10,
     hazard: "🕳️ Event Horizon: High-risk, high-crit Singularity Flux (1.68x Hardcore Scaling)",
     desc: "The event horizon at the edge of existence where reality dissolves into primordial chaos.",
     kingdomRole: "Drops the GOD-TIER ARMOR (Genesis Scales of the Progenitor Wyrm)!",
@@ -3303,7 +3364,7 @@ AREAS = AREAS.concat([
     storyChapter: { title: "Chapter XXI: Armor of the Progenitor", icon: "🐉🛡️",
       text: "Beyond the event horizon, you claim the <b>God-Tier Genesis Armor</b> and step onto the final bridge to the Throne of Genesis!" }
   },
-  { id: 22, name: "22. The Throne of Genesis (Lv 150 Finale)", icon: "🌟", scenery: "🌟🐉👑🌑", mapX: 75, mapY: 65, biome: "genesis", bg: "linear-gradient(135deg, #2e0d2e 0%, #120417 50%, #05020a 100%)", minLv: 144, maxLv: 150, reqQuests: 5,
+  { id: 22, name: "22. The Throne of Genesis (Lv 150 Finale)", icon: "🌟", scenery: "🌟🐉👑🌑", mapX: 75, mapY: 65, biome: "genesis", bg: "linear-gradient(135deg, #2e0d2e 0%, #120417 50%, #05020a 100%)", minLv: 144, maxLv: 150, reqQuests: 10,
     hazard: "🌟 Flame of First Creation: All Combo Chains deal +25% Divine Damage (1.68x Hardcore Scaling)",
     desc: "The birth-crater of the cosmos where Aethelgard the Reborn Progenitor awaits the final judgment of mortals.",
     kingdomRole: "Drops the GOD-TIER WEAPON (Spear of Dawn) & ANY missing God-Tier Genesis Panoply piece!",
@@ -3562,6 +3623,18 @@ var NPC_CHAMPIONS = [
   { name: "Lord Draven Blackthorn", race: "Half-Orc", gender: "Male", hairColor: "Crimson", calling: "Warrior", nobleRank: "Grand Regent", level: 70, guts: 195, wits: 140, charm: 120, maxHp: 3900, atk: 600, def: 310, eva: 26, parry: 38, acc: 122, crit: 35, pvpRating: 1950, sprite: "⚔️" },
   { name: "Emperor Valerius Star-Breaker", race: "Dragonborn", gender: "Male", hairColor: "Tarnished Gold", calling: "Paladin", nobleRank: "Emperor of Valoria", level: 115, guts: 360, wits: 290, charm: 310, maxHp: 9800, atk: 1450, def: 780, eva: 38, parry: 44, acc: 142, crit: 42, pvpRating: 2450, sprite: "👑" }
 ];
+
+// Updated Lodging Tiers: Cold Floor gives 0% Stress Relief; Beds above the floor grant soothing Lavender/Hearth Stress Relief!
+LODGING_TIERS = [
+  { id: "floor", name: "🪵 Cold Tavern Floor", icon: "🪵🐀", multCost: 0, minLv: 1, fameReq: 0, witsReq: 0, reqMansion: false,
+    desc: "Req: Lv 1 (FREE • 30m Lock). Damp floorboards & cellar rats: 0% Stress relief! After 2+ hrs: Restores 40% HP/MP & +4⚡ Quests, 35% risk of Pickpockets or Nightmares (+10% Stress)!" },
+  { id: "cot", name: "🍺 Common Room Straw Cot", icon: "🍺🛏️", multCost: 45, minLv: 6, fameReq: 30, witsReq: 18, reqMansion: false,
+    desc: "Req: Lv 6+ & (30 Fame OR 18 Wits). Warm hearthside cot: Eases -15% Stress on check-in! After 2+ hrs: Restores 75% HP/MP, +8⚡ Quests & purges -65% Stress + Trauma!" },
+  { id: "inn", name: "🛌 Private Inn Feather Suite", icon: "🛌🕯️", multCost: 110, minLv: 15, fameReq: 110, witsReq: 42, reqMansion: false,
+    desc: "Req: Lv 15+ & (110 Fame OR 42 Wits). Lavender-scented oak chamber: Eases -25% Stress on check-in! After 2+ hrs: 100% HP/MP, +14⚡ Quests, purges 100% Stress/Afflictions & grants Lucid Calm (-25% Stress Gain for 10q)!" },
+  { id: "mansion", name: "🏰 Your Royal Palace Estate", icon: "🏰👑", multCost: 0, minLv: 26, fameReq: 350, witsReq: 85, reqMansion: true,
+    desc: "Req: Lv 26+, Palace Lv 1+/Count+ & (350 Fame OR 85 Wits). Eases -35% Stress on check-in! After 2+ hrs: 100% HP/MP, +22⚡ Quests, +1💎, 100% Stress/Affliction Purge & Sovereign Serenity (+20% Stats & -35% Stress Gain for 15q)!" }
+];
 '''
 }
 
@@ -3575,12 +3648,12 @@ boolean part3ABoundaryGuard() { return true }
 // ==============================================================================
 
 String buildHeroChunkA() {
-    return buildHeroChunkA1() + "\n" + buildHeroChunkA2() //[cite: 3]
+    return buildHeroChunkA1() + "\n" + buildHeroChunkA2()
 }
 
 String buildHeroChunkA1() {
     return '''
-var serverData = { version: "v18.3", serverNowEpoch: Date.now(), maxSlots: 3, baseQuests: 30, regenMins: 45, xpMult: 1, unmakingWipeEnabled: false, realWeather: { linked: false, active: false, conditions: [], summary: "🌤️ Mild Skies" }, slots: {}, fallenCrypt: {}, sessionLocks: {}, pvpInbox: {}, altGuardInbox: {}, sharedWarrant: null, unmaking: { active: false }, echoes: { cycles: 0, bonusXpPct: 0, bonusGems: 0 }, worldBoss: {}, realmCurse: null, zoneRaidBosses: {}, spireRecord: { floor: 1, hero: "None" }, dynastyWonder: { stage: 0, goldIn: 0, matsIn: 0 }, chronicle: [] };
+var serverData = { version: "v18.4.1", serverNowEpoch: Date.now(), maxSlots: 3, baseQuests: 30, regenMins: 45, xpMult: 1, unmakingWipeEnabled: false, realWeather: { linked: false, active: false, conditions: [], summary: "🌤️ Mild Skies" }, slots: {}, fallenCrypt: {}, sessionLocks: {}, pvpInbox: {}, altGuardInbox: {}, sharedWarrant: null, unmaking: { active: false }, echoes: { cycles: 0, bonusXpPct: 0, bonusGems: 0 }, worldBoss: {}, realmCurse: null, zoneRaidBosses: {}, spireRecord: { floor: 1, hero: "None" }, dynastyWonder: { stage: 0, goldIn: 0, matsIn: 0 }, chronicle: [] };
 var activeSlotKey = null;
 var hero = null;
 var currentTab = "adventure";
@@ -3626,6 +3699,7 @@ var MAX_DAILY_SOCKETS = 5;
 var MAX_DAILY_SHOP_BUYS = 5;
 var MAX_DAILY_BELT_BUYS = 5;
 var MAX_DAILY_FEASTS = 3;
+var MAX_DAILY_DRINKS = 5;
 var MAX_DAILY_COURT_PETITIONS = 2;
 var MAX_DAILY_INTRIGUE = 3;
 var MAX_DAILY_COURTING = 3;
@@ -3665,6 +3739,28 @@ function addHeroFame(amt, targetH) {
   return h.fame;
 }
 
+function isHeroDrunk(targetH) {
+  var h = targetH || hero;
+  if (!h || !h.drunkUntil) return false;
+  if (Date.now() >= h.drunkUntil) {
+    h.drunkUntil = 0;
+    return false;
+  }
+  return true;
+}
+
+function countTotalPartyDiseases(targetH) {
+  var h = targetH || hero;
+  if (!h) return 0;
+  var cnt = Array.isArray(h.diseases) ? h.diseases.length : 0;
+  if (Array.isArray(h.mercenaries)) {
+    h.mercenaries.forEach(function(m) {
+      if (m && m.disease) cnt++;
+    });
+  }
+  return cnt;
+}
+
 // Strict 2-Helper Party Cap: Counts active Recruits + Alt Bodyguard + Animal Companion + Active Battle Heir
 function getActiveHelperCount(targetH) {
   var h = targetH || hero;
@@ -3691,7 +3787,6 @@ function enforceTwoHelperCap(h) {
   }
 }
 
-// Push a newly acquired positive buff ID to the newest position in the 6-Buff FIFO queue
 function pushBuffToFifo(buffId, targetH) {
   var h = targetH || hero;
   if (!h || !buffId) return;
@@ -3748,7 +3843,6 @@ function getActiveRecruitSynergyBond(h) {
   return null;
 }
 
-// 6-Buff FIFO Engine: Collects all candidate Positive Buffs & Debuffs, keeps ALL Debuffs, and caps Positive Buffs to the 6 newest (FIFO)!
 function getActiveBuffsAndWhyList(targetHero) {
   var h = targetHero || hero;
   if (!h) return [];
@@ -3757,18 +3851,29 @@ function getActiveBuffsAndWhyList(targetHero) {
   var nRank = NOBLE_RANKS[h.nobleIdx || 0] || NOBLE_RANKS[0];
   var maxF = getMaxFameForLevel(h.level || 1);
 
+  if (isHeroDrunk(h)) {
+    var drRem = formatCooldownSec(Math.max(1, Math.ceil((h.drunkUntil - Date.now()) / 1000)));
+    rawList.push({ id: "debuff_drunk", icon: "🍺", name: "Stumbling Drunk (Boar's Head Taproom)", effect: "-15% Hit Accuracy, -12% Dodge & -15% Wits (" + drRem + " left)", why: "Drank too many goblets of Aged Dragon-Malt Reserve within 2 hours at the Boar's Head Tavern!", isDebuff: true });
+  }
   if (h.deathsDoorTrauma) {
-    rawList.push({ id: "debuff_trauma", icon: "🕯️", name: "Death's Door Trauma", effect: "-10% All Stats (Mortality Debuff)", why: "A Valkyrie Seal shattered to save your life. Cure by resting at the Inn or praying at the Sanctuary!", isDebuff: true });
+    rawList.push({ id: "debuff_trauma", icon: "🕯️", name: "Death's Door Trauma", effect: "-10% All Stats (Mortality Debuff)", why: "A Valkyrie Seal shattered to save your life. Cure by resting above the floor at the Inn or praying at the Sanctuary!", isDebuff: true });
   }
   if ((h.stress || 0) >= 75) {
-    rawList.push({ id: "debuff_paranoia", icon: "😱", name: "Paranoia (75%+ Stress)", effect: "-10% Hit Accuracy, -10% Dodge & 15% Recruit Panic Chance", why: "Severe mental strain (75%+ Stress). Relieve Stress at the Sanctuary Confessional, Inn, or Campfire!", isDebuff: true });
+    rawList.push({ id: "debuff_paranoia", icon: "😱", name: "Paranoia (75%+ Stress)", effect: "-10% Hit Accuracy, -10% Dodge & 15% Recruit Panic Chance", why: "Severe mental strain (75%+ Stress). Drink Aged Dragon-Malt at the Tavern, pray at the Confessional, or sleep above the floor at the Inn!", isDebuff: true });
   } else if ((h.stress || 0) >= 50) {
     rawList.push({ id: "debuff_dread", icon: "😰", name: "Creeping Dread (50%+ Stress)", effect: "-5% Hit Accuracy & -5% Dodge", why: "Mounting dungeon dread (50%+ Stress). Relieve Stress before it reaches 75% Paranoia!", isDebuff: true });
   }
 
   if (Array.isArray(h.diseases) && h.diseases.length > 0) {
     h.diseases.forEach(function(d) {
-      rawList.push({ id: "debuff_dis_" + d.id, icon: "🦠", name: d.name, effect: d.desc, why: "Contracted from a pestilent enemy in battle. Cure at the Sanctuary's Plague-Doctor Leech Ward!", isDebuff: true });
+      rawList.push({ id: "debuff_dis_" + d.id, icon: "🦠", name: "Hero " + d.name, effect: d.desc, why: (d.caughtFrom ? ("Caught from " + d.caughtFrom + ". ") : "") + "Cure at the Plague-Doctor Leech Ward (2/day) or with Sister Vespera (15💎)!", isDebuff: true });
+    });
+  }
+  if (Array.isArray(h.mercenaries)) {
+    h.mercenaries.forEach(function(m) {
+      if (m && m.disease) {
+        rawList.push({ id: "debuff_recdis_" + m.id, icon: "🦠", name: "Recruit Infected (" + m.name + "): " + m.disease.name, effect: m.disease.recruitEffect || "-15% Recruit ATK", why: (m.disease.caughtFrom ? ("Caught from " + m.disease.caughtFrom + ". ") : "") + "Cure via Plague-Doctor Leech Ward or Sister Vespera (15💎)!", isDebuff: true });
+      }
     });
   }
 
@@ -3802,7 +3907,8 @@ function getActiveBuffsAndWhyList(targetHero) {
   }
   if (h.lodgingBuff && h.lodgingBuff.questsLeft > 0) {
     var isStiff = (h.lodgingBuff.dodgePen > 0);
-    rawList.push({ id: isStiff ? "debuff_lodging" : "buff_lodging", icon: isStiff ? "🪵" : "🛌", name: "Lodging Effect: " + h.lodgingBuff.name, effect: isStiff ? ("-" + h.lodgingBuff.dodgePen + "% Dodge") : ("+" + (h.lodgingBuff.statBonusPct || 12) + "% All Stats & +" + (h.lodgingBuff.xpBonusPct || 15) + "% XP"), why: "Slept 2+ hours offline at the Inn or Royal Palace (" + h.lodgingBuff.questsLeft + " Quests remaining).", isDebuff: isStiff });
+    var stRedTxt = h.lodgingBuff.stressRedPct ? (" & -" + h.lodgingBuff.stressRedPct + "% Stress Gain") : "";
+    rawList.push({ id: isStiff ? "debuff_lodging" : "buff_lodging", icon: isStiff ? "🪵" : "🛌", name: "Lodging Effect: " + h.lodgingBuff.name, effect: isStiff ? ("-" + h.lodgingBuff.dodgePen + "% Dodge") : ("+" + (h.lodgingBuff.statBonusPct || 12) + "% All Stats, +" + (h.lodgingBuff.xpBonusPct || 15) + "% XP" + stRedTxt), why: "Slept 2+ hours offline at the Inn or Royal Palace (" + h.lodgingBuff.questsLeft + " Quests remaining).", isDebuff: isStiff });
   }
   if (h.tarotBuff && h.tarotBuff.questsLeft > 0) {
     rawList.push({ id: "buff_tarot", icon: h.tarotBuff.icon || "🃏", name: "Tarot Arcana: " + h.tarotBuff.name, effect: h.tarotBuff.desc, why: "Drawn at the Tarot Seer's Vardo (" + h.tarotBuff.questsLeft + " Quests remaining).", isDebuff: false });
@@ -3889,7 +3995,6 @@ function getActiveBuffsAndWhyList(targetHero) {
     rawList.push({ id: "buff_starchart", icon: "✨", name: "Astrologer's Star-Chart (" + h.starChart.toUpperCase() + ")", effect: scDesc, why: "Aligned constellation in the Void-Rifts tab.", isDebuff: false });
   }
 
-  // Enforce 6-Buff FIFO on Positive Buffs while keeping 100% of Debuffs!
   if (!Array.isArray(h.buffFifoOrder)) h.buffFifoOrder = [];
   var debuffs = [];
   var posBuffs = [];
@@ -3946,7 +4051,7 @@ function openActiveBuffsModal() {
   showPopupModal(
     '<div style="font-size:38px;">✨📜🛡️</div>' +
     '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">Active Blessings (' + posCnt + '/' + MAX_ACTIVE_BUFFS + ' FIFO Cap) &amp; Afflictions (' + debCnt + ')</div>' +
-    '<div style="font-size:11.5px;color:#86efac;margin-bottom:8px;">⚖️ <b>The Law of Six Blessings (First-In, First-Out):</b> Your mortal vessel can channel at most <b>6 positive buffs</b> at once. Gaining a new blessing automatically pushes out the oldest (' + displacedCnt + ' older blessing(s) displaced). <b>All Debuffs, Diseases &amp; Afflictions apply without limit!</b></div>' +
+    '<div style="font-size:11.5px;color:#86efac;margin-bottom:8px;">⚖️ <b>The Law of Six Blessings (First-In, First-Out):</b> Temporary blessings cap at <b>6 active slots</b> (' + displacedCnt + ' older displaced). <b>Innate Passives, Debuffs, Diseases &amp; Drunk Effects never displace!</b></div>' +
     '<div style="max-height:350px;overflow-y:auto;">' + rowsHtml + '</div>' +
     '<div style="display:flex;gap:8px;margin-top:10px;">' +
       '<button class="btn btn-gold" style="flex:1;" onclick="openHeroSheetModal()">⚜️ Hero Sheet</button>' +
@@ -3966,7 +4071,7 @@ function countCompletedDailyCategories(h) {
   if ((h.stealsUsedToday || 0) > 0) cnt++;
   if ((h.forgesUsedToday || 0) > 0 || (h.socketsUsedToday || 0) > 0) cnt++;
   if ((h.shopBuysToday || 0) > 0 || (h.beltBuysToday || 0) > 0) cnt++;
-  if ((h.feastsOrderedToday || 0) > 0 || (h.bantersUsedToday || 0) > 0) cnt++;
+  if ((h.feastsOrderedToday || 0) > 0 || (h.bantersUsedToday || 0) > 0 || (h.drinksBoughtToday || 0) > 0) cnt++;
   if ((h.courtPetitionsToday || 0) > 0 || (h.intrigueUsedToday || 0) > 0) cnt++;
   if ((h.courtingUsedToday || 0) > 0) cnt++;
   if ((h.minigamesPlayedToday || 0) > 0 || (h.rouletteSpinsToday || 0) > 0) cnt++;
@@ -4015,6 +4120,8 @@ function openDailyLimitsTrackerModal() {
     ["🪽 Valkyrie Seals Consecrated (Max 3 Carried)", (hero.sealsBoughtToday || 0) + " / " + MAX_DAILY_VALKYRIE_SEALS],
     ["⚔️ Mercenary Guild Contracts Signed", (hero.mercHiresToday || 0) + " / 2"],
     ["🙏 Cathedral Confessions / 🩸 Leech Ward", (hero.confessionsToday || 0) + "/2 • " + (hero.leechesUsedToday || 0) + "/2"],
+    ["💎 Sister Vespera Dragon-Glass Purges", "Unlimited (15💎 per Disease)"],
+    ["🥃 Boar's Head Taproom Drinks (-50% Stress)", (hero.drinksBoughtToday || 0) + " / " + MAX_DAILY_DRINKS],
     ["🧪 Thermal Alembic Brews", (hero.alembicUsedToday || 0) + " / " + MAX_DAILY_ALEMBIC],
     ["🥷 Bazaar Shoplifting Attempts", (hero.stealsUsedToday || 0) + " / " + MAX_DAILY_STEALS],
     ["🕯️ Sanctuary Healing Rites", (hero.healsUsedToday || 0) + " / " + MAX_DAILY_HEALS],
@@ -4042,7 +4149,7 @@ function openDailyLimitsTrackerModal() {
   showPopupModal(
     '<div style="font-size:36px;">📅⚖️⏳</div>' +
     '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">Daily Activity Caps (' + escapeHtml(hero.name) + ')</div>' +
-    '<div style="font-size:11.5px;color:#86efac;margin-bottom:8px;">⚡ <b>Patrol/Questing has NO daily limit</b> (purely energy-based). All non-questing facilities reset at midnight!</div>' +
+    '<div style="font-size:11.5px;color:#86efac;margin-bottom:8px;">⚡ <b>Patrol/Questing &amp; Huntsman Trophy Exchanges have NO daily limit!</b> All non-questing facilities reset at midnight.</div>' +
     cacheBanner +
     '<div style="max-height:300px;overflow-y:auto;background:#0b0811;border:1px solid #4a3823;border-radius:4px;padding:8px;text-align:left;">' + listHtml + '</div>' +
     '<button class="btn btn-gold" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Close Daily Caps</button>'
@@ -4095,6 +4202,7 @@ function checkClientDailyRollover(h) {
     h.sealsBoughtToday = 0; h.alembicUsedToday = 0; h.stealsUsedToday = 0;
     h.forgesUsedToday = 0; h.socketsUsedToday = 0;
     h.shopBuysToday = 0; h.beltBuysToday = 0; h.feastsOrderedToday = 0;
+    h.drinksBoughtToday = 0;
     h.courtPetitionsToday = 0; h.intrigueUsedToday = 0; h.courtingUsedToday = 0;
     h.minigamesPlayedToday = 0; h.pvpDuelsToday = 0;
     h.spireRunsToday = 0; h.delvesRunToday = 0;
@@ -4288,8 +4396,8 @@ function renderVectorWorldMapSvg() {
       (isSel || hasApex ? '<circle cx="' + a.mapX + '" cy="' + a.mapY + '" r="16" fill="none" stroke="' + (hasApex ? '#38bdf8' : '#fde047') + '" stroke-width="2.5" class="map-node-pulse"/>' : '') +
       '<circle cx="' + a.mapX + '" cy="' + a.mapY + '" r="12" fill="' + fillCol + '" stroke="' + strokeCol + '" stroke-width="' + (isSel ? '2.5' : '1.5') + '"/>' +
       '<text x="' + a.mapX + '" y="' + (a.mapY + 4) + '" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">' + (unlocked ? (hasApex ? '⚡' : (hasNem ? '💀' : a.id)) : '🔒') + '</text>' +
-      '<rect x="' + (a.mapX - 38) + '" y="' + (a.mapY + 14) + '" width="76" height="14" rx="3" fill="rgba(7,5,10,0.88)" stroke="' + strokeCol + '" stroke-width="0.7"/>' +
-      '<text x="' + a.mapX + '" y="' + (a.mapY + 24) + '" text-anchor="middle" fill="' + (isSel ? '#fde047' : '#e5dec9') + '" font-size="8.5" font-family="Cinzel,serif" font-weight="bold">' + (unlocked ? ('A' + a.id + ' (' + qT + '/5)' + (beaten ? '⚜️' : '')) : ('Lv ' + a.minLv + '+')) + '</text>' +
+      '<rect x="' + (a.mapX - 40) + '" y="' + (a.mapY + 14) + '" width="80" height="14" rx="3" fill="rgba(7,5,10,0.88)" stroke="' + strokeCol + '" stroke-width="0.7"/>' +
+      '<text x="' + a.mapX + '" y="' + (a.mapY + 24) + '" text-anchor="middle" fill="' + (isSel ? '#fde047' : '#e5dec9') + '" font-size="8.5" font-family="Cinzel,serif" font-weight="bold">' + (unlocked ? ('A' + a.id + ' (' + qT + '/10)' + (beaten ? '⚜️' : '')) : ('Lv ' + a.minLv + '+')) + '</text>' +
       (isSel ? '<text x="' + a.mapX + '" y="' + (a.mapY - 16) + '" text-anchor="middle" font-size="15">⚔️👑</text>' : '') +
     '</g>';
   });
@@ -4491,7 +4599,6 @@ function getCombatQteBounds(cObj) {
   if (!c || !hero) return { sweetHalf: 15, goldHalf: 4.0, speedMult: 1.0, label: "Standard" };
   var hLv = Math.max(1, hero.level || 1);
   var eLv = Math.max(1, c.level || 1);
-  // As you get closer to or exceed the enemy's level, and against higher-level foes & bosses, the QTE target shrinks!
   var lvScaleShrink = Math.min(8.5, Math.floor(eLv / 10) * 1.15);
   var proximityShrink = (eLv >= hLv - 1) ? Math.min(6.0, 2.5 + Math.max(0, eLv - hLv) * 0.85) : 0;
   var bossShrink = c.isBoss ? 4.5 : 0;
@@ -4542,6 +4649,11 @@ function masterRafLoop(timestamp) {
       updateRealWeatherTopPill();
       checkKingdomBuildCompletion();
       checkChildExpeditions();
+      if (hero && hero.drunkUntil && Date.now() >= hero.drunkUntil) {
+        hero.drunkUntil = 0;
+        addLog("💧🍺 Your 2-hour <b>Stumbling Drunk</b> haze from the Boar's Head Tavern has finally cleared!");
+        renderGameScreen();
+      }
       if (window.checkArmadaVoyageCompletion) window.checkArmadaVoyageCompletion();
       if (window.spawnAmbientWeatherParticle) window.spawnAmbientWeatherParticle();
       var armEl = document.getElementById("activeArmadaTimerSpan");
@@ -4572,7 +4684,7 @@ function checkChildExpeditions() {
       var xpWon = Math.round((90 + hero.level * 24) * (ch.atkMult || 1.0));
       hero.gold += gWon;
       hero.xp += xpWon;
-      ch.level = (ch.level || 1) + 1;
+      ch.level = Math.min(hero.level, (ch.level || 1) + 1);
       ch.atk = Math.round(ch.atk * 1.08) + 2;
       ch.maxHp = Math.round(ch.maxHp * 1.08) + 10;
       ch.hp = ch.maxHp;
@@ -4792,8 +4904,7 @@ function updateQuestRegenTimer() {
       decayMsg += " 📉 -" + fameLost + " Fame" + (dipActive ? " (🕊️Diplomacy -50%)" : "") + " (" + hero.fame + "/" + maxFameCap + ")";
     }
 
-    // Courtship Affection & Marital Devotion Decay Over Time (-4% Courtship Affection / -3% Marital Love per tick)
-    if (hero.courtingProgress && typeof hero.courtingProgress === "object") {
+    if (hero.courtingProgress && typeof h !== "undefined" || (hero.courtingProgress && typeof hero.courtingProgress === "object")) {
       var anyAffDecayed = false;
       Object.keys(hero.courtingProgress).forEach(function(ck) {
         if (hero.courtingProgress[ck] > 0) {
@@ -5034,6 +5145,7 @@ function ensureHeroV3Fields(h) {
     if (m.vetRank === undefined) m.vetRank = 0;
     if (m.gear === undefined) m.gear = null;
     if (m.quirk === undefined) m.quirk = null;
+    if (m.disease === undefined) m.disease = null;
     if (m.totalDmg === undefined) m.totalDmg = 0;
     if (m.totalHeals === undefined) m.totalHeals = 0;
     if (m.dmgAbsorbed === undefined) m.dmgAbsorbed = 0;
@@ -5092,6 +5204,10 @@ function ensureHeroV3Fields(h) {
   if (h.resolveState === undefined) h.resolveState = null;
   if (!Array.isArray(h.diseases)) h.diseases = [];
   if (h.deathsDoorTrauma === undefined) h.deathsDoorTrauma = false;
+  if (h.drunkUntil === undefined) h.drunkUntil = 0;
+  if (h.drinksInWindow === undefined) h.drinksInWindow = 0;
+  if (h.drinkWindowStart === undefined) h.drinkWindowStart = 0;
+  if (h.drinksBoughtToday === undefined) h.drinksBoughtToday = 0;
   if (h.bossSabotaged === undefined) h.bossSabotaged = false;
   if (h.wantedLevel === undefined) h.wantedLevel = 0;
   if (h.merchantBlacklistUntil === undefined) h.merchantBlacklistUntil = 0;
@@ -5228,7 +5344,7 @@ function ensureHeroV3Fields(h) {
   }
   shopInventory = h.shopInventory;
   if (!h.bounties || !h.bounties.length) h.bounties = generateNewBounties(h.unlockedArea || 1);
-  if (!h.logs) h.logs = ["🏰 Welcome to Dungeon Court Revive v18.3, " + h.name + "!"];
+  if (!h.logs) h.logs = ["🏰 Welcome to Dungeon Court Revive v18.4.1, " + h.name + "!"];
   if (!h.bossesDefeated) h.bossesDefeated = [];
   if (!h.selectedArea) h.selectedArea = h.unlockedArea || 1;
   h.xpNext = getXpRequiredForLevel(h.level || 1);
@@ -5236,7 +5352,7 @@ function ensureHeroV3Fields(h) {
 '''
 }
 
-boolean part3BBoundaryGuard() { return true } //[cite: 3]
+boolean part3BBoundaryGuard() { return true }
 // ==============================================================================
 // END OF PART 3B OF 7 — REPLY "NEXT" FOR PART 4A OF 7
 // ==============================================================================
@@ -5246,7 +5362,7 @@ boolean part3BBoundaryGuard() { return true } //[cite: 3]
 // ==============================================================================
 
 String buildHeroChunkB() {
-    return buildHeroChunkB1() + "\n" + buildHeroChunkB2() + "\n" + buildHeroChunkB3() //
+    return buildHeroChunkB1() + "\n" + buildHeroChunkB2() + "\n" + buildHeroChunkB3()
 }
 
 String buildHeroChunkB1() {
@@ -5266,43 +5382,43 @@ function generateSingleBoardQuest(h, targetAreaId, forceType) {
   var aId = targetAreaId || Math.max(1, Math.min(22, Math.floor(Math.random() * (h.unlockedArea || 1)) + 1));
   var area = AREAS[aId - 1] || AREAS[0];
   var curTier = (h.areaQuestTier && h.areaQuestTier[aId]) ? h.areaQuestTier[aId] : 0;
-  var nextTier = Math.min(5, curTier + 1);
+  var nextTier = Math.min(10, curTier + 1);
   var qType = forceType || (Math.random() < 0.50 ? "kill" : "gather");
 
   if (qType === "kill") {
     var mobObj = area.enemies[Math.floor(Math.random() * area.enemies.length)] || area.enemies[0];
-    var reqKills = 4 + nextTier + Math.floor(Math.random() * 3);
+    var reqKills = 4 + Math.min(6, nextTier) + Math.floor(Math.random() * 3);
     var kFlav = QUEST_KILL_FLAVORS[Math.floor(Math.random() * QUEST_KILL_FLAVORS.length)];
     var kDesc = kFlav.replace("{qty}", reqKills).replace("{item}", mobObj.icon + " " + mobObj.name).replace("{area}", area.name).replace("{giver}", area.questGiver);
     return {
       id: "tq_" + Date.now() + "_" + Math.floor(Math.random() * 9999),
       qType: "kill",
       areaId: aId, areaName: area.name, giver: area.questGiver, giverIcon: area.questGiverIcon,
-      tier: nextTier, isBossUnlockQuest: (curTier < 5),
+      tier: nextTier, isBossUnlockQuest: (curTier < 10),
       targetMob: mobObj.name, targetMobIcon: mobObj.icon, progress: 0, reqQty: reqKills,
       matName: mobObj.name, matIcon: mobObj.icon,
       accepted: false, desc: kDesc,
-      rewardGold: Math.round(aId * reqKills * 45 * (1 + nextTier * 0.20)),
-      rewardXp: Math.round(aId * reqKills * 38 * (1 + nextTier * 0.20)),
-      rewardStability: 4 + nextTier,
-      rewardGems: (nextTier >= 5 ? 1 : 0)
+      rewardGold: Math.round(aId * reqKills * 45 * (1 + Math.min(5, nextTier) * 0.20)),
+      rewardXp: Math.round(aId * reqKills * 38 * (1 + Math.min(5, nextTier) * 0.20)),
+      rewardStability: 4 + Math.min(6, nextTier),
+      rewardGems: (nextTier >= 10 ? 1 : 0)
     };
   } else {
     var dropObj = area.drops[(nextTier - 1) % area.drops.length] || area.drops[0];
-    var reqQty = 3 + nextTier + Math.floor(Math.random() * 2);
+    var reqQty = 3 + Math.min(5, nextTier) + Math.floor(Math.random() * 2);
     var flavorTemplate = QUEST_GATHER_FLAVORS[Math.floor(Math.random() * QUEST_GATHER_FLAVORS.length)];
     var descText = flavorTemplate.replace("{qty}", reqQty).replace("{item}", dropObj.icon + " " + dropObj.name).replace("{area}", area.name).replace("{giver}", area.questGiver);
     return {
       id: "tq_" + Date.now() + "_" + Math.floor(Math.random() * 9999),
       qType: "gather",
       areaId: aId, areaName: area.name, giver: area.questGiver, giverIcon: area.questGiverIcon,
-      tier: nextTier, isBossUnlockQuest: (curTier < 5),
+      tier: nextTier, isBossUnlockQuest: (curTier < 10),
       matName: dropObj.name, matIcon: dropObj.icon, reqQty: reqQty, progress: 0,
       accepted: false, desc: descText,
-      rewardGold: Math.round(aId * reqQty * 48 * (1 + nextTier * 0.20)),
-      rewardXp: Math.round(aId * reqQty * 40 * (1 + nextTier * 0.20)),
-      rewardStability: 4 + nextTier,
-      rewardGems: (nextTier >= 5 ? 1 : 0)
+      rewardGold: Math.round(aId * reqQty * 48 * (1 + Math.min(5, nextTier) * 0.20)),
+      rewardXp: Math.round(aId * reqQty * 40 * (1 + Math.min(5, nextTier) * 0.20)),
+      rewardStability: 4 + Math.min(6, nextTier),
+      rewardGems: (nextTier >= 10 ? 1 : 0)
     };
   }
 }
@@ -5338,7 +5454,7 @@ function openQuestAcceptModal(qIdx) {
   showPopupModal(
     '<div style="margin-bottom:6px;">' + renderEntityAvatar(q.giver, q.giverIcon, 60, false) + '</div>' +
     '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">📋 Royal Warrant Parley: ' + escapeHtml(q.giver) + '</div>' +
-    '<div style="font-size:12px;color:#7dd3fc;margin-bottom:8px;">Region: <b>' + escapeHtml(q.areaName) + ' (Warrant Tier ' + q.tier + ' / 5)</b></div>' +
+    '<div style="font-size:12px;color:#7dd3fc;margin-bottom:8px;">Region: <b>' + escapeHtml(q.areaName) + ' (Warrant Tier ' + q.tier + ' / 10)</b></div>' +
     '<div style="background:#0b0811;border:1px solid #c5a059;border-radius:4px;padding:12px;margin-bottom:10px;text-align:left;font-size:13px;line-height:1.6;color:#e5dec9;">' +
       '&ldquo;' + escapeHtml(q.desc) + '&rdquo;<br><br>' +
       '• <b>Objective:</b> ' + (q.qType === "kill" ? "Slay " : "Recover ") + '<b>' + q.reqQty + 'x ' + q.matIcon + ' ' + escapeHtml(q.matName) + '</b><br>' +
@@ -5372,7 +5488,7 @@ function turnInBoardQuest(qIdx) {
     showRequirementModal(
       "Warrant Incomplete (" + prog + " / " + q.reqQty + ")", q.matIcon || "📋",
       "You need <b>" + q.reqQty + "x " + escapeHtml(q.matName) + "</b> to claim this Warrant reward (Currently have <b>" + prog + "</b>).",
-      (q.qType === "kill" && !q.accepted) ? "⚠️ Make sure you click <b>💬 Parley ➔ 📌 Sign Warrant</b> first so your kills are tracked!" : ("Patrol <b>" + escapeHtml(q.areaName) + "</b> in the World tab to finish collecting!"),
+      (q.qType === "kill" && !q.accepted) ? "⚠️ Make sure you click <b>💬 Parley ➔ 📌 Sign Warrant</b> first so your kills are tracked!" : ("Patrol <b>" + escapeHtml(q.areaName) + "</b> in the Realms tab to finish collecting!"),
       ""
     );
     return;
@@ -5386,27 +5502,116 @@ function turnInBoardQuest(qIdx) {
   hero.gold += gWon;
   hero.xp += xpWon;
   addHeroFame(18);
-  if (q.rewardGems) hero.gems = (hero.gems || 0) + q.rewardGems;
+  var curT = hero.areaQuestTier[q.areaId] || 0;
+  var newT = Math.min(10, curT + 1);
+  hero.areaQuestTier[q.areaId] = newT;
+  if (newT === 10) hero.gems = (hero.gems || 0) + 1;
   if (hero.guild && hero.guild.founded) {
     hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + (q.rewardStability || 5));
   }
-  var curT = hero.areaQuestTier[q.areaId] || 0;
-  var newT = Math.min(5, curT + 1);
-  hero.areaQuestTier[q.areaId] = newT;
 
   var nextType = (q.qType === "kill") ? "gather" : "kill";
   hero.boardQuests[qIdx] = generateSingleBoardQuest(hero, q.areaId, nextType);
   playSfx("levelup");
   if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 35);
-  var msg = "🏆📜 <b>ROYAL WARRANT COMPLETED (" + escapeHtml(q.areaName) + " Tier " + newT + "/5)!</b><br>" +
+  var msg = "🏆📜 <b>ROYAL WARRANT COMPLETED (" + escapeHtml(q.areaName) + " Tier " + newT + "/10)!</b><br>" +
     "• <b>Rewards:</b> +" + xpWon.toLocaleString() + " XP, +" + gWon.toLocaleString() + " Gold &amp; +18 Court Fame" +
-    (q.rewardGems ? (" &amp; <b>+" + q.rewardGems + "💎 Dragon Gem</b>!") : "!") +
-    (newT >= 5 ? "<br>🐉 <b style='color:#4ade80;'>ZONE BOSS WARRANT UNLOCKED (5/5)!</b> You may now confront the Region Boss in the World tab!" : "");
+    (newT === 10 ? " &amp; <b>+1💎 Dragon Gem</b>!" : "!") +
+    (newT >= 10 ? "<br>🐉 <b style='color:#4ade80;'>ZONE BOSS WARRANT UNLOCKED (10/10)!</b> You may now confront the Region Boss in the Realms tab!" : "");
   addLog(msg);
   checkLevelUp();
   saveCurrentHero(null, false, null);
   renderGameScreen();
-  showOutcomeModal("🏆 Warrant Claimed (Tier " + newT + "/5)!", q.giverIcon || "📋", q.giver, "#4ade80", msg, null);
+  showOutcomeModal("🏆 Warrant Claimed (Tier " + newT + "/10)!", q.giverIcon || "📋", q.giver, "#4ade80", msg, null);
+}
+
+// ============================================================================
+// HUNTSMAN'S TROPHY EXCHANGE & WYRM-BRAZIER (UNLIMITED SURPLUS TROPHY SINK!)
+// ============================================================================
+function openHuntsmanTrophyExchangeModal() {
+  ensureHeroV3Fields(hero);
+  var totMats = getTotalMaterialsCount();
+  var lv = Math.max(1, hero.level || 1);
+  var gold10 = 320 + (lv * 75);
+  showPopupModal(
+    '<div style="margin-bottom:6px;">' + renderEntityAvatar("Master Huntsman Kraven", "🏹🔥", 62, false) + '</div>' +
+    '<div style="font-size:19px;font-weight:900;color:#fde047;font-family:&#39;Cinzel&#39;,serif;">🏹🔥 The Huntsman&apos;s Trophy Exchange &amp; Wyrm-Brazier</div>' +
+    '<div style="font-size:12px;color:#86efac;margin:4px 0 8px 0;">📦 <b>Monster Trophies in Your Pouch: <span style="color:#fde047;font-size:14px;">' + totMats + ' Trophies</span></b> • 😰 Stress: <b>' + (hero.stress || 0) + '%</b> • 💎 Gems: <b>' + (hero.gems || 0) + '</b></div>' +
+    '<div class="lore-subtitle-box">Have dozens of surplus Monster Trophies piling up from patrols? Master Huntsman Kraven trades bulk trophy bundles with <b>no daily cap and 0⚡ Quest cost</b>—burning bones and hides in the Wyrm-Brazier for calm nerves, Kingdom materials, Reliquary Chests, or crystallized Dragon Gems!</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px;text-align:left;">' +
+      '<div class="item-row" style="border-color:#4ade80;">' +
+        '<div style="flex:1;"><b style="color:#86efac;font-family:Cinzel,serif;">🔥 I. Pyre of Calm &amp; Stronghold Tithe (Cost: 10 Trophies)</b>' +
+        '<div style="font-size:11.5px;color:#e5dec9;">Burn 10 Trophies in purifying sage: <b style="color:#4ade80;">-' + Math.min(30, hero.stress || 30) + '% Stress (-30% Max)</b>, <b style="color:#fbbf24;">+' + gold10.toLocaleString() + 'g</b>, <b>+25 Court Fame</b> &amp; <b>+15🪵 Timber / +15🪨 Stone / +10⛏️ Iron</b>!</div></div>' +
+        '<button class="btn ' + (totMats >= 10 ? 'btn-emerald' : 'btn-locked') + '" onclick="redeemTrophyExchangeTier(10)">🔥 Burn 10 (' + totMats + '/10)</button>' +
+      '</div>' +
+      '<div class="item-row" style="border-color:#38bdf8;">' +
+        '<div style="flex:1;"><b style="color:#7dd3fc;font-family:Cinzel,serif;">🎁 II. Huntsman&apos;s Masterwork Reliquary Chest (Cost: 15 Trophies)</b>' +
+        '<div style="font-size:11.5px;color:#e5dec9;">Trade 15 Trophies for <b>1x Rare–Mythic Equipment Piece (Lv ' + (lv + 1) + ')</b>, <b>+2🧪 Healing Potions</b> &amp; <b>+1💣 Dwarven Fire-Bomb</b>!</div></div>' +
+        '<button class="btn ' + (totMats >= 15 && hero.inventory.length < 30 ? 'btn-sky' : 'btn-locked') + '" onclick="redeemTrophyExchangeTier(15)">🎁 Trade 15 (' + totMats + '/15)</button>' +
+      '</div>' +
+      '<div class="item-row" style="border-color:#fde047;background:#1a1209;">' +
+        '<div style="flex:1;"><b style="color:#fde047;font-family:Cinzel,serif;">💎 III. Wyrm-Heart Crucible Offering (Cost: 30 Trophies)</b>' +
+        '<div style="font-size:11.5px;color:#e5dec9;">Smelt 30 Trophies in the dragon-crucible for <b style="color:#fde047;">+1💎 Guaranteed Dragon Gem</b>, <b style="color:#4ade80;">+1 Permanent Hero Stat Point</b> &amp; <b>+40🪵 / +40🪨 / +25⛏️</b>!</div></div>' +
+        '<button class="btn ' + (totMats >= 30 ? 'btn-shine' : 'btn-locked') + '" onclick="redeemTrophyExchangeTier(30)">💎 Smelt 30 (' + totMats + '/30)</button>' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Close Trophy Exchange</button>'
+  );
+}
+
+function redeemTrophyExchangeTier(costMats) {
+  ensureHeroV3Fields(hero);
+  var totMats = getTotalMaterialsCount();
+  if (totMats < costMats) {
+    showRequirementModal(
+      "Need " + costMats + " Monster Trophies (Have " + totMats + ")", "📦🏹",
+      "This Huntsman Trophy Exchange bundle requires <b>" + costMats + " Monster Trophies</b>, and you currently hold <b>" + totMats + " Trophies</b>.",
+      "Patrol any unlocked region in the <b>🗺️ Realms</b> tab to gather more Monster Trophies!",
+      ""
+    );
+    return;
+  }
+  if (costMats === 15 && hero.inventory.length >= 30) {
+    showGothicToast("⚠️ Your Backpack is full (30/30)! Salvage or sell an unequipped item first.");
+    return;
+  }
+  consumeAnyMaterials(costMats);
+  var lv = Math.max(1, hero.level || 1);
+  var remMats = getTotalMaterialsCount();
+  var outMsg = "";
+
+  if (costMats === 10) {
+    var gGain = 320 + (lv * 75);
+    hero.gold += gGain;
+    hero.stress = Math.max(0, (hero.stress || 0) - 30);
+    addHeroFame(25);
+    hero.guild.timber = (hero.guild.timber || 0) + 15;
+    hero.guild.stone  = (hero.guild.stone || 0) + 15;
+    hero.guild.iron   = (hero.guild.iron || 0) + 10;
+    playSfx("magic");
+    outMsg = "🔥📦 <b>PYRE OF CALM &amp; STRONGHOLD TITHE (-10 Trophies • " + remMats + " Left):</b><br>• Calmed <b>-30% Stress (Now " + hero.stress + "%)</b><br>• Earned <b>+" + gGain.toLocaleString() + " Gold &amp; +25 Court Fame</b><br>• Stocked <b>+15🪵 Timber, +15🪨 Stone &amp; +10⛏️ Iron</b>!";
+  } else if (costMats === 15) {
+    var chestItm = sanitizeGearItem(generateRandomItem(lv + 1, 2, 5), "weapon");
+    hero.inventory.push(chestItm);
+    hero.potions = (hero.potions || 0) + 2;
+    hero.belt.firebomb = Math.min(5, (hero.belt.firebomb || 0) + 1);
+    playSfx("levelup");
+    outMsg = "🎁📦 <b>HUNTSMAN'S RELIQUARY CHEST UNSEALED (-15 Trophies • " + remMats + " Left):</b><br>• Forged Gear: <b>" + formatItemStats(chestItm, true, false) + "</b><br>• Supplies: <b>+2🧪 Healing Potions (Have " + hero.potions + ") &amp; +1💣 Fire-Bomb (Have " + hero.belt.firebomb + "/5)</b>!";
+  } else {
+    hero.gems = (hero.gems || 0) + 1;
+    hero.statPoints = (hero.statPoints || 0) + 1;
+    hero.guild.timber = (hero.guild.timber || 0) + 40;
+    hero.guild.stone  = (hero.guild.stone || 0) + 40;
+    hero.guild.iron   = (hero.guild.iron || 0) + 25;
+    playSfx("levelup");
+    if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 42);
+    outMsg = "💎🔥 <b>WYRM-HEART CRUCIBLE OFFERING (-30 Trophies • " + remMats + " Left):</b><br>• Crystallized <b style='color:#fde047;'>+1💎 Dragon Gem (Now " + hero.gems + "💎)</b><br>• Granted <b style='color:#4ade80;'>+1 Permanent Stat Point (Spend in ⚜️ Hero Sheet!)</b><br>• Stocked <b>+40🪵 Timber, +40🪨 Stone &amp; +25⛏️ Iron</b>!";
+  }
+  addLog(outMsg);
+  queueSaveHero();
+  renderGameScreen();
+  openHuntsmanTrophyExchangeModal();
+  showGothicToast("✅ Exchanged " + costMats + " Trophies (" + remMats + " Trophies Remaining)!");
 }
 
 function rerollTownBoard() {
@@ -5645,7 +5850,7 @@ function prestigeHeroHeirSuccession(childIdx) {
   renderGameScreen();
   showOutcomeModal("👑 Hail Sovereign " + hero.name + "!", "👑👶", hero.name, "#fde047", sMsg, "courting");
 }
-''' //[cite: 4]
+'''
 }
 
 String buildHeroChunkB2() {
@@ -5658,7 +5863,7 @@ function awakenHeroCalling() {
     showRequirementModal(
       "Cannot Awaken Calling Yet", "🌟⚔️",
       "Tier I Class Awakening (<b>" + escapeHtml(awk.title) + "</b>) requires:<br>• <b>Hero Level 20+</b> (Currently Lv " + hero.level + ")<br>• <b>3,500 Gold</b> (Have " + hero.gold.toLocaleString() + "g)<br>• <b>6💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "Defeat Zone Bosses and complete Tier 5 Warrants to earn Dragon Gems!",
+      "Defeat Zone Bosses, complete Tier 10 Warrants, or smelt 30 Trophies at the Huntsman's Exchange to earn Dragon Gems!",
       ""
     );
     return;
@@ -5749,7 +5954,6 @@ function applySelectedHybridClass(secClass) {
   showOutcomeModal("🌑 Dual-Class Hybridized!", "🌑⚔️", hero.name, "#7dd3fc", hMsg, null);
 }
 
-// Permanent Consort Sacrifice Check: A sacrificed Princess dies forever on this character slot!
 function isConsortSacrificedForever(candIdOrName) {
   if (!hero || !Array.isArray(hero.sacrificedBrides)) return false;
   return hero.sacrificedBrides.includes(candIdOrName);
@@ -6093,7 +6297,7 @@ function sendChildExpedition(cIdx) {
   ch.expeditionUntil = Date.now() + TWO_HOURS_MS;
   var gFound = 140 + (ch.level || 1) * 35;
   hero.gold += gFound;
-  ch.level = (ch.level || 1) + 1;
+  ch.level = Math.min(hero.level, (ch.level || 1) + 1);
   ch.atk += 4;
   ch.maxHp += 15;
   ch.hp = ch.maxHp;
@@ -6113,7 +6317,7 @@ function triggerCampfireBanter() {
   var nowMs = Date.now();
   var remSec = Math.ceil((TWO_HOURS_MS - (nowMs - (hero.lastBanterEpoch || 0))) / 1000);
   if (remSec > 0) {
-    showRequirementModal("Campfire Embers Cooling", "🔥⏳", "Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before your next Campfire Banter (2h cooldown).", "Patrol regions or visit the Tavern in the meantime!", "");
+    showRequirementModal("Campfire Embers Cooling", "🔥⏳", "Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before your next Campfire Banter (2h cooldown).", "Patrol regions or visit the Boar's Head Taproom in the meantime!", "");
     return;
   }
   hero.lastBanterEpoch = nowMs;
@@ -6122,7 +6326,7 @@ function triggerCampfireBanter() {
   hero.hp = Math.min(hero.maxHp, hero.hp + hpGain);
   hero.stress = Math.max(0, (hero.stress || 0) - 20);
   if (hero.spouse) hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 10);
-  var affNote = (hero.resolveState && !hero.resolveState.isVirtue) ? "<br>⚠️ <b style='color:#f87171;'>Sticky Affliction (" + escapeHtml(hero.resolveState.name) + ") Remains:</b> Visit the <b>🙏 Cathedral Confessional</b>, <b>🕯️ Sanctuary Rite</b>, or <b>🛌 2h Offline Inn Sleep</b> to cure a mental breakdown!" : "";
+  var affNote = (hero.resolveState && !hero.resolveState.isVirtue) ? "<br>⚠️ <b style='color:#f87171;'>Sticky Affliction (" + escapeHtml(hero.resolveState.name) + ") Remains:</b> Visit the <b>🙏 Cathedral Confessional</b>, <b>🕯️ Sanctuary Rite</b>, or <b>🛌 2h Offline Bedchamber (Cot/Suite/Palace)</b> to cure a mental breakdown!" : "";
   playSfx("magic");
   var bMsg = "🔥🪕 <b>Hearthside Campfire Banter (" + hero.bantersUsedToday + "/" + MAX_DAILY_BANTERS + " Today):</b><br>Shared ale and war-stories by the fire (+<b>" + hpGain + " HP</b>, <b>-20% Stress</b>" + (hero.spouse ? " &amp; +10% ❤️ Consort Love" : "") + ")!" + affNote;
   addLog(bMsg);
@@ -6130,11 +6334,11 @@ function triggerCampfireBanter() {
   renderGameScreen();
   showOutcomeModal("🔥 Campfire Banter Shared!", "🔥🪕", hero.name, "#4ade80", bMsg, window.currentTownModal);
 }
-''' //[cite: 4]
+'''
 }
 
 String buildHeroChunkB3() {
-    return buildHeroChunkB3a() + "\n" + buildHeroChunkB3b() //[cite: 4]
+    return buildHeroChunkB3a() + "\n" + buildHeroChunkB3b()
 }
 
 String buildHeroChunkB3a() {
@@ -6348,7 +6552,7 @@ function socketGemIntoGear(slotKey, traitId) {
   var tr = GEM_SOCKET_TRAITS.find(function(x) { return x.id === traitId; });
   if (!itm || !tr) return;
   if ((hero.gems || 0) < tr.costGems) {
-    showRequirementModal("Need " + tr.costGems + "💎 Dragon Gems", "💎🔮", "Binding <b>" + escapeHtml(tr.name) + "</b> into <b>" + escapeHtml(itm.name) + "</b> requires <b>" + tr.costGems + "💎 Dragon Gems</b> (You have " + (hero.gems || 0) + "💎).", "Defeat Zone Bosses, Delve Bosses, or Spire Sentinels to earn Gems!", "");
+    showRequirementModal("Need " + tr.costGems + "💎 Dragon Gems", "💎🔮", "Binding <b>" + escapeHtml(tr.name) + "</b> into <b>" + escapeHtml(itm.name) + "</b> requires <b>" + tr.costGems + "💎 Dragon Gems</b> (You have " + (hero.gems || 0) + "💎).", "Defeat Zone Bosses, Delve Bosses, or smelt 30 Trophies at the Huntsman's Exchange!", "");
     return;
   }
   hero.gems -= tr.costGems;
@@ -6392,12 +6596,11 @@ function equipLoadoutPreset(idx) {
   openHeroSheetModal();
   renderGameScreen();
 }
-''' //[cite: 4]
+'''
 }
 
 String buildHeroChunkB3b() {
     return '''
-// Level-Scaled High Court Petition Odds: Scales Charm benchmark with Hero Level so petitions stay challenging (25%–76% cap)!
 function getHighCourtPetitionOdds(nextRank) {
   if (!nextRank || !hero) return 50;
   var st = getHeroStats();
@@ -6405,8 +6608,9 @@ function getHighCourtPetitionOdds(nextRank) {
   var charmDiff = st.effCharm - lvScaledCharmReq;
   var fameDiff = ((hero.fame || 0) - nextRank.fameReq) * 0.08;
   var orderBonus = Math.min(10, ((hero.alignment && hero.alignment.Order) ? hero.alignment.Order : 0) * 0.8);
-  var raw = Math.round(52 + (charmDiff * 0.85) + fameDiff + orderBonus);
-  return Math.max(25, Math.min(76, raw));
+  var drunkPen = isHeroDrunk(hero) ? -15 : 0;
+  var raw = Math.round(52 + (charmDiff * 0.85) + fameDiff + orderBonus + drunkPen);
+  return Math.max(20, Math.min(76, raw));
 }
 
 function submitHighCourtPetition() {
@@ -6440,7 +6644,7 @@ function submitHighCourtPetition() {
     showRequirementModal(
       "Cannot Petition for " + nr.title + " Yet", "👑⚖️",
       missing.map(function(m) { return "• " + m; }).join("<br>"),
-      "• <b>Fame (Capped at " + maxFCap + " at Lv " + hero.level + "):</b> Complete 📋 Quest Board contracts (+18), win 🏇 Royal Jousting (+22–140), or host a 🍷 Grand Royal Banquet (+45).<br>• <b>Note:</b> Court Fame decays by -8 (+5%) every 45m tick, so maintain your standing!",
+      "• <b>Fame (Capped at " + maxFCap + " at Lv " + hero.level + "):</b> Complete 📋 Quest Board contracts (+18), burn 10 Trophies (+25), win 🏇 Royal Jousting (+22–140), or host a 🍷 Grand Royal Banquet (+45).",
       '<button class="btn btn-gold" style="flex:1;" onclick="closePopupModal();setTab(&#39;questboard&#39;);">📋 Open Quest Board</button>'
     );
     return;
@@ -6505,7 +6709,7 @@ function submitHighCourtPetition() {
     showOutcomeModal(
       "⚖️ Petition Denied by the Chancellor!", "⚖️❌", null, "#ef4444",
       '<div style="text-align:center;">' + failSealSvg + '</div>' +
-      '&quot;The High Court finds your bearing unbefitting the title of <b>' + nr.title + '</b>! The Clerk of the Crown retains <b>' + feeLost.toLocaleString() + ' Gold</b> (30% filing fee), though your Monster Trophies are returned. Increase your <b>👑 Charm</b>, <b>Fame</b>, or <b>☀️ Order Alignment</b> before petitioning again!&quot;',
+      '&quot;The High Court finds your bearing unbefitting the title of <b>' + nr.title + '</b>! The Clerk of the Crown retains <b>' + feeLost.toLocaleString() + ' Gold</b> (30% filing fee), though your Monster Trophies are returned. Increase your <b>👑 Charm</b>, <b>Fame</b>, or sober up before petitioning again!&quot;',
       "court"
     );
   }
@@ -6643,8 +6847,9 @@ async function saveDeltaHero() {
       valkyrieSeals: Math.min(3, hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3), wantedLevel: hero.wantedLevel || 0, recruitOrder: hero.recruitOrder || "auto",
       recruitTargetZone: hero.recruitTargetZone || "torso", recruitsCardCollapsed: hero.recruitsCardCollapsed || false, warrantsCollapsed: hero.warrantsCollapsed || false,
       buffFifoOrder: hero.buffFifoOrder || [], overkillSurge: hero.overkillSurge || false, petTreatBattles: hero.petTreatBattles || 0,
-      stress: hero.stress || 0, resolveState: hero.resolveState || null, diseases: hero.diseases || [], deathsDoorTrauma: hero.deathsDoorTrauma || false, bossSabotaged: hero.bossSabotaged || false,
-      sacrificedBrides: hero.sacrificedBrides || [], marriedConsorts: hero.marriedConsorts || [], mercCooldowns: hero.mercCooldowns || {}, totalRecruitDeaths: hero.totalRecruitDeaths || 0,
+      stress: hero.stress || 0, resolveState: hero.resolveState || null, diseases: hero.diseases || [], mercenaries: hero.mercenaries || [], deathsDoorTrauma: hero.deathsDoorTrauma || false,
+      drunkUntil: hero.drunkUntil || 0, drinksInWindow: hero.drinksInWindow || 0, drinkWindowStart: hero.drinkWindowStart || 0, drinksBoughtToday: hero.drinksBoughtToday || 0,
+      bossSabotaged: hero.bossSabotaged || false, sacrificedBrides: hero.sacrificedBrides || [], marriedConsorts: hero.marriedConsorts || [], mercCooldowns: hero.mercCooldowns || {}, totalRecruitDeaths: hero.totalRecruitDeaths || 0,
       sealsBoughtToday: hero.sealsBoughtToday || 0, alembicUsedToday: hero.alembicUsedToday || 0, stealsUsedToday: hero.stealsUsedToday || 0,
       forgesUsedToday: hero.forgesUsedToday || 0, socketsUsedToday: hero.socketsUsedToday || 0,
       shopBuysToday: hero.shopBuysToday || 0, beltBuysToday: hero.beltBuysToday || 0, feastsOrderedToday: hero.feastsOrderedToday || 0,
@@ -6754,7 +6959,6 @@ function getWarCouncilBonusCount() {
   return cnt;
 }
 
-// Gritty Vitality with 2.20x Level Ceiling, Disease Penalties & 3-Seal Valkyrie Cap
 function syncHeroVitalityMaxHp(h) {
   var t = h || hero;
   if (!t) return;
@@ -6858,6 +7062,11 @@ function getHeroStats(targetHero) {
   }
   disGutsMult = Math.max(0.60, disGutsMult);
 
+  var drunkNow = isHeroDrunk(h);
+  var drunkWitsMult = drunkNow ? 0.85 : 1.0;
+  var drunkAccPen = drunkNow ? 15 : 0;
+  var drunkDodgePen = drunkNow ? 12 : 0;
+
   var slots = [h.weapon, h.armor, h.helm, h.boots, h.relic, h.amulet];
   var gearAtk = 0, gearDef = 0, gearGuts = 0, gearWits = 0, gearCharm = 0, gearEva = 0;
   var vampCount = 0, thunderCount = 0, frostCount = 0, fireCount = 0, brokenGearCount = 0;
@@ -6883,7 +7092,6 @@ function getHeroStats(targetHero) {
     }
   });
 
-  // Single Chosen Consort Blessing (Only 1 active consort's stats apply, gated by 6-Buff FIFO!)
   var consortActive = (h.spouse && isPositiveBuffActiveFifo(h, "buff_consort"));
   var spLove = (h.spouse && h.spouse.love !== undefined) ? h.spouse.love : 100;
   var loveMult = spLove >= 80 ? 1.0 : (spLove >= 40 ? 0.50 : 0.0);
@@ -6907,7 +7115,7 @@ function getHeroStats(targetHero) {
   var totalBaseMult = (1 + rankBonus) * stabMult * famePenaltyMult * lodgeMult * setStatMult * shardMult * mythicMult * hybridMult * prestigeMult * tarotMult * trophyWallMult * cosmicRuneMult * cipherMult * glassMult * curseAllStatMult * resolveMult * traumaMult * gambitHeroMult;
 
   var effGuts  = Math.max(1, Math.round((h.guts + gearGuts + spG + origG + (rMeta.guts || 0)) * totalBaseMult * moonGutsMult * disGutsMult));
-  var effWits  = Math.max(1, Math.round((h.wits + gearWits + spW + origW + (rMeta.wits || 0)) * totalBaseMult * moonWitsMult));
+  var effWits  = Math.max(1, Math.round((h.wits + gearWits + spW + origW + (rMeta.wits || 0)) * totalBaseMult * moonWitsMult * drunkWitsMult));
   var effCharm = Math.max(1, Math.round((h.charm + gearCharm + spC + origC + (rMeta.charm || 0)) * totalBaseMult));
 
   var wepPerk = (h.weapon && (h.weapon.dur === undefined || h.weapon.dur > 0) && isPositiveBuffActiveFifo(h, "buff_wepperk")) ? getWeaponArchetypePerk(h.weapon) : null;
@@ -6951,9 +7159,9 @@ function getHeroStats(targetHero) {
   var stressDodgePen = curStress >= 75 ? 10 : (curStress >= 50 ? 5 : 0);
   var ravingPen = (h.resolveState && h.resolveState.id === "raving") ? 10 : 0;
 
-  var accuracyPct = Math.min(145, Math.round(83 + ((sk.precision || 1) * 2.0) + (effWits * 0.16) + ((blds.watchtower || 0) * 2.5) + stanceAccAdd + petAccAdd + rwAccMod + (mutId === "night_eyes" ? 6 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0) - stressHitPen - disAccPen - ravingPen - (curse && curse.id === "fimbulwinter" ? 12 : 0)));
+  var accuracyPct = Math.min(145, Math.max(25, Math.round(83 + ((sk.precision || 1) * 2.0) + (effWits * 0.16) + ((blds.watchtower || 0) * 2.5) + stanceAccAdd + petAccAdd + rwAccMod + (mutId === "night_eyes" ? 6 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0) - stressHitPen - disAccPen - ravingPen - drunkAccPen - (curse && curse.id === "fimbulwinter" ? 12 : 0))));
   var dodgePenalty = (h.lodgingBuff && h.lodgingBuff.questsLeft > 0 && h.lodgingBuff.dodgePen) ? h.lodgingBuff.dodgePen : 0;
-  var dodgePct    = Math.min(64, Math.max(2, Math.round(5 + gearEva + (rMeta.eva || 0) + ((sk.evasion || 1) * 1.8) + (effWits * 0.11) + ((blds.watchtower || 0) * 2.5) + (frostCount > 0 ? 5 : 0) + rwEvaMod + (mutId === "night_eyes" ? 6 : (mutId === "glass_walker" ? 10 : 0)) + stanceEvaAdd + petDodgeAdd + (setActiveFifo ? setBon.dodgeAdd : 0) + (feastId === "elven_wine" ? 10 : 0) - dodgePenalty - stressDodgePen)));
+  var dodgePct    = Math.min(64, Math.max(2, Math.round(5 + gearEva + (rMeta.eva || 0) + ((sk.evasion || 1) * 1.8) + (effWits * 0.11) + ((blds.watchtower || 0) * 2.5) + (frostCount > 0 ? 5 : 0) + rwEvaMod + (mutId === "night_eyes" ? 6 : (mutId === "glass_walker" ? 10 : 0)) + stanceEvaAdd + petDodgeAdd + (setActiveFifo ? setBon.dodgeAdd : 0) + (feastId === "elven_wine" ? 10 : 0) - dodgePenalty - stressDodgePen - drunkDodgePen)));
   var parryPct    = Math.min(60, Math.max(2, Math.round(4 + (h.race === "Dwarf" ? 4 : 0) + ((sk.riposte || 1) * 1.8) + (effGuts * 0.09) + (mutId === "titan_marrow" ? 6 : 0) + stanceParryAdd + petParryAdd + (setActiveFifo ? setBon.parryAdd : 0) + (feastId === "boar_roast" ? 10 : 0) + (decree === "martial" ? 10 : 0))));
   var starActive  = isPositiveBuffActiveFifo(h, "buff_starchart");
   var critPct     = (!targetHero && activeCombat && (activeCombat.avengingWrathTurns || 0) > 0) ? 100 : Math.min(68, Math.round(5 + (rMeta.crit || 0) + (awk.bonusCrit || 0) + ((sk.lethal || 1) * 1.8) + (effWits * 0.14) + (h.calling === "Shadowblade" ? 10 : 0) + rwCritMod + (mutId === "glass_walker" ? 12 : 0) + (h.moonCurseTurns > 0 ? 15 : 0) + (rev.id === "werewolf_moon" ? 12 : 0) + (starActive && h.starChart === "draco" ? 5 : 0) + stanceCritAdd + petCritAdd + (setActiveFifo ? setBon.critAdd : 0) + (feastId === "elven_wine" ? 10 : 0) + (rev.name.indexOf("Astral") >= 0 ? 6 : 0)));
@@ -6968,7 +7176,7 @@ function getHeroStats(targetHero) {
   var lazVampAdd = (recBond && recBond.vampAdd) ? recBond.vampAdd : 0;
   var totalVamp = Math.min(0.45, (vampCount * 0.10) + (setActiveFifo ? setBon.vampAdd : 0) + lazVampAdd + wfVampAdd + (h.race === "Dhampir" ? 0.05 : 0) + (mutId === "vamp_veins" ? 0.06 : 0) + (rev.id === "vampire_masquerade" ? 0.15 : 0));
 
-  return { effGuts: effGuts, effWits: effWits, effCharm: effCharm, atk: atk, mag: mag, def: def, accuracyPct: accuracyPct, dodgePct: dodgePct, parryPct: parryPct, critPct: critPct, discountPct: discountPct, goldBonusMult: goldBonusMult, dropLuckBonus: dropLuckBonus, skillMpCost: skillMpCost, hasVampSocket: (totalVamp > 0), vampPct: totalVamp, hasThunderSocket: (thunderCount > 0), hasFrostSocket: (frostCount > 0), hasFireSocket: (fireCount > 0), activeSets: setBon.activeSets, shardPct: shardPct, tarnishedFame: tarnishedFame, toastOfCourt: toastOfCourt, maxFameCap: maxFameCap, regencySuspended: regencySuspended, martyrWardPct: martyrWardPct, brokenGearCount: brokenGearCount, wepPerk: wepPerk, recBond: recBond };
+  return { effGuts: effGuts, effWits: effWits, effCharm: effCharm, atk: atk, mag: mag, def: def, accuracyPct: accuracyPct, dodgePct: dodgePct, parryPct: parryPct, critPct: critPct, discountPct: discountPct, goldBonusMult: goldBonusMult, dropLuckBonus: dropLuckBonus, skillMpCost: skillMpCost, hasVampSocket: (totalVamp > 0), vampPct: totalVamp, hasThunderSocket: (thunderCount > 0), hasFrostSocket: (frostCount > 0), hasFireSocket: (fireCount > 0), activeSets: setBon.activeSets, shardPct: shardPct, tarnishedFame: tarnishedFame, toastOfCourt: toastOfCourt, maxFameCap: maxFameCap, regencySuspended: regencySuspended, martyrWardPct: martyrWardPct, brokenGearCount: brokenGearCount, wepPerk: wepPerk, recBond: recBond, isDrunk: drunkNow };
 }
 
 function getXpRequiredForLevel(lv) { return Math.round(175 * Math.pow(lv, 2.26)); }
@@ -7041,8 +7249,8 @@ function generateRandomItem(targetLevel, forceMinRarityIdx, maxRarityIdx) {
   else if (t === "armor") { itm.def = Math.round(3 + scale * 1.45); itm.guts = Math.round(scale * 0.5); }
   else if (t === "helm") { itm.def = Math.round(2 + scale * 0.95); itm.guts = Math.round(scale * 0.35); itm.wits = Math.round(scale * 0.3); }
   else if (t === "boots") { itm.def = Math.round(1 + scale * 0.80); itm.eva = Math.min(8, Math.round(1 + rIdx * 1.0)); itm.wits = Math.round(scale * 0.3); }
-  else if (t === "relic") { itm.atk = Math.round(1 + scale * 0.75); itm.def = Math.round(1 + scale * 0.65); itm.wits = Math.round(1 + scale * 0.5); }
-  else if (t === "amulet") { itm.atk = Math.round(1 + scale * 0.65); itm.charm = Math.round(1 + scale * 0.75); itm.guts = Math.round(1 + scale * 0.35); }
+  else if (t === "relic") { itm.atk = Math.round(1 + scale * 0.75); itm.def = Math.round(1 + scale * 0.65); itm.wits = Math.round(scale * 0.5); }
+  else if (t === "amulet") { itm.atk = Math.round(1 + scale * 0.65); itm.charm = Math.round(1 + scale * 0.75); itm.guts = Math.round(scale * 0.35); }
   return itm;
 }
 
@@ -7055,7 +7263,7 @@ function restockDwarvenMarket() {
     showRequirementModal(
       "Dwarven Caravan En Route", "⚖️⏳",
       "Merchant caravans from Ironcrag only restock the market once every <b>6 hours</b>. Time remaining: <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b>.",
-      "Patrol zones, delve dungeons, or climb the Abyssal Spire to find equipment drops while the caravan travels!",
+      "Patrol zones, delve dungeons, or exchange Trophies at the Huntsman's Brazier while the caravan travels!",
       ""
     );
     return;
@@ -7082,20 +7290,20 @@ if (!window._vitalityAutoHooked) {
     if (h) syncHeroVitalityMaxHp(h);
   };
 }
-''' //[cite: 4]
+'''
 }
 
-boolean part4ABoundaryGuard() { return true } //[cite: 4]
+boolean part4ABoundaryGuard() { return true }
 // ==============================================================================
 // END OF PART 4A OF 7 — REPLY "NEXT" FOR PART 4B OF 7
 // ==============================================================================
 
 // ==============================================================================
-// PART 4B OF 7 — PASTE DIRECTLY BELOW PART 4A[cite: 4]
+// PART 4B OF 7 — PASTE DIRECTLY BELOW PART 4A
 // ==============================================================================
 
 String buildCombatChunkA() {
-    return buildCombatChunkA1a() + "\n" + buildCombatChunkA1b() + "\n" + buildCombatChunkA2() //[cite: 4]
+    return buildCombatChunkA1a() + "\n" + buildCombatChunkA1b() + "\n" + buildCombatChunkA2()
 }
 
 String buildCombatChunkA1a() {
@@ -7114,16 +7322,105 @@ function closePopupModal() {
   window.currentTownModal = null;
   window.currentMiniGameModal = null;
   window.qteMinigameActive = false;
-  if (!activeCombat && !activeArmyBattle && !activeDelve) document.body.classList.remove("modal-open");
   var container = document.getElementById("modalContainer");
   if (container) container.innerHTML = "";
+  if (!activeCombat && !activeArmyBattle && !activeDelve) {
+    if (window._pendingPostBattleDiseaseCheck) {
+      window._pendingPostBattleDiseaseCheck = false;
+      if (window.checkAndShowPostBattleDiseasePopup && window.checkAndShowPostBattleDiseasePopup()) {
+        return;
+      }
+    }
+    document.body.classList.remove("modal-open");
+  }
+}
+
+// Post-Battle Medical & Plague Diagnosis Popup (Triggers after battle if Hero or any Recruit has an active disease!)
+function checkAndShowPostBattleDiseasePopup() {
+  if (!hero || activeCombat) return false;
+  ensureHeroV3Fields(hero);
+  var cases = [];
+  if (Array.isArray(hero.diseases)) {
+    hero.diseases.forEach(function(d) {
+      if (d) {
+        var meta = (window.DISEASE_STATES || []).find(function(x) { return x.id === d.id; }) || d;
+        cases.push({
+          who: "👑 Hero: " + hero.name,
+          isRecruit: false,
+          name: d.name || meta.name,
+          what: d.what || meta.what || "A virulent dungeon contagion coursing through mortal veins.",
+          how: d.caughtFrom ? ("Contracted in battle from <b>" + escapeHtml(d.caughtFrom) + "</b>.") : (meta.originLore || "Contracted from venomous, undead, or pestilent foes in battle."),
+          effects: d.desc || meta.desc || "-10% Guts & Vitals",
+          cure: meta.cureHow || "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel (15💎 Dragon Gems per disease, no daily limit)!"
+        });
+      }
+    });
+  }
+  if (Array.isArray(hero.mercenaries)) {
+    hero.mercenaries.forEach(function(m) {
+      if (m && m.disease) {
+        var d = m.disease;
+        var meta = (window.DISEASE_STATES || []).find(function(x) { return x.id === d.id; }) || d;
+        cases.push({
+          who: (m.icon || "⚔️") + " Sellsword Recruit: " + m.name,
+          isRecruit: true,
+          name: d.name || meta.name,
+          what: d.what || meta.what || "A virulent battlefield plague weakening your sworn sellsword.",
+          how: d.caughtFrom ? ("Contracted while shielding your party against <b>" + escapeHtml(d.caughtFrom) + "</b>.") : (meta.originLore || "Contracted from pestilent monster strikes during combat."),
+          effects: d.recruitEffect || meta.recruitEffect || "-15% Recruit Attack Power in combat",
+          cure: meta.cureHow || "Purge at the Cathedral's Plague-Doctor Leech Ward (2/day, Gold + 1 Trophy) OR visit Sister Vespera in the Citadel (15💎 Dragon Gems per disease, no daily limit)!"
+        });
+      }
+    });
+  }
+  if (cases.length === 0) return false;
+
+  var leechCost = Math.max(160, (hero.level || 1) * 35);
+  var leechLeft = Math.max(0, 2 - (hero.leechesUsedToday || 0));
+  var totMats = window.getTotalMaterialsCount ? getTotalMaterialsCount() : 0;
+  var myGems = hero.gems || 0;
+
+  var cardsHtml = cases.map(function(c) {
+    return '<div style="background:#16080c;border:2px solid #ef4444;border-left:5px solid #f43f5e;border-radius:6px;padding:10px 12px;margin-bottom:8px;text-align:left;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:4px;">' +
+        '<span style="font-weight:900;color:#fde047;font-family:Cinzel,serif;font-size:13.5px;">' + escapeHtml(c.name) + '</span>' +
+        '<span style="background:#450a0a;border:1px solid #f87171;color:#fecaca;padding:1px 7px;border-radius:4px;font-size:10.5px;font-weight:bold;">Patient: ' + escapeHtml(c.who) + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#e5dec9;line-height:1.55;">' +
+        '<div>📖 <b>What It Is:</b> ' + escapeHtml(c.what) + '</div>' +
+        '<div style="margin-top:3px;">🩸 <b>How They Got It:</b> ' + c.how + '</div>' +
+        '<div style="margin-top:3px;color:#fca5a5;">⚠️ <b>Active Debuff Effects:</b> <b>' + escapeHtml(c.effects) + '</b></div>' +
+        '<div style="margin-top:3px;color:#86efac;">🩺 <b>How to Heal It:</b> ' + escapeHtml(c.cure) + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  playSfx("death");
+  showPopupModal(
+    '<div style="font-size:44px;">🦠🩺💎</div>' +
+    '<div style="font-size:19.5px;font-weight:900;color:#fca5a5;font-family:&#39;Cinzel&#39;,serif;margin-top:2px;">POST-BATTLE PLAGUE &amp; DISEASE DIAGNOSIS!</div>' +
+    '<div style="font-size:12px;color:#fde68a;margin:4px 0 8px 0;"><b>' + cases.length + ' Active Infection(s)</b> still afflicting your party after battle! Diseases do <u>not</u> fade on their own until treated.</div>' +
+    '<div style="max-height:310px;overflow-y:auto;">' + cardsHtml + '</div>' +
+    '<div style="background:#0b0811;border:1px solid #c5a059;border-radius:4px;padding:8px;margin:8px 0;font-size:11.5px;color:#e5dec9;">' +
+      '💰 Your Gold: <b>' + hero.gold.toLocaleString() + 'g</b> • 📦 Trophies: <b>' + totMats + '</b> • 💎 Dragon Gems: <b style="color:#fde047;">' + myGems + '💎</b>' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button class="btn ' + (leechLeft > 0 && hero.gold >= leechCost && totMats >= 1 ? 'btn-emerald' : 'btn-locked') + '" style="flex:1;min-height:36px;" onclick="undergoPlagueDoctorLeechWard()">🦠 Leech Ward (' + leechCost.toLocaleString() + 'g, 1 Trophy • ' + leechLeft + '/2 Left)</button>' +
+      '<button class="btn ' + (myGems >= 15 ? 'btn-shine' : 'btn-locked') + '" style="flex:1;min-height:36px;" onclick="if(window.purgeDiseaseSisterVespera)window.purgeDiseaseSisterVespera()">💎 Sister Vespera (15💎 Purge)</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:6px;">' +
+      '<button class="btn btn-sky" style="flex:1;" onclick="if(window.openSisterVesperaModal)window.openSisterVesperaModal();else openTownFacilityModal(&#39;sanctuary&#39;);">🏥 Visit Citadel Clinic</button>' +
+      '<button class="btn" style="flex:1;" onclick="closePopupModal()">Continue With Illness</button>' +
+    '</div>'
+  );
+  return true;
 }
 
 // Blocking Valkyrie Token Popup Modal — Displays 3/3 Hardcore Cap & Death's Door Trauma!
 function showValkyrieSealPopupModal(sealsRemaining, titleTxt, bodyHtml) {
   if (hero) hero.deathsDoorTrauma = true;
   var stNote = (window.addHeroStress && hero) ? addHeroStress(20) : "";
-  var fullBody = bodyHtml + "<br>• 🕯️ <b style='color:#ef4444;'>DEATH&apos;S DOOR TRAUMA:</b> Suffered <b>+20% Stress</b> &amp; <b>-10% All Stats</b> until you rest at the Inn or pray at the Sanctuary!" + stNote;
+  var fullBody = bodyHtml + "<br>• 🕯️ <b style='color:#ef4444;'>DEATH&apos;S DOOR TRAUMA:</b> Suffered <b>+20% Stress</b> &amp; <b>-10% All Stats</b> until you rest above the floor at the Inn or pray at the Sanctuary!" + stNote;
   activeModalHtml = fullBody;
   document.body.classList.add("modal-open");
   var container = document.getElementById("modalContainer");
@@ -7143,7 +7440,6 @@ function showValkyrieSealPopupModal(sealsRemaining, titleTxt, bodyHtml) {
   '</div>';
 }
 
-// Blocking Recruit / Heir Fallen Popup Modal — Requires player to hit OK when a Mercenary, Bodyguard, or Dynasty Child dies in battle!
 function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHtml) {
   activeModalHtml = extraHtml;
   document.body.classList.add("modal-open");
@@ -7160,7 +7456,7 @@ function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHt
       '<div style="background:#14090e;border:1px solid #991b1b;border-left:4px solid #ef4444;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
         '<div>💀 <b>Slain By:</b> <span style="color:#fca5a5;font-weight:bold;">' + escapeHtml(slainBy || "Enemy Strike") + '</span></div>' +
         '<div>🔥 <b>Avenging Wrath Triggered (2 Turns):</b> <span style="color:#fde047;font-weight:bold;">+30% Hero ATK &amp; 100% Critical Strike Chance!</span></div>' +
-        '<div>⏳ <b>7-Day Resurrectionist Rite:</b> <span style="color:#f87171;font-weight:bold;">The Weeping Graveyard Resurrectionists require 7 Days to stitch their soul back together (+35% Hazard Pay on all future contracts)!</span></div>' +
+        '<div>⏳ <b>7-Day Resurrectionist Rite:</b> <span style="color:#f87171;font-weight:bold;">The Weeping Graveyard Resurrectionists require 7 Days to stitch their soul back together!</span></div>' +
         '<div>🗿 <b>Martyr Memorial:</b> <span style="color:#4ade80;font-weight:bold;">Permanent +2% Defense Ward added in the Weeping Graveyard!</span></div>' +
         (extraHtml ? ('<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #7f1d1d;">' + extraHtml + '</div>') : '') +
       '</div>' +
@@ -7320,7 +7616,7 @@ function useAbyssalEstusFlask() {
   addLog("🧪🔥 <b>Abyssal Soul-Flask Imbibed (" + activeCombat.estusSips + "/3 Sips Left):</b> Restored <b>+" + hpGain + " HP, +" + mpGain + " MP</b> &amp; relieved <b>-15% Stress</b>!");
   renderBattleModal();
 }
-''' //[cite: 4]
+'''
 }
 
 String buildCombatChunkA1b() {
@@ -7495,20 +7791,21 @@ function renderBattleModal() {
       var stars = m.vetRank >= 3 ? "★★★" : (m.vetRank === 2 ? "★★" : (m.vetRank === 1 ? "★" : ""));
       var eqAtk = (m.gear && m.gear.atk) ? m.gear.atk : 0;
       var qMult = (m.quirk && m.quirk.atkMult) ? m.quirk.atkMult : 1.0;
-      var effMercAtk = Math.round((m.atk + eqAtk) * (1 + (m.vetRank || 0) * 0.15) * qMult * recAtkMult);
+      var dMult = (m.disease && m.disease.mercAtkMult) ? m.disease.mercAtkMult : (m.disease ? 0.86 : 1.0);
+      var effMercAtk = Math.round((m.atk + eqAtk) * (1 + (m.vetRank || 0) * 0.15) * qMult * dMult * recAtkMult);
       var mBattleDmg = (pStats.mercDmg && pStats.mercDmg[m.id]) ? pStats.mercDmg[m.id] : 0;
       var mLastDmg = (pStats.mercLast && pStats.mercLast[m.id]) ? pStats.mercLast[m.id] : 0;
       var mHealDone = (pStats.mercHeals && pStats.mercHeals[m.id]) ? pStats.mercHeals[m.id] : 0;
       var mSharePct = activeCombat.sessionDamage > 0 ? Math.round((mBattleDmg / totSessionDmg) * 100) : 0;
 
-      heroCardMiniRecruits.push('<div class="battle-card-recruit-mini" title="' + escapeHtml(m.name) + ' (' + m.hp + '/' + m.maxHp + ' HP)">' +
+      heroCardMiniRecruits.push('<div class="battle-card-recruit-mini" title="' + escapeHtml(m.name) + ' (' + m.hp + '/' + m.maxHp + ' HP' + (m.disease ? ' • ' + m.disease.name : '') + ')">' +
         renderEntityAvatar(m.name, m.icon, 26, false) +
-        '<span style="font-size:8px;color:#86efac;font-weight:bold;">' + mPct + '%</span>' +
+        '<span style="font-size:8px;color:' + (m.disease ? '#fca5a5' : '#86efac') + ';font-weight:bold;">' + (m.disease ? '🦠' : '') + mPct + '%</span>' +
       '</div>');
 
-      partyCards.push('<div class="merc-mini-card" style="border-color:' + ordBadgeColor + ';">' +
+      partyCards.push('<div class="merc-mini-card" style="border-color:' + (m.disease ? '#ef4444' : ordBadgeColor) + ';">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:bold;color:#86efac;">' + m.icon + ' ' + escapeHtml(m.name) + (stars ? ' <span style="color:#d4af37;">' + stars + '</span>' : '') + '</span><span style="font-size:8.5px;color:' + ordBadgeColor + ';font-weight:bold;">[' + effRecOrder.toUpperCase() + ']</span></div>' +
-        '<div style="font-size:9px;color:#e5dec9;margin:2px 0;">🗡️ATK: <b>' + effMercAtk + '</b>' + (m.quirk ? (' • ' + m.quirk.name) : '') + ((m.id === "lazarus" || effRecOrder === "protect") ? ' • <b style="color:#fca5a5;">🩸SACRIFICIAL SHIELD</b>' : '') + '</div>' +
+        '<div style="font-size:9px;color:#e5dec9;margin:2px 0;">🗡️ATK: <b>' + effMercAtk + '</b>' + (m.disease ? (' • <b style="color:#ef4444;">' + escapeHtml(m.disease.name) + '</b>') : '') + (m.quirk ? (' • ' + m.quirk.name) : '') + ((m.id === "lazarus" || effRecOrder === "protect") ? ' • <b style="color:#fca5a5;">🩸SACRIFICIAL SHIELD</b>' : '') + '</div>' +
         '<div style="margin:2px 0;"><span class="party-dmg-pill">💥 Battle DMG: ' + mBattleDmg.toLocaleString() + ' (' + mSharePct + '%)' + (mLastDmg > 0 ? ' • Last: -' + mLastDmg : '') + (mHealDone > 0 ? ' • 💚+' + mHealDone + ' HP' : '') + '</span></div>' +
         '<div class="bar-wrap" style="height:10px;margin:2px 0 0 0;"><div class="bar-fill" style="width:' + mPct + '%;background:#15803d;"></div><div class="bar-text" style="font-size:8.5px;line-height:9px;">❤️ ' + m.hp + '/' + m.maxHp + '</div></div>' +
       '</div>');
@@ -7560,7 +7857,6 @@ function renderBattleModal() {
 
   var heroCardRecruitsStripHtml = heroCardMiniRecruits.length ? ('<div class="battle-card-recruit-strip">' + heroCardMiniRecruits.join('') + '</div>') : '';
 
-  // Conditional & Collapsible Recruits Battle Card: Hidden completely if 0 active helpers!
   var isRecCollapsed = !!hero.recruitsCardCollapsed;
   var recruitsCardHtml = "";
   if (partyCards.length > 0) {
@@ -7641,7 +7937,7 @@ function renderBattleModal() {
   if (speciesKills >= 25) enemyStatusTags += ' <span style="background:#052e16;color:#86efac;padding:1px 5px;border-radius:3px;font-size:9px;">🎯+5% MASTERY</span>';
   if (activeCombat.poiseBroken) enemyStatusTags += ' <span style="background:#eab308;color:#000;font-weight:900;padding:1px 5px;border-radius:3px;font-size:9px;">💫POISE STAGGER (100% CRIT!)</span>';
   if (activeCombat.wetTurns > 0) enemyStatusTags += ' <span style="background:#0284c7;color:#e0f2fe;padding:1px 5px;border-radius:3px;font-size:9px;">🌊WET</span>';
-  if (activeCombat.isNemesis) enemyStatusTags += ' <span style="background:#7f1d1d;color:#fde047;padding:1px 5px;border-radius:3px;font-size:9px;">💀NEMESIS R' + ((hero.nemesis && hero.nemesis.rank) || 1) + ' (+2💎)</span>';
+  if (activeCombat.isNemesis) enemyStatusTags += ' <span style="background:#7f1d1d;color:#fde047;padding:1px 5px;border-radius:3px;font-size:9px;">💀NEMESIS R' + ((hero.nemesis && hero.nemesis.rank) || 1) + '</span>';
   if (activeCombat.isZombie && !activeCombat.zombieRevived) enemyStatusTags += ' <span style="background:#14532d;color:#bbf7d0;padding:1px 5px;border-radius:3px;font-size:9px;">🧟RESILIENT</span>';
   if (activeCombat.armorBrokenTurns > 0) enemyStatusTags += ' <span style="background:#7f1d1d;color:#fde68a;padding:1px 5px;border-radius:3px;font-size:9px;">🔓BROKEN (' + activeCombat.armorBrokenTurns + 't)</span>';
   if (activeCombat.hamstrungTurns > 0) enemyStatusTags += ' <span style="background:#78350f;color:#fde68a;padding:1px 5px;border-radius:3px;font-size:9px;">🦵HAMSTRUNG</span>';
@@ -7702,7 +7998,7 @@ function renderBattleModal() {
   }).join('');
 
   var foeWhisper = activeCombat.loreIntro || (window.getMonsterLoreWhisper ? getMonsterLoreWhisper(activeCombat.baseMobName || activeCombat.name, activeCombat.trait, activeCombat.areaId) : "A dread horror stalking Valoria.");
-  var cannotFlee = ((activeCombat.isBoss && !activeCombat.isRoamingMiniBoss) || activeCombat.isGauntlet || activeCombat.isWorldRaid || activeCombat.isZoneRaid || activeCombat.isDelveBoss || activeCombat.isMirrorClone);
+  var cannotFlee = ((activeCombat.isBoss && !activeCombat.isRoamingMiniBoss && !activeCombat.isNemesis) || activeCombat.isGauntlet || activeCombat.isWorldRaid || activeCombat.isZoneRaid || activeCombat.isDelveBoss || activeCombat.isMirrorClone);
 
   var anatomySkeletonSvg = '<svg viewBox="0 0 120 110" style="width:105px;height:95px;margin:2px auto;display:block;">' +
     '<g onclick="event.stopPropagation();combatAction(&#39;attackHead&#39;);" style="cursor:pointer;"><circle cx="60" cy="20" r="14" fill="rgba(220,38,38,0.35)" stroke="#f87171" stroke-width="1.8"/><text x="60" y="24" text-anchor="middle" fill="#fef08a" font-size="9" font-weight="bold">👑' + netHitHead + '%</text></g>' +
@@ -7710,11 +8006,12 @@ function renderBattleModal() {
     '<g onclick="event.stopPropagation();combatAction(&#39;attackLegs&#39;);" style="cursor:pointer;"><rect x="40" y="74" width="17" height="30" rx="3" fill="rgba(56,189,248,0.35)" stroke="#7dd3fc" stroke-width="1.6"/><rect x="63" y="74" width="17" height="30" rx="3" fill="rgba(56,189,248,0.35)" stroke="#7dd3fc" stroke-width="1.6"/><text x="60" y="92" text-anchor="middle" fill="#e0f2fe" font-size="9" font-weight="bold">🦵' + netHitLegs + '%</text></g>' +
   '</svg>';
 
+  var partyDisCnt = countTotalPartyDiseases(hero);
   cWrap.innerHTML = '<div class="modal-overlay" style="z-index:9500;">' +
     '<div class="battle-modal-card ' + lowHpClass + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding:3px 6px;background:#0c0812;border:1px solid #4a3823;border-radius:4px;flex-wrap:wrap;gap:4px;">' +
         '<span style="font-size:12px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">⚔️ ' + escapeHtml(curArea.name) + ' (' + envObj.name + (rw.active ? ' • 📡' + rw.conditions.join('/').toUpperCase() : '') + ')</span>' +
-        '<span style="font-size:10.5px;color:#e5dec9;">' + (activeCombat.isWorldRaid ? '🌍Free WB: <b style="color:#4ade80;">' + wbFreeLeft + '/3</b> • ' : '') + '🪽 Seals: <b style="color:#fde047;">' + (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3</b> • 😰Stress: <b style="color:' + ((hero.stress || 0) >= 75 ? '#ef4444' : '#c084fc') + ';">' + (hero.stress || 0) + '%</b> • 🧪 <b style="color:#86efac;">' + hero.potions + '</b></span>' +
+        '<span style="font-size:10.5px;color:#e5dec9;">' + (activeCombat.isWorldRaid ? '🌍Free WB: <b style="color:#4ade80;">' + wbFreeLeft + '/3</b> • ' : '') + '🪽 Seals: <b style="color:#fde047;">' + (hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3</b> • 😰Stress: <b style="color:' + ((hero.stress || 0) >= 75 ? '#ef4444' : '#c084fc') + ';">' + (hero.stress || 0) + '%</b>' + (partyDisCnt > 0 ? (' • <b style="color:#ef4444;">🦠' + partyDisCnt + ' Disease</b>') : '') + (st.isDrunk ? ' • <b style="color:#fbbf24;">🍺Drunk</b>' : '') + ' • 🧪 <b style="color:#86efac;">' + hero.potions + '</b></span>' +
       '</div>' +
       '<div class="battle-arena ' + silClass + ' ' + goreClass + '" style="background:' + arenaBgStyle + ';margin-bottom:5px;">' +
         gambitBarHtml + bossLoreHtml + qteBarHtml + finisherHtml + badgesHtml +
@@ -7797,7 +8094,7 @@ function renderBattleModal() {
     '</div>' +
   '</div>';
 }
-''' //[cite: 4]
+'''
 }
 
 String buildCombatChunkA2() {
@@ -7989,18 +8286,11 @@ function saveCustomizedHero() {
   renderGameScreen();
 }
 
-// Steeply Scaled Mercenary Cost + Reputation Hazard Tax (+35% per total recruit death & +50% per individual death!)
 function getMercHireCost(tmpl) {
   var lv = hero ? (hero.level || 1) : 1;
   var totDeaths = hero ? (hero.totalRecruitDeaths || (hero.fallenHeroes ? hero.fallenHeroes.length : 0)) : 0;
-  var indivDeaths = 0;
-  if (hero && Array.isArray(hero.fallenHeroes)) {
-    hero.fallenHeroes.forEach(function(f) {
-      if (f && f.name === tmpl.name) indivDeaths++;
-    });
-  }
+  var hazardTaxMult = 1 + Math.min(0.60, totDeaths * 0.12);
   var lvScale = 1 + ((lv - 1) * 0.35) + (Math.pow(lv, 1.55) * 0.18);
-  var hazardTaxMult = 1 + (totDeaths * 0.35) + (indivDeaths * 0.50);
   return Math.round(tmpl.baseCost * lvScale * hazardTaxMult);
 }
 
@@ -8033,7 +8323,6 @@ function hireMercenaryFighter(mercId) {
   var tmpl = MERCENARY_POOL.find(function(x) { return x.id === mercId; });
   if (!tmpl) return;
 
-  // Check 7-Day Resurrectionist Cooldown if this recruit previously died!
   var cdUntil = (hero.mercCooldowns && hero.mercCooldowns[mercId]) ? hero.mercCooldowns[mercId] : 0;
   if (cdUntil > Date.now()) {
     var remSec = Math.ceil((cdUntil - Date.now()) / 1000);
@@ -8069,7 +8358,7 @@ function hireMercenaryFighter(mercId) {
     showRequirementModal(
       "Not Enough Gold to Hire " + tmpl.name, "💰⚔️",
       "Hiring <b>" + escapeHtml(tmpl.name) + "</b> requires <b style='color:#fbbf24;'>" + cost.toLocaleString() + " Gold</b> (You currently have <b>" + hero.gold.toLocaleString() + "g</b>)." +
-      (totDeaths > 0 ? ("<br>• ⚠️ <b>Reputation Hazard Tax (+" + (totDeaths * 35) + "%):</b> Sellswords across Valoria know that <b>" + totDeaths + " companion(s)</b> have died under your command and demand hazard pay!") : ""),
+      (totDeaths > 0 ? ("<br>• ⚠️ <b>Reputation Hazard Tax (+" + Math.min(60, totDeaths * 12) + "%):</b> Sellswords know that <b>" + totDeaths + " companion(s)</b> fell under your banner!") : ""),
       "Patrol regions, collect Kingdom Taxes, or sell unequipped gear to raise Gold!",
       ""
     );
@@ -8081,7 +8370,7 @@ function hireMercenaryFighter(mercId) {
   var scaledAtk = tmpl.baseAtk + Math.round(hero.level * 1.9);
   hero.mercenaries.push({
     id: tmpl.id, name: tmpl.name, role: tmpl.role, icon: tmpl.icon,
-    hp: scaledHp, maxHp: scaledHp, atk: scaledAtk, kills: 0, vetRank: 0, gear: null, quirk: null,
+    hp: scaledHp, maxHp: scaledHp, atk: scaledAtk, kills: 0, vetRank: 0, gear: null, quirk: null, disease: null,
     totalDmg: 0, totalHeals: 0, dmgAbsorbed: 0, bossesAssisted: 0
   });
   pushBuffToFifo("buff_recbond", hero);
@@ -8135,7 +8424,7 @@ function equipMercenaryGear(mercIdx) {
       addLog("🎒 Unequipped <b>" + escapeHtml(ret.name) + "</b> from " + escapeHtml(m.name) + ".");
       queueSaveHero(); renderGameScreen(); return;
     }
-    showRequirementModal("No Unlocked Weapon or Armor in Backpack", "🎒🛡️", "You do not have any unlocked spare <b>Weapon</b> or <b>Armor</b> items sitting in your Backpack to give to <b>" + escapeHtml(m.name) + "</b>.", "Hunt monsters in the World tab or buy a Weapon/Armor from the Dwarven Market in Town, then tap this button again!", "");
+    showRequirementModal("No Unlocked Weapon or Armor in Backpack", "🎒🛡️", "You do not have any unlocked spare <b>Weapon</b> or <b>Armor</b> items sitting in your Backpack to give to <b>" + escapeHtml(m.name) + "</b>.", "Hunt monsters in the Realms tab or buy a Weapon/Armor from the Dwarven Market in Town, then tap this button again!", "");
     return;
   }
   var newGear = hero.inventory.splice(bestIdx, 1)[0];
@@ -8158,7 +8447,7 @@ function selectAdventureArea(areaId) {
     showRequirementModal(
       "Region Locked: " + AREAS[areaId - 1].name, "🗺️🔒",
       "You have only unlocked up to <b>" + escapeHtml(prevArea.name) + " (Area " + hero.unlockedArea + "/22)</b>.",
-      "1. Complete all <b>5 Quest Board Warrant Tiers</b> for <b>" + escapeHtml(prevArea.name) + "</b>.<br>2. Defeat the Zone Boss <b>" + prevArea.boss.icon + " " + escapeHtml(prevArea.boss.name) + "</b> to unlock the next region!",
+      "1. Complete all <b>10 Quest Board Warrant Tiers</b> for <b>" + escapeHtml(prevArea.name) + "</b>.<br>2. Defeat the Zone Boss <b>" + prevArea.boss.icon + " " + escapeHtml(prevArea.boss.name) + "</b> to unlock the next region!",
       '<button class="btn btn-gold" style="flex:1;" onclick="closePopupModal();setTab(&#39;questboard&#39;);">📋 Open Quest Board</button>'
     );
     return;
@@ -8318,11 +8607,11 @@ function embarkOnQuest(mode) {
     }
   }
 
-  if ((mode === "soloBoss" || mode === "zoneRaid") && curTier < 5) {
+  if ((mode === "soloBoss" || mode === "zoneRaid") && curTier < 10) {
     showRequirementModal(
-      "Tier 5 Zone Boss Warrant Required!", "📋🔒",
-      "To challenge <b>" + area.boss.icon + " " + escapeHtml(area.boss.name) + "</b>, you must complete all <b>5 Warrant Tiers</b> for <b>" + escapeHtml(area.name) + "</b> (Current Tier: <b style='color:#fbbf24;'>" + curTier + " / 5</b>).",
-      "Open the <b>📋 Warrants</b> tab, accept Kill or Gather contracts for <b>" + escapeHtml(area.name) + "</b>, and turn them in until your Warrant reaches 5/5!",
+      "Tier 10 Zone Boss Warrant Required!", "📋🔒",
+      "To challenge <b>" + area.boss.icon + " " + escapeHtml(area.boss.name) + "</b>, you must complete all <b>10 Warrant Tiers</b> for <b>" + escapeHtml(area.name) + "</b> (Current Tier: <b style='color:#fbbf24;'>" + curTier + " / 10</b>).",
+      "Open the <b>📋 Warrants</b> tab, accept Kill or Gather contracts for <b>" + escapeHtml(area.name) + "</b>, and turn them in until your Warrant reaches 10/10!",
       '<button class="btn btn-gold" style="flex:1;justify-content:center;" onclick="closePopupModal();setTab(&#39;questboard&#39;);">📋 Open Warrant Board</button>'
     );
     return;
@@ -8346,8 +8635,8 @@ function embarkOnQuest(mode) {
     showRequirementModal(
       "Not Enough Quest Stamina (Need " + qCost + "⚡)", "⚡🛌",
       "This encounter requires <b style='color:#fbbf24;'>" + qCost + "⚡ Quest Stamina</b> (You currently have <b>" + hero.quests + " / " + hero.maxQuests + "⚡</b>).",
-      "• Wait for the relaxed 45-minute recovery timer (+5⚡ per tick).<br>• Visit <b>🏛️ Citadel ➔ 🛌 Boar&apos;s Head Inn</b> for a Quick-Rest (+15⚡) or 2-Hour Offline Lodging.",
-      '<button class="btn btn-gold" style="flex:1;justify-content:center;" onclick="closePopupModal();setTab(&#39;town&#39;);openTownFacilityModal(&#39;inn&#39;);">🛌 Visit Tavern Inn</button>'
+      "• Wait for the relaxed 45-minute recovery timer (+5⚡ per tick).<br>• Visit <b>🏛️ Citadel ➔ ⚡🔥 Astral Ley-Well</b> (2/day Full Energy Restore) or <b>🛌 Boar&apos;s Head Inn</b> (+15⚡ Quick-Rest)!",
+      '<button class="btn btn-shine" style="flex:1;justify-content:center;" onclick="closePopupModal();setTab(&#39;town&#39;);if(window.openAstralLeyWellModal)openAstralLeyWellModal();else openTownFacilityModal(&#39;inn&#39;);">⚡ Visit Astral Ley-Well / Inn</button>'
     );
     return;
   }
@@ -8497,7 +8786,7 @@ function embarkOnQuest(mode) {
     var startBossHp = Math.round(b.hp * (usedSab2 ? 0.85 : 1.0));
     var bArm = Math.round(b.hp * 0.40 * intelArmorMult);
     activeCombat = {
-      isBoss: true, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false,
+      isBoss: true, isTrueAreaBoss: true, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false,
       areaId: area.id, baseMobName: b.name, trait: "Area-Lord", loreIntro: b.loreIntro + (usedIntel ? " [⛓️ -20% Armor Intel]" : "") + (usedSab2 ? " [💣 -15% Sabotaged HP]" : ""),
       icon: b.icon, name: "BOSS: " + b.name, level: area.maxLv,
       hp: startBossHp, maxHp: b.hp, armor: bArm, maxArmor: bArm, poise: 100, maxPoise: 100, atk: b.atk, def: b.def, eva: b.eva, parry: 14, acc: b.acc, crit: 15,
@@ -8510,7 +8799,6 @@ function embarkOnQuest(mode) {
 
   var eLv = area.minLv + Math.floor(Math.random() * (area.maxLv - area.minLv + 1));
 
-  // Holiday Week Special Monsters (Halloween, Thanksgiving & Krampusnacht)!
   var activeHol = window.getActiveHolidayEvent ? getActiveHolidayEvent() : null;
   if (activeHol && activeHol.mobs && activeHol.mobs.length && Math.random() < 0.36) {
     var hm = activeHol.mobs[Math.floor(Math.random() * activeHol.mobs.length)];
@@ -8596,7 +8884,7 @@ function embarkOnQuest(mode) {
     activeCombat = {
       isBoss: true, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false, isNemesis: true,
       areaId: area.id, baseMobName: nem.baseMobName || nem.name, trait: nem.trait || "Nemesis-Slayer",
-      loreIntro: "Rank " + nemRank + " Vendetta! This fiend shattered your Valkyrie Seal! Fleeing will cause it to evolve higher! Slay it for +" + (1 + nemRank) + "💎 Gems & +35 Fame!",
+      loreIntro: "Rank " + nemRank + " Vendetta! This fiend shattered your Valkyrie Seal! Fleeing will cause it to evolve higher! Slay it for +1💎 Gem & +35 Fame!",
       icon: nem.icon || "💀🩸", level: eLv + nemRank, name: "NEMESIS (R" + nemRank + "): " + nem.name + (nem.epithet ? " " + nem.epithet : " the Seal-Breaker"),
       hp: nHp, maxHp: nHp, armor: nArm, maxArmor: nArm, poise: 100, maxPoise: 100, atk: Math.round((15 + eLv * 6.5) * 1.22 * areaMult * nemScale), def: Math.round((6 + eLv * 3.3) * areaMult * nemScale),
       eva: 16 + nemRank, parry: 12, acc: 96 + eLv + nemRank * 2, crit: 16,
@@ -8702,16 +8990,16 @@ function embarkOnQuest(mode) {
   addLog("⚔️ <b>Patrol Encounter (" + escapeHtml(area.name) + "):</b> Ambushed by <b>" + mob.icon + " " + escapeHtml(activeCombat.name) + " (Lv " + eLv + ")</b>!");
   renderGameScreen();
 }
-''' //[cite: 4]
+'''
 }
 
-boolean part4BBoundaryGuard() { return true } //[cite: 4]
+boolean part4BBoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 4B OF 7 — REPLY "NEXT" FOR PART 5A OF 7[cite: 4]
+// END OF PART 4B OF 7 — REPLY "NEXT" FOR PART 5A OF 7
 // ==============================================================================
 
 // ==============================================================================
-// PART 5A OF 7 — PASTE DIRECTLY BELOW PART 4B (FULL v18.3 HARDCORE COMBAT)
+// PART 5A OF 7 — PASTE DIRECTLY BELOW PART 4B (FULL v18.4.1 HARDCORE COMBAT)
 // ==============================================================================
 
 String buildCombatChunkB() {
@@ -8720,24 +9008,39 @@ String buildCombatChunkB() {
 
 String buildCombatChunkB1() {
     return '''
+function isEnemyPlagueCarrier(cObj) {
+  if (!cObj) return false;
+  var s = String(cObj.name || "").toLowerCase();
+  var tr = cObj.trait || "";
+  return (tr === "Venomous" || tr === "Acidic" || cObj.isZombie || cObj.isWerewolf || cObj.areaId === 4 || cObj.areaId === 7 || s.indexOf("rat") >= 0 || s.indexOf("ooze") >= 0 || s.indexOf("spore") >= 0 || s.indexOf("plague") >= 0 || s.indexOf("hound") >= 0 || s.indexOf("wolf") >= 0 || s.indexOf("bat") >= 0 || s.indexOf("spider") >= 0 || s.indexOf("adder") >= 0 || s.indexOf("hydra") >= 0);
+}
+
 function tryInflictCombatDisease(cObj) {
   if (!hero || !cObj || !window.DISEASE_STATES) return "";
   ensureHeroV3Fields(hero);
   if (hero.diseases.length >= 3) return "";
-  var s = String(cObj.name || "").toLowerCase();
-  var tr = cObj.trait || "";
-  var isPlagueCarrier = (tr === "Venomous" || tr === "Acidic" || cObj.isZombie || cObj.isWerewolf || cObj.areaId === 4 || cObj.areaId === 7 || s.indexOf("rat") >= 0 || s.indexOf("ooze") >= 0 || s.indexOf("spore") >= 0 || s.indexOf("plague") >= 0);
-  if (!isPlagueCarrier || Math.random() > 0.16) return "";
+  if (!isEnemyPlagueCarrier(cObj) || Math.random() > 0.18) return "";
 
   var avail = DISEASE_STATES.filter(function(d) {
     return !hero.diseases.some(function(existing) { return existing.id === d.id; });
   });
   if (!avail.length) return "";
-  var picked = avail[Math.floor(Math.random() * avail.length)];
-  hero.diseases.push(JSON.parse(JSON.stringify(picked)));
+  var picked = JSON.parse(JSON.stringify(avail[Math.floor(Math.random() * avail.length)]));
+  picked.caughtFrom = cObj.name || "a pestilent foe";
+  hero.diseases.push(picked);
   syncHeroVitalityMaxHp(hero);
-  addLog("🦠🩸 <b style='color:#ef4444;'>CONTRACTED DISEASE: " + escapeHtml(picked.name) + "!</b> " + escapeHtml(picked.desc));
+  addLog("🦠🩸 <b style='color:#ef4444;'>HERO CONTRACTED DISEASE (" + escapeHtml(picked.caughtFrom) + "): " + escapeHtml(picked.name) + "!</b> " + escapeHtml(picked.desc));
   return "<br>🦠 <b style='color:#ef4444;'>Contracted " + escapeHtml(picked.name) + ":</b> " + escapeHtml(picked.desc);
+}
+
+function tryInflictRecruitDisease(mTarget, cObj) {
+  if (!mTarget || mTarget.disease || !cObj || !window.DISEASE_STATES) return "";
+  if (!isEnemyPlagueCarrier(cObj) || Math.random() > 0.18) return "";
+  var picked = JSON.parse(JSON.stringify(DISEASE_STATES[Math.floor(Math.random() * DISEASE_STATES.length)]));
+  picked.caughtFrom = cObj.name || "a pestilent foe";
+  mTarget.disease = picked;
+  addLog("🦠🛡️ <b style='color:#ef4444;'>RECRUIT CONTRACTED DISEASE!</b> <b>" + escapeHtml(mTarget.name) + "</b> caught <b>" + escapeHtml(picked.name) + "</b> from <b>" + escapeHtml(picked.caughtFrom) + "</b> (" + escapeHtml(picked.recruitEffect || "-15% Recruit ATK") + ")!");
+  return picked.name;
 }
 
 function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHtml) {
@@ -8758,7 +9061,7 @@ function showRecruitFallenPopupModal(recName, recIcon, recRole, slainBy, extraHt
       '<div style="background:#14090e;border:1px solid #991b1b;border-left:4px solid #ef4444;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
         '<div>💀 <b>Slain By:</b> <span style="color:#fca5a5;font-weight:bold;">' + escapeHtml(slainBy || "Enemy Strike") + '</span></div>' +
         '<div>🔥 <b>Avenging Wrath Triggered:</b> <span style="color:#fde047;font-weight:bold;">+30% Hero ATK &amp; 100% Critical Strike Chance!</span></div>' +
-        '<div>⏳ <b>7-Day Resurrectionist Rite:</b> <span style="color:#f87171;font-weight:bold;">The Weeping Graveyard Resurrectionists require 7 Days to stitch their soul back into mortal flesh (+35% Hazard Pay on future sellsword contracts)!</span></div>' +
+        '<div>⏳ <b>7-Day Resurrectionist Rite:</b> <span style="color:#f87171;font-weight:bold;">The Weeping Graveyard Resurrectionists require 7 Days to stitch their soul back into mortal flesh (+12% Hazard Pay on future sellsword contracts)!</span></div>' +
         '<div>🗿 <b>Martyr Memorial:</b> <span style="color:#4ade80;font-weight:bold;">Permanent +2% Defense Ward added in the Weeping Graveyard!</span></div>' +
         '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #7f1d1d;">' + fullExtra + '</div>' +
       '</div>' +
@@ -8776,7 +9079,7 @@ function startPvpDuel(opponentType, keyOrIdx) {
     return;
   }
   if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for PvP Duel", "🏟️⚡", "Entering the Royal Tournament PvP Arena requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or rest at the Inn!", "");
+    showRequirementModal("Need 3⚡ Quests for PvP Duel", "🏟️⚡", "Entering the Royal Tournament PvP Arena requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   if (hero.hp <= Math.round(hero.maxHp * 0.2)) {
@@ -8923,7 +9226,6 @@ function combatAction(act) {
   var curse = getActiveRealmCurse();
   var lvMod = getLevelDeltaModifiers(hero.level, activeCombat.level || 1);
 
-  // Dynamic Shrinking QTE Windows: Shrinks as you approach/exceed enemy level and against Bosses!
   var qBounds = getCombatQteBounds(activeCombat);
   var inQteSweetSpot = (reflexPos >= qBounds.sweetMin && reflexPos <= qBounds.sweetMax);
   var inGoldQteSpot  = (reflexPos >= qBounds.goldMin && reflexPos <= qBounds.goldMax);
@@ -9162,7 +9464,10 @@ function combatAction(act) {
       } else {
         addLog("🏃🌑 You slipped away into the shadows safely!");
       }
-      activeCombat = null; lastCombatBanner = null; renderGameScreen(); return;
+      activeCombat = null; lastCombatBanner = null;
+      renderGameScreen();
+      if (window.checkAndShowPostBattleDiseasePopup) checkAndShowPostBattleDiseasePopup();
+      return;
     } else {
       bannerBadges.push({ text: "❌ ESCAPE FAILED (" + fleeChance + "% ODDS)!", bg: "#78350f" });
       addLog("❌ Failed to escape" + (activeCombat.isGuard ? " from the Citadel Guard (5% Flee Cap)!" : "!"));
@@ -9186,7 +9491,7 @@ function combatAction(act) {
     if (!activeCombat.poiseBroken && Math.random() * 100 > netHitChance) {
       activeCombat.comboCount = 0;
       floatingEnemyTag = { text: "🌑 MISS!", color: "#9c8f7a" };
-      bannerBadges.push({ text: "🌑 FOE DODGED!" + (lvMod.hitPen > 0 ? " (LV DELTA -" + lvMod.hitPen + "%)" : ""), bg: "#44403c" });
+      bannerBadges.push({ text: "🌑 FOE DODGED!" + (st.isDrunk ? " (🍺DRUNK -15% HIT)" : (lvMod.hitPen > 0 ? " (LV DELTA -" + lvMod.hitPen + "%)" : "")), bg: "#44403c" });
       addLog("🌑 <b>" + escapeHtml(activeCombat.name) + "</b> dodged your strike!");
     } else {
       shakeTarget = "enemy";
@@ -9385,6 +9690,7 @@ function combatAction(act) {
         var vetMult = 1 + ((m.vetRank || 0) * 0.15);
         var eqAtk = (m.gear && m.gear.atk) ? m.gear.atk : 0;
         var qMult = (m.quirk && m.quirk.atkMult) ? m.quirk.atkMult : 1.0;
+        var dMult = (m.disease && m.disease.mercAtkMult) ? m.disease.mercAtkMult : (m.disease ? 0.86 : 1.0);
         if (m.id === "beatrice" || m.id === "lazarus" || effRecOrder === "mix") {
           var cHeal = Math.max(2, Math.round((8 + hero.level * 2.0) * vetMult * (m.id === "beatrice" ? 1.0 : 0.65) * exhaustHealMult));
           hero.hp = Math.min(hero.maxHp, hero.hp + cHeal);
@@ -9392,7 +9698,7 @@ function combatAction(act) {
           pStats.mercHeals[m.id] = (pStats.mercHeals[m.id] || 0) + cHeal;
           m.totalHeals = (m.totalHeals || 0) + cHeal;
         }
-        var mDmg = Math.max(3, Math.round(((m.atk + eqAtk) * vetMult * qMult * recOrderDmgMult * armBreakMult) * (0.88 + Math.random() * 0.22) - activeCombat.def * 0.30));
+        var mDmg = Math.max(3, Math.round(((m.atk + eqAtk) * vetMult * qMult * dMult * recOrderDmgMult * armBreakMult) * (0.88 + Math.random() * 0.22) - activeCombat.def * 0.30));
         activeCombat.hp -= mDmg;
         activeCombat.sessionDamage = (activeCombat.sessionDamage || 0) + mDmg;
         pStats.mercDmg[m.id] = (pStats.mercDmg[m.id] || 0) + mDmg;
@@ -9546,9 +9852,6 @@ function combatAction(act) {
         activeCombat.partyShield -= absorbed; eDmg -= absorbed;
       }
       if ((curIntent.id === "venom" || activeCombat.trait === "Venomous" || activeCombat.trait === "Acidic") && Math.random() < (activeCombat.areaId === 4 ? 0.60 : 0.45)) activeCombat.heroPoisonTurns = 3;
-      if (tryInflictCombatDisease(activeCombat)) {
-        bannerBadges.push({ text: "🦠 CONTRACTED DISEASE! (CURE AT CATHEDRAL LEECH WARD!)", bg: "#14532d" });
-      }
       if (activeCombat.trait === "Lifesteal" && eDmg > 0) activeCombat.hp = Math.min(activeCombat.maxHp, activeCombat.hp + Math.round(eDmg * 0.35));
       if (activeCombat.isWerewolf && Math.random() < 0.35 && (hero.moonCurseTurns || 0) <= 0) {
         hero.moonCurseTurns = 6;
@@ -9596,6 +9899,9 @@ function combatAction(act) {
         mTarget.hp -= mercDmg;
         mTarget.dmgAbsorbed = (mTarget.dmgAbsorbed || 0) + mercDmg;
         floatingHeroTag = { text: "🩸 RECRUIT -" + mercDmg + " HP", color: "#f87171" };
+        if (mTarget.hp > 0 && tryInflictRecruitDisease(mTarget, activeCombat)) {
+          bannerBadges.push({ text: "🦠 " + mTarget.name.split(" ")[0].toUpperCase() + " INFECTED WITH DISEASE!", bg: "#14532d" });
+        }
         if (isSuperCleave) {
           var tramplePct = (effRecOrder === "protect") ? 0.25 : 0.55;
           var trampleDmg = Math.max(4, Math.round(eDmg * tramplePct));
@@ -9617,7 +9923,7 @@ function combatAction(act) {
           activeCombat.avengingWrathTurns = 2;
           playSfx("death");
           bannerBadges.push({ text: "⚰️ " + mercDiedObj.name.toUpperCase() + " FELL (7-DAY REVIVAL RITE STARTED)!", bg: "#000000" });
-          addLog("⚰️ [RECRUITS] <b style='color:#ef4444;'>RECRUIT FALLEN! " + mercDiedObj.icon + " " + escapeHtml(mercDiedObj.name) + " fell in battle (7-Day Resurrectionist Cooldown started, +35% Hazard Tax on future contracts &amp; Avenging Wrath triggered)!</b>");
+          addLog("⚰️ [RECRUITS] <b style='color:#ef4444;'>RECRUIT FALLEN! " + mercDiedObj.icon + " " + escapeHtml(mercDiedObj.name) + " fell in battle (7-Day Resurrectionist Cooldown started &amp; Avenging Wrath triggered)!</b>");
           var extraLifetimeTxt = "📊 <b>Lifetime Service:</b> " + (mercDiedObj.kills || 0) + " Kills • 💥 " + (mercDiedObj.totalDmg || 0).toLocaleString() + " DMG Dealt • 🛡️ " + (mercDiedObj.dmgAbsorbed || 0).toLocaleString() + " DMG Tanked" + (gearRetNote ? ("<br>" + gearRetNote) : "");
           lastCombatBanner = bannerBadges;
           if (hero.hp <= 0) { handleCombatDefeat(); return; }
@@ -9627,6 +9933,9 @@ function combatAction(act) {
         }
       } else {
         hero.hp -= eDmg;
+        if (tryInflictCombatDisease(activeCombat)) {
+          bannerBadges.push({ text: "🦠 HERO CONTRACTED DISEASE! (DIAGNOSIS AFTER BATTLE)", bg: "#14532d" });
+        }
         floatingHeroTag = { text: "🩸 -" + eDmg + " HP", color: "#ef4444" };
         bannerBadges.push({ text: "🩸 TOOK -" + eDmg + " HP", bg: "#7f1d1d" });
         addLog("🩸 <b>" + escapeHtml(activeCombat.name) + "</b> (" + curIntent.name + ") hits you for <b style='color:#ef4444;'>-" + eDmg + " HP</b>!");
@@ -9665,7 +9974,6 @@ function handleCombatDefeat() {
     return;
   }
 
-  // 1) RECRUIT / HEIR / ALT BODYGUARD SACRIFICE INTERCESSION ("Protect" Order OR Enhanced Brother Lazarus!)
   var lazIdx = (hero.mercenaries || []).findIndex(function(m) { return m.id === "lazarus"; });
   var hasActiveBattleHeir = (hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx] && (!hero.children[hero.activeChildIdx].expeditionUntil || hero.children[hero.activeChildIdx].expeditionUntil <= Date.now()));
   if (lazIdx >= 0 || (effRecOrder === "protect" && ((hero.mercenaries && hero.mercenaries.length > 0) || (hero.altBodyguard && hero.altBodyguard.name) || hasActiveBattleHeir))) {
@@ -9761,13 +10069,13 @@ function handleCombatDefeat() {
     return;
   }
 
-  // 2) ABYSSAL GAUNTLET VALKYRIE TOKEN RESCUE
   if (activeCombat && activeCombat.isGauntlet) {
     if ((hero.valkyrieSeals || 0) > 0) {
       hero.valkyrieSeals--;
       hero.hp = Math.round(hero.maxHp * 0.40);
       var gWave = activeCombat.gauntletWave || 1;
       activeCombat = null; lastCombatBanner = null;
+      window._pendingPostBattleDiseaseCheck = true;
       playSfx("death");
       renderBattleModal();
       var gFailMsg = "🕳️🪽 <b style='color:#fbbf24;'>VALKYRIE TOKEN USED — DRAGGED FROM ABYSSAL GAUNTLET (Wave " + gWave + "/10)!</b><br>" +
@@ -9782,7 +10090,6 @@ function handleCombatDefeat() {
     }
   }
 
-  // 3) WORLD BOSS FREE DAILY CITADEL AEGIS
   if (activeCombat && activeCombat.isWorldRaid && (hero.wbDefeatsToday || 0) < MAX_DAILY_WB_AEGIS) {
     hero.wbDefeatsToday = (hero.wbDefeatsToday || 0) + 1;
     var remFree = Math.max(0, MAX_DAILY_WB_AEGIS - hero.wbDefeatsToday);
@@ -9792,6 +10099,7 @@ function handleCombatDefeat() {
     hero.mp = Math.round(hero.maxMp * 0.50);
     activeCombat = null;
     lastCombatBanner = null;
+    window._pendingPostBattleDiseaseCheck = true;
     playSfx("magic");
     renderBattleModal();
     var aegisMsg = "🌍🛡️ <b style='color:#4ade80;'>CITADEL CALAMITY AEGIS INTERVENED (" + hero.wbDefeatsToday + "/3 Free Daily World Boss Defeats Used)!</b><br>" +
@@ -9806,7 +10114,6 @@ function handleCombatDefeat() {
     return;
   }
 
-  // 4) VALKYRIE TOKEN ACTIVATION (Hardcore Cap: 3 Max Carried)
   if ((hero.valkyrieSeals || 0) > 0) {
     hero.valkyrieSeals--;
     hero.hp = Math.round(hero.maxHp * 0.50);
@@ -9822,6 +10129,7 @@ function handleCombatDefeat() {
       activeCombat = null;
       activeDelve = null;
       lastCombatBanner = null;
+      window._pendingPostBattleDiseaseCheck = true;
       playSfx("death");
       renderBattleModal();
 
@@ -9929,6 +10237,7 @@ function handleCombatDefeat() {
     }
   }
   activeCombat = null; activeDelve = null; lastCombatBanner = null;
+  window._pendingPostBattleDiseaseCheck = true;
   renderBattleModal();
   addLog("💀 <b style='color:#ef4444;'>FALLEN WITH ZERO VALKYRIE SEALS vs " + escapeHtml(defeatedBy) + "!</b> Dropped Soul-Urn (" + lostGold.toLocaleString() + "g)! Succeed in your One-Chance Rescue Delve or face Permadeath!");
   saveCurrentHero(null, false, rUpdate, extraSave);
@@ -9955,7 +10264,6 @@ function handleCombatDefeat() {
   );
 }
 
-// Permanent Consort Sacrifice: If you sacrifice a married Princess, she dies forever on this character slot!
 function executeBloodPriceSacrifice(sacType) {
   ensureHeroV3Fields(hero);
   var sacDesc = "";
@@ -10248,11 +10556,10 @@ function handleCombatVictory() {
   }
 
   if (wasNemesis) {
-    var nGems = 1 + ((hero.nemesis && hero.nemesis.rank) ? hero.nemesis.rank : 1);
-    hero.gems = (hero.gems || 0) + nGems;
+    hero.gems = (hero.gems || 0) + 1;
     hero.nemesis = null;
     recordMemoirMilestone("Avenged my shattered Valkyrie Seal by slaying Nemesis " + foeName + "!");
-    extraRewardsHtml += '<div>💀 <b>SWORN NEMESIS SLAIN:</b> <span style="color:#fde047;">+' + nGems + '💎 Dragon Gems &amp; +35 Court Fame!</span></div>';
+    extraRewardsHtml += '<div>💀 <b>SWORN NEMESIS SLAIN:</b> <span style="color:#fde047;">+1💎 Dragon Gem &amp; +35 Court Fame!</span></div>';
   }
 
   if (hero.bestiaryKills[baseSpecies] === 25) {
@@ -10268,7 +10575,7 @@ function handleCombatVictory() {
   if (hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) {
     var actCh = hero.children[hero.activeChildIdx];
     if (wasBoss || Math.random() < 0.35) {
-      actCh.level = (actCh.level || 1) + 1;
+      actCh.level = Math.min(hero.level, (actCh.level || 1) + 1);
       actCh.atk = Math.round(actCh.atk * 1.05) + 2;
       actCh.maxHp = Math.round(actCh.maxHp * 1.05) + 8;
       actCh.hp = actCh.maxHp;
@@ -10454,6 +10761,7 @@ function handleCombatVictory() {
     }
     if (Math.random() < 0.015 && window.discoverAbyssalGauntletNode && (hero.unlockedGauntlets || []).length < 8) {
       activeCombat = null;
+      window._pendingPostBattleDiseaseCheck = true;
       renderBattleModal();
       checkLevelUp();
       saveCurrentHero(null, false, null);
@@ -10463,6 +10771,7 @@ function handleCombatVictory() {
   }
 
   activeCombat = null;
+  window._pendingPostBattleDiseaseCheck = true;
   renderBattleModal();
   var didLevel = checkLevelUp();
   addLog("🏆 <b>VICTORY vs " + escapeHtml(foeName) + "!</b> +" + xpGain.toLocaleString() + " XP, +" + goldGain.toLocaleString() + "g &amp; Loot: " + lootFoundHtml);
@@ -10535,7 +10844,7 @@ boolean part5ABoundaryGuard() { return true }
 // ==============================================================================
 
 // ==============================================================================
-// PART 5B OF 7 — PASTE DIRECTLY BELOW PART 5A (FULL v18.3 KINGDOM & DELVES)
+// PART 5B OF 7 — PASTE DIRECTLY BELOW PART 5A (FULL v18.4.1 KINGDOM & DELVES)
 // ==============================================================================
 
 String buildKingdomChunkA() {
@@ -10630,7 +10939,7 @@ function renderVectorKingdomVistaSvg(km) {
     structsSvg += '<g><rect x="345" y="' + (140 - ph) + '" width="110" height="' + ph + '" fill="#2e1065" stroke="#fde047" stroke-width="2"/>' +
       '<polygon points="340,' + (140 - ph) + ' 400,' + (108 - ph) + ' 460,' + (140 - ph) + '" fill="#581c87" stroke="#fde047" stroke-width="1.8"/>' +
       '<text x="400" y="' + (125 - ph) + '" text-anchor="middle" font-size="14">' + (hero.guild.crest || '👑') + '</text>' +
-      '<text x="400" y="' + (135 - ph /2) + '" text-anchor="middle" fill="#fde047" font-size="10" font-family="Cinzel,serif" font-weight="bold">🏰Citadel ' + (manLv > 0 ? 'Lv' + manLv : '') + '</text></g>';
+      '<text x="400" y="' + (135 - ph / 2) + '" text-anchor="middle" fill="#fde047" font-size="10" font-family="Cinzel,serif" font-weight="bold">🏰Citadel ' + (manLv > 0 ? 'Lv' + manLv : '') + '</text></g>';
   }
   if (alcLv > 0) {
     var ah = 45 + alcLv * 4;
@@ -10709,7 +11018,7 @@ function constructBrassGolem() {
   var curIrn = hero.guild.iron || 0;
   var curGems = hero.gems || 0;
   if (hero.gold < 2500 || curIrn < 25 || curGems < 2) {
-    showRequirementModal("Need 2,500g, 25⛏️ Iron & 2💎 Gems for Brass Golem", "⚙️⛏️", "Forging an automated Brass Golem requires:<br>• <b>2,500 Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>)<br>• <b>25⛏️ Kingdom Iron</b> (You have <b>" + curIrn + "⛏️</b>)<br>• <b>2💎 Dragon Gems</b> (You have <b>" + curGems + "💎</b>)", "Salvage spare gear in your Backpack for Iron and defeat bosses for Gems!", "");
+    showRequirementModal("Need 2,500g, 25⛏️ Iron & 2💎 Gems for Brass Golem", "⚙️⛏️", "Forging an automated Brass Golem requires:<br>• <b>2,500 Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>)<br>• <b>25⛏️ Kingdom Iron</b> (You have <b>" + curIrn + "⛏️</b>)<br>• <b>2💎 Dragon Gems</b> (You have <b>" + curGems + "💎</b>)", "Salvage spare gear in your Backpack or burn Trophies at the Huntsman's Brazier for Iron!", "");
     return;
   }
   hero.gold -= 2500;
@@ -10791,7 +11100,7 @@ function executeCrossSlotTradeTreaty(targetSlot) {
   }
   var curTim = hero.guild.timber || 0, curStn = hero.guild.stone || 0, curIrn = hero.guild.iron || 0;
   if (curTim < 25 || curStn < 25 || curIrn < 15) {
-    showRequirementModal("Insufficient Stockpiles for Trade Treaty", "📦🪵", "Shipping a Trade Treaty convoy requires:<br>• <b>25🪵 Timber</b> (You have <b>" + curTim + "🪵</b>)<br>• <b>25🪨 Stone</b> (You have <b>" + curStn + "🪨</b>)<br>• <b>15⛏️ Iron</b> (You have <b>" + curIrn + "⛏️</b>)", "Salvage spare gear in your Backpack or run your Workforce to gather materials!", "");
+    showRequirementModal("Insufficient Stockpiles for Trade Treaty", "📦🪵", "Shipping a Trade Treaty convoy requires:<br>• <b>25🪵 Timber</b> (You have <b>" + curTim + "🪵</b>)<br>• <b>25🪨 Stone</b> (You have <b>" + curStn + "🪨</b>)<br>• <b>15⛏️ Iron</b> (You have <b>" + curIrn + "⛏️</b>)", "Salvage spare gear in your Backpack or burn Trophies at the Huntsman's Exchange to gather materials!", "");
     return;
   }
   var alt = (serverData.slots && serverData.slots[targetSlot]) ? serverData.slots[targetSlot] : null;
@@ -10838,7 +11147,7 @@ function launchTrophyEchoRematch(areaId) {
   ensureHeroV3Fields(hero);
   if ((hero.echoRematchesToday || 0) >= 1) return;
   if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for Trophy Rematch", "🦌⚡", "Awakening a Throne Room Trophy Memory requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+    showRequirementModal("Need 3⚡ Quests for Trophy Rematch", "🦌⚡", "Awakening a Throne Room Trophy Memory requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   var ar = AREAS[areaId - 1] || AREAS[0];
@@ -10937,7 +11246,7 @@ function resolveInquisitorialTrial(verdict) {
     return;
   }
   if (hero.quests < 3) {
-    showRequirementModal("Need 3⚡ Quests for Inquisitorial Tribunal", "⚖️🕯️", "Presiding over an Inquisitorial Tribunal requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+    showRequirementModal("Need 3⚡ Quests for Inquisitorial Tribunal", "⚖️🕯️", "Presiding over an Inquisitorial Tribunal requires <b>3⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   hero.quests -= 3;
@@ -11009,7 +11318,7 @@ function dispatchTradeCaravan() {
     showRequirementModal(
       "Need 3⚡ Quests, 30🪵 Timber & 30🪨 Stone for Trade Caravan", "🐎⚖️",
       "Dispatching an Armored Trade Caravan across the border requires:<br>• <b>3⚡ Quests</b> (You have <b>" + hero.quests + "⚡</b>)<br>• <b>30🪵 Timber</b> (You have <b>" + curTim + "🪵</b>)<br>• <b>30🪨 Stone</b> (You have <b>" + curStn + "🪨</b>)",
-      "Assign Lumberjacks &amp; Quarrymen or salvage spare equipment in your Backpack to stock surplus materials!",
+      "Assign Lumberjacks &amp; Quarrymen, salvage spare equipment, or burn Trophies at the Huntsman's Exchange to stock surplus materials!",
       ""
     );
     return;
@@ -11111,8 +11420,8 @@ function upgradeKingdomBuilding(bId) {
     showRequirementModal(
       "Insufficient Kingdom Materials for " + bMeta.name, "🏗️🪵",
       missing.map(function(m) { return "• " + m; }).join("<br>"),
-      "• <b>♻️ Salvage Gear:</b> Open the <b>🎒 Gear/Gems</b> tab and salvage unwanted backpack items into Timber, Stone &amp; Iron!<br>• <b>👷 Assign Workforce:</b> Assign Lumberjacks &amp; Quarrymen on the Stronghold tab.",
-      '<button class="btn btn-arcane" style="flex:1;" onclick="closePopupModal();setTab(&#39;inventory&#39;);">🎒 Salvage Gear in Bag</button>'
+      "• <b>🔥 Huntsman Trophy Exchange:</b> Burn surplus Trophies in the <b>📋 Warrants</b> tab for Timber, Stone &amp; Iron!<br>• <b>♻️ Salvage Gear:</b> Salvage unwanted backpack items in <b>🎒 Reliquary</b>.",
+      '<button class="btn btn-arcane" style="flex:1;" onclick="closePopupModal();openHuntsmanTrophyExchangeModal();">🏹 Exchange Trophies</button>'
     );
     return;
   }
@@ -11137,7 +11446,7 @@ function overseeKingdomBuild() {
   ensureHeroV3Fields(hero);
   if (!hero.guild.activeBuild) return;
   if (hero.quests <= 0) {
-    showRequirementModal("Out of Quest Stamina (Have 0⚡)", "⚡🔨", "Overseeing construction labor requires <b>1⚡ Quest</b>.", "Wait for the 45m recovery tick or rest at the Inn!", "");
+    showRequirementModal("Out of Quest Stamina (Have 0⚡)", "⚡🔨", "Overseeing construction labor requires <b>1⚡ Quest</b>.", "Wait for the 45m recovery tick or visit the Astral Ley-Well!", "");
     return;
   }
   hero.quests--;
@@ -11256,7 +11565,7 @@ function contributeDynastyWonder() {
     showRequirementModal(
       "Insufficient Tribute for Shared Dynasty Wonder", "🏛️🐉",
       "Raising the next monumental stage of the Shared Dynasty Wonder requires:<br>• <b>5⚡ Quests Stamina</b> (Have " + hero.quests + "⚡)<br>• <b>50,000 Gold</b> (Have " + hero.gold.toLocaleString() + "g)<br>• <b>250🪵 Timber</b> (Have " + (hero.guild.timber || 0) + "🪵)<br>• <b>250🪨 Stone</b> (Have " + (hero.guild.stone || 0) + "🪨)<br>• <b>150⛏️ Iron</b> (Have " + (hero.guild.iron || 0) + "⛏️)<br>• <b>10💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "The Shared Dynasty Wonder is an account-wide mega-project! Salvage gear and run your Workforce to gather tribute!",
+      "The Shared Dynasty Wonder is an account-wide mega-project! Salvage gear, burn Trophies, and run your Workforce to gather tribute!",
       ""
     );
     return;
@@ -11404,7 +11713,7 @@ function startDungeonDelve(forceFreeRescue) {
   }
   var qReq = isRescueRun ? (forceFreeRescue ? 0 : Math.min(hero.quests, 4)) : 8;
   if (!isRescueRun && hero.quests < qReq) {
-    showRequirementModal("Need " + qReq + "⚡ Quests for Dungeon Delve", "⚡🔦", "Entering this 5-Room Dungeon Delve requires <b style='color:#fbbf24;'>" + qReq + "⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+    showRequirementModal("Need " + qReq + "⚡ Quests for Dungeon Delve", "⚡🔦", "Entering this 5-Room Dungeon Delve requires <b style='color:#fbbf24;'>" + qReq + "⚡ Quests</b> (You have " + hero.quests + "⚡).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   if (!isRescueRun && hero.hp <= Math.round(hero.maxHp * 0.25)) {
@@ -11455,6 +11764,7 @@ function retreatDungeonDelve() {
   activeDelve = null;
   saveCurrentHero(null, false, null);
   renderGameScreen();
+  if (window.checkAndShowPostBattleDiseasePopup) checkAndShowPostBattleDiseasePopup();
 }
 
 function resolveDelveChoice(which) {
@@ -11513,8 +11823,9 @@ function resolveDelveChoice(which) {
     if (window.DISEASE_STATES && hero.diseases.length < 3 && Math.random() < 0.25) {
       var availDis = DISEASE_STATES.filter(function(d) { return !hero.diseases.some(function(ex) { return ex.id === d.id; }); });
       if (availDis.length > 0) {
-        var dPick = availDis[Math.floor(Math.random() * availDis.length)];
-        hero.diseases.push(JSON.parse(JSON.stringify(dPick)));
+        var dPick = JSON.parse(JSON.stringify(availDis[Math.floor(Math.random() * availDis.length)]));
+        dPick.caughtFrom = "a Rusted Crypt Trap in " + (activeDelve.delveName || "the Dungeon Delve");
+        hero.diseases.push(dPick);
         syncHeroVitalityMaxHp(hero);
         disNote = "<br>🦠 <b style='color:#ef4444;'>Rusted Trap Infection:</b> Contracted <b>" + escapeHtml(dPick.name) + "</b> (" + escapeHtml(dPick.desc) + ")!";
       }
@@ -11542,6 +11853,7 @@ function resolveDelveChoice(which) {
         );
         return;
       }
+      window._pendingPostBattleDiseaseCheck = true;
       addLog("🌑 <b style='color:#ef4444;'>DUNGEON DELVE FAILED!</b> All 3 Torches went out inside <b>" + escapeHtml(dName) + "</b> (-" + lostG.toLocaleString() + "g chest lost)!");
       saveCurrentHero(null, false, null); renderGameScreen();
       showPopupModal('<div style="font-size:48px;">🌑🕯️</div><div style="font-size:21px;font-weight:900;color:#ef4444;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;">DUNGEON DELVE FAILED!</div><div style="font-size:13.5px;color:#e5dec9;margin:10px 0;">Your final torch went out inside <b>' + escapeHtml(dName) + '</b>! You abandoned your Delve Chest (<b>-' + lostG.toLocaleString() + ' Gold lost</b>) to escape!</div><button class="btn btn-crimson" style="width:100%;justify-content:center;" onclick="closePopupModal()">Stumble Back to Surface</button>');
@@ -11564,184 +11876,6 @@ function resolveDelveChoice(which) {
   }
   renderGameScreen();
 }
-
-function selectSocketTargetSlot(slotKey) { selectedSocketSlot = slotKey; renderGameScreen(); }
-
-function socketGemIntoGear(slotKey, traitId) {
-  ensureHeroV3Fields(hero);
-  if ((hero.socketsUsedToday || 0) >= MAX_DAILY_SOCKETS) {
-    showRequirementModal("Dragon Gem Socketing Limit Reached (5/5 Today)", "💎⏳", "You have already socketed <b>5 Dragon Gems into equipment today</b>.", "Return after midnight rollover (or use Admin Reset) to socket more gems!", "");
-    return;
-  }
-  var itm = hero[slotKey];
-  var tr = GEM_SOCKET_TRAITS.find(function(x) { return x.id === traitId; });
-  if (!itm || !tr) return;
-  if ((hero.gems || 0) < tr.costGems) {
-    showRequirementModal("Not Enough Dragon Gems (" + (hero.gems || 0) + "/" + tr.costGems + "💎)", "💎🔮", "Socketing <b>" + escapeHtml(tr.name) + "</b> into your equipped <b>" + escapeHtml(itm.name) + "</b> requires <b style='color:#fde68a;'>" + tr.costGems + "💎 Dragon Gems</b> (You currently have <b>" + (hero.gems || 0) + "💎</b>).", "Earn Dragon Gems by defeating Area Bosses (+2💎), Co-Op Raid Bosses (+3💎), Weather Apex Bosses (+3💎), or World Bosses (+4–15💎)!", "");
-    return;
-  }
-  hero.gems -= tr.costGems;
-  hero.socketsUsedToday = (hero.socketsUsedToday || 0) + 1;
-  itm.socket = traitId;
-  playSfx("magic");
-  var gMsg = "💎 <b>Dragon Gem Socketed (" + hero.socketsUsedToday + "/" + MAX_DAILY_SOCKETS + " Today • -" + tr.costGems + "💎):</b><br>Bound <b>" + escapeHtml(tr.name) + "</b> into your <b>" + (itm.icon || "🗡️") + " " + escapeHtml(itm.name) + "</b>!<br>• <b>Active Trait:</b> " + escapeHtml(tr.desc) + "<br>• <b>Remaining Dragon Gems:</b> <span style='color:#fde68a;font-weight:bold;'>" + hero.gems + "💎</span>";
-  addLog(gMsg);
-  queueSaveHero();
-  renderGameScreen();
-  showOutcomeModal("💎 Dragon Gem Socketed!", "💎⚜️", null, "#c084fc", gMsg, null);
-}
-
-function reforgeGearSetPrefix(slotKey) {
-  ensureHeroV3Fields(hero);
-  if ((hero.forgesUsedToday || 0) >= MAX_DAILY_FORGES) {
-    showRequirementModal("Blacksmith Forge Daily Limit Reached (5/5 Today)", "⚒️⏳", "Master Blacksmith Brom's forge fires have reached their <b>5 daily temperings/reforgings</b> limit.", "Return tomorrow (or use Admin Reset) for 5 more forge actions!", "");
-    return;
-  }
-  var itm = hero[slotKey];
-  if (!itm) return;
-  var hasSlag = (hero.vault && (hero.vault.dulledGems || 0) > 0);
-  if ((!hasSlag && (hero.gems || 0) < 2) || getTotalMaterialsCount() < 3) {
-    showRequirementModal("Need (1🪨 Dulled Slag OR 2💎 Gems) & 3 Trophies", "⚜️🔨", "Reforging <b>" + escapeHtml(itm.name) + "</b> into a matching 3-Piece Gear Set prefix requires <b>3 Monster Trophies</b> (Have " + getTotalMaterialsCount() + ") plus either <b>1🪨 Dulled Gem Slag</b> (Have " + ((hero.vault && hero.vault.dulledGems) || 0) + ") OR <b>2💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎).", "Patrol regions for Monster Trophies or use Dulled Vault Slag!", "");
-    return;
-  }
-  if (hasSlag) hero.vault.dulledGems -= 1;
-  else hero.gems -= 2;
-  consumeAnyMaterials(3);
-  hero.forgesUsedToday = (hero.forgesUsedToday || 0) + 1;
-
-  var cSetMap = { "Warrior": "Dragonforged", "Wizard": "Eldritch", "Trader": "Sovereign", "Sage": "Celestial", "Shadowblade": "Vampiric", "Paladin": "Valiant" };
-  var targetPrefix = cSetMap[hero.calling] || "Sovereign";
-  Object.keys(GEAR_SETS).forEach(function(px) {
-    if (px !== "Genesis" && itm.name.indexOf(px) >= 0) {
-      itm.name = itm.name.replace(px + " ", "");
-    }
-  });
-  if (itm.name.indexOf(targetPrefix) < 0) {
-    itm.name = targetPrefix + " " + itm.name;
-  }
-  itm.setId = "bromset_" + targetPrefix + "_" + slotKey;
-  pushBuffToFifo("buff_set_0", hero);
-  playSfx("levelup");
-  var sMsg = "⚜️🔨 <b>BROM'S SET-PREFIX REFORGING COMPLETE (" + hero.forgesUsedToday + "/" + MAX_DAILY_FORGES + " Today):</b><br>Master Blacksmith Brom inscribed the <b>" + targetPrefix + " Set</b> runes onto <b>" + escapeHtml(itm.name) + "</b>! Equip 3 pieces with the <b>" + targetPrefix + "</b> prefix to activate the 3-Piece Set Bonus!";
-  addLog(sMsg);
-  queueSaveHero();
-  renderGameScreen();
-  showOutcomeModal("⚜️ Set-Prefix Reforged (" + targetPrefix + ")!", "⚜️🔨", "Blacksmith Brom Iron-Thumb", "#4ade80", sMsg, null);
-}
-
-function reforgeHellAnvilRelic(slotKey) {
-  ensureHeroV3Fields(hero);
-  if ((hero.forgesUsedToday || 0) >= MAX_DAILY_FORGES) {
-    showRequirementModal("Blacksmith Forge Daily Limit Reached (5/5 Today)", "🔥⏳", "Master Blacksmith Brom's forge fires have reached their <b>5 daily temperings/brandings</b> limit.", "Return tomorrow (or use Admin Reset) for 5 more forge actions!", "");
-    return;
-  }
-  var itm = hero[slotKey];
-  if (!itm) return;
-  if (itm.cursedAffix) {
-    showRequirementModal(
-      "Relic Already Blood-Forged (1/1 Max)", "🔥🩸",
-      "<b>" + escapeHtml(itm.name) + "</b> has already been branded on the Sentient Hell-Anvil!",
-      "Each piece of equipment can only be Blood-Forged once (and weapons gain +2 ATK every 10 kills up to 100 kills / +20 ATK max).",
-      ""
-    );
-    return;
-  }
-  if ((hero.gems || 0) < 2 || getTotalMaterialsCount() < 3) {
-    showRequirementModal("Need 2💎 Gems & 3 Monster Trophies for Hell-Anvil", "🔥⚒️", "Branding <b>" + escapeHtml(itm.name) + "</b> on the Hell-Anvil requires <b>2💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎) and <b>3 Monster Trophies</b> (Have " + getTotalMaterialsCount() + ").", "Defeat bosses and patrol regions to gather Gems and Trophies!", "");
-    return;
-  }
-  hero.gems -= 2;
-  hero.forgesUsedToday = (hero.forgesUsedToday || 0) + 1;
-  consumeAnyMaterials(3);
-  if (itm.atk) itm.atk = Math.round(itm.atk * 1.15) + 3;
-  if (itm.def) itm.def = Math.round(itm.def * 1.15) + 3;
-  itm.cursedAffix = "Blood-forged";
-  if (itm.name.indexOf("Blood-forged") < 0) itm.name = "Blood-forged " + itm.name;
-  playSfx("crit");
-  var hMsg = "🔥🩸 <b>SENTIENT HELL-ANVIL BRANDING (1/1 Max • -2💎, -3 Trophies):</b><br>Quenched <b>" + escapeHtml(itm.name) + "</b> in abyssal ichor (+15% Base ATK/DEF &amp; Awakened Sentient Ego-Relic that gains +2 ATK every 10 kills up to +20 ATK max)!";
-  addLog(hMsg);
-  queueSaveHero();
-  renderGameScreen();
-  showOutcomeModal("🔥 Sentient Hell-Anvil Reforged!", "🔥⚒️", null, "#ef4444", hMsg, null);
-}
-
-function awakenHeroCalling() {
-  if (hero.awakened) return;
-  if (hero.level < 20 || hero.gold < 3500 || (hero.gems || 0) < 6) {
-    showRequirementModal(
-      "Cannot Awaken Class Calling Yet", "🌟⚔️",
-      "Tier I Class Awakening requires:<br>• <b>Hero Level 20+</b> (Currently Lv " + hero.level + ")<br>• <b>3,500 Gold</b> (Have " + hero.gold.toLocaleString() + "g)<br>• <b>6💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "Defeat Area Bosses and complete Quest Board contracts to reach Level 20 and gather 6 Dragon Gems!",
-      ""
-    );
-    return;
-  }
-  hero.gold -= 3500; hero.gems -= 6;
-  var awk = CLASS_AWAKENINGS[hero.calling] || { title: "Grandmaster", bonusHp: 50 };
-  hero.awakened = true; hero.awakenedTitle = awk.title;
-  if (awk.bonusHp) { hero.maxHp += awk.bonusHp; hero.hp += awk.bonusHp; }
-  if (awk.bonusMp) { hero.maxMp += awk.bonusMp; hero.mp += awk.bonusMp; }
-  syncHeroVitalityMaxHp(hero);
-  recordMemoirMilestone("Awakened Tier I Calling as " + awk.title + ".");
-  playSfx("levelup");
-  var aMsg = "🌟 <b>TIER I CLASS AWAKENING!</b><br>You ascended to <b>" + escapeHtml(awk.title) + "</b> (" + escapeHtml(awk.desc) + ")!";
-  addLog(aMsg);
-  saveCurrentHero("🌟 " + hero.name + " awakened as a " + awk.title + "!", false, null);
-  renderGameScreen();
-  showOutcomeModal("🌟 Class Awakened!", "🌟⚔️", hero.name, "#d4af37", aMsg, null);
-}
-
-function ascendMythicCalling() {
-  if (hero.mythicAscended) return;
-  if (!hero.awakened || hero.level < 75 || hero.gold < 45000 || (hero.gems || 0) < 15) {
-    showRequirementModal(
-      "Cannot Ascend to Tier II Mythic Calling Yet", "☄️👑",
-      "Tier II Mythic Ascension (+25% All Stats) requires:<br>• <b>Tier I Awakening Completed</b><br>• <b>Hero Level 75+</b> (Currently Lv " + hero.level + ")<br>• <b>45,000 Gold</b> (Have " + hero.gold.toLocaleString() + "g) &amp; <b>15💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "Conquer the higher regions of Valoria and World Raid Bosses to reach Level 75!",
-      ""
-    );
-    return;
-  }
-  hero.gold -= 45000; hero.gems -= 15;
-  var awk = CLASS_AWAKENINGS[hero.calling] || { mythicTitle: "Mythic Sovereign" };
-  hero.mythicAscended = true;
-  hero.mythicTitle = awk.mythicTitle;
-  hero.maxHp += 180; hero.hp += 180;
-  hero.maxMp += 80; hero.mp += 80;
-  syncHeroVitalityMaxHp(hero);
-  recordMemoirMilestone("Achieved Tier II Mythic Ascension as " + awk.mythicTitle + ".");
-  playSfx("levelup");
-  var mMsg = "☄️ <b style='color:#fbbf24;'>TIER II MYTHIC ASCENSION!</b><br>You ascended to <b>" + escapeHtml(awk.mythicTitle) + " (+25% All Stats, +180 Max HP &amp; +80 Max MP)</b>!";
-  addLog(mMsg);
-  saveCurrentHero("☄️ " + hero.name + " achieved Tier II Mythic Ascension as " + awk.mythicTitle + "!", false, null);
-  renderGameScreen();
-  showOutcomeModal("☄️ Mythic Ascension!", "☄️👑", hero.name, "#c084fc", mMsg, null);
-}
-
-function unlockEclipseDualClass() {
-  if (hero.hybridClass) return;
-  if (!hero.mythicAscended || hero.level < 125 || (hero.gems || 0) < 20) {
-    showRequirementModal(
-      "Cannot Unlock Tier III Eclipse Dual-Class Yet", "🌑⚔️",
-      "Tier III Eclipse Dual-Class Hybridization (+15% All Stats &amp; +220 Max HP) requires:<br>• <b>Tier II Mythic Ascension Completed</b><br>• <b>Hero Level 125+</b> (Currently Lv " + hero.level + ")<br>• <b>20💎 Dragon Gems</b> (Have " + (hero.gems || 0) + "💎)",
-      "Conquer Areas 17–22 to reach Level 125 and unlock Dual-Class Hybridization!",
-      ""
-    );
-    return;
-  }
-  hero.gems -= 20;
-  hero.hybridClass = "Eclipse Dread-Archon";
-  hero.mythicTitle = "Eclipse " + (hero.mythicTitle || hero.calling);
-  hero.maxHp += 220; hero.hp += 220;
-  syncHeroVitalityMaxHp(hero);
-  recordMemoirMilestone("Mastered Tier III Eclipse Dual-Class Hybridization.");
-  playSfx("levelup");
-  var dMsg = "🌑⚜️ <b style='color:#fde047;'>TIER III ECLIPSE DUAL-CLASS AWAKENED!</b><br>Merged martial and arcane bloodlines into <b>" + escapeHtml(hero.mythicTitle) + " (+15% All Stats &amp; +220 Max HP)</b>!";
-  addLog(dMsg);
-  saveCurrentHero("🌑 " + hero.name + " unlocked Tier III Eclipse Dual-Class Hybridization!", false, null);
-  renderGameScreen();
-  showOutcomeModal("🌑 Eclipse Dual-Class Awakened!", "🌑⚜️", hero.name, "#fde047", dMsg, null);
-}
 '''
 }
 
@@ -11751,7 +11885,7 @@ boolean part5BBoundaryGuard() { return true }
 // ==============================================================================
 
 // ==============================================================================
-// PART 5C OF 7 — PASTE DIRECTLY BELOW PART 5B (FULL v18.3 KINGDOM2 & SANCTUARY)
+// PART 5C OF 7 — PASTE DIRECTLY BELOW PART 5B (FULL v18.4.1 KINGDOM2 & SANCTUARY)
 // ==============================================================================
 
 String buildKingdomChunkC() {
@@ -11977,6 +12111,145 @@ function getFeastScaledCost(fMeta) {
   return Math.round(fMeta.baseCost * (1 + (lv - 1) * 0.22));
 }
 
+function getTavernDrinkScaledCost() {
+  var lv = hero ? Math.max(1, hero.level || 1) : 1;
+  return Math.max(260, Math.round(220 + (lv * 95) + Math.pow(lv, 2.05) * 9));
+}
+
+// Boar's Head Taproom Reserve Drink: Lowers Stress by 50%, but drinking too many in 2h inflicts 2-Hour Stumbling Drunk debuff!
+function orderBoarsHeadTaproomDrink() {
+  ensureHeroV3Fields(hero);
+  if ((hero.drinksBoughtToday || 0) >= MAX_DAILY_DRINKS) {
+    showRequirementModal("Boar's Head Taproom Limit (5/5 Today)", "🥃⏳", "The Innkeeper refuses to pour more than <b>5 goblets of Aged Dragon-Malt Reserve per day</b>.", "Sleep in a bedchamber above the floor or pray at the Confessional!", "");
+    return;
+  }
+  var cost = getTavernDrinkScaledCost();
+  if (hero.gold < cost) {
+    showRequirementModal(
+      "Not Enough Gold for Aged Dragon-Malt Reserve", "🥃💰",
+      "A goblet of <b>🥃 Aged Dragon-Malt Reserve</b> at Level " + hero.level + " costs <b style='color:#fbbf24;'>" + cost.toLocaleString() + " Gold</b> (You currently carry <b>" + hero.gold.toLocaleString() + "g</b>).",
+      "Patrol regions, burn 10 Trophies at the Huntsman's Exchange, or collect Kingdom Taxes to afford top-shelf spirits!",
+      ""
+    );
+    return;
+  }
+  var nowMs = Date.now();
+  if (!hero.drinkWindowStart || (nowMs - hero.drinkWindowStart) >= TWO_HOURS_MS) {
+    hero.drinkWindowStart = nowMs;
+    hero.drinksInWindow = 0;
+  }
+  hero.gold -= cost;
+  hero.drinksBoughtToday = (hero.drinksBoughtToday || 0) + 1;
+  hero.drinksInWindow = (hero.drinksInWindow || 0) + 1;
+
+  var oldStress = hero.stress || 0;
+  var newStress = Math.max(0, oldStress - 50);
+  if (oldStress > 0 && newStress === oldStress) newStress = 0;
+  hero.stress = newStress;
+
+  var gotDrunkNow = false;
+  if (hero.drinksInWindow === 2 && Math.random() < 0.55) gotDrunkNow = true;
+  else if (hero.drinksInWindow >= 3) gotDrunkNow = true;
+
+  var drunkMsg = "";
+  if (gotDrunkNow) {
+    hero.drunkUntil = nowMs + TWO_HOURS_MS;
+    playSfx("death");
+    drunkMsg = "<br><br>🍺💫 <b style='color:#ef4444;'>OVERINDULGED — 2-HOUR STUMBLING DRUNK DEBUFF!</b><br>Goblet #" + hero.drinksInWindow + " within 2 hours went straight to your head! For the next <b>2 Hours</b>, you suffer <b style='color:#fca5a5;'>-15% Hit Accuracy, -12% Dodge &amp; -15% Effective Wits</b>!";
+  } else {
+    playSfx("coin");
+    drunkMsg = "<br>• 🍺 <b>Taproom Tolerance (" + hero.drinksInWindow + " Goblet(s) in last 2h):</b> <i style='color:#fde68a;'>Careful—ordering another goblet within 2 hours risks a <b>2-Hour Stumbling Drunk</b> debuff (-15% Hit, -12% Dodge &amp; -15% Wits)!</i>";
+  }
+
+  var dMsg = "🥃🔥 <b>AGED DRAGON-MALT RESERVE IMBIBED (" + hero.drinksBoughtToday + "/" + MAX_DAILY_DRINKS + " Today • -" + cost.toLocaleString() + "g • " + hero.gold.toLocaleString() + "g Left):</b><br>" +
+    "Liquid dragon-amber warmed your chest, cutting your Stress by <b>-50%</b> (<b>" + oldStress + "% ➔ " + hero.stress + "% Stress</b>)!" + drunkMsg;
+  addLog(dMsg);
+  queueDeltaSaveHero();
+  renderGameScreen();
+  showOutcomeModal(gotDrunkNow ? "🍺 Stumbling Drunk (-50% Stress)!" : "🥃 Nerves Steeled (-50% Stress)!", gotDrunkNow ? "🍺💫" : "🥃🔥", null, gotDrunkNow ? "#ef4444" : "#4ade80", dMsg, "inn");
+}
+
+// ============================================================================
+// NEW CITADEL SANCTUM: THE ASTRAL LEY-WELL (FULL ENERGY RESTORE • MAX 2/DAY!)
+// ============================================================================
+function getAstralLeyWellCosts() {
+  var lv = hero ? Math.max(1, hero.level || 1) : 1;
+  return {
+    gold: Math.max(1200, Math.round(900 + (lv * 165) + Math.pow(lv, 2.08) * 14)),
+    gems: 4,
+    trophies: 12
+  };
+}
+
+function openAstralLeyWellModal() {
+  ensureHeroV3Fields(hero);
+  if (hero.leyWellUsedToday === undefined) hero.leyWellUsedToday = 0;
+  var usesLeft = Math.max(0, 2 - (hero.leyWellUsedToday || 0));
+  var req = getAstralLeyWellCosts();
+  var totMats = getTotalMaterialsCount();
+  var myGems = hero.gems || 0;
+  var canUse = usesLeft > 0 && hero.quests < hero.maxQuests && hero.gold >= req.gold && myGems >= req.gems && totMats >= req.trophies;
+
+  showPopupModal(
+    '<div style="font-size:42px;">⚡🔥🌌</div>' +
+    '<div style="font-size:19.5px;font-weight:900;color:#fde047;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">The Astral Ley-Well &amp; Soul-Brazier</div>' +
+    '<div style="font-size:12px;color:#7dd3fc;margin-bottom:8px;">⚡ Current Energy: <b style="color:#4ade80;">' + hero.quests + ' / ' + hero.maxQuests + '⚡</b> • Daily Restorations Left: <b style="color:#fde047;">' + usesLeft + ' / 2 Today</b></div>' +
+    '<div class="lore-subtitle-box">Beneath the High Citadel&apos;s star-spire roars a raw conduit of First-Age ley-energy. By casting a heavy tribute of <b>Gold, Dragon Gems, and Monster Trophies</b> into the brazier, you can surge your stamina back to <b>100% Full Max Quest Energy</b> up to <b>2 times per day</b>!</div>' +
+    '<div style="background:#0b0811;border:2px solid #c5a059;border-radius:6px;padding:12px;margin:10px 0;text-align:left;font-size:13px;line-height:1.65;">' +
+      '<div style="font-weight:900;color:#d4af37;font-family:Cinzel,serif;margin-bottom:4px;">🔥 Required Ley-Well Offering (100% Energy Surge):</div>' +
+      '<div>• 💰 <b>Royal Bullion:</b> <b style="color:' + (hero.gold >= req.gold ? '#4ade80' : '#f87171') + ';">' + hero.gold.toLocaleString() + ' / ' + req.gold.toLocaleString() + ' Gold</b></div>' +
+      '<div>• 💎 <b>Dragon Gems:</b> <b style="color:' + (myGems >= req.gems ? '#4ade80' : '#f87171') + ';">' + myGems + ' / ' + req.gems + '💎 Dragon Gems</b></div>' +
+      '<div>• 📦 <b>Monster Trophies:</b> <b style="color:' + (totMats >= req.trophies ? '#4ade80' : '#f87171') + ';">' + totMats + ' / ' + req.trophies + ' Trophies</b></div>' +
+      '<div>• 📅 <b>Daily Sanctum Limit:</b> <b style="color:' + (usesLeft > 0 ? '#4ade80' : '#f87171') + ';">' + usesLeft + ' / 2 Remaining Today</b></div>' +
+    '</div>' +
+    '<button class="btn ' + (canUse ? 'btn-shine' : 'btn-locked') + '" style="width:100%;padding:12px;font-size:14px;" onclick="channelAstralLeyWellEnergy()">' + (usesLeft <= 0 ? '⏳ Daily Ley-Well Cap Reached (2/2 Today)' : (hero.quests >= hero.maxQuests ? '✅ Already at 100% Full Energy (' + hero.quests + '/' + hero.maxQuests + '⚡)' : ('⚡🔥 Surge to 100% Full Energy (-' + req.gold.toLocaleString() + 'g, -' + req.gems + '💎, -' + req.trophies + ' Trophies)'))) + '</button>' +
+    '<button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Leave the Astral Ley-Well</button>'
+  );
+}
+
+function channelAstralLeyWellEnergy() {
+  ensureHeroV3Fields(hero);
+  if (hero.leyWellUsedToday === undefined) hero.leyWellUsedToday = 0;
+  if (hero.leyWellUsedToday >= 2) {
+    showRequirementModal("Astral Ley-Well Daily Limit Reached (2/2 Today)", "⚡⏳", "Mortal veins can only channel the raw Astral Ley-Well <b>2 times per day</b> without burning to ash.", "Return after midnight rollover (or use Admin Reset) for 2 fresh Ley-Well surges!", "");
+    return;
+  }
+  if (hero.quests >= hero.maxQuests) {
+    showGothicToast("⚡ Your Quest Energy is already at 100% (" + hero.quests + "/" + hero.maxQuests + "⚡)!");
+    return;
+  }
+  var req = getAstralLeyWellCosts();
+  var totMats = getTotalMaterialsCount();
+  var myGems = hero.gems || 0;
+  var missing = [];
+  if (hero.gold < req.gold) missing.push("Need <b>" + req.gold.toLocaleString() + " Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>)");
+  if (myGems < req.gems) missing.push("Need <b>" + req.gems + "💎 Dragon Gems</b> (You have <b>" + myGems + "💎</b>)");
+  if (totMats < req.trophies) missing.push("Need <b>" + req.trophies + " Monster Trophies</b> (You have <b>" + totMats + " Trophies</b>)");
+  if (missing.length > 0) {
+    showRequirementModal(
+      "Insufficient Tribute for Astral Ley-Well", "⚡🔥",
+      missing.map(function(m) { return "• " + m; }).join("<br>"),
+      "Withdraw Gems from your 🏦 Reliquary Vault, collect Kingdom Taxes, or patrol realms for Monster Trophies!",
+      ""
+    );
+    return;
+  }
+  hero.gold -= req.gold;
+  hero.gems -= req.gems;
+  consumeAnyMaterials(req.trophies);
+  hero.leyWellUsedToday = (hero.leyWellUsedToday || 0) + 1;
+  var gainedE = hero.maxQuests - hero.quests;
+  hero.quests = hero.maxQuests;
+  playSfx("levelup");
+  if (window.spawnCanvasParticles) window.spawnCanvasParticles("void", 48);
+  var wMsg = "⚡🔥 <b style='color:#fde047;'>ASTRAL LEY-WELL CHANNELED (" + hero.leyWellUsedToday + "/2 Today • -" + req.gold.toLocaleString() + "g, -" + req.gems + "💎, -" + req.trophies + " Trophies)!</b><br>" +
+    "Star-fire erupted from the Soul-Brazier, surging <b>+" + gainedE + "⚡ Quest Stamina</b> and restoring you to <b style='color:#4ade80;'>100% FULL ENERGY (" + hero.quests + " / " + hero.maxQuests + "⚡)</b>!";
+  addLog(wMsg);
+  saveCurrentHero(null, false, null);
+  renderGameScreen();
+  showOutcomeModal("⚡ 100% Quest Energy Restored (" + hero.quests + "/" + hero.maxQuests + "⚡)!", "⚡🔥", null, "#fde047", wMsg, null);
+}
+
 function orderTavernFeast(feastId) {
   ensureHeroV3Fields(hero);
   if ((hero.feastsOrderedToday || 0) >= MAX_DAILY_FEASTS) {
@@ -12003,11 +12276,10 @@ function orderTavernFeast(feastId) {
   showOutcomeModal(f.icon + " Feast Blessing Active!", f.icon, null, "#4ade80", fMsg, "inn");
 }
 
-// Darkest Dungeon Stress & Affliction Cure: Cathedral Confessional Booth (2/Day)
 function prayAtConfessionalBooth() {
   ensureHeroV3Fields(hero);
   if ((hero.confessionsToday || 0) >= 2) {
-    showRequirementModal("Confessional Booth Daily Limit (2/2 Today)", "🙏⏳", "The High Confessor only hears <b>2 Penance Confessions per day</b>.", "Return tomorrow (or use Admin Reset)!", "");
+    showRequirementModal("Confessional Booth Daily Limit (2/2 Today)", "🙏⏳", "The High Confessor only hears <b>2 Penance Confessions per day</b>.", "Order a goblet of 🥃 Aged Dragon-Malt at the Boar's Head Tavern (-50% Stress) or sleep above the floor!", "");
     return;
   }
   var cost = Math.max(120, hero.level * 28);
@@ -12036,15 +12308,21 @@ function prayAtConfessionalBooth() {
   showOutcomeModal("🙏 Soul Absolved (-45% Stress)!", "🙏🕯️", null, "#4ade80", cMsg, "sanctuary");
 }
 
-// Darkest Dungeon Disease Cure: Plague-Doctor's Leech Ward (2/Day)
+// Plague-Doctor's Leech Ward (2/Day): Cures active diseases on Hero AND any infected Sellsword Recruits!
 function undergoPlagueDoctorLeechWard() {
   ensureHeroV3Fields(hero);
   if ((hero.leechesUsedToday || 0) >= 2) {
-    showRequirementModal("Plague-Doctor Ward Limit (2/2 Today)", "🩸⏳", "The Plague-Surgeon can only administer <b>2 Leech &amp; Bloodletting treatments per day</b>.", "Return tomorrow (or use Admin Reset)!", "");
+    showRequirementModal(
+      "Plague-Doctor Ward Limit (2/2 Today)", "🩸⏳",
+      "The Plague-Surgeon can only administer <b>2 Leech &amp; Bloodletting treatments per day</b>.",
+      "Visit <b>💎🩺 Sister Vespera in the Citadel</b> (15💎 Dragon Gems per disease, no daily limit) or return tomorrow!",
+      '<button class="btn btn-shine" style="flex:1;" onclick="if(window.openSisterVesperaModal)openSisterVesperaModal()">💎 Visit Sister Vespera</button>'
+    );
     return;
   }
-  if (!Array.isArray(hero.diseases) || hero.diseases.length === 0) {
-    showGothicToast("✅ You have no active physical Diseases to purge!");
+  var totalPartyDis = countTotalPartyDiseases(hero);
+  if (totalPartyDis === 0) {
+    showGothicToast("✅ Neither your Hero nor your Recruits have any active physical Diseases!");
     return;
   }
   var cost = Math.max(160, hero.level * 35);
@@ -12056,17 +12334,28 @@ function undergoPlagueDoctorLeechWard() {
   hero.gold -= cost;
   consumeAnyMaterials(1);
   hero.leechesUsedToday = (hero.leechesUsedToday || 0) + 1;
-  var curedNames = hero.diseases.map(function(d) { return d.name; }).join(", ");
-  hero.diseases = [];
+  var curedList = [];
+  if (Array.isArray(hero.diseases)) {
+    hero.diseases.forEach(function(d) { if (d) curedList.push(hero.name + " (" + d.name + ")"); });
+    hero.diseases = [];
+  }
+  if (Array.isArray(hero.mercenaries)) {
+    hero.mercenaries.forEach(function(m) {
+      if (m && m.disease) {
+        curedList.push(m.name + " (" + m.disease.name + ")");
+        m.disease = null;
+      }
+    });
+  }
   syncHeroVitalityMaxHp(hero);
   var hpGain = Math.round(hero.maxHp * 0.20);
   hero.hp = Math.min(hero.maxHp, hero.hp + hpGain);
   playSfx("levelup");
-  var lMsg = "🦠🩸 <b>PLAGUE-DOCTOR LEECH WARD COMPLETE (" + hero.leechesUsedToday + "/2 Today • -" + cost.toLocaleString() + "g, -1 Trophy):</b><br>Medicinal leeches and alchemical poultices purged <b>" + escapeHtml(curedNames) + "</b> from your bloodstream and restored <b>+" + hpGain + " HP</b>!";
+  var lMsg = "🦠🩸 <b>PLAGUE-DOCTOR LEECH WARD COMPLETE (" + hero.leechesUsedToday + "/2 Today • -" + cost.toLocaleString() + "g, -1 Trophy):</b><br>Medicinal leeches and alchemical poultices purged <b>" + escapeHtml(curedList.join(", ")) + "</b> and restored <b>+" + hpGain + " HP</b>!";
   addLog(lMsg);
-  queueDeltaSaveHero();
+  queueSaveHero();
   renderGameScreen();
-  showOutcomeModal("🦠 Diseases Purged!", "🦠🩸", null, "#4ade80", lMsg, "sanctuary");
+  showOutcomeModal("🦠 Party Diseases Purged!", "🦠🩸", null, "#4ade80", lMsg, "sanctuary");
 }
 
 function depositVaultGold() {
@@ -12591,7 +12880,7 @@ boolean part5CBoundaryGuard() { return true }
 // ==============================================================================
 
 // ==============================================================================
-// PART 6A OF 7 — PASTE DIRECTLY BELOW PART 5C (FULL v18.3 UI1 & HERO SHEET)
+// PART 6A OF 7 — PASTE DIRECTLY BELOW PART 5C (FULL v18.4.1 UI1 & HERO SHEET)
 // ==============================================================================
 
 String buildUiChunkA1() {
@@ -12729,7 +13018,7 @@ function renderSlotsScreen() {
           '🛌 Resting at ' + escapeHtml(h.sleepingAt.name) + ' (' + elapHrs + 'h / 2.0h)' + (restLocked ? (' — 🔒 Rest Lock (' + lockRemMin + 'm left)') : (readyPerk ? ' — ⚜️ 2H BLESSING READY!' : '')) + '</div>';
       }
       var pTag = (h.prestigeRank || 0) > 0 ? ' <span style="color:#fde047;font-size:11px;">[★Prestige ' + h.prestigeRank + ']</span>' : '';
-      var disCnt = Array.isArray(h.diseases) ? h.diseases.length : 0;
+      var disCnt = countTotalPartyDiseases(h);
 
       html += '<div class="slot-card class-card-' + h.calling + '">' +
         '<div>' +
@@ -12754,6 +13043,7 @@ function renderSlotsScreen() {
             '<span class="nowrap-pill" style="color:#4ade80;">🌍 WB Free: <b>' + wbFree + '/3</b></span>' +
             ((h.stress || 0) > 0 ? ('<span class="nowrap-pill" style="color:#c084fc;">😰 Stress: <b>' + h.stress + '%</b></span>') : '') +
             (disCnt > 0 ? ('<span class="nowrap-pill" style="color:#ef4444;">🦠 Diseases: <b>' + disCnt + '</b></span>') : '') +
+            (isHeroDrunk(h) ? '<span class="nowrap-pill" style="color:#fbbf24;">🍺 Drunk</span>' : '') +
           '</div>' +
           '<div class="slot-stat-line">' +
             '<span class="nowrap-pill">❤️ HP: <b id="slotHpVal_' + key + '">' + h.hp + '/' + h.maxHp + '</b></span>' +
@@ -12934,8 +13224,9 @@ async function finalizeCharacter() {
     courtingProgress: {}, sacrificedBrides: [], marriedConsorts: [], spouse: null, children: [], activeChildIdx: -1,
     belt: { firebomb: 1, ironnet: 1, warhorn: 1 },
     vault: { gold: 0, gems: 0, gemsLockedEpoch: 0, dulledGems: 0, items: [] },
-    stress: 0, resolveState: null, diseases: [], deathsDoorTrauma: false, bossSabotaged: false,
-    wantedLevel: 0, merchantBlacklistUntil: 0, prisoners: [], bossWeaknessIntel: false, altBodyguard: null,
+    stress: 0, resolveState: null, diseases: [], deathsDoorTrauma: false,
+    drunkUntil: 0, drinksInWindow: 0, drinkWindowStart: 0, drinksBoughtToday: 0, leyWellUsedToday: 0,
+    bossSabotaged: false, wantedLevel: 0, merchantBlacklistUntil: 0, prisoners: [], bossWeaknessIntel: false, altBodyguard: null,
     healsUsedToday: 0, restsUsedToday: 0, potionsBoughtToday: 0, ethersBoughtToday: 0,
     sealsBoughtToday: 0, alembicUsedToday: 0, stealsUsedToday: 0,
     forgesUsedToday: 0, socketsUsedToday: 0, shopBuysToday: 0, beltBuysToday: 0,
@@ -12977,6 +13268,7 @@ async function finalizeCharacter() {
   await saveCurrentHero("⚜️ " + hName + " (" + hero.race + " " + hero.calling + " — " + createPoints.origin + ") entered the Realm!", false, null);
   switchScreen("game");
   renderGameScreen();
+  if (window.showHeroOnboardingLoreAndGuideModal) showHeroOnboardingLoreAndGuideModal("new");
 }
 '''
 }
@@ -12991,7 +13283,7 @@ function getLodgingCost(tierId) {
   var t = LODGING_TIERS.find(function(x) { return x.id === tierId; });
   if (!t || !t.multCost) return 0;
   var lv = hero ? (hero.level || 1) : 1;
-  return Math.max(45, Math.round(t.multCost * lv + Math.pow(lv, 2.15) * (t.id === "inn" ? 16 : 7)));
+  return Math.max(65, Math.round(t.multCost * 1.35 * lv + Math.pow(lv, 2.15) * (t.id === "inn" ? 18 : 8)));
 }
 
 function canUseMansionLodging() {
@@ -13021,7 +13313,7 @@ function renderSleepingRoomVectorSvg(tierId) {
   var svgInner = "";
   var caption = "";
   if (id === "floor") {
-    caption = "🪵 Cold Tavern Floor — Drafty oak planks beside spilled ale and scurrying cellar rats.";
+    caption = "🪵 Cold Tavern Floor — Drafty planks & cellar rats (0% Stress Relief & Nightmare Risk!).";
     svgInner = '<rect width="500" height="145" fill="#120d0a"/>' +
       '<line x1="0" y1="100" x2="500" y2="100" stroke="#3f2e21" stroke-width="3"/>' +
       '<rect x="0" y="100" width="500" height="45" fill="#1c140d"/>' +
@@ -13031,9 +13323,9 @@ function renderSleepingRoomVectorSvg(tierId) {
       '<rect x="70" y="65" width="38" height="35" rx="4" fill="#451a03" stroke="#78350f" stroke-width="2"/>' +
       '<ellipse cx="135" cy="128" rx="22" ry="6" fill="#78350f" opacity="0.7"/>' +
       '<text x="380" y="128" font-size="20">🐀</text><text x="415" y="135" font-size="15">🐀</text>' +
-      '<text x="235" y="92" fill="#9c8f7a" font-size="12" font-family="Cinzel,serif">💤 Sleeping on Cold Planks</text>';
+      '<text x="235" y="92" fill="#9c8f7a" font-size="12" font-family="Cinzel,serif">💤 Cold Planks (No Stress Relief)</text>';
   } else if (id === "cot") {
-    caption = "🍺 Common Room Straw Cot — Warm stone hearthfire, wool blanket, and locked iron footlocker.";
+    caption = "🍺 Common Room Straw Cot — Warm hearthfire & wool blanket (-15% Check-In & -65% Wake Stress Relief!).";
     svgInner = '<rect width="500" height="145" fill="#1c120c"/>' +
       '<rect x="0" y="102" width="500" height="43" fill="#291a10" stroke="#785a28" stroke-width="1.5"/>' +
       '<rect x="45" y="32" width="95" height="70" fill="#27272a" stroke="#57534e" stroke-width="2"/>' +
@@ -13044,9 +13336,9 @@ function renderSleepingRoomVectorSvg(tierId) {
       '<ellipse cx="235" cy="78" rx="16" ry="8" fill="#fef3c7"/>' +
       '<path d="M250 74 Q315 66 378 82 L250 84 Z" fill="#15803d" stroke="#86efac" stroke-width="1.2"/>' +
       '<rect x="405" y="86" width="52" height="32" fill="#3f2e21" stroke="#d4af37" stroke-width="1.5"/>' +
-      '<text x="295" y="55" text-anchor="middle" fill="#fde68a" font-size="12" font-family="Cinzel,serif">🔥 Warm Hearthside Straw Cot</text>';
+      '<text x="295" y="55" text-anchor="middle" fill="#fde68a" font-size="12" font-family="Cinzel,serif">🔥 Warm Hearthside Cot (-65% Stress)</text>';
   } else if (id === "inn") {
-    caption = "🛌 Private Inn Feather Suite — Carved oak four-poster feather bed, stained-glass moon, and warded door.";
+    caption = "🛌 Private Feather Suite — Lavender incense & feather bed (100% Stress Purge & -25% Stress Gain Ward!).";
     svgInner = '<rect width="500" height="145" fill="#140c1c"/>' +
       '<rect x="0" y="104" width="500" height="41" fill="#24111e" stroke="#c5a059" stroke-width="1.5"/>' +
       '<rect x="55" y="20" width="60" height="65" rx="30" fill="#0f172a" stroke="#d4af37" stroke-width="2"/>' +
@@ -13057,9 +13349,9 @@ function renderSleepingRoomVectorSvg(tierId) {
       '<path d="M225 76 Q295 62 365 76 L365 98 L225 98 Z" fill="#581c87" stroke="#c084fc" stroke-width="1.5"/>' +
       '<circle cx="212" cy="72" r="10" fill="#fde68a"/>' +
       '<text x="430" y="78" font-size="24">🕯️</text>' +
-      '<text x="280" y="18" text-anchor="middle" fill="#f472b6" font-size="11.5" font-family="Cinzel,serif" font-weight="bold">🛌 Private Feather-Bed Suite (+12% Stats Buff)</text>';
+      '<text x="280" y="18" text-anchor="middle" fill="#f472b6" font-size="11.5" font-family="Cinzel,serif" font-weight="bold">🛌 Feather Suite (+12% Stats &amp; Lucid Calm)</text>';
   } else {
-    caption = "🏰 Royal Sovereign Palace Bedchamber — Astral dome, silk canopy, golden braziers, and Royal Guard watch.";
+    caption = "🏰 Sovereign Palace Bedchamber — Silk canopy & astral braziers (100% Stress Purge, +1💎 & -35% Stress Gain!).";
     svgInner = '<rect width="500" height="145" fill="#1a0926"/>' +
       '<rect x="0" y="104" width="500" height="41" fill="#2e1065" stroke="#fde047" stroke-width="2"/>' +
       '<rect x="28" y="10" width="18" height="94" fill="#4c1d95" stroke="#d4af37" stroke-width="1.5"/>' +
@@ -13069,7 +13361,7 @@ function renderSleepingRoomVectorSvg(tierId) {
       '<path d="M202 74 Q250 58 325 74 L325 98 L202 98 Z" fill="#991b1b" stroke="#fde047" stroke-width="1.5"/>' +
       '<text x="250" y="45" text-anchor="middle" font-size="20">👑🐉</text>' +
       '<text x="110" y="88" font-size="24">🔥🏆</text><text x="385" y="88" font-size="24">🛡️⚜️</text>' +
-      '<text x="250" y="128" text-anchor="middle" fill="#fde047" font-size="12" font-family="Cinzel,serif" font-weight="bold">🏰 Sovereign Palace Bedchamber (+20% Stats &amp; +1💎)</text>';
+      '<text x="250" y="128" text-anchor="middle" fill="#fde047" font-size="12" font-family="Cinzel,serif" font-weight="bold">🏰 Sovereign Palace (+20% Stats &amp; Serenity)</text>';
   }
   return '<div style="background:#07050a;border:2px solid #c5a059;border-radius:6px;overflow:hidden;margin-bottom:10px;box-shadow:0 6px 20px rgba(0,0,0,0.85);">' +
     '<svg viewBox="0 0 500 145" style="width:100%;height:auto;display:block;">' + svgInner + '</svg>' +
@@ -13083,6 +13375,7 @@ function previewInnLodgingRoom(tierId) {
   if (box) box.innerHTML = renderSleepingRoomVectorSvg(tierId);
 }
 
+// Above-Floor Sleep Stress Relief: Floor gives 0% Stress relief; Cot/Suite/Palace ease Stress immediately on check-in AND purge Stress on wake-up!
 async function bedDownForLogout(tierId) {
   ensureHeroV3Fields(hero);
   selectedLodgingPreview = tierId;
@@ -13099,12 +13392,16 @@ async function bedDownForLogout(tierId) {
   }
   var cost = getLodgingCost(tierId);
   if (hero.gold < cost) {
-    showRequirementModal("Not Enough Gold for " + t.name, t.icon, "Checking into <b>" + escapeHtml(t.name) + "</b> at Level " + hero.level + " costs <b style='color:#fbbf24;'>" + cost.toLocaleString() + " Gold</b> (You currently have <b>" + hero.gold.toLocaleString() + "g</b>).", "Choose a lower-cost lodging option (Cold Tavern Floor is FREE) or earn Gold from patrols and Kingdom Taxes!", "");
+    showRequirementModal("Not Enough Gold for " + t.name, t.icon, "Checking into <b>" + escapeHtml(t.name) + "</b> at Level " + hero.level + " costs <b style='color:#fbbf24;'>" + cost.toLocaleString() + " Gold</b> (You currently have <b>" + hero.gold.toLocaleString() + "g</b>).", "Choose a lower-cost lodging option or earn Gold from patrols and Kingdom Taxes!", "");
     return;
   }
   hero.gold -= cost;
+  var checkinStressRelief = (t.id === "mansion") ? 35 : ((t.id === "inn") ? 25 : ((t.id === "cot") ? 15 : 0));
+  if (checkinStressRelief > 0) {
+    hero.stress = Math.max(0, (hero.stress || 0) - checkinStressRelief);
+  }
   hero.sleepingAt = { type: t.id, name: t.name, icon: t.icon, startedEpoch: Date.now() };
-  addLog("🛌 <b>Bedded Down at " + t.icon + " " + escapeHtml(t.name) + " (-" + cost.toLocaleString() + "g):</b> 30m Minimum Rest Lock active; sleep 2+ hours for full perks!");
+  addLog("🛌 <b>Bedded Down at " + t.icon + " " + escapeHtml(t.name) + " (-" + cost.toLocaleString() + "g):</b> " + (checkinStressRelief > 0 ? ("Soothing bedchamber eased -" + checkinStressRelief + "% Stress immediately (Now " + (hero.stress || 0) + "%); ") : "Cold floorboards offer 0% Stress relief; ") + "sleep 2+ hours for full perks!");
   await saveCurrentHero("🛌 " + hero.name + " bedded down at " + t.name + ".", false, null);
   switchScreen("slots");
   showPopupModal(
@@ -13112,8 +13409,8 @@ async function bedDownForLogout(tierId) {
     renderSleepingRoomVectorSvg(t.id) +
     '<div style="background:#0b0811;border:1px solid #4a3823;border-radius:4px;padding:10px;margin-bottom:10px;font-size:12.5px;color:#e5dec9;text-align:left;">' +
       '<div>• <b>Room Selected:</b> ' + t.icon + ' <b>' + escapeHtml(t.name) + '</b> (-' + cost.toLocaleString() + 'g)</div>' +
-      '<div>• <b>Minimum Rest Lock:</b> 🔒 <b>30 Minutes</b> (Prevents spam-resting)</div>' +
-      '<div>• <b>Full Lodging Blessings &amp; Affliction Cure Unlock At:</b> ⏳ <b>2.0+ Hours Offline</b></div>' +
+      '<div>• <b>Bedchamber Stress Relief:</b> ' + (t.id === "floor" ? '<span style="color:#f87171;">0% on Cold Floor (Upgrade to Straw Cot or Suite to heal Stress while sleeping!)</span>' : ('<span style="color:#4ade80;">-' + checkinStressRelief + '% Stress eased on check-in + Deep Sleep Stress Purge upon waking!</span>')) + '</div>' +
+      '<div>• <b>Minimum Rest Lock:</b> 🔒 <b>30 Minutes</b> • <b>Full Blessings At:</b> ⏳ <b>2.0+ Hours Offline</b></div>' +
     '</div>' +
     '<button class="btn btn-gold" style="width:100%;" onclick="closePopupModal()">🕯️ Rest in Peace</button>'
   );
@@ -13125,16 +13422,22 @@ function wakeUpFromLodging() {
   var elapsedMs = Date.now() - (slp.startedEpoch || Date.now());
   var hrs = (elapsedMs / 3600000).toFixed(2);
   var roomVec = renderSleepingRoomVectorSvg(slp.type);
+  var isAboveFloor = (slp.type !== "floor");
   hero.sleepingAt = null;
-  hero.stress = 0;
-  hero.deathsDoorTrauma = false;
-  if (hero.resolveState && !hero.resolveState.isVirtue) hero.resolveState = null;
+  hero.drunkUntil = 0;
 
   var summaryHtml = "";
   if (elapsedMs < TWO_HOURS_MS) {
     var smallHp = Math.round(hero.maxHp * 0.25);
     hero.hp = Math.min(hero.maxHp, hero.hp + smallHp);
-    summaryHtml = "⏰ <b>Woke Up After 30m+ Rest (" + hrs + " / 2.00 hrs):</b> Restored <b>+" + smallHp + " HP</b> &amp; cleared Stress/Trauma (Sleep 2+ hours next time for full Lodging Blessings!).";
+    if (isAboveFloor) {
+      var shortRelief = slp.type === "cot" ? 30 : 50;
+      hero.stress = Math.max(0, (hero.stress || 0) - shortRelief);
+      hero.deathsDoorTrauma = false;
+      summaryHtml = "⏰ <b>Woke Up After Short Bedchamber Rest (" + hrs + " / 2.00 hrs):</b> Restored <b>+" + smallHp + " HP</b>, calmed <b>-" + shortRelief + "% Stress (Now " + (hero.stress || 0) + "%)</b> &amp; cleared Trauma/Drunk haze!";
+    } else {
+      summaryHtml = "🪵 <b>Woke Up From Cold Tavern Floor (" + hrs + " / 2.00 hrs):</b> Restored <b>+" + smallHp + " HP</b>, but the damp planks gave <b>0% Stress relief</b> (Stress remains <b>" + (hero.stress || 0) + "%</b> — sleep on a Cot or Suite above the floor to remove Stress!).";
+    }
     addLog(summaryHtml);
   } else {
     playSfx("levelup");
@@ -13142,29 +13445,36 @@ function wakeUpFromLodging() {
       var flHp = Math.round(hero.maxHp * 0.40), flMp = Math.round(hero.maxMp * 0.40);
       hero.hp = Math.min(hero.maxHp, hero.hp + flHp); hero.mp = Math.min(hero.maxMp, hero.mp + flMp);
       hero.quests = Math.min(hero.maxQuests + 4, hero.quests + 4);
-      var badRoll = Math.random(), hazardTxt = "No cutpurses robbed you in the night.";
+      var badRoll = Math.random(), hazardTxt = "Cold planks offered <b>0% Stress relief</b>.";
       if (badRoll < 0.20) {
         var stolen = Math.round(hero.gold * 0.08);
         hero.gold = Math.max(0, hero.gold - stolen);
-        hazardTxt = "<b style='color:#ef4444;'>A cutpurse slit your coin-pouch (-" + stolen + " Gold)!</b>";
+        hazardTxt = "<b style='color:#ef4444;'>A cutpurse slit your coin-pouch (-" + stolen + " Gold) &amp; 0% Stress relief!</b>";
       } else if (badRoll < 0.38) {
+        hero.stress = Math.min(100, (hero.stress || 0) + 10);
         hero.lodgingBuff = { name: "Stiff Tavern Neck", questsLeft: 5, statBonusPct: 0, dodgePen: 5 };
-        hazardTxt = "<b style='color:#f59e0b;'>Cold floorboards gave you a Stiff Neck (-5% Dodge for 5 Quests)!</b>";
+        hazardTxt = "<b style='color:#f59e0b;'>Cellar rats &amp; cold planks gave you Nightmares (+10% Stress) &amp; a Stiff Neck (-5% Dodge for 5q)!</b>";
       }
       summaryHtml = "🪵 <b>Woke from Tavern Floor (" + hrs + " hrs):</b> +" + flHp + " HP, +" + flMp + " MP &amp; +4⚡ Quests. " + hazardTxt;
     } else if (slp.type === "cot") {
       var cHp = Math.round(hero.maxHp * 0.75), cMp = Math.round(hero.maxMp * 0.75);
       hero.hp = Math.min(hero.maxHp, hero.hp + cHp); hero.mp = Math.min(hero.maxMp, hero.mp + cMp);
       hero.quests = Math.min(hero.maxQuests + 8, hero.quests + 8);
-      summaryHtml = "🍺 <b>Woke from Common Room Cot (" + hrs + " hrs):</b> +" + cHp + " HP, +" + cMp + " MP &amp; +8⚡ Bonus Quests!";
+      hero.stress = Math.max(0, (hero.stress || 0) - 65);
+      hero.deathsDoorTrauma = false;
+      if (hero.resolveState && !hero.resolveState.isVirtue) hero.resolveState = null;
+      summaryHtml = "🍺 <b>Woke from Warm Hearthside Cot (" + hrs + " hrs):</b> +" + cHp + " HP, +" + cMp + " MP, +8⚡ Bonus Quests &amp; <b>purged -65% Stress (Now " + hero.stress + "%) + Afflictions/Trauma</b>!";
     } else if (slp.type === "inn") {
       hero.hp = hero.maxHp; hero.mp = hero.maxMp;
       (hero.mercenaries || []).forEach(function(m) { m.hp = m.maxHp; });
       (hero.children || []).forEach(function(ch) { ch.hp = ch.maxHp; });
       hero.quests = Math.min(hero.maxQuests + 14, hero.quests + 14);
-      hero.lodgingBuff = { name: "Inn Feather-Bed Vigor", questsLeft: 10, statBonusPct: 12, xpBonusPct: 15, dodgePen: 0 };
+      hero.stress = 0;
+      hero.deathsDoorTrauma = false;
+      if (hero.resolveState && !hero.resolveState.isVirtue) hero.resolveState = null;
+      hero.lodgingBuff = { name: "Feather-Suite Lucid Calm", questsLeft: 10, statBonusPct: 12, xpBonusPct: 15, stressRedPct: 25, dodgePen: 0 };
       pushBuffToFifo("buff_lodging", hero);
-      summaryHtml = "🛌 <b>Woke in Private Inn Suite (" + hrs + " hrs):</b> 100% Party HP/MP, +14⚡ Quests &amp; <b>Inn Vigor (+12% All Stats &amp; +15% XP for 10q)</b>!";
+      summaryHtml = "🛌 <b>Woke in Private Feather Suite (" + hrs + " hrs):</b> 100% Party HP/MP, +14⚡ Quests, <b>100% Stress &amp; Affliction Purge (0% Stress)</b> &amp; <b>Lucid Calm (+12% Stats, +15% XP &amp; -25% Stress Gain for 10q)</b>!";
     } else if (slp.type === "mansion") {
       hero.hp = hero.maxHp; hero.mp = hero.maxMp;
       (hero.mercenaries || []).forEach(function(m) { m.hp = m.maxHp; });
@@ -13173,10 +13483,13 @@ function wakeUpFromLodging() {
       hero.gems = (hero.gems || 0) + 1;
       var stipend = hero.level * 35;
       hero.gold += stipend;
+      hero.stress = 0;
+      hero.deathsDoorTrauma = false;
+      if (hero.resolveState && !hero.resolveState.isVirtue) hero.resolveState = null;
       if (hero.spouse) hero.spouse.love = Math.min(100, (hero.spouse.love !== undefined ? hero.spouse.love : 100) + 20);
-      hero.lodgingBuff = { name: "Sovereign Palace Majesty", questsLeft: 15, statBonusPct: 20, xpBonusPct: 20, dodgePen: 0 };
+      hero.lodgingBuff = { name: "Sovereign Palace Serenity", questsLeft: 15, statBonusPct: 20, xpBonusPct: 20, stressRedPct: 35, dodgePen: 0 };
       pushBuffToFifo("buff_lodging", hero);
-      summaryHtml = "🏰 <b>Woke in Royal Palace Estate (" + hrs + " hrs):</b> 100% Party HP/MP, +22⚡ Quests, +1💎 Gem (Total: " + hero.gems + "💎), +" + stipend + "g Stipend" + (hero.spouse ? ", +20% Wife Love" : "") + " &amp; <b>Sovereign Majesty (+20% All Stats for 15q)</b>!";
+      summaryHtml = "🏰 <b>Woke in Royal Palace Estate (" + hrs + " hrs):</b> 100% Party HP/MP, +22⚡ Quests, +1💎 Gem (Total: " + hero.gems + "💎), +" + stipend + "g Stipend, <b>100% Stress Purge</b> &amp; <b>Sovereign Serenity (+20% Stats &amp; -35% Stress Gain for 15q)</b>!";
     }
     addLog(summaryHtml);
   }
@@ -13272,7 +13585,7 @@ function attemptShoplift(category, targetKey) {
     return;
   }
   if (hero.quests < 1) {
-    showRequirementModal("Need 1⚡ Quest Stamina to Attempt Heist", "🗡️⚡", "Attempting a five-finger shoplifting heist requires <b>1⚡ Quest</b> (You have 0⚡).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+    showRequirementModal("Need 1⚡ Quest Stamina to Attempt Heist", "🗡️⚡", "Attempting a five-finger shoplifting heist requires <b>1⚡ Quest</b> (You have 0⚡).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   hero.quests -= 1;
@@ -13281,7 +13594,8 @@ function attemptShoplift(category, targetKey) {
   var st = getHeroStats();
   var reqWitsSteal = 18 + (hero.level || 1) * 2.2 + Math.pow(hero.level || 1, 1.35) * 0.9;
   var witsMod = Math.max(-0.04, Math.min(0.08, ((st.effWits + st.effCharm * 0.4) - reqWitsSteal) * 0.002));
-  var stealthOdds = Math.max(0.08, Math.min(0.26, ((rw.rain || rw.lightning) ? 0.18 : 0.12) + witsMod));
+  var drunkPen = st.isDrunk ? -0.05 : 0;
+  var stealthOdds = Math.max(0.05, Math.min(0.26, ((rw.rain || rw.lightning) ? 0.18 : 0.12) + witsMod + drunkPen));
   var stolenRewardDesc = "";
   var applyStolenGoods = function() {
     if (category === "shop") {
@@ -13408,7 +13722,6 @@ function setTab(t) {
   renderGameScreen();
 }
 
-// Strict 2-Helper Party Cap Enforced on Animal Companions!
 function adoptOrEquipCompanion(compId) {
   ensureHeroV3Fields(hero);
   var c = COMPANIONS.find(function(x) { return x.id === compId; });
@@ -13438,7 +13751,7 @@ function adoptOrEquipCompanion(compId) {
       showRequirementModal(
         "Cannot Bind " + c.name + " Yet", c.icon,
         "Binding <b>" + escapeHtml(c.name) + "</b> requires <b style='color:#fbbf24;'>" + c.costGold.toLocaleString() + " Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>) and <b style='color:#fde68a;'>" + c.costGems + "💎 Dragon Gems</b> (You have <b>" + (hero.gems || 0) + "💎</b>).",
-        "Hunt Area Bosses, Delve Bosses, or World Bosses to earn Dragon Gems!",
+        "Hunt Area Bosses, Delve Bosses, or smelt 30 Trophies at the Huntsman's Exchange to earn Dragon Gems!",
         ""
       );
       return;
@@ -13471,7 +13784,7 @@ function getScaledEtherCost() {
 }
 function getScaledInnRestCost() {
   var lv = hero ? (hero.level || 1) : 1;
-  return Math.max(95, Math.round(85 * lv + Math.pow(lv, 2.15) * 14));
+  return Math.max(95, Math.round(95 + 62 * lv + Math.pow(lv, 2.22) * 3.15));
 }
 function getScaledBeltCost(bMeta) { return Math.round(bMeta.baseCost * (1 + ((hero ? hero.level : 1) - 1) * 0.24)); }
 
@@ -13552,7 +13865,7 @@ function healAtSanctuary() {
   ensureHeroV3Fields(hero);
   var nowMs = Date.now(), used = hero.healsUsedToday || 0;
   if (used >= MAX_DAILY_HEALS) {
-    showRequirementModal("Sanctuary Daily Limit Reached (3/3)", "🕯️⏳", "You have used all <b>3 Sanctuary Rites</b> for today.", "Use the 🙏 Confessional Booth (-45% Stress), Healing Potions, Dark Weir Angling (+8% HP), or your passive Auto-Heal!", "");
+    showRequirementModal("Sanctuary Daily Limit Reached (3/3)", "🕯️⏳", "You have used all <b>3 Sanctuary Rites</b> for today.", "Use the 🙏 Confessional Booth (-45% Stress), 🥃 Boar's Head Taproom (-50% Stress), or Healing Potions!", "");
     return;
   }
   var elapsed = nowMs - (hero.lastHealEpoch || 0);
@@ -13602,7 +13915,7 @@ function buyConsumable(type) {
   if (type === "potion") {
     var pBought = hero.potionsBoughtToday || 0;
     if (pBought >= MAX_DAILY_POTIONS) {
-      showRequirementModal("Apothecary Out of Potions (3/3 Today)", "🧪⏳", "The Royal Apothecary only brews <b>3 Healing Potions per day</b>.", "Use 🧪 Alchemical Brewing (-2⚡, -2 Trophies), assign an Heir to Apothecary Mira, or risk a 🥷 Steal attempt!", "");
+      showRequirementModal("Apothecary Out of Potions (3/3 Today)", "🧪⏳", "The Royal Apothecary only brews <b>3 Healing Potions per day</b>.", "Use 🧪 Alchemical Brewing (-2⚡, -2 Trophies), trade 15 Trophies at the Huntsman's Exchange, or assign an Heir to Apothecary Mira!", "");
       return;
     }
     var pCost = getScaledPotionCost();
@@ -13642,18 +13955,18 @@ function restAtTavernInn() {
   ensureHeroV3Fields(hero);
   var nowMs = Date.now(), rUsed = hero.restsUsedToday || 0;
   if (rUsed >= MAX_DAILY_RESTS) {
-    showRequirementModal("Inn Quick-Rest Limit Reached (2/2 Today)", "🍺🛌", "You have used both of your <b>2 daily Quick-Rests</b>.", "Use <b>2-Hour Offline Lodging</b> below or wait for the 45m stamina timer!", "");
+    showRequirementModal("Inn Quick-Rest Limit Reached (2/2 Today)", "🍺🛌", "You have used both of your <b>2 daily Quick-Rests</b>.", "Visit the <b>⚡🔥 Astral Ley-Well</b> in the Citadel (2/day Full Energy Restore) or use <b>2-Hour Offline Lodging</b>!", "");
     return;
   }
   var elapsed = nowMs - (hero.lastRestEpoch || 0);
   if (elapsed < REST_COOLDOWN_MS) {
     var remSec = Math.ceil((REST_COOLDOWN_MS - elapsed) / 1000);
-    showRequirementModal("30-Minute Inn Rest Lock Active", "🛌⏳", "Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before your next Quick-Rest (30m cooldown).", "Patrol or play Tavern Wagers while your room is readied!", "");
+    showRequirementModal("30-Minute Inn Rest Lock Active", "🛌⏳", "Wait <b style='color:#fbbf24;'>" + formatCooldownSec(remSec) + "</b> before your next Quick-Rest (30m cooldown).", "Patrol or visit the Astral Ley-Well while your room is readied!", "");
     return;
   }
   var innCost = getScaledInnRestCost();
   if (hero.gold < innCost) {
-    showRequirementModal("Not Enough Gold for Quick-Rest", "🛌💰", "Quick-Resting at the Boar&apos;s Head Inn at Level " + hero.level + " costs <b style='color:#fbbf24;'>" + innCost.toLocaleString() + " Gold</b> (You currently have <b>" + hero.gold.toLocaleString() + "g</b>).", "Inn service scales steeply with your hero's renown and level! Sell unequipped gear, complete Warrants, or collect Kingdom Taxes!", "");
+    showRequirementModal("Not Enough Gold for Quick-Rest", "🛌💰", "Quick-Resting at the Boar&apos;s Head Inn at Level " + hero.level + " costs <b style='color:#fbbf24;'>" + innCost.toLocaleString() + " Gold</b> (You currently have <b>" + hero.gold.toLocaleString() + "g</b>).", "Sell unequipped gear, burn 10 Trophies at the Huntsman's Exchange, or collect Kingdom Taxes!", "");
     return;
   }
   hero.gold -= innCost; hero.restsUsedToday = rUsed + 1; hero.lastRestEpoch = nowMs;
@@ -13760,9 +14073,12 @@ function consumeAnyMaterials(qty) {
   }
 }
 
+// Increased Monster Trophy Requirements for Tempering Weapons (5 + 3*Tier) & Armor/Relics (3 + 2*Tier)!
 function getForgeOddsAndPreview(itm) {
-  if (!itm) return { curUp: 0, cost: 0, matReq: 1, successPct: 100, crackRisk: false, gainText: "None" };
-  var curUp = itm.upgrade || 0, cost = getForgeCost(itm), matReq = 1 + Math.floor(curUp / 3);
+  if (!itm) return { curUp: 0, cost: 0, matReq: 5, successPct: 100, crackRisk: false, gainText: "None" };
+  var curUp = itm.upgrade || 0, cost = getForgeCost(itm);
+  var isWeap = (itm.type === "weapon" || (!itm.type && itm.atk && !itm.def));
+  var matReq = isWeap ? (5 + (curUp * 3)) : (3 + (curUp * 2));
   var failRiskPct = curUp >= 3 ? Math.min(58, (curUp - 2) * 6) : 0;
   var successPct = 100 - failRiskPct, crackRisk = (curUp >= 8), gains = [];
   if (itm.atk) gains.push("+" + (Math.max(1, Math.round(itm.atk * 0.08) + 1)) + " ATK");
@@ -13793,8 +14109,8 @@ function upgradeEquippedGear(slotType) {
   if (hero.gold < info.cost || getTotalMaterialsCount() < info.matReq) {
     showRequirementModal(
       "Insufficient Forging Materials", "⚒️📦",
-      "Tempering <b>" + escapeHtml(itm.name) + " to +" + (info.curUp + 1) + "</b> requires:<br>• <b>" + info.cost.toLocaleString() + " Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>)<br>• <b>" + info.matReq + " Monster Trophy Mat(s)</b> (You have <b>" + getTotalMaterialsCount() + " Trophies</b>)",
-      "Patrol any region in the World tab to gather Monster Trophies and Gold!",
+      "Tempering <b>" + escapeHtml(itm.name) + " to +" + (info.curUp + 1) + "</b> requires:<br>• <b>" + info.cost.toLocaleString() + " Gold</b> (You have <b>" + hero.gold.toLocaleString() + "g</b>)<br>• <b>" + info.matReq + " Monster Trophies</b> (You have <b>" + getTotalMaterialsCount() + " Trophies</b>)",
+      "Patrol any region in the Realms tab to gather Monster Trophies and Gold!",
       ""
     );
     return;
@@ -13829,7 +14145,7 @@ function upgradeEquippedGear(slotType) {
   syncHeroVitalityMaxHp(hero);
   playSfx("levelup");
   if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 34);
-  var winMsg = "⚒️ <b style='color:#4ade80;'>MASTERWORK TEMPER SUCCESS (" + hero.forgesUsedToday + "/" + MAX_DAILY_FORGES + " Today)!</b><br>Reforged <b>" + formatItemStats(itm, false, true) + "</b> to <b style='color:#fbbf24;'>+" + itm.upgrade + "</b> (100% Durability Restored)!";
+  var winMsg = "⚒️ <b style='color:#4ade80;'>MASTERWORK TEMPER SUCCESS (" + hero.forgesUsedToday + "/" + MAX_DAILY_FORGES + " Today • -" + info.matReq + " Trophies)!</b><br>Reforged <b>" + formatItemStats(itm, false, true) + "</b> to <b style='color:#fbbf24;'>+" + itm.upgrade + "</b> (100% Durability Restored)!";
   addLog(winMsg);
   queueSaveHero(); renderGameScreen();
   showOutcomeModal("⚒️ Tempered to +" + itm.upgrade + "!", itm.icon || "⚒️", null, "#4ade80", winMsg, null);
@@ -13849,7 +14165,6 @@ function addLog(msg) {
 
 function escapeHtml(str) { return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
-// Clear Visual Distinction between Unequipped Backpack Items vs. Equipped Gear!
 function formatItemStats(itm, showUpgradeBadge, isEquippedSlot) {
   if (!itm || typeof itm !== "object") return "Empty";
   var parts = [];
@@ -13921,12 +14236,13 @@ function openHeroSheetModal() {
   if (!hero) return;
   var st = getHeroStats();
   var activeBuffsList = getActiveBuffsAndWhyList(hero);
-  var posCnt = activeBuffsList.filter(function(b) { return !b.isDebuff; }).length;
+  var posCnt = activeBuffsList.filter(function(b) { return !b.isDebuff && !b.isPassive; }).length;
   var debCnt = activeBuffsList.filter(function(b) { return b.isDebuff; }).length;
   var xpPct = Math.min(100, Math.round((hero.xp / hero.xpNext) * 100));
   var xpRem = Math.max(0, hero.xpNext - hero.xp);
   var awk = CLASS_AWAKENINGS[hero.calling] || { title: "Grandmaster", desc: "", mythicTitle: "Mythic Sovereign" };
   var wbFree = Math.max(0, MAX_DAILY_WB_AEGIS - (hero.wbDefeatsToday || 0));
+  var partyDisCnt = countTotalPartyDiseases(hero);
   var gearSlots = [
     { key: "weapon", label: "Weapon", itm: hero.weapon }, { key: "armor", label: "Armor", itm: hero.armor },
     { key: "helm", label: "Helm", itm: hero.helm },       { key: "boots", label: "Boots", itm: hero.boots },
@@ -13951,7 +14267,7 @@ function openHeroSheetModal() {
 
   var embeddedBuffsHtml = '<div style="margin-top:8px;background:#070c0a;border:1px solid #4ade80;border-radius:4px;padding:8px;text-align:left;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">' +
-      '<span style="font-size:12px;font-weight:900;color:#4ade80;font-family:&#39;Cinzel&#39;,serif;">✨ Active Blessings (' + posCnt + '/' + MAX_ACTIVE_BUFFS + ' FIFO Cap) &amp; Afflictions/Diseases (' + debCnt + ')</span>' +
+      '<span style="font-size:12px;font-weight:900;color:#4ade80;font-family:&#39;Cinzel&#39;,serif;">✨ Active Blessings (' + posCnt + '/' + MAX_ACTIVE_BUFFS + ' FIFO) &amp; Afflictions/Diseases (' + debCnt + ')</span>' +
       '<button class="btn btn-emerald" style="min-height:22px;padding:1px 7px;font-size:9.5px;" onclick="openActiveBuffsModal()">🔍 Full View</button>' +
     '</div>' +
     '<div style="max-height:135px;overflow-y:auto;">' +
@@ -14019,11 +14335,12 @@ function openHeroSheetModal() {
       '<div style="display:flex;align-items:center;gap:10px;text-align:left;">' + renderHeroPortraitSvg(hero, 58) +
         '<div><div style="font-size:17px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">' + escapeHtml(hero.name) + ' (Lv ' + hero.level + ')</div>' +
         '<div style="font-size:12px;color:#e5dec9;">👑 ' + escapeHtml((hero.titlePrefix || 'Sworn') + ' ' + hero.nobleRank + ' ' + (hero.titleSuffix || 'of Valoria')) + ' • ' + hero.race + ' ' + (hero.mythicTitle || hero.awakenedTitle || hero.calling) + (hero.spouse ? ' • 💍 ' + escapeHtml(hero.spouse.name) + ' (' + spLove + '% ❤️)' : '') + '</div>' +
-        '<div style="font-size:11px;color:#7dd3fc;">📜 Origin: ' + escapeHtml(hero.origin || 'Disgraced High-Court Noble') + ' • Helpers: ' + getActiveHelperCount(hero) + '/2 • 😰Stress: ' + (hero.stress || 0) + '%' + (hero.resolveState ? (' (' + hero.resolveState.name + ')') : '') + ((hero.diseases && hero.diseases.length) ? (' • <b style="color:#ef4444;">🦠' + hero.diseases.length + ' Disease(s)</b>') : '') + ((hero.wantedLevel || 0) > 0 ? ' • <b style="color:#ef4444;">🚨Wanted Lv ' + hero.wantedLevel + '</b>' : '') + '</div></div>' +
+        '<div style="font-size:11px;color:#7dd3fc;">📜 Origin: ' + escapeHtml(hero.origin || 'Disgraced High-Court Noble') + ' • Helpers: ' + getActiveHelperCount(hero) + '/2 • 😰Stress: ' + (hero.stress || 0) + '%' + (hero.resolveState ? (' (' + hero.resolveState.name + ')') : '') + (partyDisCnt > 0 ? (' • <b style="color:#ef4444;">🦠' + partyDisCnt + ' Disease(s)</b>') : '') + (st.isDrunk ? ' • <b style="color:#fbbf24;">🍺Drunk</b>' : '') + ((hero.wantedLevel || 0) > 0 ? ' • <b style="color:#ef4444;">🚨Wanted Lv ' + hero.wantedLevel + '</b>' : '') + '</div></div>' +
       '</div>' +
       '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">' +
         '<button class="btn btn-emerald" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="openActiveBuffsModal()">✨ Blessings (' + posCnt + '/6)</button>' +
         '<button class="btn btn-sky" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="openDailyLimitsTrackerModal()">📅 Caps</button>' +
+        (partyDisCnt > 0 ? '<button class="btn btn-crimson" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="checkAndShowPostBattleDiseasePopup()">🦠 Diagnosis</button>' : '') +
         '<button class="btn btn-emerald" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="openMemoirModal()">🖋️ Memoir</button>' +
         '<button class="btn btn-sky" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="openBestiaryModal()">📖 Bestiary</button>' +
         '<button class="btn btn-arcane" style="min-height:28px;padding:3px 7px;font-size:10.5px;" onclick="if(window.openDynastyTapestryModal)window.openDynastyTapestryModal()">🌳 Tapestry</button>' +
@@ -14090,7 +14407,7 @@ function renderGameScreen() {
   var unspentPts = (hero.statPoints || 0) + (hero.skillPoints || 0);
   var nRank = NOBLE_RANKS[hero.nobleIdx || 0] || NOBLE_RANKS[0];
   var spLove = (hero.spouse && hero.spouse.love !== undefined) ? hero.spouse.love : 100;
-  var disCnt = Array.isArray(hero.diseases) ? hero.diseases.length : 0;
+  var disCnt = countTotalPartyDiseases(hero);
 
   var gearSlots = [
     { key: "weapon", label: "Weapon", itm: hero.weapon }, { key: "armor", label: "Armor", itm: hero.armor },
@@ -14104,11 +14421,12 @@ function renderGameScreen() {
         renderHeroPortraitSvg(hero, 46) +
         '<div>' +
           '<div style="font-size:14.5px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">' + escapeHtml(hero.name) + ' <span style="font-size:11px;color:#e5dec9;">(Lv ' + hero.level + '/150 • 👑 ' + escapeHtml((hero.titlePrefix || '') + ' ' + hero.nobleRank) + ')</span></div>' +
-          '<div style="font-size:11px;color:#e5dec9;">🗡️' + st.atk + ' • 🛡️' + st.def + ' • 💰<b style="color:#fbbf24;">' + hero.gold.toLocaleString() + 'g</b> • 💎<b style="color:#fde68a;">' + (hero.gems || 0) + '</b> • 🪽<b style="color:#fde047;">' + Math.min(3, hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3</b> • 🏅<b style="color:' + (st.tarnishedFame ? '#f87171' : (st.toastOfCourt ? '#4ade80' : '#fde68a')) + ';">' + (hero.fame || 0) + '/' + st.maxFameCap + '</b> • 😰<b style="color:' + ((hero.stress || 0) >= 75 ? '#ef4444' : '#c084fc') + ';">' + (hero.stress || 0) + '%</b>' + (hero.resolveState ? (' <span style="color:' + (hero.resolveState.isVirtue ? '#4ade80' : '#f87171') + ';font-size:10px;">[' + hero.resolveState.name + ']</span>') : '') + (disCnt > 0 ? (' <span style="color:#ef4444;font-size:10px;">[🦠' + disCnt + ' Disease]</span>') : '') + (hero.deathsDoorTrauma ? ' <span style="color:#ef4444;font-size:10px;">[🕯️Trauma -10%]</span>' : '') + (hero.spouse ? ' • ❤️<b style="color:' + (spLove < 40 ? '#f87171' : '#f472b6') + ';">' + spLove + '%</b>' : '') + ((hero.wantedLevel || 0) > 0 ? ' • <b style="color:#ef4444;">🚨Wanted Lv' + hero.wantedLevel + '</b>' : '') + (st.brokenGearCount > 0 ? ' • <b style="color:#ef4444;">💥' + st.brokenGearCount + ' Broken!</b>' : '') + '</div>' +
+          '<div style="font-size:11px;color:#e5dec9;">🗡️' + st.atk + ' • 🛡️' + st.def + ' • 💰<b style="color:#fbbf24;">' + hero.gold.toLocaleString() + 'g</b> • 💎<b style="color:#fde68a;">' + (hero.gems || 0) + '</b> • 🪽<b style="color:#fde047;">' + Math.min(3, hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3</b> • 🏅<b style="color:' + (st.tarnishedFame ? '#f87171' : (st.toastOfCourt ? '#4ade80' : '#fde68a')) + ';">' + (hero.fame || 0) + '/' + st.maxFameCap + '</b> • 😰<b style="color:' + ((hero.stress || 0) >= 75 ? '#ef4444' : '#c084fc') + ';">' + (hero.stress || 0) + '%</b>' + (hero.resolveState ? (' <span style="color:' + (hero.resolveState.isVirtue ? '#4ade80' : '#f87171') + ';font-size:10px;">[' + hero.resolveState.name + ']</span>') : '') + (disCnt > 0 ? (' <span onclick="event.stopPropagation();checkAndShowPostBattleDiseasePopup();" style="color:#ef4444;font-size:10px;text-decoration:underline;">[🦠' + disCnt + ' Disease — Tap]</span>') : '') + (st.isDrunk ? ' <span style="color:#fbbf24;font-size:10px;">[🍺Drunk]</span>' : '') + (hero.deathsDoorTrauma ? ' <span style="color:#ef4444;font-size:10px;">[🕯️Trauma -10%]</span>' : '') + (hero.spouse ? ' • ❤️<b style="color:' + (spLove < 40 ? '#f87171' : '#f472b6') + ';">' + spLove + '%</b>' : '') + ((hero.wantedLevel || 0) > 0 ? ' • <b style="color:#ef4444;">🚨Wanted Lv' + hero.wantedLevel + '</b>' : '') + (st.brokenGearCount > 0 ? ' • <b style="color:#ef4444;">💥' + st.brokenGearCount + ' Broken!</b>' : '') + '</div>' +
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:4px;align-items:center;">' +
         (bagUpgradesCnt > 0 ? '<button class="btn btn-shine" style="min-height:32px;padding:3px 7px;font-size:10.5px;" onclick="autoEquipAllUpgrades()">✨ Equip (' + bagUpgradesCnt + ')</button>' : '') +
+        (disCnt > 0 ? '<button class="btn btn-crimson" style="min-height:32px;padding:3px 7px;font-size:10.5px;" onclick="checkAndShowPostBattleDiseasePopup()">🦠 Cure (' + disCnt + ')</button>' : '') +
         '<button class="btn btn-emerald" style="min-height:32px;padding:3px 7px;font-size:10.5px;" onclick="openActiveBuffsModal()">✨ Buffs</button>' +
         '<button class="btn btn-arcane" style="min-height:32px;padding:3px 7px;font-size:10.5px;" onclick="openCustomizeHeroModal()">🎨 Studio</button>' +
         '<button class="btn ' + (unspentPts > 0 ? 'btn-shine' : 'btn-gold') + '" style="min-height:32px;padding:3px 8px;font-size:11px;" onclick="openHeroSheetModal()">⚜️ Hero' + (unspentPts > 0 ? ' (+' + unspentPts + '!)' : '') + '</button>' +
@@ -14145,7 +14463,7 @@ function renderGameScreen() {
     '<div class="dock-btn ' + (currentTab === "adventure" || currentTab === "raids" || currentTab === "pvp" || currentTab === "rifts" ? "active" : "") + '" onclick="setTab(&#39;adventure&#39;)"><span style="font-size:16px;">🗺️</span><span>Realms</span>' + (hero.deathMarker ? '<span class="dock-badge">⚱️</span>' : '') + '</div>' +
     '<div class="dock-btn ' + (currentTab === "questboard" ? "active" : "") + '" onclick="setTab(&#39;questboard&#39;)"><span style="font-size:16px;">📋</span><span>Warrants</span>' + (readyBoardQuests > 0 ? '<span class="dock-badge">' + readyBoardQuests + '</span>' : '') + '</div>' +
     '<div class="dock-btn ' + (currentTab === "army" ? "active" : "") + '" onclick="setTab(&#39;army&#39;)"><span style="font-size:16px;">🏰</span><span>' + (nRank.domainTier >= 3 ? 'Kingdom' : 'Estate') + '</span></div>' +
-    '<div class="dock-btn ' + (currentTab === "town" ? "active" : "") + '" onclick="setTab(&#39;town&#39;)"><span style="font-size:16px;">🏛️</span><span>Citadel</span></div>' +
+    '<div class="dock-btn ' + (currentTab === "town" ? "active" : "") + '" onclick="setTab(&#39;town&#39;)"><span style="font-size:16px;">🏛️</span><span>Citadel</span>' + (disCnt > 0 ? '<span class="dock-badge">🦠</span>' : '') + '</div>' +
     '<div class="dock-btn ' + (currentTab === "inventory" ? "active" : "") + '" onclick="setTab(&#39;inventory&#39;)"><span style="font-size:16px;">🎒</span><span>Reliquary</span>' + (bagUpgradesCnt > 0 ? '<span class="dock-badge">' + bagUpgradesCnt + '</span>' : '') + '</div>' +
   '</div>';
 
@@ -14156,7 +14474,7 @@ function renderGameScreen() {
 
 boolean part6ABoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 6A OF 7 — REPLY "NEXT" FOR PART 6B OF 7
+// END OF PART 6A OF 7 — REPLY "NEXT" FOR PART 6B-1 OF 7
 // ==============================================================================
 
 // ==============================================================================
@@ -14210,7 +14528,8 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
   if (currentTab === "adventure") {
     var curTier = hero.areaQuestTier[curArea.id] || 0;
     var zbToday = (hero.zoneBossDaily && hero.zoneBossDaily[curArea.id]) ? hero.zoneBossDaily[curArea.id] : 0;
-    var lairReady = curTier >= 5 && zbToday < MAX_DAILY_ZONE_BOSS;
+    var bossCdUntil = (hero.areaBossCooldownUntil && hero.areaBossCooldownUntil[curArea.id]) ? hero.areaBossCooldownUntil[curArea.id] : 0;
+    var lairReady = curTier >= 10 && zbToday < MAX_DAILY_ZONE_BOSS && bossCdUntil <= nowMs;
     var delvesLeft = Math.max(0, MAX_DAILY_DELVES - (hero.delvesRunToday || 0));
     var spireLeft = Math.max(0, MAX_DAILY_SPIRE_RUNS - (hero.spireRunsToday || 0));
     var sabLeft = Math.max(0, MAX_DAILY_SABOTAGES - (hero.sabotagesUsedToday || 0));
@@ -14229,7 +14548,7 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
         var prog = getBoardQuestProgress(q);
         var done = prog >= q.reqQty;
         warrantStripItems.push('<span style="display:inline-flex;align-items:center;gap:4px;background:' + (done ? '#052e16' : '#16111c') + ';border:1px solid ' + (done ? '#4ade80' : '#785a28') + ';padding:2px 7px;border-radius:4px;font-size:11px;">' +
-          '<b>[A' + q.areaId + ' T' + q.tier + '/5]</b> ' + q.matIcon + ' ' + escapeHtml(q.matName) + ': <b style="color:' + (done ? '#4ade80' : '#fde047') + ';">' + prog + '/' + q.reqQty + '</b>' +
+          '<b>[A' + q.areaId + ' T' + q.tier + '/10]</b> ' + q.matIcon + ' ' + escapeHtml(q.matName) + ': <b style="color:' + (done ? '#4ade80' : '#fde047') + ';">' + prog + '/' + q.reqQty + '</b>' +
           (done ? (' <button class="btn btn-shine" style="min-height:20px;padding:1px 6px;font-size:9.5px;" onclick="turnInBoardQuest(' + qIdx + ')">🏆Claim</button>') : (!q.accepted ? (' <button class="btn btn-sky" style="min-height:20px;padding:1px 5px;font-size:9px;" onclick="openQuestAcceptModal(' + qIdx + ')">📌Sign</button>') : '')) +
         '</span>');
       }
@@ -14237,7 +14556,7 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
     var isWarrantsCol = !!hero.warrantsCollapsed;
     var warrantStripHtml = warrantStripItems.length ? ('<div style="background:#09060e;border:1px solid #c5a059;border-radius:4px;padding:5px 8px;margin-bottom:8px;font-size:11px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleWarrantsStripCollapse()">' +
-        '<span style="color:#d4af37;font-family:Cinzel,serif;font-weight:bold;">📋 Active Royal Warrants (' + warrantStripItems.length + ' — Complete 5/5 to Unseal Area Boss)</span>' +
+        '<span style="color:#d4af37;font-family:Cinzel,serif;font-weight:bold;">📋 Active Royal Warrants (' + warrantStripItems.length + ' — Complete 10/10 to Unseal Area Boss)</span>' +
         '<button class="btn" style="min-height:20px;padding:1px 7px;font-size:9.5px;" onclick="event.stopPropagation();toggleWarrantsStripCollapse();">' + (isWarrantsCol ? '▶ Show Warrants' : '▼ Hide') + '</button>' +
       '</div>' +
       (!isWarrantsCol ? ('<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px;">' + warrantStripItems.join('') + '</div>') : '') +
@@ -14247,12 +14566,14 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
     var bombCost = getScaledBeltCost(bMetaBomb);
     var haveBombs = (hero.belt && hero.belt.firebomb) ? hero.belt.firebomb : 0;
     var haveRations = (hero.guild && hero.guild.rations) ? hero.guild.rations : 0;
+    var totTrophies = getTotalMaterialsCount();
     var prepBarHtml = '<div style="background:rgba(12,8,18,0.92);border:1px dashed #785a28;border-radius:4px;padding:5px 8px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;">' +
-      '<span style="color:#fde68a;font-family:Cinzel,serif;font-weight:bold;">⚡ Pre-Battle Preparation (💰' + hero.gold.toLocaleString() + 'g • 🍞' + haveRations + ' Rations):</span>' +
+      '<span style="color:#fde68a;font-family:Cinzel,serif;font-weight:bold;">⚡ Pre-Battle Prep (💰' + hero.gold.toLocaleString() + 'g • 📦' + totTrophies + ' Trophies):</span>' +
       '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
         '<button class="btn btn-emerald" style="min-height:26px;padding:2px 8px;font-size:10px;" onclick="quickDrinkPotionPrep()">🧪 Drink Potion (Have ' + (hero.potions || 0) + ')</button>' +
         '<button class="btn btn-gold" style="min-height:26px;padding:2px 8px;font-size:10px;" onclick="if(window.repairAllEquippedGear)window.repairAllEquippedGear()">🔧 Brom Repair All</button>' +
         '<button class="btn btn-crimson" style="min-height:26px;padding:2px 8px;font-size:10px;" onclick="buyBeltItem(&#39;firebomb&#39;)">💣 +1 Fire-Bomb (' + haveBombs + '/5 • ' + bombCost + 'g)</button>' +
+        '<button class="btn btn-sky" style="min-height:26px;padding:2px 8px;font-size:10px;" onclick="openAstralLeyWellModal()">⚡ Ley-Well Energy</button>' +
         (hero.companion ? '<button class="btn btn-arcane" style="min-height:26px;padding:2px 8px;font-size:10px;" onclick="feedCompanionMoraleTreat()">🍖 Feed Pet (-5🍞 • Have ' + haveRations + '🍞)</button>' : '') +
       '</div>' +
     '</div>';
@@ -14292,7 +14613,9 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
       '</div>';
     }
 
-    var bossBtnTxt = curTier < 5 ? ('🔒 Boss Warrant (' + curTier + '/5)') : (zbToday >= MAX_DAILY_ZONE_BOSS ? ('✅ Boss Locked Today (1/1)') : (curArea.boss.icon + ' Confront Boss (-5⚡)' + (hero.bossSabotaged ? ' [💣-15% HP]' : '') + (hero.bossWeaknessIntel ? ' [🎯-20% Arm]' : '')));
+    var bossBtnTxt = bossCdUntil > nowMs
+      ? ('⏳ Boss Respawn (' + formatCooldownSec(Math.ceil((bossCdUntil - nowMs) / 1000)) + ')')
+      : (curTier < 10 ? ('🔒 Boss Warrant (' + curTier + '/10)') : (zbToday >= MAX_DAILY_ZONE_BOSS ? ('✅ Boss Locked Today (1/1)') : (curArea.boss.icon + ' Confront Boss (-5⚡)' + (hero.bossSabotaged ? ' [💣-15% HP]' : '') + (hero.bossWeaknessIntel ? ' [🎯-20% Arm]' : ''))));
 
     rightCol += warrantStripHtml + holidayAlert + deathMarkerAlert + apexAlert + nemesisAlert + '<div class="area-hero-banner" style="background:' + bannerStyle + ';">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">' +
@@ -14332,7 +14655,7 @@ function renderActiveTabContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
         rightCol += '<div class="map-node-card ' + (!unlocked ? 'locked' : '') + ' ' + (isSel ? 'selected' : '') + '" style="background:' + nodeStyle + ';" onclick="selectAdventureArea(' + a.id + ')">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:19px;">' + (unlocked ? a.scenery : '🔒') + '</span><span style="font-size:10px;background:rgba(0,0,0,0.75);border:1px solid #4a3823;padding:2px 6px;border-radius:4px;">Lv ' + a.minLv + '–' + a.maxLv + '</span></div>' +
           '<div style="font-weight:800;font-size:12px;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-top:4px;text-shadow:0 1px 4px #000;">' + a.name + '</div>' +
-          '<div style="font-size:10.5px;color:#e5dec9;margin-top:2px;">📋 Warrant: <b>' + qT + '/5</b> • ' + a.boss.icon + (beaten ? ' ⚜️' : '') + (a.id >= 17 ? ' <span style="color:#fef08a;">🌟GOD</span>' : '') + '</div></div>';
+          '<div style="font-size:10.5px;color:#e5dec9;margin-top:2px;">📋 Warrant: <b>' + qT + '/10</b> • ' + a.boss.icon + (beaten ? ' ⚜️' : '') + (a.id >= 17 ? ' <span style="color:#fef08a;">🌟GOD</span>' : '') + '</div></div>';
       });
       rightCol += '</div>';
     }
@@ -14424,7 +14747,7 @@ function renderOtherTabsContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
     }
 
     rightCol += '<div class="card-title"><span>📋 The Royal Warrant Board</span><button class="btn ' + (boardRemSec > 0 ? 'btn-locked' : 'btn-gold') + '" style="min-height:30px;padding:4px 9px;font-size:11px;" onclick="rerollTownBoard()">' + boardBtnLabel + '</button></div>' +
-      '<div class="lore-subtitle-box">Sign Royal Warrants before patrolling so your kills and trophies are credited by the Crown. Completing <b>5 Warrant Tiers</b> in a region unseals its Area Boss lair and awards a Dragon Gem.</div>';
+      '<div class="lore-subtitle-box">Sign Royal Warrants before patrolling so your kills and trophies are credited by the Crown. Completing <b>10 Warrant Tiers</b> in a region unseals its Area Boss lair and awards a Dragon Gem.</div>';
     (hero.boardQuests || []).forEach(function(q, idx) {
       var haveQty = getBoardQuestProgress(q), canTurnIn = haveQty >= q.reqQty, curZoneTier = hero.areaQuestTier[q.areaId] || 0;
       var typeBadge = (q.qType === "kill") ? '<span style="background:#7f1d1d;color:#fca5a5;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:bold;">⚔️ SLAY</span>' : '<span style="background:#14532d;color:#86efac;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:bold;">📦 RECLAIM</span>';
@@ -14432,8 +14755,8 @@ function renderOtherTabsContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
       rightCol += '<div class="item-row ' + (canTurnIn ? 'gear-upgrade-shine' : '') + '">' +
         renderEntityAvatar(q.giver, q.giverIcon, 42, false) +
         '<div style="flex:1;">' +
-          '<div>' + typeBadge + ' <b style="color:#d4af37;">[' + q.areaName + ' T' + q.tier + '/5]</b> <b>' + taskVerb + q.reqQty + 'x ' + q.matIcon + ' ' + escapeHtml(q.matName) + '</b> <span style="color:' + (canTurnIn ? '#4ade80' : '#fde68a') + ';font-weight:bold;">(Progress: ' + haveQty + '/' + q.reqQty + ')</span></div>' +
-          '<div style="font-size:11.5px;color:#86efac;margin-top:2px;">Reward: 🌟+' + q.rewardXp.toLocaleString() + ' XP • 💰+' + q.rewardGold.toLocaleString() + 'g • 🏅+18 Fame • 🏰+' + (q.rewardStability || 5) + '% Stab. (Region Tier: ' + curZoneTier + '/5)</div>' +
+          '<div>' + typeBadge + ' <b style="color:#d4af37;">[' + q.areaName + ' T' + q.tier + '/10]</b> <b>' + taskVerb + q.reqQty + 'x ' + q.matIcon + ' ' + escapeHtml(q.matName) + '</b> <span style="color:' + (canTurnIn ? '#4ade80' : '#fde68a') + ';font-weight:bold;">(Progress: ' + haveQty + '/' + q.reqQty + ')</span></div>' +
+          '<div style="font-size:11.5px;color:#86efac;margin-top:2px;">Reward: 🌟+' + q.rewardXp.toLocaleString() + ' XP • 💰+' + q.rewardGold.toLocaleString() + 'g • 🏅+18 Fame • 🏰+' + (q.rewardStability || 5) + '% Stab. (Region Tier: ' + curZoneTier + '/10)</div>' +
         '</div>' +
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
           (!q.accepted ? '<button class="btn btn-sky" onclick="openQuestAcceptModal(' + idx + ')">💬 Parley</button>' : '<span style="font-size:11px;color:#d4af37;font-weight:bold;align-self:center;">📌 Sworn</span>') +
@@ -14441,7 +14764,11 @@ function renderOtherTabsContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
           '<button class="btn ' + (canTurnIn ? 'btn-shine' : 'btn-locked') + '" onclick="turnInBoardQuest(' + idx + ')">🏆 Claim</button>' +
         '</div></div>';
     });
-    rightCol += '<div class="card-title" style="margin-top:10px;"><span>🎒 Monster Trophies Pouch (Total Held: ' + totMats + ' Trophies)</span></div><div class="slot-grid">';
+    rightCol += '<div class="card-title" style="margin-top:10px;"><span>🎒 Monster Trophies Pouch (Total Held: ' + totMats + ' Trophies)</span>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        '<button class="btn ' + (totMats >= 10 ? 'btn-shine' : 'btn-gold') + '" style="min-height:28px;padding:3px 9px;font-size:11px;" onclick="openHuntsmanTrophyExchangeModal()">🏹🔥 Huntsman&apos;s Trophy Exchange (10 / 15 / 30)</button>' +
+        '<button class="btn btn-sky" style="min-height:28px;padding:3px 9px;font-size:11px;" onclick="openAstralLeyWellModal()">⚡ Ley-Well Energy</button>' +
+      '</div></div><div class="slot-grid">';
     var matKeys = Object.keys(hero.materials || {}).filter(function(k) { return hero.materials[k] > 0; });
     if (!matKeys.length) rightCol += '<div style="font-size:12.5px;color:#9c8f7a;">No monster trophies yet — hunt in the Realms tab!</div>';
     matKeys.forEach(function(mName) { rightCol += '<div class="doll-slot"><b>' + escapeHtml(mName) + ':</b> <span style="color:#d4af37;font-weight:bold;margin-left:auto;">x' + hero.materials[mName] + '</span></div>'; });
@@ -14492,14 +14819,14 @@ function renderOtherTabsContentHtml(curArea, st, uMeta, gearSlots, bagUpgradesCn
       '<div style="font-size:11.5px;color:#fde68a;margin-top:5px;">📊 <b>Damage Leaderboard:</b> ' + (contribList.length ? contribList.join(' • ') : 'None yet') + '</div></div>';
 
     rightCol += '<div class="card-title"><span>🔥 Regional Overlord Sieges</span><button class="btn ' + (hero.bossSabotaged ? 'btn-emerald' : (sabLeft2 > 0 ? 'btn-gold' : 'btn-locked')) + '" style="min-height:28px;padding:3px 8px;font-size:10.5px;" onclick="sabotageBossSupplyCamp()">' + (hero.bossSabotaged ? '💣 Sabotage Ready (-15% Boss HP)' : ('💣 Sabotage Boss Camp (' + sabLeft2 + '/' + MAX_DAILY_SABOTAGES + ' • -2⚡)')) + '</button></div>' +
-      '<div class="lore-subtitle-box">Coordinate with all champions on your hub to wear down shared Regional Overlords. Requires a completed Tier 5 Warrant for that region (1 siege per zone per day).</div><div class="slot-grid">';
+      '<div class="lore-subtitle-box">Coordinate with all champions on your hub to wear down shared Regional Overlords. Requires a completed Tier 10 Warrant for that region (1 siege per zone per day).</div><div class="slot-grid">';
     AREAS.forEach(function(a) {
       if (a.id <= hero.unlockedArea) {
         var zKey = "area_" + a.id, zState = (serverData.zoneRaidBosses && serverData.zoneRaidBosses[zKey]) ? serverData.zoneRaidBosses[zKey] : { hp: a.boss.raidHp, maxHp: a.boss.raidHp };
-        var zPct = Math.round((zState.hp / zState.maxHp) * 100), tierDone = (hero.areaQuestTier[a.id] || 0) >= 5;
+        var zPct = Math.round((zState.hp / zState.maxHp) * 100), tierDone = (hero.areaQuestTier[a.id] || 0) >= 10;
         var zbDoneToday = ((hero.zoneBossDaily && hero.zoneBossDaily[a.id]) ? hero.zoneBossDaily[a.id] : 0) >= MAX_DAILY_ZONE_BOSS;
         var canFightOverlord = tierDone && !zbDoneToday;
-        var btnTxt = !tierDone ? '🔒 Need Tier 5 Warrant' : (zbDoneToday ? '⏳ Locked Today (1/1)' : ('🔥 Join Siege (-5⚡ • Have ' + hero.quests + '⚡)'));
+        var btnTxt = !tierDone ? ('🔒 Warrant (' + (hero.areaQuestTier[a.id] || 0) + '/10)') : (zbDoneToday ? '⏳ Locked Today (1/1)' : ('🔥 Join Siege (-5⚡ • Have ' + hero.quests + '⚡)'));
         rightCol += '<div class="slot-card">' +
           '<div style="display:flex;align-items:center;gap:8px;">' + renderEntityAvatar(a.boss.name, a.boss.icon, 40, true) + '<div style="font-weight:800;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">' + a.boss.icon + ' ' + a.boss.name + '</div></div>' +
           '<div class="bar-wrap" style="margin-top:5px;"><div class="bar-fill" style="width:' + zPct + '%;background:#991b1b;"></div><div class="bar-text">' + zState.hp.toLocaleString() + ' / ' + zState.maxHp.toLocaleString() + ' HP</div></div>' +
@@ -14561,7 +14888,7 @@ function renderKingdomAndGuildTabHtml() {
     var haveRat = (hero.guild && hero.guild.rations) ? hero.guild.rations : 0;
 
     htm += '<div class="lore-subtitle-box">⚖️ <b>The Two-Companion Decree (Active Helpers: ' + activeHelperCnt + ' / 2 Max):</b> You may march into battle with at most <b>2 total helpers</b> (any combination of Sellsword Recruits, an Animal Companion, a Dynasty Heir, or an Alt Slot Bodyguard). Dismiss an active helper anytime to free a slot.<br>' +
-      '⚰️ <b>7-Day Resurrectionist Lore &amp; Hazard Pay:</b> If a recruit falls in battle, the Resurrectionists of the Weeping Graveyard require <b>7 Days</b> to stitch their soul back together—and every death under your banner permanently raises sellsword contract costs by <b>+35%</b> (Current Hazard Tax: <b style="color:' + (totDeaths > 0 ? '#f87171' : '#4ade80') + ';">+' + (totDeaths * 35) + '%</b> from ' + totDeaths + ' fallen)!</div>';
+      '⚰️ <b>7-Day Resurrectionist Lore &amp; Hazard Pay:</b> If a recruit falls in battle, the Resurrectionists of the Weeping Graveyard require <b>7 Days</b> to stitch their soul back together—and every death under your banner raises sellsword contract costs by <b>+12% (Max +60%)</b> (Current Hazard Tax: <b style="color:' + (totDeaths > 0 ? '#f87171' : '#4ade80') + ';">+' + Math.min(60, totDeaths * 12) + '%</b> from ' + totDeaths + ' fallen)!</div>';
 
     htm += '<div class="velvet-consort-card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
       '<div style="display:flex;align-items:center;gap:10px;">' + (hero.spouse ? renderLadyPortraitSvg(hero.spouse.id || hero.spouse.name, 48) : '<div style="font-size:28px;">🌹</div>') +
@@ -14610,17 +14937,19 @@ function renderKingdomAndGuildTabHtml() {
       hero.mercenaries.forEach(function(m, idx) {
         var stars = m.vetRank >= 3 ? "★★★ Champion" : (m.vetRank === 2 ? "★★ Elite" : (m.vetRank === 1 ? "★ Veteran" : "Sworn"));
         var qkLine = m.quirk ? ('<div style="font-size:11px;color:' + (m.quirk.isPositive ? '#4ade80' : '#f87171') + ';margin-bottom:4px;">🧠 Quirk: <b>' + m.quirk.name + '</b> (' + m.quirk.desc + ')</div>') : '';
-        htm += '<div class="slot-card" style="border-color:#c5a059;">' +
+        var disLine = m.disease ? ('<div style="font-size:11px;color:#fca5a5;background:#2b0712;border:1px solid #ef4444;padding:3px 6px;border-radius:4px;margin-bottom:4px;">🦠 <b>Infected: ' + escapeHtml(m.disease.name) + '</b> (' + escapeHtml(m.disease.recruitEffect || '-15% Recruit ATK') + (m.disease.caughtFrom ? ' • Caught from ' + escapeHtml(m.disease.caughtFrom) : '') + ')</div>') : '';
+        htm += '<div class="slot-card" style="border-color:' + (m.disease ? '#ef4444' : '#c5a059') + ';">' +
           '<div style="display:flex;align-items:center;gap:8px;">' + renderEntityAvatar(m.name, m.icon, 42, false) +
           '<div style="font-weight:800;color:#86efac;font-family:&#39;Cinzel&#39;,serif;">' + m.icon + ' ' + escapeHtml(m.name) + ' <span style="color:#d4af37;">[' + stars + ']</span></div></div>' +
           '<div style="font-size:12px;color:#e5dec9;margin:4px 0;">❤️ HP: <b>' + m.hp + '/' + m.maxHp + '</b> • 🗡️ ATK: <b>' + m.atk + '</b> • 💀 Kills: <b>' + (m.kills || 0) + '</b></div>' +
           '<div style="background:#090d16;border:1px solid #38bdf8;border-radius:4px;padding:4px 6px;margin-bottom:5px;font-size:10.5px;color:#7dd3fc;">' +
             '📊 <b>Lifetime Service:</b> 💥 <b>' + (m.totalDmg || 0).toLocaleString() + ' DMG</b> • 💚 <b>' + (m.totalHeals || 0).toLocaleString() + ' Healed</b> • 🛡️ <b>' + (m.dmgAbsorbed || 0).toLocaleString() + ' Tanked</b> • 🐉 <b>' + (m.bossesAssisted || 0) + ' Bosses</b>' +
           '</div>' +
-          qkLine +
+          disLine + qkLine +
           '<div style="font-size:11px;color:#fde68a;margin-bottom:5px;">🛡️ Gear: ' + (m.gear ? formatItemStats(m.gear, false, true) : '<i>None</i>') + '</div>' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
             '<button class="btn btn-sky" style="flex:1;" onclick="equipMercenaryGear(' + idx + ')">🎒 Equip Gear</button>' +
+            (m.disease ? '<button class="btn btn-crimson" onclick="checkAndShowPostBattleDiseasePopup()">🦠 Cure Disease</button>' : '') +
             (m.quirk && !m.quirk.isPositive ? '<button class="btn btn-crimson" onclick="cureMercenaryQuirkSanitarium(' + idx + ')">🏥 Cure Quirk</button>' : '') +
             (m.vetRank >= 3 && !m.loyaltyDone ? '<button class="btn btn-shine" onclick="if(window.completeMercenaryLoyaltyQuest)window.completeMercenaryLoyaltyQuest(' + idx + ')">🌟 Loyalty Quest</button>' : '') +
             '<button class="btn" title="Honorably discharge this sellsword to free a Helper Slot" onclick="dismissMercenaryFighter(' + idx + ')">🏕️ Dismiss</button>' +
@@ -14808,14 +15137,14 @@ function renderCharteredKingdomSubTabs(htm) {
     '<div style="background:#091521;border:1px solid #38bdf8;border-radius:6px;padding:10px;margin-bottom:12px;">' +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' + renderEntityAvatar("Admiral Kaelen Vance", "⚓🌊", 46, false) +
         '<div style="font-size:12px;color:#e0f2fe;line-height:1.5;">' +
-          (hasFleetCaptain ? (armActive ? ('⏳ <b>Sovereign Armada At Sea (' + arm.voyageHrs + 'h Voyage):</b> Returns in <b id="activeArmadaTimerSpan" style="color:#fde047;">' + formatCooldownSec(armRemSec) + '</b> with off-map Gold, Dragon Gems &amp; 25% chance for a Ghost Corsair Boarding Battle!') : '&ldquo;The tide is with us, my Liege! Launch a timed naval expedition (💨 +20% Faster in Real High Wind) or smuggle stolen Contraband across the Maelstrom for <b>150% value in untraceable Dragon Gems</b>!&rdquo;') : '🔒 <b>Shipyard Locked:</b> Recruit <b>⚓ Admiral Kaelen Vance (Grand Fleet Captain)</b> in the Division Captains roster below to unlock timed Armada Voyages &amp; Contraband Smuggling!') +
+          (hasFleetCaptain ? (armActive ? ('⏳ <b>Sovereign Armada At Sea (' + arm.voyageHrs + 'h Voyage):</b> Returns in <b id="activeArmadaTimerSpan" style="color:#fde047;">' + formatCooldownSec(armRemSec) + '</b> with off-map Gold, Dragon Gems &amp; 25% chance for a Ghost Corsair Boarding Battle!') : '&ldquo;The tide is with us, my Liege! Launch a timed naval expedition (💨 +20% Faster in Real High Wind) or smuggle stolen Contraband across the Maelstrom for <b>untraceable Gold &amp; Dragon Gems</b>!&rdquo;') : '🔒 <b>Shipyard Locked:</b> Recruit <b>⚓ Admiral Kaelen Vance (Grand Fleet Captain)</b> in the Division Captains roster below to unlock timed Armada Voyages &amp; Contraband Smuggling!') +
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
         '<button class="btn ' + (hasFleetCaptain && !armActive ? 'btn-sky' : 'btn-locked') + '" style="flex:1;" onclick="if(window.launchArmadaVoyage)window.launchArmadaVoyage(4)">⚓ 4h Voyage (20🪵, 16🍞)</button>' +
         '<button class="btn ' + (hasFleetCaptain && !armActive ? 'btn-gold' : 'btn-locked') + '" style="flex:1;" onclick="if(window.launchArmadaVoyage)window.launchArmadaVoyage(8)">⚓ 8h Voyage (40🪵, 32🍞)</button>' +
         '<button class="btn ' + (hasFleetCaptain && !armActive ? 'btn-shine' : 'btn-locked') + '" style="flex:1;" onclick="if(window.launchArmadaVoyage)window.launchArmadaVoyage(24)">⚓ 24h Voyage (120🪵, 96🍞)</button>' +
-        '<button class="btn ' + (hasFleetCaptain && hasContraband ? 'btn-crimson' : 'btn-locked') + '" style="flex:1;" onclick="if(window.smuggleContrabandArmada)window.smuggleContrabandArmada()">🥷⚓ Smuggle Contraband (150% in 💎!)</button>' +
+        '<button class="btn ' + (hasFleetCaptain && hasContraband ? 'btn-crimson' : 'btn-locked') + '" style="flex:1;" onclick="if(window.smuggleContrabandArmada)window.smuggleContrabandArmada()">🥷⚓ Smuggle Contraband (+💎!)</button>' +
       '</div>' +
     '</div>';
 
@@ -14854,25 +15183,42 @@ function renderCleanTownHubHtml() {
   var v = hero.vault || { gold: 0, gems: 0, gemsLockedEpoch: 0, dulledGems: 0, items: [] };
   var spLove = (hero.spouse && hero.spouse.love !== undefined) ? hero.spouse.love : 100;
   var mySlotDead = (activeSlotKey && serverData.fallenCrypt && serverData.fallenCrypt[activeSlotKey] && serverData.fallenCrypt[activeSlotKey].hero) ? serverData.fallenCrypt[activeSlotKey].hero : null;
-  var disCnt = Array.isArray(hero.diseases) ? hero.diseases.length : 0;
+  var disCnt = countTotalPartyDiseases(hero);
+  var leyLeft = Math.max(0, 2 - (hero.leyWellUsedToday || 0));
+  var totMats = getTotalMaterialsCount();
 
-  return '<div class="card-title"><span>🏛️ The High Citadel of Valoria — Select a Sanctum</span><span class="gem-pill">🪽 ' + Math.min(3, hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3 Seals • 💰 ' + hero.gold.toLocaleString() + 'g • 💎 ' + (hero.gems || 0) + '</span></div>' +
-    '<div class="lore-subtitle-box">Within the bastion walls of the High Citadel stand nine ancient sanctums. Step inside to petition the Crown, court noble houses, purge battle-madness and plague, or barter with the dwarven caravans.</div>' +
+  return '<div class="card-title"><span>🏛️ The High Citadel of Valoria — Select a Sanctum</span><span class="gem-pill">🪽 ' + Math.min(3, hero.valkyrieSeals !== undefined ? hero.valkyrieSeals : 3) + '/3 Seals • 💰 ' + hero.gold.toLocaleString() + 'g • 💎 ' + (hero.gems || 0) + ' • 📦 ' + totMats + '</span></div>' +
+    '<div class="lore-subtitle-box">Within the bastion walls of the High Citadel stand twelve ancient sanctums. Step inside to petition the Crown, purge plagues with Sister Vespera, study in the Grand Royal Library, surge 100% Energy at the Astral Ley-Well, or drink Dragon-Malt at the Boar&apos;s Head Tavern.</div>' +
     '<div class="slot-grid">' +
       '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("court") + ';" onclick="openTownFacilityModal(&#39;court&#39;)"><div style="font-size:32px;">👑</div><div><div style="font-weight:900;color:#d4af37;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Obsidian High Court ' + (hero.level < 2 ? '🔒(Lv 2+)' : '') + '</div><div style="font-size:11.5px;color:#e5dec9;">Feudal Rank: <b>' + hero.nobleRank + ' (' + (hero.fame || 0) + '/' + maxF + ' Fame)</b>' + ((hero.wantedLevel || 0) > 0 ? ' • <b style="color:#ef4444;">🚨Wanted Lv ' + hero.wantedLevel + '</b>' : (nextRank ? ' ➔ Petition for <b>' + nextRank.title + '</b>' : '')) + '</div></div></div>' +
       '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("courting") + ';border-color:#f472b6;" onclick="openTownFacilityModal(&#39;courting&#39;)"><div style="font-size:32px;">🌹</div><div><div style="font-weight:900;color:#f472b6;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Velvet Chamber ' + ((hero.nobleIdx || 0) < 1 ? '🔒(Squire+)' : '') + '</div><div style="font-size:11.5px;color:#e5dec9;">' + (hero.spouse ? ('Active Consort: <b>' + escapeHtml(hero.spouse.name) + ' (' + spLove + '% ❤️)</b>') : 'Court Noble Ladies &amp; Forge Royal Alliances') + ' • 👶 <b>' + (hero.children ? hero.children.length : 0) + '/6 Scions</b></div></div></div>' +
-      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("legends") + ';border-color:#fde047;" onclick="openTownFacilityModal(&#39;legends&#39;)"><div style="font-size:32px;">🌟</div><div><div style="font-weight:900;color:#fde047;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Hall of Legends ' + (hero.level < 50 ? '🔒(Lv 50+)' : '') + '</div><div style="font-size:11.5px;color:#e5dec9;">Seat of Grandmaster Solaris the Oath-Keeper (Trial Stage ' + (hero.ultQuestStage || 0) + '/5)</div></div></div>' +
-      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("graveyard") + ';border-color:#f43f5e;" onclick="openTownFacilityModal(&#39;graveyard&#39;)"><div style="font-size:32px;">⚰️</div><div><div style="font-weight:900;color:#fca5a5;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Weeping Graveyard</div><div style="font-size:11.5px;color:#e5dec9;">' + (mySlotDead ? ('<b style="color:#fde047;">⛏️👻 Ancestral Soul of ' + escapeHtml(mySlotDead.name) + ' Awaiting Exhumation!</b>') : 'Ancestral Burial Plots &amp; Memorials of the Fallen') + '</div></div></div>' +
       '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("sanctuary") + ';" onclick="openTownFacilityModal(&#39;sanctuary&#39;)"><div style="font-size:32px;">🕯️</div><div><div style="font-weight:900;color:#86efac;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">Cathedral of the First Flame</div><div style="font-size:11.5px;color:#e5dec9;">Healing Rites, Confessional Penance, Leech Ward' + (disCnt > 0 ? (' <b style="color:#ef4444;">(🦠' + disCnt + ' Disease!)</b>') : '') + ' &amp; Valkyrie Reliquary</div></div></div>' +
-      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("market") + ';" onclick="openTownFacilityModal(&#39;market&#39;)"><div style="font-size:32px;">⚖️</div><div><div style="font-weight:900;color:#fde68a;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Ironcrag Caravan Bazaar</div><div style="font-size:11.5px;color:#e5dec9;">Dwarven Arms, Master Blacksmith Brom, Underground Fence &amp; Jonah</div></div></div>' +
-      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("inn") + ';" onclick="openTownFacilityModal(&#39;inn&#39;)"><div style="font-size:32px;">🛌</div><div><div style="font-weight:900;color:#7dd3fc;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Boar&apos;s Head Inn</div><div style="font-size:11.5px;color:#e5dec9;">Hearthside Banter, Royal Feasts &amp; Warded Bedchambers</div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("vespera") + ';border-color:' + (disCnt > 0 ? '#ef4444' : '#c084fc') + ';" onclick="openTownFacilityModal(&#39;vespera&#39;)"><div style="font-size:32px;">💎🩺</div><div><div style="font-weight:900;color:#e9d5ff;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">Sister Vespera&apos;s Dragon-Glass Clinic</div><div style="font-size:11.5px;color:#e5dec9;">' + (disCnt > 0 ? ('<b style="color:#fca5a5;">🦠 ' + disCnt + ' Active Party Disease(s) — Purge for 15💎!</b>') : 'Unlimited 15💎 Dragon-Glass Disease Purge (Hero &amp; Recruits)') + '</div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("library") + ';border-color:#38bdf8;" onclick="openTownFacilityModal(&#39;library&#39;)"><div style="font-size:32px;">📚</div><div><div style="font-weight:900;color:#7dd3fc;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Grand Royal Library</div><div style="font-size:11.5px;color:#e5dec9;">World Guide, Diseases (' + disCnt + '), Sanity, Recruit Quirks &amp; Dynasty Archives</div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("legends") + ';border-color:#fde047;" onclick="openAstralLeyWellModal()"><div style="font-size:32px;">⚡🔥</div><div><div style="font-weight:900;color:#fde047;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Astral Ley-Well (' + leyLeft + '/2 Today)</div><div style="font-size:11.5px;color:#e5dec9;">Sacrifice <b>4💎 Gems, Gold &amp; 12 Trophies</b> for <b>100% Full Energy (' + hero.quests + '/' + hero.maxQuests + '⚡)</b></div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("inn") + ';" onclick="openTownFacilityModal(&#39;inn&#39;)"><div style="font-size:32px;">🍺🛌</div><div><div style="font-weight:900;color:#7dd3fc;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Boar&apos;s Head Tavern &amp; Inn</div><div style="font-size:11.5px;color:#e5dec9;">🥃 Dragon-Malt (-50% Stress / 2h Drunk Risk), Feasts &amp; Stress-Healing Beds</div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("market") + ';" onclick="openTownFacilityModal(&#39;market&#39;)"><div style="font-size:32px;">⚖️</div><div><div style="font-weight:900;color:#fde68a;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Ironcrag Caravan Bazaar</div><div style="font-size:11.5px;color:#e5dec9;">Dwarven Arms, Blacksmith Brom, Trophy Exchange (' + totMats + '📦) &amp; Jonah</div></div></div>' +
       '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("vault") + ';" onclick="openTownFacilityModal(&#39;post&#39;)"><div style="font-size:32px;">🏦</div><div><div style="font-weight:900;color:#c084fc;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Royal Reliquary Vault</div><div style="font-size:11.5px;color:#e5dec9;">Treasury: <b style="color:#fbbf24;">' + (v.gold || 0).toLocaleString() + 'g</b> • Sealed Gems: <b style="color:#fde047;">' + (v.gems || 0) + '/20💎</b> • Heirlooms: <b>' + (v.items ? v.items.length : 0) + '/25</b></div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("graveyard") + ';border-color:#f43f5e;" onclick="openTownFacilityModal(&#39;graveyard&#39;)"><div style="font-size:32px;">⚰️</div><div><div style="font-weight:900;color:#fca5a5;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Weeping Graveyard</div><div style="font-size:11.5px;color:#e5dec9;">' + (mySlotDead ? ('<b style="color:#fde047;">⛏️👻 Ancestral Soul of ' + escapeHtml(mySlotDead.name) + ' Awaiting Exhumation!</b>') : 'Ancestral Burial Plots &amp; Memorials of the Fallen') + '</div></div></div>' +
+      '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("legends") + ';border-color:#fde047;" onclick="openTownFacilityModal(&#39;legends&#39;)"><div style="font-size:32px;">🌟</div><div><div style="font-weight:900;color:#fde047;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Hall of Legends ' + (hero.level < 50 ? '🔒(Lv 50+)' : '') + '</div><div style="font-size:11.5px;color:#e5dec9;">Seat of Grandmaster Solaris the Oath-Keeper (Trial Stage ' + (hero.ultQuestStage || 0) + '/5)</div></div></div>' +
       '<div class="hub-launcher-card" style="background:' + getTownBannerStyle("wagers") + ';" onclick="openTownFacilityModal(&#39;wagers&#39;)"><div style="font-size:32px;">🏇</div><div><div style="font-weight:900;color:#fca5a5;font-size:14px;font-family:&#39;Cinzel&#39;,serif;text-shadow:0 2px 6px #000;">The Grand Tourney Grounds</div><div style="font-size:11.5px;color:#e5dec9;">Jousting Lists, Seer&apos;s Vardo, High Court Debates &amp; Royal Archives</div></div></div>' +
     '</div>';
 }
 
 function openTownFacilityModal(fac) {
   ensureHeroV3Fields(hero);
+  if (fac === "library") {
+    if (window.openGrandRoyalLibraryModal) window.openGrandRoyalLibraryModal("ui");
+    return;
+  }
+  if (fac === "vespera") {
+    if (window.openSisterVesperaModal) window.openSisterVesperaModal();
+    return;
+  }
+  if (fac === "leywell") {
+    openAstralLeyWellModal();
+    return;
+  }
   if (fac === "court" && hero.level < 2) {
     showRequirementModal("High Court Gates Locked (Requires Level 2+)", "👑🔒", "The obsidian doors of the High Court only open to heroes who have survived their first season of battle (<b>Level 2+</b>).", "Patrol Area 1 (The Blighted Shire Fields) to reach Level 2 and unlock the High Court!", "");
     return;
@@ -14921,7 +15267,7 @@ function openTownFacilityModal(fac) {
         '<div>• Royal Investiture Gold: <b style="color:' + (gOk ? '#4ade80' : '#f87171') + ';">' + hero.gold.toLocaleString() + ' / ' + nextRank.cost.toLocaleString() + 'g</b> (30% kept if denied!)</div>' +
         '<div>• Courtly Fame (Level Cap ' + maxF + ' • Decays -8/45m): <b style="color:' + (fOk ? '#4ade80' : '#f87171') + ';">' + (hero.fame || 0) + ' / ' + nextRank.fameReq + ' Fame</b></div>' +
         '<div>• Monster Trophies: <b style="color:' + (mOk ? '#4ade80' : '#f87171') + ';">' + totMats + ' / ' + nextRank.matsReq + ' Trophies</b></div>' +
-        '<div>• Chancellor Approval Odds (👑Charm ' + st.effCharm + ' vs Benchmark ' + lvScaledCharmReq + '): <b style="color:#fde68a;">' + odds + '% Chance</b></div>' +
+        '<div>• Chancellor Approval Odds (👑Charm ' + st.effCharm + ' vs Benchmark ' + lvScaledCharmReq + (st.isDrunk ? ' • 🍺-15% Drunk Penalty' : '') + '): <b style="color:#fde68a;">' + odds + '% Chance</b></div>' +
         '<button class="btn ' + (allOk ? 'btn-shine' : 'btn-locked') + '" style="width:100%;margin-top:10px;" onclick="submitHighCourtPetition()">👑 Submit Formal Petition (-3⚡ • Have ' + hero.quests + '⚡)</button>' +
       '</div>';
     } else {
@@ -14953,7 +15299,6 @@ function openTownFacilityModal(fac) {
       return '<option value="' + at + '" ' + (hero.consortAttire === at ? 'selected' : '') + '>' + at + (at !== "Velvet Court Gown" ? " (+25% Spouse Stats!)" : "") + '</option>';
     }).join('');
 
-    // Single Chosen Consort Blessing Selector when multiple wives are wed!
     var multiConsortSelectorHtml = "";
     if (Array.isArray(hero.marriedConsorts) && hero.marriedConsorts.length > 1) {
       multiConsortSelectorHtml = '<div style="background:#1a0920;border:2px solid #f472b6;border-radius:6px;padding:8px 10px;margin-bottom:8px;text-align:left;">' +
@@ -14970,6 +15315,8 @@ function openTownFacilityModal(fac) {
     var dateCost = Math.max(300, hero.level * 45);
     var banquetCost = Math.max(600, hero.level * 85);
     var heirCost = Math.max(800, hero.level * 120);
+    var mKeySpouse = hero.spouse ? (hero.spouse.id || hero.spouse.name) : "";
+    var spBornCnt = (mKeySpouse && hero.consortChildrenCount && hero.consortChildrenCount[mKeySpouse]) ? hero.consortChildrenCount[mKeySpouse] : 0;
 
     var spouseBanner = hero.spouse ?
       (multiConsortSelectorHtml + '<div class="velvet-consort-card" style="text-align:left;">' +
@@ -14989,7 +15336,7 @@ function openTownFacilityModal(fac) {
           '<button class="btn ' + (courtLeft > 0 ? 'btn-arcane' : 'btn-locked') + '" style="min-height:32px;font-size:11px;" onclick="embarkConsortRomanceQuest()">🗺️ Romance (-4⚡ • +1 All Stats)</button>' +
           '<button class="btn ' + (dipActive ? 'btn-emerald' : (courtLeft > 0 ? 'btn-sky' : 'btn-locked')) + '" style="min-height:32px;font-size:11px;" title="Dispatch Consort on Diplomatic Mission: Cuts passive Court Fame decay by 50% for 2 Hours!" onclick="dispatchConsortDiplomacy()">' + (dipActive ? ('🕊️ Envoy (' + dipRemTxt + ')') : ('🕊️ Diplomacy (-3⚡ ➔ -50% Decay)')) + '</button>' +
           '<button class="btn ' + (courtLeft > 0 ? 'btn-gold' : 'btn-locked') + '" style="min-height:32px;font-size:11px;" onclick="hostGrandRoyalBanquet()">🍷 Banquet (-6⚡, ' + banquetCost.toLocaleString() + 'g)</button>' +
-          '<button class="btn btn-shine" style="min-height:32px;font-size:11px;" onclick="conceiveDynastyChild()">👶 Welcome Heir (-4⚡, ' + heirCost.toLocaleString() + 'g)</button>' +
+          '<button class="btn ' + (spBornCnt >= 3 ? 'btn-locked' : 'btn-shine') + '" style="min-height:32px;font-size:11px;" onclick="conceiveDynastyChild()">👶 Welcome Heir (' + spBornCnt + '/3 Born • -4⚡, ' + heirCost.toLocaleString() + 'g)</button>' +
         '</div></div>') :
       '<div class="lore-subtitle-box">Welcome to <b>The Velvet Chamber</b> (' + courtLeft + '/' + MAX_DAILY_COURTING + ' Courting Actions Left Today • 💰' + hero.gold.toLocaleString() + 'g • ⚡' + hero.quests + '⚡). Serenade or gift noble ladies to raise Affection to <b>100%</b> and celebrate a Royal Wedding. Beware: <b>Courtship Affection decays by -4% every 45m tick and -12% at midnight</b>, and if you wed multiple ladies, you must choose <b>1 active Consort Blessing</b> at a time!</div>';
 
@@ -15016,6 +15363,7 @@ function openTownFacilityModal(fac) {
               '<button class="btn ' + (isAct ? 'btn-emerald' : 'btn-sky') + '" style="min-height:26px;padding:2px 6px;font-size:10px;" onclick="setActiveBattleChild(' + cIdx + ')">' + (isAct ? '⚔️Active (Dismiss)' : '⚔️Deploy (1 Helper)') + '</button>' +
               '<button class="btn ' + (onExp ? 'btn-locked' : 'btn-gold') + '" style="min-height:26px;padding:2px 6px;font-size:10px;" onclick="sendChildExpedition(' + cIdx + ')">' + (onExp ? '🗺️' + expRem : '🗺️Quest') + '</button>' +
               '<button class="btn ' + (hero.level >= 50 ? 'btn-arcane' : 'btn-locked') + '" style="min-height:26px;padding:2px 6px;font-size:10px;" onclick="prestigeHeroHeirSuccession(' + cIdx + ')">👑Crown</button>' +
+              '<button class="btn btn-crimson" style="min-height:26px;padding:2px 6px;font-size:10px;" title="Move to Fallen Family Tree Memorial" onclick="if(window.removeChildFromNursery)removeChildFromNursery(' + cIdx + ')">🪦Remove</button>' +
             '</div></div>';
         }).join('') + '</div>';
     }
@@ -15067,7 +15415,7 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
   var rw = getRealWeather();
   var reqWitsSteal = 18 + (hero.level || 1) * 2.2 + Math.pow(hero.level || 1, 1.35) * 0.9;
   var witsMod = Math.max(-0.04, Math.min(0.08, ((st.effWits + st.effCharm * 0.4) - reqWitsSteal) * 0.002));
-  var stealOddsPct = Math.round(Math.max(0.08, Math.min(0.26, ((rw.rain || rw.lightning) ? 0.18 : 0.12) + witsMod)) * 100);
+  var stealOddsPct = Math.round(Math.max(0.05, Math.min(0.26, ((rw.rain || rw.lightning) ? 0.18 : 0.12) + witsMod - (st.isDrunk ? 0.05 : 0))) * 100);
 
   if (fac === "sanctuary") {
     var healCost = getScaledHealCost(), potCost = getScaledPotionCost(), ethCost = getScaledEtherCost();
@@ -15086,7 +15434,7 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
     var caulLeft = Math.max(0, 2 - (hero.cauldronUsedToday || 0));
     var confLeft = Math.max(0, 2 - (hero.confessionsToday || 0));
     var leechLeft = Math.max(0, 2 - (hero.leechesUsedToday || 0));
-    var disList = Array.isArray(hero.diseases) ? hero.diseases : [];
+    var totalPartyDis = countTotalPartyDiseases(hero);
     var healCdRemSec = Math.max(0, Math.ceil((HEAL_COOLDOWN_MS - (nowMs - (hero.lastHealEpoch || 0))) / 1000));
     var healBtnLabel = healCdRemSec > 0 ? '⏳ Cooldown (' + formatCooldownSec(healCdRemSec) + ')' : '🕯️ +60% Rite, Cure Trauma &amp; -35% Stress (' + healCost.toLocaleString() + 'g • ' + healsLeft + '/3 Left)';
     var belt = hero.belt || { firebomb: 0, ironnet: 0, warhorn: 0 };
@@ -15098,6 +15446,17 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
           (haveB < 5 ? '<button class="btn ' + (stealsLeft > 0 ? 'btn-crimson' : 'btn-locked') + '" style="min-height:30px;padding:4px 8px;font-size:10.5px;" title="' + stealOddsPct + '% Wits/Charm Steal Chance (' + stealsLeft + '/3 Left Today • -1⚡)" onclick="attemptShoplift(&#39;belt&#39;,&#39;' + b.id + '&#39;)">🥷 Steal (' + stealsLeft + '/3)</button>' : '') +
         '</div></div>';
     }).join('');
+
+    var vesperaInlineHtml = '<div id="sisterVesperaCathedralCard" style="background:linear-gradient(135deg,#1f0b2e 0%,#0b0614 100%);border:2px solid #c084fc;border-radius:6px;padding:10px;margin:6px 0;text-align:left;font-size:11.5px;color:#e9d5ff;">' +
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        renderLadyPortraitSvg("vespera", 48) +
+        '<div style="flex:1;min-width:180px;"><b style="color:#fde047;font-family:Cinzel,serif;font-size:13px;">💎🩺 Sister Vespera, Dragon-Glass Chirurgeon (Unlimited Daily Cures):</b><br>' +
+        '<i>&ldquo;When the Plague-Doctor&apos;s daily leeches are spent, offer me <b>15💎 Dragon Gems</b> to cauterize any physical plague from you or your sworn recruits (+25% HP).&rdquo;</i></div>' +
+        '<div style="display:flex;gap:5px;width:100%;margin-top:4px;">' +
+          '<button class="btn ' + (totalPartyDis > 0 && (hero.gems || 0) >= 15 ? 'btn-shine' : 'btn-locked') + '" style="flex:1;" onclick="if(window.purgeDiseaseSisterVespera)window.purgeDiseaseSisterVespera()">💎🩺 Purge 1 Disease (' + totalPartyDis + ' Active • 15💎 • Have ' + (hero.gems || 0) + '💎)</button>' +
+          '<button class="btn btn-arcane" onclick="if(window.openSisterVesperaModal)window.openSisterVesperaModal()">🏥 Clinic Details</button>' +
+        '</div>' +
+      '</div></div>';
 
     var sanitariumHtml = "";
     var quirkMercs = (hero.mercenaries || []).map(function(m, mIdx) { return { m: m, idx: mIdx }; }).filter(function(x) { return x.m.quirk; });
@@ -15113,14 +15472,15 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
 
     showPopupModal(
       '<div style="font-size:36px;">🕯️🪽🧪</div><div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">Cathedral of the First Flame &amp; Apothecary</div>' +
-      '<div class="lore-subtitle-box">Consecrate Seals of the Valkyrie, confess battle-dread to purge Mental Afflictions, or visit the Plague-Doctor&apos;s Leech Ward to cleanse contracted physical diseases.</div>' +
-      '<div style="font-size:12px;color:#fde68a;margin:4px 0 8px 0;">❤️ <b>' + hero.hp + '/' + hero.maxHp + '</b> • 🔮 <b>' + hero.mp + '/' + hero.maxMp + '</b> • 😰Stress: <b style="color:#c084fc;">' + (hero.stress || 0) + '%</b> • 🦠Diseases: <b style="color:' + (disList.length ? '#ef4444' : '#4ade80') + ';">' + disList.length + '</b> • 🪽Seals: <b style="color:#fde047;">' + curSeals + '/3</b> • 💰<b>' + hero.gold.toLocaleString() + 'g</b> • 💎<b>' + (hero.gems || 0) + '</b> • 📦<b>' + totMats + ' Trophies</b></div>' +
+      '<div class="lore-subtitle-box">Consecrate Seals of the Valkyrie, confess battle-dread to purge Mental Afflictions, or visit the Plague-Doctor&apos;s Leech Ward and Sister Vespera to cleanse contracted physical diseases on your Hero and Recruits.</div>' +
+      '<div style="font-size:12px;color:#fde68a;margin:4px 0 8px 0;">❤️ <b>' + hero.hp + '/' + hero.maxHp + '</b> • 🔮 <b>' + hero.mp + '/' + hero.maxMp + '</b> • 😰Stress: <b style="color:#c084fc;">' + (hero.stress || 0) + '%</b> • 🦠Party Diseases: <b style="color:' + (totalPartyDis ? '#ef4444' : '#4ade80') + ';">' + totalPartyDis + '</b> • 🪽Seals: <b style="color:#fde047;">' + curSeals + '/3</b> • 💰<b>' + hero.gold.toLocaleString() + 'g</b> • 💎<b>' + (hero.gems || 0) + '</b> • 📦<b>' + totMats + ' Trophies</b></div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">' +
         '<button class="btn ' + (healsLeft <= 0 || healCdRemSec > 0 ? 'btn-locked' : 'btn-emerald') + '" onclick="healAtSanctuary()">' + healBtnLabel + '</button>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
           '<button class="btn ' + (confLeft <= 0 ? 'btn-locked' : 'btn-arcane') + '" onclick="prayAtConfessionalBooth()">🙏 Confessional (-45% Stress &amp; Cure Affliction • -2⚡, ' + confCost + 'g • ' + confLeft + '/2)</button>' +
-          '<button class="btn ' + (leechLeft <= 0 || disList.length === 0 ? 'btn-locked' : 'btn-crimson') + '" onclick="undergoPlagueDoctorLeechWard()">🦠 Leech Ward (Cure ' + disList.length + ' Disease &amp; +20% HP • ' + leechCost + 'g, -1 Trophy • ' + leechLeft + '/2)</button>' +
+          '<button class="btn ' + (leechLeft <= 0 || totalPartyDis === 0 ? 'btn-locked' : 'btn-crimson') + '" onclick="undergoPlagueDoctorLeechWard()">🦠 Leech Ward (Cure All ' + totalPartyDis + ' Party Diseases • ' + leechCost + 'g, -1 Trophy • ' + leechLeft + '/2)</button>' +
         '</div>' +
+        vesperaInlineHtml +
         '<button class="btn ' + (sealsLeft <= 0 || curSeals >= 3 ? 'btn-locked' : 'btn-shine') + '" onclick="buyValkyrieSeal()">🪽 Consecrate Seal of the Valkyrie (' + sealCost.toLocaleString() + 'g &amp; 2💎 • ' + sealsLeft + '/1 Today • Carry ' + curSeals + '/3 Max)</button>' +
         '<button class="btn btn-crimson" onclick="openTownFacilityModal(&#39;graveyard&#39;)">⚰️ Step Through the Lich-Gate to The Weeping Graveyard (Soul Exhumation)</button>' +
         '<button class="btn ' + (alembicLeft <= 0 ? 'btn-locked' : 'btn-sky') + '" onclick="brewAlchemicalMixture()">🧪 Thermal Alembic: Distill 2 Trophies (Have ' + totMats + ' Trophies • -2⚡ • ' + alembicLeft + '/2 Left)</button>' +
@@ -15142,10 +15502,26 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
     var innCost = getScaledInnRestCost(), restsLeft = Math.max(0, MAX_DAILY_RESTS - (hero.restsUsedToday || 0));
     var feastsLeft = Math.max(0, MAX_DAILY_FEASTS - (hero.feastsOrderedToday || 0));
     var bantersLeft = Math.max(0, MAX_DAILY_BANTERS - (hero.bantersUsedToday || 0));
+    var drinksLeft = Math.max(0, MAX_DAILY_DRINKS - (hero.drinksBoughtToday || 0));
+    var drinkCost = getTavernDrinkScaledCost();
+    var drunkNow = isHeroDrunk(hero);
+    var drunkRemTxt = drunkNow ? formatCooldownSec(Math.ceil((hero.drunkUntil - nowMs) / 1000)) : "";
     var restCdRemSec = Math.max(0, Math.ceil((REST_COOLDOWN_MS - (nowMs - (hero.lastRestEpoch || 0))) / 1000));
     var restBtnLabel = restCdRemSec > 0 ? '⏳ 30m Rest Lock (' + formatCooldownSec(restCdRemSec) + ')' : '🛌 Quick-Rest +15⚡, 75% HP, Cure Trauma &amp; -25% Stress (' + innCost.toLocaleString() + 'g • ' + restsLeft + '/2)';
     var banterCdSec = Math.max(0, Math.ceil((TWO_HOURS_MS - (nowMs - (hero.lastBanterEpoch || 0))) / 1000));
     var banterInnLbl = bantersLeft <= 0 ? '⏳ Banter Cap (3/3)' : (banterCdSec > 0 ? ('⏳ Banter (' + formatCooldownSec(banterCdSec) + ')') : ('🔥 Hearth Banter (' + bantersLeft + '/3 • +10% HP &amp; -20% Stress)'));
+
+    var taproomBarHtml = '<div style="background:linear-gradient(135deg,#241107 0%,#0f0806 100%);border:2px solid #f59e0b;border-radius:6px;padding:10px;margin-bottom:8px;text-align:left;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
+        '<div style="flex:1;min-width:190px;">' +
+          '<b style="color:#fde047;font-family:Cinzel,serif;font-size:13px;">🥃 Boar&apos;s Head Taproom — Aged Dragon-Malt Reserve (' + drinksLeft + '/' + MAX_DAILY_DRINKS + ' Today):</b>' +
+          '<div style="font-size:11.5px;color:#e5dec9;margin-top:2px;">Instantly drops <b>😰 Stress by -50%</b> (Current Stress: <b style="color:#c084fc;">' + (hero.stress || 0) + '%</b>)! <span style="color:#fca5a5;">⚠️ Ordering multiple goblets within 2 hours risks a <b>2-Hour 🍺 Stumbling Drunk</b> debuff (-15% Hit, -12% Dodge &amp; -15% Wits)!</span></div>' +
+          (drunkNow ? ('<div style="font-size:11px;color:#ef4444;font-weight:bold;margin-top:3px;">🍺 CURRENTLY STUMBLING DRUNK (' + drunkRemTxt + ' remaining — Sleep in a bedchamber to sober up!)</div>') : '') +
+        '</div>' +
+        '<button class="btn ' + (drinksLeft > 0 && hero.gold >= drinkCost ? 'btn-gold' : 'btn-locked') + '" style="min-height:36px;" onclick="orderBoarsHeadTaproomDrink()">🥃 Buy Dragon-Malt (' + drinkCost.toLocaleString() + 'g • -50% Stress)</button>' +
+      '</div>' +
+    '</div>';
+
     var lodgeCards = LODGING_TIERS.map(function(lt) {
       var lCost = getLodgingCost(lt.id);
       var chk = checkLodgingTierUnlocked(lt.id);
@@ -15156,17 +15532,18 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
         '</div></div>';
     }).join('');
     showPopupModal(
-      '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">🍺 The Boar&apos;s Head Inn &amp; Hearth</div>' +
-      '<div class="lore-subtitle-box">Share tales by the hearthfire to calm your retinue&apos;s nerves, order a hot royal feast (+10-Quest blessing &amp; -18% Stress), or bed down for 2+ hours offline to awaken with full vigor and zero afflictions. (💰Your Gold: <b>' + hero.gold.toLocaleString() + 'g</b>)</div>' +
+      '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">🍺 The Boar&apos;s Head Tavern &amp; Inn</div>' +
+      '<div class="lore-subtitle-box">Order a pricey goblet of <b>🥃 Aged Dragon-Malt (-50% Stress)</b> at the bar, enjoy a hot feast, or bed down in any room <b>above the floor</b> (Straw Cot, Feather Suite, or Royal Palace) to purge Stress while you sleep! (💰Your Gold: <b>' + hero.gold.toLocaleString() + 'g</b> • 😰Stress: <b>' + (hero.stress || 0) + '%</b>)</div>' +
       '<div id="innRoomVectorPreviewBox">' + renderSleepingRoomVectorSvg(selectedLodgingPreview) + '</div>' +
+      taproomBarHtml +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
         '<button class="btn ' + (restsLeft <= 0 || restCdRemSec > 0 ? 'btn-locked' : 'btn-emerald') + '" style="flex:1;" onclick="restAtTavernInn()">' + restBtnLabel + '</button>' +
         '<button class="btn ' + (banterCdSec > 0 || bantersLeft <= 0 ? 'btn-locked' : 'btn-sky') + '" style="flex:1;" onclick="triggerCampfireBanter()">' + banterInnLbl + '</button>' +
       '</div>' +
       '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px;">' + TAVERN_FEASTS.map(function(f){ var fc = getFeastScaledCost(f); return '<button class="btn ' + (feastsLeft > 0 ? 'btn-gold' : 'btn-locked') + '" style="flex:1;font-size:11px;padding:5px;" onclick="orderTavernFeast(&#39;' + f.id + '&#39;)">' + f.icon + ' ' + f.name + ' (' + fc.toLocaleString() + 'g • ' + feastsLeft + '/3)</button>'; }).join('') + '</div>' +
-      '<div style="font-size:12.5px;font-weight:bold;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:6px;text-align:left;">🛌 Select Offline Bedchamber (30m Minimum Rest Lock):</div>' +
+      '<div style="font-size:12.5px;font-weight:bold;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:6px;text-align:left;">🛌 Select Offline Bedchamber (Beds Above the Floor Purge Stress!):</div>' +
       lodgeCards +
-      '<button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Leave the Inn</button>'
+      '<button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Leave the Tavern &amp; Inn</button>'
     );
   }
   else if (fac === "market") {
@@ -15175,6 +15552,7 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
     var shopBuysLeft = Math.max(0, MAX_DAILY_SHOP_BUYS - (hero.shopBuysToday || 0));
     var stealsLeft2 = Math.max(0, MAX_DAILY_STEALS - (hero.stealsUsedToday || 0));
     var jonahUnlocked = (hero.level >= 85);
+    var totMatsBazaar = getTotalMaterialsCount();
     var fenceUnlocked = ((hero.alignment && hero.alignment.Shadow >= 15) || (hero.wantedLevel || 0) > 0 || (hero.inventory || []).some(function(x) { return x && x.stolen; }));
     var blAlert = "";
     if (hero.merchantBlacklistUntil && hero.merchantBlacklistUntil > nowMs) {
@@ -15193,8 +15571,14 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
     }).join('');
     showPopupModal(
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:18px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;">⚖️ The Ironcrag Caravan Bazaar (' + st.discountPct + '% Charm Discount)</span><button class="btn ' + (shopRemSec > 0 ? 'btn-locked' : 'btn-gold') + '" style="min-height:30px;padding:4px 8px;font-size:11px;" onclick="restockDwarvenMarket()">' + shopBtnLabel + '</button></div>' +
-      '<div class="lore-subtitle-box">💰 <b>Your Treasury: ' + hero.gold.toLocaleString() + 'g</b> • 🪵 <b>' + (hero.guild.timber || 0) + '</b> • 🪨 <b>' + (hero.guild.stone || 0) + '</b> • ⛏️ <b>' + (hero.guild.iron || 0) + '</b> • 🎒 <b>Pack: ' + hero.inventory.length + '/30</b>. Purchase forged relics from the Ironcrag wagons, or risk a stealth heist under the eyes of the Citadel Watch.</div>' +
+      '<div class="lore-subtitle-box">💰 <b>Your Treasury: ' + hero.gold.toLocaleString() + 'g</b> • 📦 <b>Trophies: ' + totMatsBazaar + '</b> • 🪵 <b>' + (hero.guild.timber || 0) + '</b> • 🪨 <b>' + (hero.guild.stone || 0) + '</b> • ⛏️ <b>' + (hero.guild.iron || 0) + '</b> • 🎒 <b>Pack: ' + hero.inventory.length + '/30</b>.</div>' +
       blAlert +
+      '<div style="background:#141a0d;border:1px solid #4ade80;border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' + renderEntityAvatar("Master Huntsman Kraven", "🏹🔥", 42, false) +
+          '<div><b style="color:#86efac;">🏹🔥 Master Huntsman Kraven&apos;s Trophy Exchange (You Hold ' + totMatsBazaar + ' Trophies):</b><div style="font-size:11px;color:#e5dec9;">Trade <b>10, 15, or 30 Monster Trophies</b> for Stress Relief, Rare–Mythic Chests, Kingdom Materials &amp; Dragon Gems!</div></div>' +
+        '</div>' +
+        '<button class="btn ' + (totMatsBazaar >= 10 ? 'btn-shine' : 'btn-gold') + '" style="min-height:30px;padding:4px 10px;font-size:11px;" onclick="openHuntsmanTrophyExchangeModal()">🏹 Exchange Trophies (' + totMatsBazaar + ')</button>' +
+      '</div>' +
       '<div style="background:#140d1c;border:1px solid #c5a059;border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
         '<div style="display:flex;align-items:center;gap:8px;">' + renderEntityAvatar("Blacksmith Brom Iron-Thumb", "🔨⚒️", 42, false) +
           '<div><b style="color:#fde047;">🔨 Master Blacksmith Brom Iron-Thumb:</b><div style="font-size:11px;color:#e5dec9;">&ldquo;Bring your notched steel to my anvil for repairs, hammer rune-steel on the beat, or crush Dulled Gem Slag!&rdquo;</div></div>' +
@@ -15202,7 +15586,7 @@ function openSecondaryTownFacilitiesModal(fac, nowMs, st) {
         '<div style="display:flex;gap:4px;"><button class="btn btn-gold" style="min-height:30px;padding:4px 8px;font-size:10.5px;" onclick="if(window.openBromRhythmAnvilModal)window.openBromRhythmAnvilModal()">🔨 Dwarven Anvil (-2⚡)</button><button class="btn btn-emerald" style="min-height:30px;padding:4px 8px;font-size:10.5px;" onclick="if(window.repairAllEquippedGear)window.repairAllEquippedGear()">🔧 Repair All</button></div>' +
       '</div>' +
       '<div style="background:#170a1c;border:1px solid ' + (fenceUnlocked ? '#f43f5e' : '#473e4f') + ';border-radius:6px;padding:8px;margin-bottom:8px;text-align:left;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
-        '<div><b style="color:#fda4af;">🥷 The Underground Sewer Fence:</b><div style="font-size:11px;color:#e5dec9;">Launder stolen contraband for <b>85% gold value</b>, smuggle aboard your Armada for <b>150% in 💎 Gems</b>, or burn Wanted warrants!</div></div>' +
+        '<div><b style="color:#fda4af;">🥷 The Underground Sewer Fence:</b><div style="font-size:11px;color:#e5dec9;">Launder stolen contraband for <b>85% gold value</b>, smuggle aboard your Armada, or burn Wanted warrants!</div></div>' +
         '<button class="btn ' + (fenceUnlocked ? 'btn-crimson' : 'btn-locked') + '" style="min-height:30px;padding:4px 10px;font-size:11px;" onclick="if(window.openUndergroundFenceModal)window.openUndergroundFenceModal()">🥷 Enter Sewer Fence</button>' +
       '</div>' +
       '<div style="background:#0c1926;border:1px solid ' + (jonahUnlocked ? '#38bdf8' : '#473e4f') + ';border-radius:6px;padding:8px;margin-bottom:10px;text-align:left;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
@@ -15303,12 +15687,13 @@ function renderInventoryAndSocketsTabHtml(gearSlots, bagUpgradesCnt) {
     var bromBanner = '<div style="background:linear-gradient(135deg,#1f1424 0%,#0b0811 100%);border:2px solid #c5a059;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
       '<div style="display:flex;align-items:center;gap:10px;">' + renderEntityAvatar("Blacksmith Brom Iron-Thumb", "🔨⚒️", 48, false) +
         '<div><div style="font-size:14px;font-weight:900;color:#fde047;font-family:&#39;Cinzel&#39;,serif;">🔨 Master Blacksmith Brom&apos;s Dwarven Forge (💰' + hero.gold.toLocaleString() + 'g • 💎' + myGems + ' • 📦' + totMats + ' Trophies • 🪨' + dulledCnt + ' Slag)</div>' +
-        '<div style="font-size:11.5px;color:#e5dec9;">&ldquo;Equipped gear is protected and can never be sold! Only unequipped items in your Reliquary Pack below can be sold or salvaged into Timber, Stone, and Iron.&rdquo;</div></div>' +
+        '<div style="font-size:11.5px;color:#e5dec9;">&ldquo;Tempering weapons demands heavy Monster Trophy tribute (5 + 3 per tier)! Have surplus trophies? Trade them with Master Huntsman Kraven!&rdquo;</div></div>' +
       '</div>' +
       '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
         '<button class="btn btn-gold" onclick="if(window.openBromRhythmAnvilModal)window.openBromRhythmAnvilModal()">🔨 Dwarven Anvil (' + wBoosts + '/3 • -2⚡)</button>' +
         '<button class="btn ' + (dulledCnt > 0 ? 'btn-arcane' : 'btn-locked') + '" onclick="if(window.crushDulledSlagWhetstone)window.crushDulledSlagWhetstone()">🪨 Crush Slag (Have ' + dulledCnt + '🪨)</button>' +
         '<button class="btn btn-emerald" onclick="if(window.repairAllEquippedGear)window.repairAllEquippedGear()">🔧 Repair All Equipped</button>' +
+        '<button class="btn btn-sky" onclick="openHuntsmanTrophyExchangeModal()">🏹 Exchange (' + totMats + '📦)</button>' +
       '</div>' +
     '</div>';
 
@@ -15356,11 +15741,11 @@ function renderInventoryAndSocketsTabHtml(gearSlots, bagUpgradesCnt) {
       htm += '<div class="item-row" style="border-left:3px solid #4ade80;background:#0b130f;">' +
         '<div style="flex:1;">' +
           '<div><b>[' + String(g.label || g.key).toUpperCase() + ']</b> ' + formatItemStats(gItm, false, true) + '</div>' +
-          '<div style="font-size:11px;color:#e5dec9;margin-top:2px;">Next Temper (<b>+' + (info.curUp + 1) + '</b>): <span style="color:#4ade80;font-weight:bold;">' + info.gainText + '</span> • Cost: <b style="color:#fbbf24;">' + info.cost.toLocaleString() + 'g (Have ' + hero.gold.toLocaleString() + 'g) + ' + info.matReq + ' Trophy (Have ' + totMats + ')</b> • Odds: <b style="color:' + (info.successPct >= 80 ? '#4ade80' : '#f87171') + ';">' + info.successPct + '%</b></div>' +
+          '<div style="font-size:11px;color:#e5dec9;margin-top:2px;">Next Temper (<b>+' + (info.curUp + 1) + '</b>): <span style="color:#4ade80;font-weight:bold;">' + info.gainText + '</span> • Cost: <b style="color:#fbbf24;">' + info.cost.toLocaleString() + 'g + ' + info.matReq + ' Trophies (Have ' + totMats + ')</b> • Odds: <b style="color:' + (info.successPct >= 80 ? '#4ade80' : '#f87171') + ';">' + info.successPct + '%</b></div>' +
         '</div>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;">' +
           (curD < 100 ? '<button class="btn btn-emerald" style="min-height:30px;padding:3px 7px;font-size:10.5px;" onclick="if(window.repairSingleGearSlot)window.repairSingleGearSlot(&#39;' + g.key + '&#39;)">🔧 Repair (' + repCost.toLocaleString() + 'g)</button>' : '') +
-          '<button class="btn ' + (maxed ? 'btn-emerald' : (canForge ? 'btn-gold' : 'btn-locked')) + '" style="min-height:30px;padding:3px 9px;font-size:11px;" onclick="upgradeEquippedGear(&#39;' + g.key + '&#39;)">' + (maxed ? '✅ Max +' + maxCap : '⚒️ +' + (info.curUp + 1)) + '</button>' +
+          '<button class="btn ' + (maxed ? 'btn-emerald' : (canForge ? 'btn-gold' : 'btn-locked')) + '" style="min-height:30px;padding:3px 9px;font-size:11px;" onclick="upgradeEquippedGear(&#39;' + g.key + '&#39;)">' + (maxed ? '✅ Max +' + maxCap : '⚒️ +' + (info.curUp + 1) + ' (-' + info.matReq + '📦)') + '</button>' +
           '<button class="btn ' + (forgesLeft > 0 ? 'btn-arcane' : 'btn-locked') + '" style="min-height:30px;padding:3px 7px;font-size:10.5px;" title="Reforge into a matching 3-Piece Class Gear Set Prefix (Costs 3 Trophies + 1🪨 Slag OR 2💎)" onclick="reforgeGearSetPrefix(&#39;' + g.key + '&#39;)">⚜️ Set (-3 Mats, 1🪨/2💎)</button>' +
           '<button class="btn btn-sky" style="min-height:30px;padding:3px 7px;font-size:10.5px;" title="View Kill-Counter Scroll &amp; Engrave Motto (+2 ATK/DEF for 1💎)" onclick="openEngraveGearModal(&#39;' + g.key + '&#39;)">📜 Scroll</button>' +
           '<button class="btn ' + (alreadySentient ? 'btn-emerald' : (forgesLeft > 0 ? 'btn-crimson' : 'btn-locked')) + '" style="min-height:30px;padding:3px 7px;font-size:10.5px;" title="Awaken Sentient Cursed Ego-Relic (1/1 Max • +15% Base ATK/DEF for 2💎 &amp; 3 Mats)" onclick="reforgeHellAnvilRelic(&#39;' + g.key + '&#39;)">' + (alreadySentient ? '🩸 Sentient' : '🔥 Sentient (2💎, 3 Mats)') + '</button>' +
@@ -15400,17 +15785,21 @@ function renderInventoryAndSocketsTabHtml(gearSlots, bagUpgradesCnt) {
 
 boolean part6B2BoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 6B-2 OF 7 — REPLY "NEXT" FOR PART 7 OF 7 (FINAL PART)
+// END OF PART 6B-2 OF 7 — REPLY "NEXT" FOR PART 7A OF 7
 // ==============================================================================
 
 // ==============================================================================
-// PART 7 OF 7 (FINAL PART) — PASTE DIRECTLY BELOW PART 6B-2
+// PART 7A OF 7 (BLOCK 1 OF 2) — PASTE DIRECTLY BELOW PART 6B-2
 // ==============================================================================
 
 String buildV16ChunkA1() {
+    return buildV16ChunkA1a() + "\n" + buildV16ChunkA1b()
+}
+
+String buildV16ChunkA1a() {
     return '''
 // ============================================================================
-// v18.3 ENGINE PART A1: WEATHER & HOLIDAY CANVAS FX, HIT-STOP, ISO GRID & RUMORS
+// v18.4.1 ENGINE PART A1a: WEATHER & HOLIDAY CANVAS FX, AMBIANCE AUDIO & VIGNETTE
 // ============================================================================
 var v16Particles = [];
 var SLASH_TINCTURES = {
@@ -15420,6 +15809,64 @@ var SLASH_TINCTURES = {
   "Abyssal Void":  ["#c084fc", "#6b21a8", "#e9d5ff"],
   "Emerald Venom": ["#4ade80", "#15803d", "#bbf7d0"]
 };
+
+function playAmbianceChord(type) {
+  if (typeof sfxMuted !== "undefined" && sfxMuted) return;
+  try {
+    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!window._dcrAudioCtx) window._dcrAudioCtx = new AudioCtx();
+    var ctx = window._dcrAudioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    var now = ctx.currentTime;
+    if (type === "bell") {
+      [220, 440, 659.25].forEach(function(freq, idx) {
+        var osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.12 / (idx + 1), now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.8);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 1.85);
+      });
+    } else if (type === "lute") {
+      [293.66, 369.99, 440, 587.33].forEach(function(freq, idx) {
+        var osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.06);
+        gain.gain.setValueAtTime(0.10, now + idx * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.06 + 0.9);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now + idx * 0.06); osc.stop(now + idx * 0.06 + 0.95);
+      });
+    }
+  } catch (e) {}
+}
+
+function updateAmbianceVignetteOverlay() {
+  if (!window.hero) return;
+  var vig = document.getElementById("dcrAmbianceVignette");
+  if (!vig) {
+    vig = document.createElement("div");
+    vig.id = "dcrAmbianceVignette";
+    vig.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:88;transition:box-shadow 0.6s ease;";
+    document.body.appendChild(vig);
+  }
+  if ((hero.stress || 0) >= 75 || hero.deathsDoorTrauma || (hero.hp / Math.max(1, hero.maxHp)) <= 0.25) {
+    vig.style.boxShadow = "inset 0 0 85px rgba(185, 28, 28, 0.52)";
+  } else if (window.activeDelve) {
+    var tLeft = activeDelve.torches !== undefined ? activeDelve.torches : 3;
+    var darkAlpha = tLeft <= 1 ? "0.78" : (tLeft === 2 ? "0.55" : "0.35");
+    vig.style.boxShadow = "inset 0 0 110px rgba(0, 0, 0, " + darkAlpha + "), inset 0 0 45px rgba(217, 119, 6, 0.25)";
+  } else {
+    vig.style.boxShadow = "inset 0 0 55px rgba(0, 0, 0, 0.35)";
+  }
+}
+
+function whisperAncestorToast(line) {
+  if (!line) return;
+  showGothicToast("👁️ Ancestor: “" + line + "”");
+}
 
 function initV16MasterEngine() {
   var c = document.getElementById("particleCanvas");
@@ -15431,7 +15878,7 @@ function initV16MasterEngine() {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
   }
-  if (window.checkClientDailyRollover && !window._v183RolloverWrapped) {
+  if (window.checkClientDailyRollover && !window._v184RolloverWrapped) {
     var origRoll = window.checkClientDailyRollover;
     window.checkClientDailyRollover = function(h) {
       var prevDate = h ? h.dailyResetDateStr : "";
@@ -15451,9 +15898,13 @@ function initV16MasterEngine() {
         h.krampusBossToday = 0;
         h.confessionsToday = 0;
         h.leechesUsedToday = 0;
+        h.drinksBoughtToday = 0;
+        h.leyWellUsedToday = 0;
+        h.randomSkillPtsToday = 0;
+        h.randomGemsToday = 0;
       }
     };
-    window._v183RolloverWrapped = true;
+    window._v184RolloverWrapped = true;
   }
 }
 
@@ -15573,7 +16024,11 @@ function renderParticleCanvasFrame() {
   }
   ctx.globalAlpha = 1.0;
 }
+'''
+}
 
+String buildV16ChunkA1b() {
+    return '''
 function triggerHitStopZoom() {
   document.body.classList.add("hit-stop-zoom");
   setTimeout(function() {
@@ -15665,7 +16120,7 @@ var TOWN_FIRST_LORE = {
   courting: { title: "The Velvet Chamber of Noble Consorts", icon: "🌹🕯️", text: "Perfumed incense and lute melodies drift through arched colonnades of silver lace. Here the noble houses of Valoria forge eternal bloodline alliances—though each Royal Consort can bear at most 3 children in her lifetime (even if an heir falls in battle), and only one chosen Consort Blessing may empower your banner at a time." },
   legends: { title: "The Hall of Legends & Grandmaster Solaris", icon: "🌟⚔️", text: "Beneath a dome of revolving star-crystal stands Grandmaster Solaris the Oath-Keeper, guardian of the First-Age armories. Only heroes of Level 50+ may undertake his five mythic trials." },
   graveyard: { title: "The Weeping Graveyard & Soul Exhumation", icon: "⚰️🕯️", text: "Cold rain patters against moss-covered headstones beyond the Sanctuary's northern Lich-Gate. By the crossroads stands Charon Vane, keeper of your slot's ancestral grave plot where fallen souls await exhumation at Level 5+." },
-  market: { title: "The Ironcrag Caravan Bazaar & Sewer Fence", icon: "⚖️🔨", text: "Master Blacksmith Brom Iron-Thumb hammers glowing steel beside dwarven wagons, while beneath the iron sewer grates lurks the Underground Fence—and in a dark tent sits Jonah the Star-Swallowed (Lv 85+)." },
+  market: { title: "The Ironcrag Caravan Bazaar & Sewer Fence", icon: "⚖️🔨", text: "Master Blacksmith Brom Iron-Thumb hammers glowing steel beside dwarven wagons, Master Huntsman Kraven tends the Trophy Wyrm-Brazier, and beneath the iron sewer grates lurks the Underground Fence." },
   wagers: { title: "The Grand Tourney Grounds & Seer's Vardo", icon: "🏇🃏", text: "Warhorses thunder down the tilt-yard while veiled fortune-tellers deal obsidian Tarot Arcana beneath crimson pavilions." }
 };
 
@@ -15709,10 +16164,10 @@ function checkFirstEntryAreaLore(area) {
 }
 
 var VILLAGE_RUMORS = [
-  { speaker: "One-Eyed Tavern Bard", icon: "🪕🍺", text: "They say the Reflex Timing Bar shrinks against higher-level enemies and Bosses! Keep your eyes on the gold center when a Boss charges its Cleave.", bonusType: "gold", val: 120 },
-  { speaker: "Weeping Herbalist of Ash-Hollow", icon: "🌿🕯️", text: "If a venomous beast or crypt-trap infects you with a Disease, visit the Plague-Doctor's Leech Ward in the Cathedral—and use the Confessional Booth if your Stress nears 100%!", bonusType: "potion", val: 1 },
-  { speaker: "Master Blacksmith Brom's Apprentice", icon: "⚒️🛡️", text: "Remember the Law of Six Blessings: your mortal blood can hold at most 6 active positive buffs at a time (First-In, First-Out), though curses and diseases have no limit! Let me tighten your rivets (+100% Weapon Durability).", bonusType: "repair", val: 100 },
-  { speaker: "Hooded Crossroads Pilgrim", icon: "🦅🌑", text: "When a bound Animal Companion falls in battle, its spirit scatters into the roots of the Whispering Weald—Beastmaster Thulsa needs 7 full days to weave its soul back into mortal fur!", bonusType: "fame", val: 20 }
+  { speaker: "One-Eyed Tavern Bard", icon: "🪕🍺", text: "Order a goblet of Aged Dragon-Malt at the Boar's Head Tavern to drop Stress by 50%—just don't drink too many in two hours or you'll stumble into battle drunk!", bonusType: "gold", val: 120 },
+  { speaker: "Weeping Herbalist of Ash-Hollow", icon: "🌿🕯️", text: "If the Plague-Doctor's Leech Ward is out of leeches for the day, Sister Vespera the Dragon-Glass Chirurgeon in the Citadel can burn away any Hero or Recruit disease for 15💎 Dragon Gems!", bonusType: "potion", val: 1 },
+  { speaker: "Master Blacksmith Brom's Apprentice", icon: "⚒️🛡️", text: "Got dozens of spare Monster Trophies? Visit Master Huntsman Kraven's Trophy Exchange on the Warrants or Bazaar screen, or channel the Astral Ley-Well for 100% Energy!", bonusType: "repair", val: 100 },
+  { speaker: "Hooded Crossroads Pilgrim", icon: "🦅🌑", text: "Need to look up a disease, mental affliction, or sellsword quirk? Open 📚 Library in the top banner or Citadel anytime!", bonusType: "fame", val: 20 }
 ];
 
 function triggerVillageRumorEncounter(area) {
@@ -15740,7 +16195,7 @@ String buildV16ChunkA2() {
 String buildV16ChunkA2a() {
     return '''
 // ============================================================================
-// v18.3 ENGINE PART A2a: SCALED BROM REPAIRS, SLAG GRINDER, FENCE & SMUGGLING
+// v18.4.1 ENGINE PART A2a: SCALED BROM REPAIRS, SLAG GRINDER, FENCE & SMUGGLING
 // ============================================================================
 
 function degradeEquippedGearAfterBattle() {
@@ -15867,7 +16322,7 @@ function openUndergroundFenceModal() {
     return '<div class="item-row" style="border-color:#f43f5e;text-align:left;">' +
       '<div style="flex:1;">' + formatItemStats(c.itm, false, false) + '</div>' +
       '<button class="btn ' + (smugLeft > 0 ? 'btn-gold' : 'btn-locked') + '" onclick="launderContrabandItem(' + c.idx + ')">🥷 Launder (+' + launderVal.toLocaleString() + 'g • ' + smugLeft + '/3)</button></div>';
-  }).join('') : '<div style="font-size:12px;color:#9c8f7a;padding:8px;">No stolen 🥷 Contraband in your backpack right now. Any item stolen from the Bazaar can be laundered here for <b>85% of its full value</b> (or smuggled on your Sovereign Armada for <b>150% value in 💎 Dragon Gems</b>)!</div>';
+  }).join('') : '<div style="font-size:12px;color:#9c8f7a;padding:8px;">No stolen 🥷 Contraband in your backpack right now. Any item stolen from the Bazaar can be laundered here for <b>85% of its full value</b> (or smuggled on your Sovereign Armada for <b>125% Gold &amp; up to +1–2💎 Gems</b>)!</div>';
 
   showPopupModal(
     '<div style="margin-bottom:6px;">' + renderEntityAvatar("Sewer Fence Whisper", "🥷🕳️", 62, false) + '</div>' +
@@ -15875,7 +16330,7 @@ function openUndergroundFenceModal() {
     '<div style="font-size:12px;color:#e5dec9;margin-bottom:8px;">Shadow Standing: <b>' + ((hero.alignment && hero.alignment.Shadow) || 0) + '</b> • Wanted Level: <b style="color:#ef4444;">' + (hero.wantedLevel || 0) + '</b> • 💰 Your Gold: <b>' + hero.gold.toLocaleString() + 'g</b> • Deals Left Today: <b>' + smugLeft + '/3</b></div>' +
     '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">' +
       '<button class="btn ' + ((hero.wantedLevel || 0) > 0 ? 'btn-crimson' : 'btn-locked') + '" style="flex:1;" onclick="bribeWatchCaptainClearWanted()">🚨 Burn Wanted Warrant (' + pardonCost.toLocaleString() + 'g • Have ' + hero.gold.toLocaleString() + 'g)</button>' +
-      (contrabands.length > 0 ? '<button class="btn ' + (hasFleet && smugLeft > 0 ? 'btn-shine' : 'btn-locked') + '" style="flex:1;" onclick="smuggleContrabandArmada()">🥷⚓ Armada Smuggle All Contraband (' + smugLeft + '/3 • 150% in 💎!)</button>' : '') +
+      (contrabands.length > 0 ? '<button class="btn ' + (hasFleet && smugLeft > 0 ? 'btn-shine' : 'btn-locked') + '" style="flex:1;" onclick="smuggleContrabandArmada()">🥷⚓ Armada Smuggle Contraband (' + smugLeft + '/3 • +1–2💎 Max)</button>' : '') +
       '<button class="btn ' + (hero.merchantBlacklistUntil > Date.now() ? 'btn-sky' : 'btn-locked') + '" style="flex:1;" onclick="hero.merchantBlacklistUntil=0;hero.gold=Math.max(0,hero.gold-250);showGothicToast(&#39;🥷 Forged Merchant Papers (-250g)!&#39;);openUndergroundFenceModal();">📜 Forge Merchant Pass (-250g ➔ Clear 1h Blacklist)</button>' +
     '</div>' +
     '<div style="text-align:left;font-size:13px;font-weight:bold;color:#fde047;font-family:Cinzel,serif;margin-bottom:6px;">🥷 Launder Stolen Contraband (85% Value Payout):</div>' +
@@ -15930,8 +16385,23 @@ function bribeWatchCaptainClearWanted() {
 String buildV16ChunkA2b() {
     return '''
 // ============================================================================
-// v18.3 ENGINE PART A2b: ALT BODYGUARD PAYOUTS, TONED-DOWN PET UPGRADES & MENAGERIE
+// v18.4.1 ENGINE PART A2b: ALT BODYGUARD PAYOUTS, RARER GEM SETS & MENAGERIE
 // ============================================================================
+
+window.getMercHireCost = function(mMeta) {
+  var lv = hero ? Math.max(1, hero.level || 1) : 1;
+  var deaths = hero ? (hero.totalRecruitDeaths || (hero.fallenHeroes ? hero.fallenHeroes.length : 0)) : 0;
+  var hazardMult = 1 + Math.min(0.60, deaths * 0.12);
+  var baseTier = 180;
+  if (mMeta) {
+    if (mMeta.isMartyr) baseTier = 480;
+    else if ((mMeta.costGold || 0) >= 6500) baseTier = 390;
+    else if ((mMeta.costGold || 0) >= 5000) baseTier = 320;
+    else if ((mMeta.costGold || 0) >= 3800) baseTier = 240;
+  }
+  var levelCurve = (lv * 28) + Math.round(Math.pow(lv, 1.42) * 5.5);
+  return Math.max(150, Math.round((baseTier + levelCurve) * hazardMult));
+};
 
 function capturePrisonerToCell() {
   if (!activeCombat || !hero || !activeCombat.isGuard) return;
@@ -15947,6 +16417,7 @@ function capturePrisonerToCell() {
   var stolenTxt = activeCombat.stolenRewardDesc ? ("<br>• <b>Heist Loot Kept:</b> " + activeCombat.stolenRewardDesc) : "";
   activeCombat = null;
   lastCombatBanner = null;
+  window._pendingPostBattleDiseaseCheck = true;
   playSfx("levelup");
   renderBattleModal();
   var cMsg = "⛓️🛡️ <b>GUARD SUBDUED &amp; LOCKED IN DUNGEON GAOL!</b><br>Because you captured <b>" + escapeHtml(pName) + "</b> alive instead of slaying them, you suffered <b>0 Court Fame Loss &amp; 0 Wanted Bounty</b>!" + stolenTxt + "<br>• Visit <b>🏰 Kingdom ➔ ⛓️ Gaol &amp; Tribunal</b> to extract <b>-20% Boss Armor Intel</b>, recruit them as a Defector (+100 Troops), or ransom them!";
@@ -15956,7 +16427,6 @@ function capturePrisonerToCell() {
   showOutcomeModal("⛓️ Guard Imprisoned in Dungeon Gaol!", "⛓️🛡️", pName, "#38bdf8", cMsg, null);
 }
 
-// Upgraded Cross-Slot Alt Bodyguard: Enforces 2-Helper Cap, pays 100% of the Gold to the other player's slot & sends a Raven Battle Report!
 function hireAltSlotBodyguard(slotKey) {
   ensureHeroV3Fields(hero);
   if (hero.altBodyguard && hero.altBodyguard.slotKey === slotKey) {
@@ -16056,7 +16526,7 @@ function hasOwnedSetPiece(setId) {
 }
 
 function rollSmartClassZoneSetDrop(areaId) {
-  if (Math.random() > 0.55) {
+  if (Math.random() > 0.40) {
     return { item: null, scrappedGems: 0 };
   }
   var cSet = CLASS_ZONE_SETS[hero.calling] || CLASS_ZONE_SETS["Warrior"];
@@ -16065,7 +16535,7 @@ function rollSmartClassZoneSetDrop(areaId) {
   var setId = "czset_" + hero.calling + "_a" + areaId + "_" + targetSlot;
 
   if (hasOwnedSetPiece(setId)) {
-    return { item: null, scrappedGems: 2 };
+    return { item: null, scrappedGems: (Math.random() < 0.50 ? 1 : 0) };
   }
 
   var scale = Math.max(2, areaId * 6 + hero.level * 1.4);
@@ -16089,7 +16559,6 @@ function rollSmartClassZoneSetDrop(areaId) {
   return { item: itm, scrappedGems: 0 };
 }
 
-// Toned-Down Animal Companion Evolution: Reasonable Gold, Gems & Trophies + +35% Max HP!
 function evolveCompanionStage(compId) {
   ensureHeroV3Fields(hero);
   if (!hero.petEvo) hero.petEvo = {};
@@ -16144,6 +16613,7 @@ function captureMonsterMenagerie() {
   spawnCanvasParticles("gold", 32);
   activeCombat = null;
   lastCombatBanner = null;
+  window._pendingPostBattleDiseaseCheck = true;
   renderBattleModal();
   var mMsg = "🕸️🦁 <b>CAPTURED FOR BEASTMASTER THULSA'S GRAND MENAGERIE!</b><br>Bound <b>" + capturedIcon + " " + escapeHtml(capturedName) + "</b> into your Royal Menagerie in the Retinue tab (" + hero.menagerie.length + "/12 Beasts)!<br>• <b>Exotic Menagerie Yield:</b> Generates <b>+" + (hero.menagerie.length * 45) + " Gold</b> every 45m tick!";
   addLog(mMsg);
@@ -16168,14 +16638,14 @@ function discoverFreeFormAlchemy() {
   consumeAnyMaterials(3);
   var roll = Math.random() * 100;
   var msg = "";
-  if (roll < 40) {
+  if (roll < 42) {
     playSfx("death");
     var singe = Math.max(8, Math.round(hero.maxHp * 0.15));
     hero.hp = Math.max(1, hero.hp - singe);
     var stMsg = addHeroStress(15);
     hero.belt.firebomb = Math.min(5, (hero.belt.firebomb || 0) + 1);
     msg = "💥🧪 <b>VOLATILE CAULDRON BACKFIRE (" + hero.cauldronUsedToday + "/2 Today)!</b><br>Toxic fumes seared your lungs for <b style='color:#ef4444;'>-" + singe + " HP &amp; +15% Stress</b>, leaving behind <b>+1💣 Fire-Bomb</b>!" + stMsg;
-  } else if (roll < 85) {
+  } else if (roll < 94) {
     playSfx("magic");
     var hAmt = Math.round(hero.maxHp * 0.30);
     hero.hp = Math.min(hero.maxHp, hero.hp + hAmt);
@@ -16186,7 +16656,7 @@ function discoverFreeFormAlchemy() {
     hero.maxHp += 5;
     if (window.syncHeroVitalityMaxHp) syncHeroVitalityMaxHp(hero);
     hero.gems = (hero.gems || 0) + 1;
-    msg = "🌟🧪 <b>RARE ALCHEMICAL MIRACLE: PHILOSOPHER'S TINCTURE (" + hero.cauldronUsedToday + "/2 Today • 15% Odds)!</b><br>Granted <b>+5 Permanent Base HP</b> &amp; crystallized <b>+1💎 Dragon Gem (Now " + hero.gems + "💎)</b>!";
+    msg = "🌟🧪 <b>RARE ALCHEMICAL MIRACLE: PHILOSOPHER'S TINCTURE (" + hero.cauldronUsedToday + "/2 Today • 6% Odds)!</b><br>Granted <b>+5 Permanent Base HP</b> &amp; crystallized <b>+1💎 Dragon Gem (Now " + hero.gems + "💎)</b>!";
   }
   addLog(msg);
   queueSaveHero();
@@ -16203,7 +16673,7 @@ String buildV16ChunkB1() {
 String buildV16ChunkB1a() {
     return '''
 // ============================================================================
-// v18.3 ENGINE PART B1a: ABYSSAL ESTUS GAUNTLETS & HALL OF LEGENDS
+// v18.4.1 ENGINE PART B1a: ABYSSAL ESTUS GAUNTLETS & HALL OF LEGENDS
 // ============================================================================
 
 var ABYSSAL_GAUNTLETS = [
@@ -16274,7 +16744,7 @@ function startAbyssalGauntlet(gId) {
     return;
   }
   if (hero.quests < 6) {
-    showRequirementModal("Need 6⚡ Quests for 10-Wave Chasm", "🕳️⚡", "Entering a 10-Wave Abyssal Chasm requires <b>6⚡ Quests</b> (You have <b>" + hero.quests + "⚡</b>).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", "");
+    showRequirementModal("Need 6⚡ Quests for 10-Wave Chasm", "🕳️⚡", "Entering a 10-Wave Abyssal Chasm requires <b>6⚡ Quests</b> (You have <b>" + hero.quests + "⚡</b>).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", "");
     return;
   }
   var gMeta = ABYSSAL_GAUNTLETS.find(function(x) { return x.id === gId; }) || ABYSSAL_GAUNTLETS[0];
@@ -16287,10 +16757,10 @@ function startAbyssalGauntlet(gId) {
 function spawnGauntletWaveCombat(gMeta, waveNum, estusLeft) {
   var isApex = (waveNum === 10);
   var wLv = Math.max(gMeta.minLv, hero.level) + Math.floor(waveNum / 2);
-  var wHp = Math.round((102 + wLv * 46 + Math.pow(wLv, 1.73) * 6.0) * (isApex ? 1.85 : 1.22));
-  var wArm = Math.round(wHp * 0.35);
-  var wAtk = Math.round((16 + wLv * 6.8) * (isApex ? 1.52 : 1.22));
-  var wDef = Math.round((7 + wLv * 3.5) * 1.20);
+  var wHp = Math.round((102 + wLv * 46 + Math.pow(wLv, 1.73) * 6.0) * (isApex ? 1.55 : 1.15));
+  var wArm = Math.round(wHp * 0.25);
+  var wAtk = Math.round((15 + wLv * 6.0) * (isApex ? 1.30 : 1.10));
+  var wDef = Math.round((7 + wLv * 3.2) * 1.10);
   clearTransientCombatFx();
   activeCombat = {
     isBoss: isApex, isGauntlet: true, gauntletId: gMeta.id, gauntletWave: waveNum, gauntletMeta: gMeta,
@@ -16301,7 +16771,7 @@ function spawnGauntletWaveCombat(gMeta, waveNum, estusLeft) {
     loreIntro: "Wave " + waveNum + " of 10 in " + gMeta.name + " (NO FLEEING! Estus Soul-Flask: " + (estusLeft !== undefined ? estusLeft : 3) + "/3 Sips).",
     icon: gMeta.icon, name: isApex ? ("WAVE 10 APEX: " + gMeta.warden) : ("CHASM WAVE " + waveNum + "/10: Abyssal Vanguard"),
     level: wLv, hp: wHp, maxHp: wHp, armor: wArm, maxArmor: wArm, poise: 100, maxPoise: 100,
-    atk: wAtk, def: wDef, eva: 16, parry: 13, acc: 99 + wLv, crit: 17,
+    atk: wAtk, def: wDef, eva: 14, parry: 12, acc: 96 + wLv, crit: 15,
     xp: wLv * 55, gold: wLv * 60,
     sessionDamage: 0, alliedUsed: false, tauntUsed: false, tauntedTurns: 0, armorBrokenTurns: 0, hamstrungTurns: 0, silencedTurns: 0, phase2Triggered: false, comboCount: 0, bossCharging: false, partyShield: 0, bleedTurns: 0, heroPoisonTurns: 0, stunned: false
   };
@@ -16331,7 +16801,7 @@ function advanceAbyssalGauntletWave() {
 String buildV16ChunkB1b() {
     return '''
 // ============================================================================
-// v18.3 ENGINE PART B1b: HALL OF LEGENDS, VOID-RIFTS, ARMADA & BOARDING BATTLES
+// v18.4.1 ENGINE PART B1b: HALL OF LEGENDS, VOID-RIFTS, ARMADA & GEM SCARCITY
 // ============================================================================
 
 var CLASS_ULTIMATE_QUESTS = {
@@ -16468,14 +16938,14 @@ function smuggleContrabandArmada() {
     return;
   }
   if (!hero.guild || !hero.guild.founded || !hero.guild.recruits || !hero.guild.recruits.includes("kaelen_fleet")) {
-    showRequirementModal("Requires Sovereign Armada & Admiral Kaelen Vance", "🥷⚓", "Smuggling stolen Contraband across the Maelstrom for <b>150% value in 💎 Dragon Gems</b> requires a chartered Kingdom and recruiting <b>⚓ Admiral Kaelen Vance</b> in the War Room.", "Recruit Admiral Kaelen Vance (6,500g) in the War Room tab first!", "");
+    showRequirementModal("Requires Sovereign Armada & Admiral Kaelen Vance", "🥷⚓", "Smuggling stolen Contraband across the Maelstrom requires a chartered Kingdom and recruiting <b>⚓ Admiral Kaelen Vance</b> in the War Room.", "Recruit Admiral Kaelen Vance (6,500g) in the War Room tab first!", "");
     return;
   }
   var kept = [], smuggledCnt = 0, totalVal = 0;
   (hero.inventory || []).forEach(function(itm) {
     if (itm && itm.stolen) {
       smuggledCnt++;
-      totalVal += Math.round((itm.value || 60) * 1.50);
+      totalVal += Math.round((itm.value || 60) * 1.25);
     } else {
       kept.push(itm);
     }
@@ -16486,12 +16956,12 @@ function smuggleContrabandArmada() {
   }
   hero.smugglesToday = (hero.smugglesToday || 0) + 1;
   hero.inventory = kept;
-  var gemsWon = Math.max(1, Math.min(8, Math.ceil(totalVal / 350)));
+  var gemsWon = totalVal >= 2400 ? 2 : (totalVal >= 800 || Math.random() < 0.45 ? 1 : 0);
   hero.gems = (hero.gems || 0) + gemsWon;
   hero.gold += totalVal;
   playSfx("levelup");
   spawnCanvasParticles("gold", 38);
-  var sMsg = "🥷⚓ <b>SOVEREIGN ARMADA CONTRABAND SMUGGLING COMPLETE (" + hero.smugglesToday + "/3 Today)!</b><br>Admiral Kaelen Vance smuggled <b>" + smuggledCnt + " stolen contraband relic(s)</b> past the High Court blockade!<br>• <b>150% Black-Market Payout:</b> <span style='color:#fde047;font-weight:bold;'>+" + gemsWon + "💎 Untraceable Dragon Gems &amp; +" + totalVal.toLocaleString() + " Gold!</span>";
+  var sMsg = "🥷⚓ <b>SOVEREIGN ARMADA CONTRABAND SMUGGLING COMPLETE (" + hero.smugglesToday + "/3 Today)!</b><br>Admiral Kaelen Vance smuggled <b>" + smuggledCnt + " stolen contraband relic(s)</b> past the High Court blockade!<br>• <b>Black-Market Payout:</b> <span style='color:#fde047;font-weight:bold;'>+" + totalVal.toLocaleString() + " Gold" + (gemsWon > 0 ? (" &amp; +" + gemsWon + "💎 Dragon Gem(s)") : "") + "!</span>";
   addLog(sMsg);
   queueSaveHero();
   renderGameScreen();
@@ -16522,7 +16992,7 @@ function launchArmadaVoyage(hrs) {
   var ratCost = hrs * 4;
   var curTim = hero.guild.timber || 0, curRat = hero.guild.rations || 0;
   if (curTim < timCost || curRat < ratCost) {
-    showRequirementModal("Insufficient Armada Dock Supplies", "⚓🪵", "Launching a <b>" + hrs + "-Hour Sovereign Armada Voyage</b> under Admiral Kaelen Vance requires:<br>• <b>" + timCost + "🪵 Timber</b> (You have <b>" + curTim + "🪵</b>)<br>• <b>" + ratCost + "🍞 Rations</b> (You have <b>" + curRat + "🍞</b>)", "Salvage gear in your backpack for Timber and assign Shire Farmers for Rations!", "");
+    showRequirementModal("Insufficient Armada Dock Supplies", "⚓🪵", "Launching a <b>" + hrs + "-Hour Sovereign Armada Voyage</b> under Admiral Kaelen Vance requires:<br>• <b>" + timCost + "🪵 Timber</b> (You have <b>" + curTim + "🪵</b>)<br>• <b>" + ratCost + "🍞 Rations</b> (You have <b>" + curRat + "🍞</b>)", "Salvage gear in your backpack or exchange Trophies for Timber and assign Shire Farmers for Rations!", "");
     return;
   }
   var rw = getRealWeather();
@@ -16533,7 +17003,7 @@ function launchArmadaVoyage(hrs) {
   hero.armada.voyageHrs = hrs;
   hero.armada.voyageUntil = Date.now() + Math.round(hrs * 3600000 * speedMult);
   playSfx("coin");
-  var aMsg = "⚓🌊 <b>SOVEREIGN ARMADA SET SAIL (" + hero.armadaLaunchesToday + "/2 Today • " + hrs + "h Voyage" + (rw.wind ? " • 💨 -20% Real-Wind Speed Boost!" : "") + ")!</b><br><b>Admiral Kaelen Vance</b> ordered the sails unfurled! Your fleet will return with off-map Gold, Dragon Gems &amp; Flagship upgrades!";
+  var aMsg = "⚓🌊 <b>SOVEREIGN ARMADA SET SAIL (" + hero.armadaLaunchesToday + "/2 Today • " + hrs + "h Voyage" + (rw.wind ? " • 💨 -20% Real-Wind Speed Boost!" : "") + ")!</b><br><b>Admiral Kaelen Vance</b> ordered the sails unfurled! Your fleet will return with off-map Gold, rare Dragon Gems &amp; Flagship upgrades!";
   addLog(aMsg);
   queueSaveHero();
   renderGameScreen();
@@ -16552,8 +17022,8 @@ function launchArmadaCorsairBoardingBattle() {
     areaId: hero.selectedArea || 1, baseMobName: "Dread-Captain Vane's Ghost Corsair", trait: "Savage",
     loreIntro: "⚓🏴‍☠️ ARMADA NAVAL BOARDING BATTLE! Grappling hooks lock your Flagship to the Ghost Corsair's deck!",
     icon: "🏴‍☠️💀", name: "BOARDING BOSS: Dread-Captain Vane", level: cLv,
-    hp: cHp, maxHp: cHp, armor: Math.round(cHp * 0.35), maxArmor: Math.round(cHp * 0.35), poise: 100, maxPoise: 100,
-    atk: Math.round(19 + cLv * 6.8), def: Math.round(9 + cLv * 3.5), eva: 18, parry: 14, acc: 99 + cLv, crit: 18,
+    hp: cHp, maxHp: cHp, armor: Math.round(cHp * 0.25), maxArmor: Math.round(cHp * 0.25), poise: 100, maxPoise: 100,
+    atk: Math.round(16 + cLv * 5.8), def: Math.round(8 + cLv * 3.0), eva: 15, parry: 12, acc: 95 + cLv, crit: 15,
     xp: cLv * 55, gold: 450 + hero.level * 50,
     sessionDamage: 0, alliedUsed: false, tauntUsed: false, tauntedTurns: 0, armorBrokenTurns: 0, hamstrungTurns: 0, silencedTurns: 0, phase2Triggered: false, comboCount: 0, bossCharging: false, partyShield: 0, bleedTurns: 0, heroPoisonTurns: 0, stunned: false
   };
@@ -16566,16 +17036,15 @@ function checkArmadaVoyageCompletion() {
   if (Date.now() < hero.armada.voyageUntil) return;
   var hrs = hero.armada.voyageHrs || 4;
   hero.armada.voyageUntil = 0;
-  var gWon = hrs * 450 + hero.level * 95;
-  var gemWon = Math.max(1, Math.floor(hrs / 4));
+  var gWon = hrs * 420 + hero.level * 90;
+  var gemWon = (hrs >= 24) ? 1 : ((hrs >= 8) ? (Math.random() < 0.65 ? 1 : 0) : (Math.random() < 0.35 ? 1 : 0));
   var boardingTriggered = (!activeCombat && Math.random() < 0.25);
-  if (boardingTriggered) gemWon += 1;
   hero.gold += gWon;
   hero.gems = (hero.gems || 0) + gemWon;
   hero.armada.shipLv = (hero.armada.shipLv || 1) + 1;
   playSfx("levelup");
-  addLog("⚓🏆 <b>ADMIRAL KAELEN VANCE RETURNED (" + hrs + "h Voyage)!</b> Delivered <b>+" + gWon.toLocaleString() + "g</b>, <b>+" + gemWon + "💎 Gems</b> &amp; upgraded Flagship to <b>Lv " + hero.armada.shipLv + "</b>!");
-  showGothicToast("⚓ Armada Returned: +" + gWon + "g & +" + gemWon + "💎!");
+  addLog("⚓🏆 <b>ADMIRAL KAELEN VANCE RETURNED (" + hrs + "h Voyage)!</b> Delivered <b>+" + gWon.toLocaleString() + "g</b>" + (gemWon > 0 ? (", <b>+" + gemWon + "💎 Gem</b>") : "") + " &amp; upgraded Flagship to <b>Lv " + hero.armada.shipLv + "</b>!");
+  showGothicToast("⚓ Armada Returned: +" + gWon + "g" + (gemWon > 0 ? (" & +" + gemWon + "💎!") : "!"));
   queueSaveHero();
   renderGameScreen();
   if (boardingTriggered) {
@@ -16583,7 +17052,7 @@ function checkArmadaVoyageCompletion() {
       '<div style="font-size:46px;">⚓🏴‍☠️💀</div>' +
       '<div style="font-size:19px;font-weight:900;color:#38bdf8;font-family:Cinzel,serif;margin-top:4px;">ARMADA RETURNED — GHOST CORSAIR PRIZE CAPTURED!</div>' +
       '<div style="background:#091521;border:2px solid #38bdf8;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13px;line-height:1.6;color:#e0f2fe;">' +
-        'Admiral Kaelen Vance returned with <b>+' + gWon.toLocaleString() + 'g</b> &amp; <b>+' + gemWon + '💎 Gems</b>—and towed a grappled <b>Ghost Corsair Flagship</b> into harbor! Board their deck now for a free Roaming Boss fight (+1💎 &amp; Field Relic on Victory)!' +
+        'Admiral Kaelen Vance returned with <b>+' + gWon.toLocaleString() + 'g</b>' + (gemWon > 0 ? (' &amp; <b>+' + gemWon + '💎 Gem</b>') : '') + '—and towed a grappled <b>Ghost Corsair Flagship</b> into harbor! Board their deck now for a free Roaming Boss fight!' +
       '</div>' +
       '<div style="display:flex;gap:8px;">' +
         '<button class="btn btn-shine" style="flex:1;" onclick="launchArmadaCorsairBoardingBattle()">⚓⚔️ Board Ghost Corsair (0⚡ Free Fight!)</button>' +
@@ -16595,8 +17064,17 @@ function checkArmadaVoyageCompletion() {
 '''
 }
 
+boolean part7ABoundaryGuard() { return true }
+// ==============================================================================
+// END OF PART 7A OF 7 — REPLY "NEXT" FOR PART 7B OF 7 (FINAL BLOCK)
+// ==============================================================================
+
+// ==============================================================================
+// PART 7B OF 7 (BLOCK 2 OF 2 — FINAL BLOCK) — PASTE DIRECTLY BELOW PART 7A
+// ==============================================================================
+
 String buildV16ChunkB2() {
-    return buildV16ChunkB2a() + "\n" + buildV16ChunkB2b() + "\n" + buildV16ChunkB2c() + "\n" + buildV16ChunkB2d()
+    return buildV16ChunkB2a() + "\n" + buildV16ChunkB2b() + "\n" + buildV16ChunkB2c() + "\n" + buildV16ChunkB2d1() + "\n" + buildV16ChunkB2d2() + "\n" + buildV16ChunkB2d3() + "\n" + buildV16ChunkB2d4()
 }
 
 String buildV16ChunkB2a() {
@@ -16630,6 +17108,7 @@ function findBestFallenHeirloom(deadHero) {
 
 function openWeepingGraveyardModal() {
   ensureHeroV3Fields(hero);
+  if (window.playAmbianceChord) playAmbianceChord("bell");
   var crypt = serverData.fallenCrypt || {};
   var mySlotEntry = activeSlotKey ? crypt[activeSlotKey] : null;
   var myDeadHero = (mySlotEntry && mySlotEntry.hero) ? mySlotEntry.hero : null;
@@ -16643,13 +17122,13 @@ function openWeepingGraveyardModal() {
         '<div><div style="font-size:14.5px;font-weight:900;color:#fde047;font-family:Cinzel,serif;">⛏️👻 Buried in ' + activeSlotKey.toUpperCase() + ': Soul of ' + escapeHtml(myDeadHero.name) + ' (Lv ' + (myDeadHero.level || 1) + ' ' + escapeHtml(myDeadHero.calling || 'Warrior') + ')</div>' +
         '<div style="font-size:11.5px;color:#fecaca;">Cause of Death: ' + escapeHtml(mySlotEntry.cause || 'Slain in Battle') + '</div></div></div>' +
       '<div style="font-size:12px;color:#e5dec9;line-height:1.55;margin-bottom:8px;background:#0b0811;padding:8px;border-radius:4px;border:1px solid #4a3823;">' +
-        '<div>🕯️ <b>Same-Slot Soul Imbuement (20% Stats & 15% Vitals from ' + escapeHtml(myDeadHero.name) + '):</b></div>' +
-        '<div style="color:#4ade80;font-weight:bold;">• Permanent +' + req.bonusG + ' Guts, +' + req.bonusW + ' Wits, +' + req.bonusC + ' Charm, +' + req.bonusHp + ' Max HP, +' + req.bonusMp + ' Max MP & +1 Skill Pt!</div>' +
+        '<div>🕯️ <b>Same-Slot Soul Imbuement (20% Stats &amp; 15% Vitals from ' + escapeHtml(myDeadHero.name) + '):</b></div>' +
+        '<div style="color:#4ade80;font-weight:bold;">• Permanent +' + req.bonusG + ' Guts, +' + req.bonusW + ' Wits, +' + req.bonusC + ' Charm, +' + req.bonusHp + ' Max HP, +' + req.bonusMp + ' Max MP &amp; +1 Skill Pt!</div>' +
         (bestHeirloom ? ('<div style="color:#7dd3fc;margin-top:2px;">• 🗡️ <b>50% Heirloom Grave-Robbing Chance:</b> Unearth <b>' + bestHeirloom.icon + ' ' + escapeHtml(bestHeirloom.name) + (bestHeirloom.upgrade ? ' [+' + bestHeirloom.upgrade + ']' : '') + '</b> at 25% Durability!</div>') : '') +
-        '<div style="color:#fde68a;margin-top:3px;">• <b>Exhumation Requirements:</b> Hero Level <b>5+</b> (Now Lv ' + hero.level + '), <b>' + req.goldCost.toLocaleString() + ' Gold</b> (Have ' + hero.gold.toLocaleString() + 'g) & <b>' + req.gemCost + '💎 Dragon Gems</b> (Have ' + (hero.gems || 0) + '💎)</div></div>' +
-      '<button class="btn ' + (canExhume ? 'btn-shine' : 'btn-locked') + '" style="width:100%;padding:11px;font-size:13px;" onclick="exhumeSameSlotSoul()">⛏️👻 Dig Up & Imbue ' + escapeHtml(myDeadHero.name) + '’s Soul (-' + req.goldCost.toLocaleString() + 'g, -' + req.gemCost + '💎)</button></div>';
+        '<div style="color:#fde68a;margin-top:3px;">• <b>Exhumation Requirements:</b> Hero Level <b>5+</b> (Now Lv ' + hero.level + '), <b>' + req.goldCost.toLocaleString() + ' Gold</b> (Have ' + hero.gold.toLocaleString() + 'g) &amp; <b>' + req.gemCost + '💎 Dragon Gems</b> (Have ' + (hero.gems || 0) + '💎)</div></div>' +
+      '<button class="btn ' + (canExhume ? 'btn-shine' : 'btn-locked') + '" style="width:100%;padding:11px;font-size:13px;" onclick="exhumeSameSlotSoul()">⛏️👻 Dig Up &amp; Imbue ' + escapeHtml(myDeadHero.name) + '&apos;s Soul (-' + req.goldCost.toLocaleString() + 'g, -' + req.gemCost + '💎)</button></div>';
   } else {
-    exhumeHtml = '<div style="padding:10px;background:#0b0811;border:1px dashed #4a3823;border-radius:4px;color:#9c8f7a;font-size:12px;margin-bottom:10px;text-align:left;">⛏️ <b>Same-Slot Grave Plot (' + (activeSlotKey ? activeSlotKey.toUpperCase() : 'SLOT') + '):</b> No uncollected hero soul is buried in this slot right now. If your current hero ever falls to True Permadeath and you forge a new hero on this same slot, return here at <b>Level 5+</b> to dig up their soul (+20% Stats & 50% chance to unearth their best Relic)!</div>';
+    exhumeHtml = '<div style="padding:10px;background:#0b0811;border:1px dashed #4a3823;border-radius:4px;color:#9c8f7a;font-size:12px;margin-bottom:10px;text-align:left;">⛏️ <b>Same-Slot Grave Plot (' + (activeSlotKey ? activeSlotKey.toUpperCase() : 'SLOT') + '):</b> No uncollected hero soul is buried in this slot right now. If your current hero ever falls to True Permadeath and you forge a new hero on this same slot, return here at <b>Level 5+</b> to dig up their soul (+20% Stats &amp; 50% chance to unearth their best Relic)!</div>';
   }
   var otherSlotsHtml = Object.keys(crypt).filter(function(ck) { return ck !== activeSlotKey; }).map(function(ck) {
     var entry = crypt[ck], ch = (entry && entry.hero) ? entry.hero : null;
@@ -16704,8 +17183,9 @@ function exhumeSameSlotSoul() {
   recordMemoirMilestone("Exhumed and imbued the fallen soul of " + deadH.name + " (Lv " + (deadH.level || 1) + ") at the Weeping Graveyard.");
   delete serverData.fallenCrypt[activeSlotKey];
   playSfx("levelup");
+  if (window.playAmbianceChord) playAmbianceChord("bell");
   if (window.spawnCanvasParticles) window.spawnCanvasParticles("void", 48);
-  var sMsg = "⛏️👻 <b style='color:#fde047;'>ANCESTRAL SOUL EXHUMED & IMBUED!</b><br>Charon Vane broke the iron seal on <b>" + activeSlotKey.toUpperCase() + "’s</b> grave! The spirit of <b>" + escapeHtml(deadH.name) + " (Lv " + (deadH.level || 1) + ")</b> surged into your body!<br>• <b>Permanent Stat Imbuement:</b> <span style='color:#4ade80;font-weight:bold;'>+" + req.bonusG + " Guts, +" + req.bonusW + " Wits, +" + req.bonusC + " Charm</span><br>• <b>Permanent Vitals & Mastery:</b> <span style='color:#7dd3fc;font-weight:bold;'>+" + req.bonusHp + " Max HP, +" + req.bonusMp + " Max MP & +1 Skill Point</span>" + heirloomMsg;
+  var sMsg = "⛏️👻 <b style='color:#fde047;'>ANCESTRAL SOUL EXHUMED &amp; IMBUED!</b><br>Charon Vane broke the iron seal on <b>" + activeSlotKey.toUpperCase() + "’s</b> grave! The spirit of <b>" + escapeHtml(deadH.name) + " (Lv " + (deadH.level || 1) + ")</b> surged into your body!<br>• <b>Permanent Stat Imbuement:</b> <span style='color:#4ade80;font-weight:bold;'>+" + req.bonusG + " Guts, +" + req.bonusW + " Wits, +" + req.bonusC + " Charm</span><br>• <b>Permanent Vitals &amp; Mastery:</b> <span style='color:#7dd3fc;font-weight:bold;'>+" + req.bonusHp + " Max HP, +" + req.bonusMp + " Max MP &amp; +1 Skill Point</span>" + heirloomMsg;
   addLog(sMsg);
   saveCurrentHero("👻 " + hero.name + " exhumed and absorbed the fallen soul of " + deadH.name + " at the Weeping Graveyard!", false, null, { clearCryptSlot: activeSlotKey });
   renderGameScreen();
@@ -16716,7 +17196,7 @@ function startMirrorFirstKingDuel() {
   ensureHeroV3Fields(hero);
   if ((hero.riftsRunToday || 0) >= 3) { showRequirementModal("Mirror & Void-Rift Daily Limit Reached (3/3 Today)", "🪞⏳", "You can only challenge the Void-Rifts or Mirror of the First King <b>3 times per day</b>.", "Return tomorrow (or use Admin Reset)!", ""); return; }
   if (hero.level < 100) { showRequirementModal("Mirror Sealed (Requires Level 100+)", "🪞🔒", "Only champions of <b>Level 100+</b> (Currently <b>Lv " + hero.level + "</b>) may awaken the Mirror of Aldric I.", "Reach Level 100 to face your 4x–10x Shadow-Clone!", ""); return; }
-  if (hero.quests < 4) { showRequirementModal("Need 4⚡ Quests for Mirror Duel", "🪞⚔️", "Requires <b>4⚡ Quests</b> (You have <b>" + hero.quests + "⚡</b>).", "Wait for the 45m stamina tick or Quick-Rest at the Inn!", ""); return; }
+  if (hero.quests < 4) { showRequirementModal("Need 4⚡ Quests for Mirror Duel", "🪞⚔️", "Requires <b>4⚡ Quests</b> (You have <b>" + hero.quests + "⚡</b>).", "Wait for the 45m stamina tick or visit the Astral Ley-Well!", ""); return; }
   hero.quests -= 4; hero.riftsRunToday = (hero.riftsRunToday || 0) + 1;
   var st = getHeroStats(), multRoll = 4 + Math.floor(Math.random() * 7), mHp = Math.round(hero.maxHp * multRoll), mArm = Math.round(mHp * 0.35);
   closePopupModal(); clearTransientCombatFx();
@@ -16739,7 +17219,7 @@ function tradeLeviathanRelic() {
   if ((hero.shopBuysToday || 0) >= MAX_DAILY_SHOP_BUYS) { showRequirementModal("Bazaar Limit Reached (5/5 Today)", "🐳⏳", "Max 5 Bazaar/Leviathan trades per day.", "Return after midnight rollover!", ""); return; }
   if (hero.level < 85) { showRequirementModal("Leviathan Market Locked (Req Lv 85+)", "🐳🔒", "Requires <b>Level 85+</b> (Now Lv " + hero.level + ").", "Conquer realms to reach Level 85!", ""); return; }
   var curTim = hero.guild.timber || 0, curStn = hero.guild.stone || 0, curIrn = hero.guild.iron || 0;
-  if (curTim < 120 || curStn < 120 || curIrn < 80) { showRequirementModal("Need 120🪵, 120🪨 & 80⛏️", "🐳💎", "Requires <b>120🪵 Timber</b> (Have " + curTim + "🪵), <b>120🪨 Stone</b> (Have " + curStn + "🪨) & <b>80⛏️ Iron</b> (Have " + curIrn + "⛏️).", "Salvage gear and run your workforce!", ""); return; }
+  if (curTim < 120 || curStn < 120 || curIrn < 80) { showRequirementModal("Need 120🪵, 120🪨 & 80⛏️", "🐳💎", "Requires <b>120🪵 Timber</b> (Have " + curTim + "🪵), <b>120🪨 Stone</b> (Have " + curStn + "🪨) &amp; <b>80⛏️ Iron</b> (Have " + curIrn + "⛏️).", "Salvage gear, burn Trophies, and run your workforce!", ""); return; }
   hero.guild.timber -= 120; hero.guild.stone -= 120; hero.guild.iron -= 80;
   hero.shopBuysToday = (hero.shopBuysToday || 0) + 1;
   var drop = sanitizeGearItem(pickSmartGodTierDrop(22), "weapon");
@@ -16755,16 +17235,16 @@ function trySpawnRevenantCryptBoss(area, eLv) {
   if (!keys.length) return false;
   var cKey = keys[0], deadH = (crypt[cKey] && crypt[cKey].hero) ? crypt[cKey].hero : null;
   if (!deadH) return false;
-  var rLv = Math.max(eLv, deadH.level || 10), rHp = Math.round((140 + rLv * 48) * 1.5);
+  var rLv = Math.max(eLv, deadH.level || 10), rHp = Math.round((130 + rLv * 42) * 1.25);
   clearTransientCombatFx();
   activeCombat = {
     isBoss: true, isRoamingMiniBoss: true, isRevenant: true, revenantSlotKey: cKey, revenantGold: Math.max(1500, deadH.gold || 1500),
     isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false,
     areaId: area.id, baseMobName: "Revenant " + deadH.name, trait: "Lifesteal",
-    loreIntro: "The fallen corpse of " + deadH.name + " stalks the mist! Defeat them for bonus Gold and +3💎 Gems!",
+    loreIntro: "The fallen corpse of " + deadH.name + " stalks the mist! Defeat them for bonus Gold and +1💎 Gem (or Flee anytime)!",
     icon: "💀👑", name: "REVENANT BOUNTY: Fallen " + deadH.name, level: rLv,
-    hp: rHp, maxHp: rHp, armor: Math.round(rHp * 0.40), maxArmor: Math.round(rHp * 0.40), poise: 100, maxPoise: 100,
-    atk: Math.round((18 + rLv * 6.8) * 1.35), def: Math.round((8 + rLv * 3.5) * 1.35), eva: 18, parry: 15, acc: 102, crit: 18,
+    hp: rHp, maxHp: rHp, armor: Math.round(rHp * 0.25), maxArmor: Math.round(rHp * 0.25), poise: 100, maxPoise: 100,
+    atk: Math.round((15 + rLv * 5.6) * 1.15), def: Math.round((7 + rLv * 3.0) * 1.15), eva: 15, parry: 12, acc: 96, crit: 15,
     xp: rLv * 65, gold: rLv * 55,
     sessionDamage: 0, alliedUsed: false, tauntUsed: false, tauntedTurns: 0, armorBrokenTurns: 0, hamstrungTurns: 0, silencedTurns: 0, phase2Triggered: false, comboCount: 0, bossCharging: false, partyShield: 0, bleedTurns: 0, heroPoisonTurns: 0, stunned: false
   };
@@ -16786,7 +17266,7 @@ function checkAsyncPvpRavenInbox() {
     '<div style="background:#0b0811;border:2px solid #38bdf8;border-radius:4px;padding:12px;margin:10px 0;text-align:left;font-size:13.5px;line-height:1.65;color:#e5dec9;">' +
       '<div>• <b>Offline Defenses Won:</b> <b style="color:#4ade80;">' + (box.wins || 0) + '</b> | <b>Times Defeated:</b> <b style="color:#f87171;">' + (box.defeats || 0) + '</b></div>' +
       '<div>• <b>Recent Challengers:</b> ' + escapeHtml(atks) + '</div>' +
-      (bGold > 0 ? '<div style="margin-top:6px;color:#fde047;font-weight:bold;">🎁 Claimed Defense Bounty: +' + bGold.toLocaleString() + 'g & +' + bXp.toLocaleString() + ' XP!</div>' : '') +
+      (bGold > 0 ? '<div style="margin-top:6px;color:#fde047;font-weight:bold;">🎁 Claimed Defense Bounty: +' + bGold.toLocaleString() + 'g &amp; +' + bXp.toLocaleString() + ' XP!</div>' : '') +
     '</div><button class="btn btn-gold" style="width:100%;justify-content:center;" onclick="closePopupModal()">🐦‍⬛ Dismiss Raven</button>'
   );
 }
@@ -16803,7 +17283,7 @@ function saveKingdomHeraldryStudio() {
   hero.garrisonDye = (document.getElementById("v16GarrisonDye") || {}).value || hero.garrisonDye;
   hero.coatOfArms = { bg: (document.getElementById("v16CoaBg") || {}).value || "#4c0519", fg: "#d4af37", charge: (document.getElementById("v16CoaCharge") || {}).value || "🐉", div: "quartered" };
   playSfx("levelup"); spawnCanvasParticles("gold", 30);
-  addLog("🎨 Sealed Kingdom Coat-of-Arms & Stronghold Masonry!");
+  addLog("🎨 Sealed Kingdom Coat-of-Arms &amp; Stronghold Masonry!");
   queueSaveHero(); renderGameScreen();
 }
 '''
@@ -16811,22 +17291,90 @@ function saveKingdomHeraldryStudio() {
 
 String buildV16ChunkB2b() {
     return '''
+function getFallenChildrenList(h) {
+  var t = h || hero;
+  if (!t) return [];
+  if (!Array.isArray(t.fallenChildren)) t.fallenChildren = [];
+  (t.fallenHeroes || []).forEach(function(fh) {
+    if (fh && fh.role && (fh.role.indexOf("Heir") >= 0 || fh.role.indexOf("Scion") >= 0 || fh.role.indexOf("Sacrificed") >= 0 || fh.name.indexOf("Prince ") === 0 || fh.name.indexOf("Princess ") === 0)) {
+      var exists = t.fallenChildren.some(function(fc) { return fc.name === fh.name; });
+      if (!exists) {
+        t.fallenChildren.push({
+          name: fh.name,
+          icon: fh.icon || "🪦",
+          motherName: (t.spouse && t.spouse.name) ? t.spouse.name : "Royal Consort",
+          slainBy: fh.slainBy || "Fallen in Battle"
+        });
+      }
+    }
+  });
+  return t.fallenChildren;
+}
+
+function removeChildFromNursery(cIdx) {
+  if (!hero || !Array.isArray(hero.children) || !hero.children[cIdx]) return;
+  var removed = hero.children[cIdx];
+  if (!Array.isArray(hero.fallenChildren)) hero.fallenChildren = [];
+  var alreadyIn = hero.fallenChildren.some(function(fc) { return fc.name === removed.name; });
+  if (!alreadyIn) {
+    hero.fallenChildren.push({
+      name: removed.name,
+      icon: removed.icon || "🪦",
+      motherId: removed.motherId || "",
+      motherName: removed.motherName || (hero.spouse ? hero.spouse.name : "Royal Consort"),
+      slainBy: "Inscribed on Ancestral Family Tree Memorial"
+    });
+  }
+  hero.children.splice(cIdx, 1);
+  if (hero.activeChildIdx === cIdx) hero.activeChildIdx = -1;
+  else if (hero.activeChildIdx > cIdx) hero.activeChildIdx--;
+  playSfx("coin");
+  addLog("🪦🌳 Moved <b>" + escapeHtml(removed.name) + "</b> from the active nursery to the <b>Fallen Scions Family Tree Memorial</b> (still counts toward their mother&apos;s 3/3 lifetime birth cap).");
+  queueSaveHero();
+  if (window.currentTownModal === "courting") openTownFacilityModal("courting");
+  renderGameScreen();
+}
+
 function openDynastyTapestryModal() {
   ensureHeroV3Fields(hero);
-  var ancList = hero.ancestors || [], chList = hero.children || [], spName = hero.spouse ? hero.spouse.name : "Unwed";
-  var wedCnt = Array.isArray(hero.marriedConsorts) ? hero.marriedConsorts.length : (hero.spouse ? 1 : 0);
-  var spBornCnt = (hero.spouse && hero.consortChildrenCount && hero.consortChildrenCount[hero.spouse.id || hero.spouse.name]) ? hero.consortChildrenCount[hero.spouse.id || hero.spouse.name] : 0;
-  var svgTree = '<svg viewBox="0 0 500 180" style="width:100%;height:auto;background:#090612;border:2px solid #c5a059;border-radius:6px;margin-bottom:8px;">' +
-    '<line x1="250" y1="38" x2="250" y2="85" stroke="#d4af37" stroke-width="2"/><line x1="160" y1="85" x2="340" y2="85" stroke="#f472b6" stroke-width="2" stroke-dasharray="4,2"/><line x1="250" y1="85" x2="250" y2="140" stroke="#4ade80" stroke-width="2"/>' +
-    '<rect x="175" y="10" width="150" height="28" rx="4" fill="#1e1b4b" stroke="#c084fc" stroke-width="1.5"/><text x="250" y="28" text-anchor="middle" fill="#e9d5ff" font-size="10" font-family:Cinzel,serif">👻 Ancestors (' + ancList.length + ')</text>' +
-    '<rect x="85" y="70" width="145" height="30" rx="4" fill="#4c0519" stroke="#fde047" stroke-width="2"/><text x="157" y="89" text-anchor="middle" fill="#fde047" font-size="10.5" font-weight="bold">👑 ' + escapeHtml(hero.name.slice(0, 16)) + '</text>' +
-    '<rect x="270" y="70" width="145" height="30" rx="4" fill="#3b071e" stroke="#f472b6" stroke-width="1.5"/><text x="342" y="89" text-anchor="middle" fill="#fbcfe8" font-size="10">💍 ' + escapeHtml(spName.slice(0, 14)) + ' (' + spBornCnt + '/3)</text>' +
-    '<rect x="150" y="135" width="200" height="32" rx="4" fill="#052e16" stroke="#4ade80" stroke-width="1.5"/><text x="250" y="155" text-anchor="middle" fill="#86efac" font-size="10.5" font-weight="bold">👶 Living Heirs (' + chList.length + ' • Max 3 Born/Wife)</text></svg>';
+  ensureCompanionVitals(hero);
+  var ancList = hero.ancestors || [], chList = hero.children || [], deadChList = getFallenChildrenList(hero);
+  var spName = hero.spouse ? hero.spouse.name : "Unwed";
+  var spBornCnt = (hero.spouse && hero.consortChildrenCount && hero.consortChildrenCount[hero.spouse.id || hero.spouse.name]) ? hero.consortChildrenCount[hero.spouse.id || hero.spouse.name] : Math.min(3, chList.length + deadChList.length);
+
+  var svgTree = '<svg viewBox="0 0 500 195" style="width:100%;height:auto;background:#090612;border:2px solid #c5a059;border-radius:6px;margin-bottom:8px;">' +
+    '<line x1="250" y1="36" x2="250" y2="82" stroke="#d4af37" stroke-width="2"/>' +
+    '<line x1="155" y1="82" x2="345" y2="82" stroke="#f472b6" stroke-width="2" stroke-dasharray="4,2"/>' +
+    '<line x1="250" y1="82" x2="145" y2="142" stroke="#4ade80" stroke-width="2"/>' +
+    '<line x1="250" y1="82" x2="355" y2="142" stroke="#ef4444" stroke-width="2" stroke-dasharray="3,3"/>' +
+    '<rect x="170" y="8" width="160" height="28" rx="4" fill="#1e1b4b" stroke="#c084fc" stroke-width="1.5"/><text x="250" y="26" text-anchor="middle" fill="#e9d5ff" font-size="10" font-family="Cinzel,serif">👻 Ancestors (' + ancList.length + ')</text>' +
+    '<rect x="75" y="67" width="150" height="30" rx="4" fill="#4c0519" stroke="#fde047" stroke-width="2"/><text x="150" y="86" text-anchor="middle" fill="#fde047" font-size="10.5" font-weight="bold">👑 ' + escapeHtml(hero.name.slice(0, 16)) + '</text>' +
+    '<rect x="275" y="67" width="150" height="30" rx="4" fill="#3b071e" stroke="#f472b6" stroke-width="1.5"/><text x="350" y="86" text-anchor="middle" fill="#fbcfe8" font-size="10">💍 ' + escapeHtml(spName.slice(0, 14)) + ' (' + spBornCnt + '/3)</text>' +
+    '<rect x="35" y="140" width="210" height="36" rx="4" fill="#052e16" stroke="#4ade80" stroke-width="1.5"/><text x="140" y="162" text-anchor="middle" fill="#86efac" font-size="10" font-weight="bold">👶 Living Scions (' + chList.length + ' Active)</text>' +
+    '<rect x="255" y="140" width="210" height="36" rx="4" fill="#2b0712" stroke="#ef4444" stroke-width="1.5"/><text x="360" y="162" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="bold">🪦 Fallen Scions (' + deadChList.length + ' Slain)</text>' +
+  '</svg>';
+
+  var livingRows = chList.length ? chList.map(function(ch, idx) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px dashed #1e293b;">' +
+      '<span>🟢 <b>' + (ch.icon || '👶') + ' ' + escapeHtml(ch.name) + ' (Lv ' + (ch.level || 1) + ')</b> — <span style="color:#86efac;">' + escapeHtml(ch.traitName || 'Royal Scion') + '</span></span>' +
+      '<button class="btn btn-crimson" style="min-height:20px;padding:1px 6px;font-size:9.5px;" onclick="removeChildFromNursery(' + idx + ');openDynastyTapestryModal();">🪦 Move to Fallen</button>' +
+    '</div>';
+  }).join('') : '<div style="color:#9c8f7a;">No living children in the nursery.</div>';
+
+  var fallenRows = deadChList.length ? deadChList.map(function(fc) {
+    return '<div style="padding:3px 0;border-bottom:1px dashed #3b0712;color:#fca5a5;">' +
+      '🪦 <b>' + (fc.icon || '🪦') + ' ' + escapeHtml(fc.name) + '</b> (Born to ' + escapeHtml(fc.motherName || 'Royal Consort') + ') — <i>' + escapeHtml(fc.slainBy || 'Fallen in Battle') + '</i>' +
+    '</div>';
+  }).join('') : '<div style="color:#9c8f7a;">No Royal Scions have fallen in battle yet.</div>';
+
   showPopupModal(
-    '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:Cinzel,serif;margin-bottom:6px;">🌳 Dynasty Bloodline Tapestry</div>' + svgTree +
-    '<div style="font-size:12px;color:#e5dec9;text-align:left;background:#0b0811;padding:10px;border-radius:4px;border:1px solid #4a3823;">' +
+    '<div style="font-size:19px;font-weight:900;color:#d4af37;font-family:Cinzel,serif;margin-bottom:6px;">🌳 Dynasty Bloodline Tapestry (Living &amp; Fallen Scions)</div>' + svgTree +
+    '<div style="font-size:12px;color:#e5dec9;text-align:left;background:#0b0811;padding:10px;border-radius:4px;border:1px solid #4a3823;max-height:240px;overflow-y:auto;">' +
       '<div>• <b>Founding House:</b> ' + escapeHtml(hero.baseLineageName || hero.name) + ' (Prestige Rank ' + (hero.prestigeRank || 0) + ')</div>' +
-      '<div>• <b>Active Consort Blessing:</b> ' + escapeHtml(spName) + ' (' + spBornCnt + '/3 Lifetime Heirs Born • ' + wedCnt + ' Wed) • <b>Martyr Memorials:</b> ' + (hero.fallenHeroes ? hero.fallenHeroes.length : 0) + '</div></div>' +
+      '<div style="margin-bottom:6px;">• <b>Active Consort:</b> ' + escapeHtml(spName) + ' (<b style="color:#fde047;">' + spBornCnt + '/3 Lifetime Heirs Born</b> — Fallen children permanently count toward her 3-child limit!)</div>' +
+      '<div style="font-weight:bold;color:#4ade80;font-family:Cinzel,serif;margin-top:4px;">👶 Living Royal Scions (' + chList.length + '):</div>' + livingRows +
+      '<div style="font-weight:bold;color:#f87171;font-family:Cinzel,serif;margin-top:8px;">🪦 Fallen Royal Scions In Memoriam (' + deadChList.length + '):</div>' + fallenRows +
+    '</div>' +
     '<button class="btn btn-gold" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Close Tapestry</button>'
   );
 }
@@ -16847,9 +17395,9 @@ function openStarChartModal() {
     '<div style="font-size:38px;">✨🌌🔭</div><div style="font-size:19px;font-weight:900;color:#7dd3fc;font-family:Cinzel,serif;margin-bottom:6px;">The Astrologer’s Star-Chart</div>' +
     '<div style="font-size:12px;color:#e5dec9;margin-bottom:10px;">Active Constellation: <b style="color:#fde047;">' + cur.toUpperCase() + '</b></div>' +
     '<div style="display:flex;flex-direction:column;gap:8px;">' +
-      '<button class="btn btn-gold" onclick="selectStarChartConstellation(\\'draco\\',\\'✨ Aligned Constellation of the Wyrm (+5% Crit)!\\')">🐉 Constellation of the First Wyrm (+5% Crit Aura)</button>' +
-      '<button class="btn btn-sky" onclick="selectStarChartConstellation(\\'chalice\\',\\'✨ Aligned Constellation of the Chalice (+15% Trophy Luck)!\\')">🏆 Constellation of the Golden Chalice (+15% Trophy Luck)</button>' +
-      '<button class="btn btn-arcane" onclick="selectStarChartConstellation(\\'scales\\',\\'✨ Aligned Constellation of the Scales (+12% Gold)!\\')">⚖️ Constellation of the Sovereign Scales (+12% Gold Find)</button>' +
+      '<button class="btn btn-gold" onclick="selectStarChartConstellation(&#39;draco&#39;,&#39;✨ Aligned Constellation of the Wyrm (+5% Crit)!&#39;)">🐉 Constellation of the First Wyrm (+5% Crit Aura)</button>' +
+      '<button class="btn btn-sky" onclick="selectStarChartConstellation(&#39;chalice&#39;,&#39;✨ Aligned Constellation of the Chalice (+15% Trophy Luck)!&#39;)">🏆 Constellation of the Golden Chalice (+15% Trophy Luck)</button>' +
+      '<button class="btn btn-arcane" onclick="selectStarChartConstellation(&#39;scales&#39;,&#39;✨ Aligned Constellation of the Scales (+12% Gold)!&#39;)">⚖️ Constellation of the Sovereign Scales (+12% Gold Find)</button>' +
     '</div><button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Close Star-Chart</button>'
   );
 }
@@ -16857,17 +17405,17 @@ function openStarChartModal() {
 function triggerParadoxEchoDuel() {
   ensureHeroV3Fields(hero);
   if ((hero.riftsRunToday || 0) >= 3) { showRequirementModal("Void-Rift Daily Limit Reached (3/3 Today)", "⏳🔒", "Max 3 Void-Rift or Paradox Echo encounters per day.", "Return tomorrow!", ""); return; }
-  if (hero.quests < 4) { showRequirementModal("Need 4⚡ Quests", "⏳⚡", "Opening a Paradox Time-Rift requires 4⚡ Quests (You have " + hero.quests + "⚡).", "Rest or wait for the 45m tick!", ""); return; }
+  if (hero.quests < 4) { showRequirementModal("Need 4⚡ Quests", "⏳⚡", "Opening a Paradox Time-Rift requires 4⚡ Quests (You have " + hero.quests + "⚡).", "Rest or visit the Astral Ley-Well!", ""); return; }
   hero.quests -= 4; hero.riftsRunToday = (hero.riftsRunToday || 0) + 1;
-  var st = getHeroStats(), eLv = Math.max(10, hero.level + 2), eHp = Math.round(hero.maxHp * 1.9);
+  var st = getHeroStats(), eLv = Math.max(10, hero.level + 2), eHp = Math.round(hero.maxHp * 1.6);
   clearTransientCombatFx();
   activeCombat = {
     isBoss: true, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false,
     areaId: hero.selectedArea || 1, baseMobName: "Paradox Echo of " + hero.name, trait: "Hexing",
     loreIntro: "A temporal echo of your own lineage steps out of the Chrono-Wastes (No Fleeing)!",
     icon: "⏳👻", name: "PARADOX ECHO: Past " + hero.name, level: eLv,
-    hp: eHp, maxHp: eHp, armor: Math.round(eHp * 0.35), maxArmor: Math.round(eHp * 0.35), poise: 100, maxPoise: 100,
-    atk: Math.round(st.atk * 1.50), def: Math.round(st.def * 1.40), eva: st.dodgePct, parry: st.parryPct, acc: st.accuracyPct + 8, crit: st.critPct,
+    hp: eHp, maxHp: eHp, armor: Math.round(eHp * 0.25), maxArmor: Math.round(eHp * 0.25), poise: 100, maxPoise: 100,
+    atk: Math.round(st.atk * 1.25), def: Math.round(st.def * 1.20), eva: st.dodgePct, parry: st.parryPct, acc: st.accuracyPct + 5, crit: st.critPct,
     xp: eLv * 85, gold: eLv * 75,
     sessionDamage: 0, alliedUsed: false, tauntUsed: false, tauntedTurns: 0, armorBrokenTurns: 0, hamstrungTurns: 0, silencedTurns: 0, phase2Triggered: false, comboCount: 0, bossCharging: false, partyShield: 0, bleedTurns: 0, heroPoisonTurns: 0, stunned: false
   };
@@ -16890,7 +17438,7 @@ function playTraitorsMasqueradeMystery() {
   var maskSvg = '<div class="joust-tilt-stage charging" style="height:74px;background:linear-gradient(90deg,#2b0712,#1e1b4b,#2b0712);"><div class="joust-knight-left" style="top:14px;transform:none;">🎭🕯️</div><div class="joust-clash-spark" style="top:10px;">🔎🗡️</div><div class="joust-knight-right" style="top:14px;transform:none;">🧛🍷</div></div>';
   if (chk.passed) {
     var gWon = 180 + hero.level * 40; hero.gold += gWon; addHeroFame(35); playSfx("levelup");
-    showOutcomeModal("🎭 Traitor Unmasked (" + chk.chance + "% Wits Odds)!", "🎭🗡️", null, "#4ade80", maskSvg + "You unmasked the Shadow Covenant assassin! Earned <b>+" + gWon.toLocaleString() + "g & +35 Court Fame</b>!", "court");
+    showOutcomeModal("🎭 Traitor Unmasked (" + chk.chance + "% Wits Odds)!", "🎭🗡️", null, "#4ade80", maskSvg + "You unmasked the Shadow Covenant assassin! Earned <b>+" + gWon.toLocaleString() + "g &amp; +35 Court Fame</b>!", "court");
   } else {
     var stNote = addHeroStress(12);
     playSfx("slash");
@@ -16907,7 +17455,7 @@ function completeMercenaryLoyaltyQuest(mercIdx) {
   hero.quests -= 4; m.loyaltyDone = true;
   m.atk = Math.round(m.atk * 1.25) + 10; m.maxHp = Math.round(m.maxHp * 1.25) + 50; m.hp = m.maxHp;
   playSfx("levelup");
-  var lMsg = "🌟🎖️ <b>MERCENARY LOYALTY QUEST COMPLETE:</b> <b>" + escapeHtml(m.name) + "</b> gained +25% Permanent ATK & HP!";
+  var lMsg = "🌟🎖️ <b>MERCENARY LOYALTY QUEST COMPLETE:</b> <b>" + escapeHtml(m.name) + "</b> gained +25% Permanent ATK &amp; HP!";
   addLog(lMsg); queueSaveHero(); renderGameScreen();
   showOutcomeModal("🌟 Loyalty Oath Sealed!", m.icon, m.name, "#4ade80", lMsg, null);
 }
@@ -16930,7 +17478,7 @@ function defendStrongholdRamparts() {
     '<div style="font-size:12px;color:#e5dec9;margin-bottom:8px;">Captains: <b>' + recCount + '/9</b> • Crosswind: <b>' + (siegeWindOffset >= 0 ? '+' + siegeWindOffset : siegeWindOffset) + 'm</b> • Target: <b>65m</b> (Ideal: ~<b>' + targetPower + '%</b>):</div>' +
     '<div style="background:#0b0811;border:1px solid #4a3823;border-radius:4px;padding:10px;margin-bottom:10px;text-align:left;">' +
       '<label style="color:#d4af37;font-weight:bold;font-size:12px;">☄️ Counterweight Power: <span id="catPwrLbl">' + targetPower + '%</span></label>' +
-      '<input type="range" id="catapultPwrSlider" min="10" max="100" value="' + targetPower + '" oninput="document.getElementById(\\'catPwrLbl\\').textContent=this.value+\\'%\\'"></div>' +
+      '<input type="range" id="catapultPwrSlider" min="10" max="100" value="' + targetPower + '" oninput="document.getElementById(&#39;catPwrLbl&#39;).textContent=this.value+&#39;%&#39;"></div>' +
     '<button class="btn btn-shine" style="width:100%;padding:11px;font-size:13.5px;" onclick="fireSiegeCatapult()">☄️🔥 FIRE TREBUCHET (-3⚡)!</button>' +
     '<button class="btn" style="width:100%;margin-top:8px;" onclick="closePopupModal()">Cancel</button>'
   );
@@ -16950,7 +17498,7 @@ function fireSiegeCatapult() {
     var gWon = 260 + hero.level * 48 + (flankOrd === "volley" ? 150 : 80), stabAdd = 12 + (keepOrd === "wards" ? 5 : 2);
     hero.gold += gWon; hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + stabAdd); addHeroFame(30);
     playSfx("crit"); spawnCanvasParticles("fire", 42);
-    showOutcomeModal("☄️🎯 Rampart Siege Victory!", "☄️🏰", null, "#4ade80", "Boulder hit at <b>" + landDist + "m</b>! Earned <b>+" + gWon.toLocaleString() + "g, +30 Fame & +" + stabAdd + "% Stability</b>!", null);
+    showOutcomeModal("☄️🎯 Rampart Siege Victory!", "☄️🏰", null, "#4ade80", "Boulder hit at <b>" + landDist + "m</b>! Earned <b>+" + gWon.toLocaleString() + "g, +30 Fame &amp; +" + stabAdd + "% Stability</b>!", null);
   } else {
     hero.guild.stability = Math.max(15, (hero.guild.stability || 75) - 4); playSfx("slash");
     showOutcomeModal("💥 Boulder Overshot (" + landDist + "m)!", "💥🏰", null, "#ef4444", "Raiders scorched the outer gate (-4% Stability).", null);
@@ -17031,9 +17579,10 @@ function strikeQteLockpickPin() {
     window.qteMinigameActive = false;
     if (lockpickQteState.aligned >= 2) {
       var gWon = (140 + hero.level * 34) * (lockpickQteState.aligned === 3 ? 2 : 1);
-      hero.gold += gWon; if (lockpickQteState.aligned === 3) hero.gems = (hero.gems || 0) + 1;
+      var gemWon = (lockpickQteState.aligned === 3 && Math.random() < 0.25) ? 1 : 0;
+      hero.gold += gWon; if (gemWon) hero.gems = (hero.gems || 0) + 1;
       playSfx("levelup"); queueDeltaSaveHero(); renderGameScreen();
-      showOutcomeModal("🗝️ Chest Unlocked!", "🗝️💎", null, "#4ade80", "Looted <b>+" + gWon.toLocaleString() + "g</b>" + (lockpickQteState.aligned === 3 ? " & <b>+1💎 Gem</b>!" : "!"), "wagers");
+      showOutcomeModal("🗝️ Chest Unlocked!", "🗝️💎", null, "#4ade80", "Looted <b>+" + gWon.toLocaleString() + "g</b>" + (gemWon ? " &amp; <b>+1💎 Rare Gem (25% Roll)</b>!" : "!"), "wagers");
     } else {
       queueDeltaSaveHero(); renderGameScreen();
       showOutcomeModal("🗝️ Pick Snapped!", "🗝️💥", null, "#ef4444", "Align at least 2 of 3 pins next time!", "wagers");
@@ -17048,7 +17597,7 @@ function openGoblinSapperModal() {
   var gridHtml = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:260px;margin:10px auto;">';
   for (var i = 0; i < 9; i++) { gridHtml += '<button class="btn btn-gold" style="height:58px;font-size:22px;" onclick="resolveSapperTile(' + i + ')">🛢️</button>'; }
   gridHtml += '</div>';
-  showPopupModal('<div style="font-size:19px;font-weight:900;color:#f97316;font-family:Cinzel,serif;">💣 Skarsnik’s Sapper Kegs (-2⚡ • Have ' + hero.quests + '⚡)</div>' + gridHtml + '<button class="btn" style="width:100%;margin-top:8px;" onclick="openTownFacilityModal(\\'wagers\\')">⬅️ Back</button>');
+  showPopupModal('<div style="font-size:19px;font-weight:900;color:#f97316;font-family:Cinzel,serif;">💣 Skarsnik’s Sapper Kegs (-2⚡ • Have ' + hero.quests + '⚡)</div>' + gridHtml + '<button class="btn" style="width:100%;margin-top:8px;" onclick="openTownFacilityModal(&#39;wagers&#39;)">⬅️ Back</button>');
 }
 
 function resolveSapperTile(idx) {
@@ -17056,9 +17605,9 @@ function resolveSapperTile(idx) {
   hero.quests -= 2; hero.minigamesPlayedToday = (hero.minigamesPlayedToday || 0) + 1;
   var chk = rollContestedStatCheck("wits", 16, hero.unlockedArea || 1, false);
   if (chk.passed) {
-    var gWon = 110 + hero.level * 28, gemBonus = Math.random() < 0.25 ? 1 : 0;
+    var gWon = 110 + hero.level * 28, gemBonus = Math.random() < 0.08 ? 1 : 0;
     hero.gold += gWon; if (gemBonus) hero.gems = (hero.gems || 0) + 1; playSfx("coin");
-    showOutcomeModal("💣 Keg Defused (" + chk.chance + "% Wits Odds)!", "🛢️💎", null, "#4ade80", "Recovered <b>+" + gWon.toLocaleString() + "g</b>" + (gemBonus ? " & <b>+1💎</b>!" : "!"), "wagers");
+    showOutcomeModal("💣 Keg Defused (" + chk.chance + "% Wits Odds)!", "🛢️💎", null, "#4ade80", "Recovered <b>+" + gWon.toLocaleString() + "g</b>" + (gemBonus ? " &amp; <b>+1💎 Rare Gem (8% Roll)</b>!" : "!"), "wagers");
   } else {
     var dmg = Math.max(10, Math.round(hero.maxHp * 0.14)); hero.hp = Math.max(1, hero.hp - dmg);
     var stNote = addHeroStress(10);
@@ -17080,7 +17629,7 @@ function playLiarsDiceModal() {
       '<div style="font-size:34px;cursor:pointer;" onclick="shakeLiarsCup()"><span class="dice-cup-shake">🥤</span> ⚃ ⚄ ⚅ ⚅ <span class="dice-cup-shake">🥤</span></div>' +
       '<div style="font-size:11.5px;color:#fde047;margin-top:4px;">Shake Velocity: <b id="liarsShakeMeter">0%</b></div></div>' +
     '<div style="display:flex;gap:6px;"><button class="btn btn-sky" style="flex:1;" onclick="shakeLiarsCup()">🥤 Shake Cup</button><button class="btn btn-shine" style="flex:1;" onclick="resolveLiarsDiceCall()">👑 Call Bluff (-2⚡)</button></div>' +
-    '<button class="btn" style="width:100%;margin-top:8px;" onclick="openTownFacilityModal(\\'wagers\\')">⬅️ Back</button>'
+    '<button class="btn" style="width:100%;margin-top:8px;" onclick="openTownFacilityModal(&#39;wagers&#39;)">⬅️ Back</button>'
   );
 }
 
@@ -17097,7 +17646,7 @@ function resolveLiarsDiceCall() {
   var chk = rollContestedStatCheck("charm", liarsCupShake >= 75 ? 14 : 18, hero.unlockedArea || 1, false);
   if (chk.passed) {
     var gWon = 130 + hero.level * 30; hero.gold += gWon; addHeroFame(30); playSfx("coin");
-    showOutcomeModal("🎲 Bluff Called (" + chk.chance + "% Charm Odds)!", "🎲👑", null, "#4ade80", "Won <b>+" + gWon.toLocaleString() + "g & +30 Court Fame</b>!", "wagers");
+    showOutcomeModal("🎲 Bluff Called (" + chk.chance + "% Charm Odds)!", "🎲👑", null, "#4ade80", "Won <b>+" + gWon.toLocaleString() + "g &amp; +30 Court Fame</b>!", "wagers");
   } else {
     playSfx("slash"); addHeroFame(6);
     showOutcomeModal("🎲 Bluff Caught (" + chk.chance + "% Charm Odds)!", "🎲💀", null, "#d4af37", "The Chancellor saw through your bluff (+6 Fame).", "wagers");
@@ -17113,7 +17662,7 @@ function playWyvernSkyRaceModal() {
   var rw = getRealWeather(), chk = rollContestedStatCheck("guts", rw.wind ? 15 : 17, hero.unlockedArea || 1, false);
   if (chk.passed) {
     var gWon = 190 + hero.level * 38; hero.gold += gWon; addHeroFame(28); playSfx("levelup");
-    showOutcomeModal("🐲 Crag-Wyvern Sky-Lists Champion (" + chk.chance + "% Guts Odds)!", "🐲🏆", null, "#4ade80", "Won <b>+" + gWon.toLocaleString() + "g & +28 Court Fame</b>!", "wagers");
+    showOutcomeModal("🐲 Crag-Wyvern Sky-Lists Champion (" + chk.chance + "% Guts Odds)!", "🐲🏆", null, "#4ade80", "Won <b>+" + gWon.toLocaleString() + "g &amp; +28 Court Fame</b>!", "wagers");
   } else {
     playSfx("slash"); addHeroFame(8);
     showOutcomeModal("🐲 Buffeted by Crosswinds (" + chk.chance + "% Guts Odds)!", "🐲🌪️", null, "#d4af37", "A downdraft forced your mount wide (+8 Fame).", "wagers");
@@ -17123,13 +17672,13 @@ function playWyvernSkyRaceModal() {
 '''
 }
 
-String buildV16ChunkB2d() {
+String buildV16ChunkB2d1() {
     return '''
 // ============================================================================
-// LEVEL-SCALED WITS, CHARM & GUTS CHECK ENGINE (BALANCED DELVE ENCOUNTERS)
+// LEVEL-SCALED WITS, CHARM & GUTS CHECK ENGINE + FULL SERVER BACKUP/RESTORE
 // ============================================================================
 function getContestedRollOdds(statKey, diff, areaId, isDelve) {
-  if (!hero) return 50;
+  if (!hero) return 55;
   var st = getHeroStats(), statVal = st.effGuts;
   if (statKey === "wits") statVal = st.effWits;
   else if (statKey === "charm") statVal = st.effCharm;
@@ -17139,17 +17688,18 @@ function getContestedRollOdds(statKey, diff, areaId, isDelve) {
   var delveStep = (isDelve && window.activeDelve) ? (activeDelve.step || 0) : 0;
 
   var baseDiff = diff || 16;
-  var delveMult = isDelve ? 1.25 : 1.15;
-  var levelBenchmark = (baseDiff * delveMult) + (hLv * (isDelve ? 2.55 : 2.25)) + (Math.pow(hLv, 1.36) * (isDelve ? 1.10 : 0.95)) + ((aId - 1) * (isDelve ? 5.5 : 4.5)) + (delveStep * 6.5);
-  var expectedPlayerStat = 14 + (hLv * 2.35) + (Math.pow(hLv, 1.35) * 0.85);
-  var effectiveTarget = Math.max(levelBenchmark, expectedPlayerStat * (isDelve ? 1.14 : 1.02));
+  var delveMult = isDelve ? 1.12 : 1.05;
+  var levelBenchmark = (baseDiff * delveMult) + (hLv * (isDelve ? 2.20 : 2.00)) + (Math.pow(hLv, 1.32) * 0.85) + ((aId - 1) * 4.0) + (delveStep * 4.5);
+  var expectedPlayerStat = 14 + (hLv * 2.25) + (Math.pow(hLv, 1.32) * 0.80);
+  var effectiveTarget = Math.max(levelBenchmark, expectedPlayerStat * (isDelve ? 1.05 : 0.98));
 
   var ratio = statVal / Math.max(10, effectiveTarget);
-  var petBonus = (isDelve && hero.companion) ? 3 : 0;
-  var baseCenter = isDelve ? 45 : 48;
-  var rawOdds = Math.round(baseCenter + ((ratio - 1.0) * 50) + petBonus - (delveStep * 2));
-  var maxCap = isDelve ? 66 : 78;
-  return Math.max(18, Math.min(maxCap, rawOdds));
+  var petBonus = (isDelve && hero.companion) ? 4 : 0;
+  var drunkPen = st.isDrunk ? -10 : 0;
+  var baseCenter = isDelve ? 52 : 55;
+  var rawOdds = Math.round(baseCenter + ((ratio - 1.0) * 50) + petBonus + drunkPen - (delveStep * 1.5));
+  var maxCap = isDelve ? 74 : 82;
+  return Math.max(20, Math.min(maxCap, rawOdds));
 }
 
 function rollContestedStatCheck(statKey, diff, areaId, isDelve) {
@@ -17169,8 +17719,10 @@ function addHeroStress(amt) {
   var rw = getRealWeather();
   var hasLazarus = (hero.mercenaries || []).some(function(m) { return m.id === "lazarus" && m.hp > 0; });
   var lazMult = hasLazarus ? 0.80 : 1.0;
-  var delta = Math.max(1, Math.round(amt * ((rw.lightning || rw.hot) ? 1.05 : 1.0) * lazMult));
+  var lodgeStressMult = (hero.lodgingBuff && hero.lodgingBuff.questsLeft > 0 && hero.lodgingBuff.stressRedPct && isPositiveBuffActiveFifo(hero, "buff_lodging")) ? (1 - hero.lodgingBuff.stressRedPct / 100.0) : 1.0;
+  var delta = Math.max(1, Math.round(amt * ((rw.lightning || rw.hot) ? 1.05 : 1.0) * lazMult * lodgeStressMult));
   hero.stress = Math.max(0, Math.min(100, (hero.stress || 0) + delta));
+  if (window.updateAmbianceVignetteOverlay) updateAmbianceVignetteOverlay();
   if (hero.stress >= 100 && !hero.resolveState && window.RESOLVE_STATES) {
     var isVirtue = (Math.random() < 0.25), pool = isVirtue ? RESOLVE_STATES.virtues : RESOLVE_STATES.afflictions;
     var pick = pool[Math.floor(Math.random() * pool.length)];
@@ -17197,30 +17749,545 @@ function restoreHeroJsonBackup() {
   try {
     var box = document.getElementById("jsonBackupBox"), parsed = JSON.parse(box ? box.value : "");
     if (parsed && parsed.name) { hero = parsed; ensureHeroV3Fields(hero); saveCurrentHero(null, true, null); closePopupModal(); renderGameScreen(); }
-  } catch (e) { showGothicToast("⚠️ Invalid JSON!"); }
+  } catch (e) { showGothicToast("⚠️ Invalid Hero JSON!"); }
 }
 
 function openJsonBackupModal() {
   if (!hero) return;
-  showPopupModal('<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:Cinzel,serif;margin-bottom:6px;">💾 Hero JSON Snapshot</div><textarea id="jsonBackupBox" rows="6" style="font-family:monospace;font-size:11px;margin-bottom:8px;">' + escapeHtml(JSON.stringify(hero)) + '</textarea><div style="display:flex;gap:8px;"><button class="btn btn-emerald" style="flex:1;" onclick="restoreHeroJsonBackup()">📥 Restore JSON</button><button class="btn" style="flex:1;" onclick="openHeroSheetModal()">⬅️ Back</button></div>');
+  showPopupModal(
+    '<div style="font-size:18px;font-weight:900;color:#d4af37;font-family:Cinzel,serif;margin-bottom:4px;">💾 Hero &amp; Full Server Backup / Migration</div>' +
+    '<div style="font-size:11.5px;color:#86efac;margin-bottom:6px;">Copy the JSON below to back up your current Hero, or click <b>🗄️ Full Server Backup (All Slots &amp; World)</b> to export or migrate your entire Hubitat game database!</div>' +
+    '<textarea id="jsonBackupBox" rows="6" style="font-family:monospace;font-size:11px;margin-bottom:8px;">' + escapeHtml(JSON.stringify(hero)) + '</textarea>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button class="btn btn-emerald" style="flex:1;" onclick="restoreHeroJsonBackup()">📥 Restore This Hero</button>' +
+      '<button class="btn btn-shine" style="flex:1;" onclick="openFullServerBackupModal()">🗄️ Full Server Backup (All Slots)</button>' +
+      '<button class="btn" onclick="openHeroSheetModal()">⬅️ Back</button>' +
+    '</div>'
+  );
 }
 
+function openFullServerBackupModal() {
+  if (hero && activeSlotKey && serverData && serverData.slots) {
+    serverData.slots[activeSlotKey] = JSON.parse(JSON.stringify(hero));
+  }
+  var fullDump = {
+    dcrBackupVersion: "18.4.1",
+    exportedAt: new Date().toISOString(),
+    slots: (serverData && serverData.slots) ? serverData.slots : {},
+    fallenCrypt: (serverData && serverData.fallenCrypt) ? serverData.fallenCrypt : {},
+    dynastyWonder: (serverData && serverData.dynastyWonder) ? serverData.dynastyWonder : { stage: 0, goldIn: 0, matsIn: 0 },
+    spireRecord: (serverData && serverData.spireRecord) ? serverData.spireRecord : { floor: 1, hero: "None" },
+    echoes: (serverData && serverData.echoes) ? serverData.echoes : { cycles: 0, bonusXpPct: 0, bonusGems: 0 },
+    worldBoss: (serverData && serverData.worldBoss) ? serverData.worldBoss : {},
+    chronicle: (serverData && serverData.chronicle) ? serverData.chronicle : []
+  };
+  showPopupModal(
+    '<div style="font-size:34px;">🗄️🏰💾</div>' +
+    '<div style="font-size:18.5px;font-weight:900;color:#fde047;font-family:Cinzel,serif;margin-bottom:4px;">Full Hubitat Server Migration &amp; Disaster Backup</div>' +
+    '<div style="font-size:11.5px;color:#e5dec9;margin-bottom:8px;text-align:left;background:#0b0811;padding:8px;border-radius:4px;border:1px solid #c5a059;">' +
+      '• <b>What This Contains:</b> Every Character Slot (Slots 1–6), all Personal Vaults &amp; Kingdoms, Fallen Crypt Souls, Dynasty Wonder Stage, Spire Records, World Boss state, and Chronicle history.<br>' +
+      '• <b>How to Migrate to a New Hub or Recover from Corruption:</b> Copy this JSON or click <b>⬇️ Download .JSON File</b>. On the new Hubitat hub, open this window, paste the JSON, and click <b>📥 Restore Entire Server</b>!' +
+    '</div>' +
+    '<textarea id="fullServerBackupBox" rows="7" style="font-family:monospace;font-size:10.5px;margin-bottom:8px;">' + escapeHtml(JSON.stringify(fullDump)) + '</textarea>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button class="btn btn-gold" style="flex:1;" onclick="downloadFullServerBackupFile()">⬇️ Download .JSON File</button>' +
+      '<button class="btn btn-emerald" style="flex:1;" onclick="restoreFullServerBackupJson()">📥 Restore Entire Server</button>' +
+      '<button class="btn" onclick="closePopupModal()">Close</button>' +
+    '</div>'
+  );
+}
+
+function downloadFullServerBackupFile() {
+  var box = document.getElementById("fullServerBackupBox");
+  if (!box || !box.value) return;
+  try {
+    var blob = new Blob([box.value], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "DungeonCourt_FullServerBackup_" + getTodayDateStr() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showGothicToast("💾 Full Server Backup downloaded!");
+  } catch (e) {
+    box.select();
+    document.execCommand("copy");
+    showGothicToast("💾 Backup copied to clipboard!");
+  }
+}
+
+async function restoreFullServerBackupJson() {
+  var box = document.getElementById("fullServerBackupBox");
+  if (!box || !box.value) return;
+  try {
+    var parsed = JSON.parse(box.value);
+    if (!parsed || !parsed.slots || typeof parsed.slots !== "object") {
+      showGothicToast("⚠️ Invalid Full Server Backup JSON (missing slots object)!");
+      return;
+    }
+    showGothicToast("⏳ Restoring all Hero Slots & World State to Hubitat...");
+    var slotKeys = Object.keys(parsed.slots);
+    for (var i = 0; i < slotKeys.length; i++) {
+      var sk = slotKeys[i];
+      var sHero = parsed.slots[sk];
+      if (sHero && sHero.name) {
+        ensureHeroV3Fields(sHero);
+        compactHeroStateForHubitat(sHero);
+        await fetch(API_SAVE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            slotKey: sk,
+            sessionId: CLIENT_SESSION_ID,
+            hero: sHero,
+            wonderUpdate: (i === 0 ? parsed.dynastyWonder : null),
+            chronicleEvent: (i === 0 ? "🗄️ Full Server Backup Restored (" + slotKeys.length + " Slots)" : null),
+            fullServerRestore: (i === 0 ? {
+              fallenCrypt: parsed.fallenCrypt || {},
+              spireRecord: parsed.spireRecord || null,
+              echoes: parsed.echoes || null,
+              worldBoss: parsed.worldBoss || null
+            } : null)
+          })
+        });
+      }
+    }
+    await loadServerState();
+    if (activeSlotKey && serverData.slots && serverData.slots[activeSlotKey]) {
+      hero = JSON.parse(JSON.stringify(serverData.slots[activeSlotKey]));
+      ensureHeroV3Fields(hero);
+    }
+    closePopupModal();
+    renderSlotsScreen();
+    if (hero) renderGameScreen();
+    playSfx("levelup");
+    showGothicToast("✅ Full Server Backup Restored (" + slotKeys.length + " Slots)!");
+  } catch (err) {
+    showGothicToast("⚠️ Restore Failed: " + err.message);
+  }
+}
+
+var PERMANENT_PASSIVE_IDS = [
+  "buff_noble", "buff_shards", "buff_trophies", "buff_runes", "buff_cipher",
+  "buff_prestige", "buff_mutation", "buff_wepperk", "buff_recbond",
+  "buff_set_0", "buff_set_1", "buff_set_2"
+];
+
+function isPermanentPassiveId(id) {
+  if (!id) return false;
+  return PERMANENT_PASSIVE_IDS.includes(id) || String(id).indexOf("buff_set_") === 0;
+}
+
+window.isPositiveBuffActiveFifo = function(h, buffId) {
+  if (!h || !buffId) return true;
+  if (isPermanentPassiveId(buffId)) return true;
+  if (!Array.isArray(h._activeFifoBuffIds)) getActiveBuffsAndWhyList(h);
+  return !h._activeFifoBuffIds || h._activeFifoBuffIds.includes(buffId);
+};
+
+var _origPushBuffFifo = window.pushBuffToFifo;
+window.pushBuffToFifo = function(buffId, targetH) {
+  if (isPermanentPassiveId(buffId)) return;
+  if (_origPushBuffFifo) _origPushBuffFifo(buffId, targetH);
+};
+
+var _baseGetActiveBuffsRaw = window.getActiveBuffsAndWhyList;
+window.getActiveBuffsAndWhyList = function(targetHero) {
+  var h = targetHero || hero;
+  if (!h) return [];
+  ensureHeroV3Fields(h);
+  var rawAll = [];
+  var nRank = NOBLE_RANKS[h.nobleIdx || 0] || NOBLE_RANKS[0];
+  var maxF = getMaxFameForLevel(h.level || 1);
+
+  if (isHeroDrunk(h)) {
+    var drRem = formatCooldownSec(Math.max(1, Math.ceil((h.drunkUntil - Date.now()) / 1000)));
+    rawAll.push({ id: "debuff_drunk", icon: "🍺", name: "Stumbling Drunk (Boar's Head Taproom)", effect: "-15% Hit Accuracy, -12% Dodge & -15% Wits (" + drRem + " left)", why: "Overindulged on Aged Dragon-Malt Reserve within 2 hours at the Boar's Head Tavern! Sleep in any bedchamber to sober up immediately.", isDebuff: true });
+  }
+  if (h.deathsDoorTrauma) {
+    rawAll.push({ id: "debuff_trauma", icon: "🕯️", name: "Death's Door Trauma", effect: "-10% All Stats (Mortality Debuff)", why: "A Valkyrie Seal shattered to save your life. Cure by resting above the floor at the Inn or praying at the Sanctuary!", isDebuff: true });
+  }
+  if ((h.stress || 0) >= 75) {
+    rawAll.push({ id: "debuff_paranoia", icon: "😱", name: "Paranoia (75%+ Stress)", effect: "-10% Hit Accuracy, -10% Dodge & 15% Recruit Panic Chance", why: "Severe mental strain (75%+ Stress). Drink Aged Dragon-Malt at the Tavern (-50% Stress), pray at the Confessional, or sleep above the floor!", isDebuff: true });
+  } else if ((h.stress || 0) >= 50) {
+    rawAll.push({ id: "debuff_dread", icon: "😰", name: "Creeping Dread (50%+ Stress)", effect: "-5% Hit Accuracy & -5% Dodge", why: "Mounting dungeon dread (50%+ Stress). Relieve Stress before it reaches 75% Paranoia!", isDebuff: true });
+  }
+
+  if (Array.isArray(h.diseases) && h.diseases.length > 0) {
+    h.diseases.forEach(function(d) {
+      rawAll.push({ id: "debuff_dis_" + d.id, icon: "🦠", name: "Hero " + d.name, effect: d.desc, why: (d.caughtFrom ? ("Caught from " + d.caughtFrom + ". ") : "") + "Cure at the Plague-Doctor Leech Ward (2/day) or with Sister Vespera (15💎)!", isDebuff: true });
+    });
+  }
+  if (Array.isArray(h.mercenaries)) {
+    h.mercenaries.forEach(function(m) {
+      if (m && m.disease) {
+        rawAll.push({ id: "debuff_recdis_" + m.id, icon: "🦠", name: "Recruit Infected (" + m.name + "): " + m.disease.name, effect: m.disease.recruitEffect || "-15% Recruit ATK", why: (m.disease.caughtFrom ? ("Caught from " + m.disease.caughtFrom + ". ") : "") + "Cure via Plague-Doctor Leech Ward or Sister Vespera (15💎)!", isDebuff: true });
+      }
+    });
+  }
+
+  var hol = window.getActiveHolidayEvent ? getActiveHolidayEvent() : null;
+  if (hol) rawAll.push({ id: "buff_holiday", icon: hol.icon, name: hol.name, effect: hol.desc, why: "Active Holiday Week Event across Valoria!", isDebuff: false });
+
+  if ((nRank.bonusPct || 0) > 0) {
+    rawAll.push({ id: "buff_noble", icon: "👑", name: "Feudal Rank: " + nRank.title, effect: "+" + nRank.bonusPct + "% All Stats", why: "Permanent progression passive from holding the title of " + nRank.title + ".", isDebuff: false, isPassive: true });
+  }
+  if ((h.fame || 0) < nRank.fameReq) {
+    rawAll.push({ id: "debuff_fame", icon: "⚠️", name: "Tarnished Court Reputation", effect: "-10% All Stats & -15% Kingdom Tax", why: "Your Court Fame (" + (h.fame || 0) + ") decayed below your " + nRank.title + " requirement (" + nRank.fameReq + ").", isDebuff: true });
+  } else if ((h.fame || 0) >= Math.round(maxF * 0.95)) {
+    rawAll.push({ id: "buff_toast", icon: "🌟", name: "Toast of the High Court", effect: "+5% All Stats & +10% Gold Find", why: "Your Court Fame (" + (h.fame || 0) + "/" + maxF + ") is at 95%+ of your Level " + h.level + " Max Fame Cap!", isDebuff: false });
+  }
+
+  if (h.spouse && h.spouse.name) {
+    var spLove = h.spouse.love !== undefined ? h.spouse.love : 100;
+    var lovePct = spLove >= 80 ? "100%" : (spLove >= 40 ? "50%" : "0%");
+    var multiCnt = Array.isArray(h.marriedConsorts) ? h.marriedConsorts.length : 1;
+    rawAll.push({ id: "buff_consort", icon: "💍", name: "Chosen Consort Blessing: " + h.spouse.name, effect: lovePct + " of " + h.spouse.blessing + (h.consortAttire !== "Velvet Court Gown" ? " [+25% Wardrobe]" : ""), why: "Selected as your single active Consort Blessing in the Velvet Chamber (" + multiCnt + " Wed • Devotion: " + spLove + "%).", isDebuff: (spLove < 40) });
+    if (h.spouse.diplomacyUntil && h.spouse.diplomacyUntil > Date.now()) {
+      var dipRem = formatCooldownSec(Math.ceil((h.spouse.diplomacyUntil - Date.now()) / 1000));
+      rawAll.push({ id: "buff_diplomacy", icon: "🕊️", name: "Consort Diplomatic Mission", effect: "-50% Passive Fame Decay Rate", why: h.spouse.name + " is representing your House at neighboring courts (" + dipRem + " left).", isDebuff: false });
+    }
+  }
+
+  if (h.activeFeast && h.activeFeast.questsLeft > 0) {
+    rawAll.push({ id: "buff_feast", icon: h.activeFeast.icon || "🍖", name: "Tavern Feast: " + h.activeFeast.name, effect: h.activeFeast.desc, why: "Ordered at the Boar's Head Inn (" + h.activeFeast.questsLeft + " Quests remaining).", isDebuff: false });
+  }
+  if (h.lodgingBuff && h.lodgingBuff.questsLeft > 0) {
+    var isStiff = (h.lodgingBuff.dodgePen > 0);
+    var stRedTxt = h.lodgingBuff.stressRedPct ? (" & -" + h.lodgingBuff.stressRedPct + "% Stress Gain") : "";
+    rawAll.push({ id: isStiff ? "debuff_lodging" : "buff_lodging", icon: isStiff ? "🪵" : "🛌", name: "Lodging Effect: " + h.lodgingBuff.name, effect: isStiff ? ("-" + h.lodgingBuff.dodgePen + "% Dodge") : ("+" + (h.lodgingBuff.statBonusPct || 12) + "% All Stats, +" + (h.lodgingBuff.xpBonusPct || 15) + "% XP" + stRedTxt), why: "Slept 2+ hours offline in a bedchamber (" + h.lodgingBuff.questsLeft + " Quests remaining).", isDebuff: isStiff });
+  }
+  if (h.tarotBuff && h.tarotBuff.questsLeft > 0) {
+    rawAll.push({ id: "buff_tarot", icon: h.tarotBuff.icon || "🃏", name: "Tarot Arcana: " + h.tarotBuff.name, effect: h.tarotBuff.desc, why: "Drawn at the Tarot Seer's Vardo (" + h.tarotBuff.questsLeft + " Quests remaining).", isDebuff: false });
+  }
+  if (h.resolveState) {
+    rawAll.push({ id: h.resolveState.isVirtue ? "buff_virtue" : "debuff_affliction", icon: h.resolveState.isVirtue ? "🌟" : "😰", name: h.resolveState.name, effect: h.resolveState.desc, why: "Triggered when Stress reached 100% (" + (h.resolveState.questsLeft || 1) + " Quests remaining).", isDebuff: !h.resolveState.isVirtue });
+  }
+  if ((h.moonCurseTurns || 0) > 0) {
+    rawAll.push({ id: "debuff_moon", icon: "🐺", name: "Hunter's Moon Lycanthropy", effect: "+25% Guts & +15% Crit, -15% Wits", why: "Bitten by a feral Werewolf during patrol (" + h.moonCurseTurns + " Quests remaining).", isDebuff: true });
+  }
+  if ((h.petTreatBattles || 0) > 0 && h.companion) {
+    rawAll.push({ id: "buff_pettreat", icon: "🍖", name: "Companion Morale Surge (" + h.companion.name + ")", effect: "+50% Companion Damage & +5% Hit/Crit", why: "Fed rations to your bound companion (" + h.petTreatBattles + " Battles remaining).", isDebuff: false });
+  }
+  if (h.overkillSurge) {
+    rawAll.push({ id: "buff_overkill", icon: "⚡", name: "Overkill Momentum Surge", effect: "+15% First-Strike Damage & +10% Colossus Charge", why: "Earned by slaying your previous foe with a 50%+ Overkill blow!", isDebuff: false });
+  }
+
+  var rw = getRealWeather();
+  if (rw && rw.active && rw.conditions && rw.conditions.length) {
+    rw.conditions.forEach(function(cKey) {
+      var cfg = REAL_WEATHER_CONFIG[cKey];
+      if (cfg) rawAll.push({ id: "buff_rw_" + cKey, icon: cfg.icon, name: cfg.name + " (Real Weather Station)", effect: "Perk: " + cfg.perk + " | Debuff: " + cfg.debuff, why: "Live outdoor sensor reading from your linked Hubitat Weather Station.", isDebuff: false });
+    });
+  }
+
+  var curse = getActiveRealmCurse();
+  if (curse) rawAll.push({ id: "debuff_curse", icon: "☠️", name: "7-Day Cataclysm Curse: " + curse.name, effect: curse.desc, why: "World Boss reached 100% Devastation (Cleanse at Kingdom Cathedral).", isDebuff: true });
+
+  if (h.guild && h.guild.founded) {
+    var stab = h.guild.stability !== undefined ? h.guild.stability : 75;
+    if (stab >= 80) rawAll.push({ id: "buff_stability", icon: "🏰", name: "High Kingdom Stability (" + stab + "%)", effect: "+8% All Stats" + (h.guild.festivalBoom ? " & +15% Festival Boom Gold/XP!" : ""), why: "Your Chartered Kingdom's Stability is maintained at 80%+.", isDebuff: false });
+    else if (stab < 40) rawAll.push({ id: "debuff_unrest", icon: "🔥", name: "Kingdom Unrest (" + stab + "%)", effect: "-10% All Stats", why: "Your Kingdom Stability fell below 40% due to famine or raids.", isDebuff: true });
+    var dec = KINGDOM_DECREES[h.guild.decree || "martial"];
+    if (dec) rawAll.push({ id: "buff_decree", icon: "⚖️", name: dec.name, effect: dec.desc, why: "Enacted as your active Royal Edict in the Royal Works tab.", isDebuff: false });
+  }
+
+  var setBon = getActiveSetBonuses(h);
+  if (setBon && setBon.activeSets && setBon.activeSets.length) {
+    setBon.activeSets.forEach(function(s, sIdx) {
+      rawAll.push({ id: "buff_set_" + sIdx, icon: "⚜️", name: s.name, effect: s.desc, why: "Innate Gear Set Synergy from wearing 3+ matching Set pieces.", isDebuff: false, isPassive: true });
+    });
+  }
+
+  var wepPerk = getWeaponArchetypePerk(h.weapon);
+  if (wepPerk && h.weapon && (h.weapon.dur === undefined || h.weapon.dur > 0)) {
+    rawAll.push({ id: "buff_wepperk", icon: "🗡️", name: "Weapon Archetype: " + wepPerk.name, effect: wepPerk.desc, why: "Innate archetype mastery from wielding " + h.weapon.name + ".", isDebuff: false, isPassive: true });
+  }
+
+  var recBond = getActiveRecruitSynergyBond(h);
+  if (recBond) rawAll.push({ id: "buff_recbond", icon: "🤝", name: "Recruit Synergy: " + recBond.name, effect: recBond.desc, why: "Innate Mercenary covenant in your Sworn Retinue.", isDebuff: false, isPassive: true });
+
+  var shardPct = 0;
+  SACRED_SHARDS.forEach(function(sh) {
+    if (h.bossesDefeated && h.bossesDefeated.includes(sh.areaId)) shardPct += (sh.areaId === 22 ? 10 : (sh.areaId <= 11 ? 5 : 4));
+  });
+  if (shardPct > 0) rawAll.push({ id: "buff_shards", icon: "💎", name: "Sacred Dragon Shards & Astral Seals", effect: "+" + shardPct + "% All Stats", why: "Permanent progression passive from unsealing regional Dragon Shards.", isDebuff: false, isPassive: true });
+
+  var tCnt = h.trophyWall ? h.trophyWall.length : 0;
+  if (tCnt > 0) rawAll.push({ id: "buff_trophies", icon: "🦌", name: "Throne Room Trophy Wall (" + tCnt + "/22)", effect: "+" + (tCnt * 2) + "% All Stats", why: "Permanent progression passive from mounted Area Boss trophies.", isDebuff: false, isPassive: true });
+
+  if ((h.cosmicRunes || 0) > 0) rawAll.push({ id: "buff_runes", icon: "🌌", name: "Void-Rift Cosmic Runes (" + h.cosmicRunes + "/15)", effect: "+" + (Math.min(15, h.cosmicRunes) * 2) + "% All Stats", why: "Permanent progression passive from clearing Void-Rift milestones.", isDebuff: false, isPassive: true });
+  if ((h.cipherPages || 0) >= 5) rawAll.push({ id: "buff_cipher", icon: "📜", name: "Deciphered Tome of Elowen (5/5)", effect: "+6% All Stats", why: "Permanent progression passive from collecting all 5 Torn Cipher Pages.", isDebuff: false, isPassive: true });
+  if ((h.prestigeRank || 0) > 0) rawAll.push({ id: "buff_prestige", icon: "👑", name: "Lineage Ascendancy (Prestige Rank " + h.prestigeRank + ")", effect: "+" + (h.prestigeRank * 3) + "% All Stats & +" + (h.prestigeRank * 2) + "% Gold/Luck", why: "Permanent bloodline passive from Prestige or Heir Succession.", isDebuff: false, isPassive: true });
+  if (h.lineageMutation) rawAll.push({ id: "buff_mutation", icon: "🧬", name: "Bloodline Mutation: " + h.lineageMutation.name, effect: h.lineageMutation.desc, why: "Permanent bloodline mutation from Prestige or the Mirror of the First King.", isDebuff: false, isPassive: true });
+  if (h.starChart && h.starChart !== "none") {
+    var scDesc = h.starChart === "draco" ? "+5% Crit Chance" : (h.starChart === "chalice" ? "+15% Trophy Drop Luck" : "+12% Gold Find");
+    rawAll.push({ id: "buff_starchart", icon: "✨", name: "Astrologer's Star-Chart (" + h.starChart.toUpperCase() + ")", effect: scDesc, why: "Aligned constellation in the Void-Rifts tab.", isDebuff: false });
+  }
+
+  if (!Array.isArray(h.buffFifoOrder)) h.buffFifoOrder = [];
+  var debuffs = [];
+  var permPassives = [];
+  var tempPosBuffs = [];
+
+  rawAll.forEach(function(item) {
+    if (item.isDebuff) {
+      debuffs.push(item);
+    } else if (item.isPassive || isPermanentPassiveId(item.id)) {
+      item.isPassive = true;
+      permPassives.push(item);
+    } else {
+      tempPosBuffs.push(item);
+      if (!h.buffFifoOrder.includes(item.id)) h.buffFifoOrder.push(item.id);
+    }
+  });
+
+  var activeTempIds = tempPosBuffs.map(function(x) { return x.id; });
+  h.buffFifoOrder = h.buffFifoOrder.filter(function(id) { return activeTempIds.includes(id); });
+  tempPosBuffs.sort(function(a, b) {
+    return h.buffFifoOrder.indexOf(a.id) - h.buffFifoOrder.indexOf(b.id);
+  });
+
+  var keptTempBuffs = tempPosBuffs.slice(-MAX_ACTIVE_BUFFS);
+  h._activeFifoBuffIds = keptTempBuffs.map(function(x) { return x.id; });
+  h._tempFifoCount = keptTempBuffs.length;
+  h._permPassiveCount = permPassives.length;
+  h._displacedBuffCount = Math.max(0, tempPosBuffs.length - MAX_ACTIVE_BUFFS);
+  return debuffs.concat(keptTempBuffs.reverse()).concat(permPassives);
+};
+
+window.openActiveBuffsModal = function() {
+  if (!hero) {
+    showGothicToast("⚠️ Load a Hero Slot first to inspect Active Buffs!");
+    return;
+  }
+  var buffs = getActiveBuffsAndWhyList(hero);
+  var fifoCnt = hero._tempFifoCount || 0;
+  var permCnt = hero._permPassiveCount || 0;
+  var debCnt = buffs.filter(function(b) { return b.isDebuff; }).length;
+  var displacedCnt = hero._displacedBuffCount || 0;
+
+  var rowsHtml = buffs.length ? buffs.map(function(b) {
+    var bCol = b.isDebuff ? "#ef4444" : (b.isPassive ? "#38bdf8" : "#4ade80");
+    var bgCol = b.isDebuff ? "#1f090d" : (b.isPassive ? "#09131c" : "#0b1410");
+    var tagTxt = b.isDebuff ? "[☠️ DEBUFF — UNLIMITED]" : (b.isPassive ? "[♾️ INNATE PASSIVE — ALWAYS ON]" : "[✨ ACTIVE FIFO BUFF]");
+    return '<div style="background:' + bgCol + ';border:1px solid ' + bCol + ';border-left:4px solid ' + bCol + ';border-radius:4px;padding:8px 10px;margin-bottom:6px;text-align:left;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+        '<span style="font-weight:900;color:#fde047;font-family:Cinzel,serif;font-size:12.5px;">' + b.icon + ' ' + escapeHtml(b.name) + ' <span style="font-size:9.5px;color:' + bCol + ';">' + tagTxt + '</span></span>' +
+        '<span style="font-size:11.5px;font-weight:bold;color:' + bCol + ';">' + escapeHtml(b.effect) + '</span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:#e5dec9;margin-top:3px;">🕯️ <b>Why You Have This:</b> ' + escapeHtml(b.why) + '</div>' +
+    '</div>';
+  }).join('') : '<div style="padding:12px;color:#9c8f7a;">No active buffs or debuffs right now.</div>';
+
+  showPopupModal(
+    '<div style="font-size:38px;">✨📜🛡️</div>' +
+    '<div style="font-size:18.5px;font-weight:900;color:#d4af37;font-family:&#39;Cinzel&#39;,serif;margin-bottom:4px;">Active Blessings (' + fifoCnt + '/' + MAX_ACTIVE_BUFFS + ' FIFO) • Innate Passives (' + permCnt + ') • Afflictions (' + debCnt + ')</div>' +
+    '<div style="font-size:11.5px;color:#86efac;margin-bottom:8px;">⚖️ <b>The Law of Six Blessings (First-In, First-Out):</b> Temporary &amp; conditional blessings are capped at <b>6 active slots</b> (' + displacedCnt + ' older blessing(s) pushed out). <b>Innate Progression Passives (' + permCnt + ')</b> and <b>Debuffs/Diseases (' + debCnt + ')</b> are never displaced!</div>' +
+    '<div style="max-height:350px;overflow-y:auto;">' + rowsHtml + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;">' +
+      '<button class="btn btn-gold" style="flex:1;" onclick="openHeroSheetModal()">⚜️ Hero Sheet</button>' +
+      '<button class="btn" style="flex:1;" onclick="closePopupModal()">Close</button>' +
+    '</div>'
+  );
+};
+
+function compactHeroStateForHubitat(h) {
+  var t = h || hero;
+  if (!t) return;
+  var nowTs = Date.now();
+  ["mercCooldowns", "petCooldowns", "areaBossCooldownUntil"].forEach(function(mapKey) {
+    if (t[mapKey] && typeof t[mapKey] === "object") {
+      Object.keys(t[mapKey]).forEach(function(k) {
+        if (!t[mapKey][k] || t[mapKey][k] <= nowTs) {
+          delete t[mapKey][k];
+        }
+      });
+    }
+  });
+  if (t.bestiaryKills && typeof t.bestiaryKills === "object") {
+    var bKeys = Object.keys(t.bestiaryKills);
+    if (bKeys.length > 35) {
+      bKeys.sort(function(a, b) { return (t.bestiaryKills[b] || 0) - (t.bestiaryKills[a] || 0); });
+      var prunedB = {};
+      bKeys.slice(0, 35).forEach(function(k) { prunedB[k] = t.bestiaryKills[k]; });
+      t.bestiaryKills = prunedB;
+    }
+  }
+  if (Array.isArray(t.seenIntros) && t.seenIntros.length > 30) t.seenIntros = t.seenIntros.slice(-30);
+  if (Array.isArray(t.fallenHeroes) && t.fallenHeroes.length > 10) t.fallenHeroes = t.fallenHeroes.slice(0, 10);
+  if (Array.isArray(t.fallenChildren) && t.fallenChildren.length > 12) t.fallenChildren = t.fallenChildren.slice(0, 12);
+  if (Array.isArray(t.ancestors) && t.ancestors.length > 8) t.ancestors = t.ancestors.slice(0, 8);
+  if (Array.isArray(t.memoir) && t.memoir.length > 10) t.memoir = t.memoir.slice(0, 10);
+  if (Array.isArray(t.buffFifoOrder) && t.buffFifoOrder.length > 8) t.buffFifoOrder = t.buffFifoOrder.slice(-8);
+}
+
+var _origSaveCurrentHero = window.saveCurrentHero;
+window.saveCurrentHero = async function(chronicleMsg, showNotice, raidUpdate, extraPayload) {
+  if (hero) compactHeroStateForHubitat(hero);
+  return await _origSaveCurrentHero(chronicleMsg, showNotice, raidUpdate, extraPayload);
+};
+
+var _origSaveDeltaHero = window.saveDeltaHero;
+window.saveDeltaHero = async function() {
+  if (hero) compactHeroStateForHubitat(hero);
+  return await _origSaveDeltaHero();
+};
+'''
+}
+
+String buildV16ChunkB2d2() {
+    return '''
 // ============================================================================
-// BALANCED HARDCORE BOSS, 3-CHILD PER PRINCESS CAP & 7-DAY MORTAL PET LORE (v18.3.2)
+// SISTER VESPERA'S DRAGON-GLASS CLINIC (15💎 HERO & RECRUIT DISEASE PURGE)
 // ============================================================================
 var REQ_BOSS_WARRANT_TIERS = 10;
-var AREA_BOSS_RESPAWN_MS = 72 * 3600000; // 72-Hour Area Boss Respawn Cooldown
-var MAX_CHILDREN_PER_PRINCESS = 3; // Ultimate lifetime cap of 3 children per Princess (even if one dies!)
+var AREA_BOSS_RESPAWN_MS = 72 * 3600000;
+var MAX_CHILDREN_PER_PRINCESS = 3;
+var VESPERA_DISEASE_GEM_COST = 15;
+
+window.openSisterVesperaModal = function() {
+  ensureHeroV3Fields(hero);
+  var curGems = hero.gems || 0;
+  var leechCost = Math.max(160, (hero.level || 1) * 35);
+  var leechLeft = Math.max(0, 2 - (hero.leechesUsedToday || 0));
+  var totMats = getTotalMaterialsCount();
+
+  var patientRows = [];
+  if (Array.isArray(hero.diseases)) {
+    hero.diseases.forEach(function(d, idx) {
+      if (!d) return;
+      var meta = (window.DISEASE_STATES || []).find(function(x) { return x.id === d.id; }) || d;
+      patientRows.push('<div class="item-row" style="border-color:#ef4444;text-align:left;">' +
+        '<div style="flex:1;">' +
+          '<div><b style="color:#fde047;font-family:Cinzel,serif;">👑 Hero (' + escapeHtml(hero.name) + '): ' + escapeHtml(d.name || meta.name) + '</b></div>' +
+          '<div style="font-size:11.5px;color:#e5dec9;margin-top:2px;">📖 <b>What It Is:</b> ' + escapeHtml(d.what || meta.what || d.desc) + '</div>' +
+          '<div style="font-size:11.5px;color:#fca5a5;">🩸 <b>How Contracted:</b> ' + escapeHtml(d.caughtFrom || meta.originLore || 'Pestilent combat wound') + ' • <b>Debuff:</b> ' + escapeHtml(d.desc) + '</div>' +
+        '</div>' +
+        '<button class="btn ' + (curGems >= VESPERA_DISEASE_GEM_COST ? 'btn-shine' : 'btn-locked') + '" onclick="purgeDiseaseSisterVespera(&#39;hero&#39;,' + idx + ')">💎 Purge (-15💎)</button>' +
+      '</div>');
+    });
+  }
+  if (Array.isArray(hero.mercenaries)) {
+    hero.mercenaries.forEach(function(m, mIdx) {
+      if (!m || !m.disease) return;
+      var d = m.disease;
+      var meta = (window.DISEASE_STATES || []).find(function(x) { return x.id === d.id; }) || d;
+      patientRows.push('<div class="item-row" style="border-color:#f43f5e;text-align:left;">' +
+        '<div style="flex:1;">' +
+          '<div><b style="color:#86efac;font-family:Cinzel,serif;">' + (m.icon || '⚔️') + ' Recruit (' + escapeHtml(m.name) + '): ' + escapeHtml(d.name || meta.name) + '</b></div>' +
+          '<div style="font-size:11.5px;color:#e5dec9;margin-top:2px;">📖 <b>What It Is:</b> ' + escapeHtml(d.what || meta.what || 'Battlefield contagion') + '</div>' +
+          '<div style="font-size:11.5px;color:#fca5a5;">🩸 <b>How Contracted:</b> ' + escapeHtml(d.caughtFrom || meta.originLore || 'Pestilent monster strike') + ' • <b>Debuff:</b> ' + escapeHtml(d.recruitEffect || '-15% Recruit ATK') + '</div>' +
+        '</div>' +
+        '<button class="btn ' + (curGems >= VESPERA_DISEASE_GEM_COST ? 'btn-shine' : 'btn-locked') + '" onclick="purgeDiseaseSisterVespera(&#39;merc&#39;,' + mIdx + ')">💎 Purge (-15💎)</button>' +
+      '</div>');
+    });
+  }
+
+  showPopupModal(
+    '<div style="margin-bottom:6px;">' + renderLadyPortraitSvg("vespera", 68) + '</div>' +
+    '<div style="font-size:19.5px;font-weight:900;color:#e9d5ff;font-family:&#39;Cinzel&#39;,serif;">💎🩺 Sister Vespera&apos;s Dragon-Glass Clinic</div>' +
+    '<div style="font-size:12px;color:#fde68a;margin:4px 0 8px 0;">💎 Carried Dragon Gems: <b style="color:#fde047;">' + curGems + '💎</b> (Vault: ' + ((hero.vault && hero.vault.gems) || 0) + '/20💎) • 🦠 Active Party Infections: <b style="color:' + (patientRows.length ? '#ef4444' : '#4ade80') + ';">' + patientRows.length + '</b></div>' +
+    '<div class="lore-subtitle-box">&ldquo;Step into the violet brazier-light, Sovereign. When the Cathedral Plague-Doctor&apos;s daily leeches are spent, I grind <b>15💎 Dragon Gems</b> into incandescent dragon-glass to burn any mortal disease from your veins—or from your sworn Sellsword Recruits—with <b>no daily limit</b> (+25% HP restored).&rdquo;</div>' +
+    (patientRows.length ? patientRows.join('') : '<div style="padding:14px;background:#0b1410;border:1px solid #4ade80;border-radius:6px;color:#86efac;font-weight:bold;margin-bottom:10px;">✅ Clean Bill of Health! Neither your Hero nor any Sellsword Recruit is currently infected with a physical disease.</div>') +
+    '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' +
+      (patientRows.length > 0 ? ('<button class="btn ' + (leechLeft > 0 && hero.gold >= leechCost && totMats >= 1 ? 'btn-emerald' : 'btn-locked') + '" style="flex:1;" onclick="undergoPlagueDoctorLeechWard()">🦠 Plague-Doctor Leech Ward (' + leechCost + 'g, 1 Trophy • ' + leechLeft + '/2)</button>') : '') +
+      '<button class="btn btn-arcane" style="flex:1;" onclick="openTownFacilityModal(&#39;post&#39;)">🏦 Withdraw Vault Gems</button>' +
+      '<button class="btn" style="flex:1;" onclick="closePopupModal()">Leave Clinic</button>' +
+    '</div>'
+  );
+};
+
+window.purgeDiseaseSisterVespera = function(targetType, targetIdx) {
+  ensureHeroV3Fields(hero);
+  var totalPartyDis = countTotalPartyDiseases(hero);
+  if (totalPartyDis === 0) {
+    showGothicToast("✅ Sister Vespera: Your entire party's blood is pure—no active Diseases!");
+    return;
+  }
+  var curGems = hero.gems || 0;
+  if (curGems < VESPERA_DISEASE_GEM_COST) {
+    showRequirementModal(
+      "Insufficient Dragon Gems for Sister Vespera (" + curGems + " / " + VESPERA_DISEASE_GEM_COST + "💎)", "💎🩺",
+      "<b>Sister Vespera the Dragon-Glass Chirurgeon</b> requires <b style='color:#fde047;'>" + VESPERA_DISEASE_GEM_COST + "💎 Dragon Gems</b> from your active pouch to cauterize and purge a physical plague (You currently carry <b>" + curGems + "💎</b> in your pouch).",
+      "Withdraw locked Dragon Gems from your 🏦 Personal Reliquary Vault, smelt 30 Trophies at the Huntsman's Exchange, or complete 10/10 Regional Warrants &amp; Bosses!",
+      '<button class="btn btn-arcane" style="flex:1;" onclick="openTownFacilityModal(&#39;post&#39;)">🏦 Open Reliquary Vault</button>'
+    );
+    return;
+  }
+
+  var curedName = "";
+  var patientName = hero.name;
+  if (targetType === "merc" && hero.mercenaries && hero.mercenaries[targetIdx] && hero.mercenaries[targetIdx].disease) {
+    var m = hero.mercenaries[targetIdx];
+    curedName = m.disease.name;
+    patientName = m.name;
+    m.disease = null;
+    m.hp = Math.min(m.maxHp, m.hp + Math.max(10, Math.round(m.maxHp * 0.25)));
+  } else if (Array.isArray(hero.diseases) && hero.diseases.length > 0) {
+    var idx = (targetType === "hero" && targetIdx !== undefined && hero.diseases[targetIdx]) ? targetIdx : 0;
+    var curedObj = hero.diseases.splice(idx, 1)[0];
+    curedName = curedObj.name;
+    patientName = hero.name;
+  } else {
+    for (var i = 0; i < (hero.mercenaries || []).length; i++) {
+      if (hero.mercenaries[i] && hero.mercenaries[i].disease) {
+        curedName = hero.mercenaries[i].disease.name;
+        patientName = hero.mercenaries[i].name;
+        hero.mercenaries[i].disease = null;
+        hero.mercenaries[i].hp = Math.min(hero.mercenaries[i].maxHp, hero.mercenaries[i].hp + Math.round(hero.mercenaries[i].maxHp * 0.25));
+        break;
+      }
+    }
+  }
+  if (!curedName) return;
+
+  hero.gems -= VESPERA_DISEASE_GEM_COST;
+  syncHeroVitalityMaxHp(hero);
+  var healAmt = Math.max(15, Math.round(hero.maxHp * 0.25));
+  hero.hp = Math.min(hero.maxHp, hero.hp + healAmt);
+  playSfx("levelup");
+  if (window.playAmbianceChord) playAmbianceChord("bell");
+  if (window.spawnCanvasParticles) spawnCanvasParticles("void", 38);
+  var remDis = countTotalPartyDiseases(hero);
+  var vMsg = "💎🩺 <b style='color:#c084fc;'>DRAGON-GLASS CAUTERIZATION COMPLETE (-" + VESPERA_DISEASE_GEM_COST + "💎 Dragon Gems • " + hero.gems + "💎 Left):</b><br>" +
+    "<b>Sister Vespera</b> crushed fifteen resonant Dragon Gems into incandescent astral glass, burning <b>🦠 " + escapeHtml(curedName) + "</b> out of <b>" + escapeHtml(patientName) + "&apos;s</b> veins and restoring <b style='color:#4ade80;'>+25% HP</b>!<br>" +
+    "• <b>Remaining Party Diseases:</b> " + (remDis > 0 ? ("<span style='color:#fca5a5;font-weight:bold;'>" + remDis + " Still Active</span>") : "<span style='color:#4ade80;font-weight:bold;'>0 (Clean Bill of Health!)</span>");
+  addLog(vMsg);
+  queueSaveHero();
+  renderGameScreen();
+  showOutcomeModal("💎 Sister Vespera Purged " + curedName + "!", "💎🩺", "vespera", "#c084fc", vMsg, "vespera");
+};
 
 function ensureCompanionVitals(h) {
   var t = h || hero;
   if (!t) return;
   if (!t.petCooldowns || typeof t.petCooldowns !== "object") t.petCooldowns = {};
+  if (!Array.isArray(t.fallenChildren)) t.fallenChildren = [];
+  getFallenChildrenList(t);
+
+  if (Array.isArray(t.children) && t.children.length > MAX_CHILDREN_PER_PRINCESS && (!t.marriedConsorts || t.marriedConsorts.length <= 1)) {
+    while (t.children.length > MAX_CHILDREN_PER_PRINCESS) {
+      var extraCh = t.children.pop();
+      if (extraCh) {
+        t.fallenChildren.push({
+          name: extraCh.name,
+          icon: extraCh.icon || "🪦",
+          motherName: extraCh.motherName || (t.spouse ? t.spouse.name : "Royal Consort"),
+          slainBy: "Inscribed on Ancestral Family Tree Memorial"
+        });
+      }
+    }
+    if (t.activeChildIdx >= t.children.length) t.activeChildIdx = t.children.length - 1;
+  }
+
   if (!t.consortChildrenCount || typeof t.consortChildrenCount !== "object") {
     t.consortChildrenCount = {};
-    if (Array.isArray(t.children) && t.children.length > 0 && t.spouse) {
+    if (t.spouse) {
       var mKey = t.spouse.id || t.spouse.name;
-      t.consortChildrenCount[mKey] = Math.min(MAX_CHILDREN_PER_PRINCESS, t.children.length);
+      t.consortChildrenCount[mKey] = Math.min(MAX_CHILDREN_PER_PRINCESS, (t.children ? t.children.length : 0) + t.fallenChildren.length);
     }
   }
   if (!t.companion) return;
@@ -17257,7 +18324,6 @@ function syncHeirAndHelperCaps(h) {
   }
 }
 
-// Override conceiveDynastyChild: Enforces Ultimate 3-Child Lifetime Cap Per Princess (Deaths Still Count Toward the 3!)
 window.conceiveDynastyChild = function() {
   ensureHeroV3Fields(hero);
   ensureCompanionVitals(hero);
@@ -17329,7 +18395,6 @@ window.conceiveDynastyChild = function() {
   showOutcomeModal("👶 Royal Heir Welcomed (" + newBornTotal + "/3)!", newCh.icon, newCh.name, "#4ade80", chMsg, "courting");
 };
 
-// Override adoptOrEquipCompanion: Enforces 7-Day Wild-Soul Reincarnation Cooldown & Lore when a Pet Dies!
 var _origAdoptOrEquipCompanion = window.adoptOrEquipCompanion;
 window.adoptOrEquipCompanion = function(compId) {
   ensureHeroV3Fields(hero);
@@ -17354,20 +18419,19 @@ window.adoptOrEquipCompanion = function(compId) {
   renderGameScreen();
 };
 
-// Mortal Animal Companion Check: Summoned pets take combat damage, die at 0 HP, and enter a 7-Day Weald-Stone Reincarnation Cooldown!
 function checkCompanionMortality(cObj) {
   if (!hero || !hero.companion || !cObj || cObj.hp <= 0) return false;
   ensureCompanionVitals(hero);
   if (cObj.stunned || hero.envStance === "chokepoint" || (cObj.tauntedTurns || 0) > 0) return false;
 
   var effRecOrder = getEffectiveRecruitOrder();
-  var petHitChance = cObj.bossCharging ? 0.65 : (effRecOrder === "protect" ? 0.55 : (effRecOrder === "defend" ? 0.25 : 0.36));
+  var petHitChance = cObj.bossCharging ? 0.50 : (effRecOrder === "protect" ? 0.45 : (effRecOrder === "defend" ? 0.18 : 0.28));
   if (Math.random() > petHitChance) return false;
 
   var st = getHeroStats();
-  var rawEnemyAtk = Math.max(12, (cObj.atk || 25) - Math.round(st.def * 0.42));
-  var petDmgMult = (effRecOrder === "defend") ? 0.35 : (cObj.bossCharging ? 0.65 : 0.45);
-  var petDmg = Math.max(6, Math.round(rawEnemyAtk * petDmgMult * (0.85 + Math.random() * 0.25)));
+  var rawEnemyAtk = Math.max(10, (cObj.atk || 20) - Math.round(st.def * 0.48));
+  var petDmgMult = (effRecOrder === "defend") ? 0.28 : (cObj.bossCharging ? 0.50 : 0.35);
+  var petDmg = Math.max(5, Math.round(rawEnemyAtk * petDmgMult * (0.85 + Math.random() * 0.25)));
 
   hero.companion.hp = Math.max(0, (hero.companion.hp || hero.companion.maxHp) - petDmg);
   if (hero.companion.hp <= 0) {
@@ -17385,7 +18449,7 @@ function checkCompanionMortality(cObj) {
       icon: deadPet.icon || "🐾",
       slainBy: cObj.name || "Enemy Strike"
     });
-    if (hero.fallenHeroes.length > 15) hero.fallenHeroes.pop();
+    if (hero.fallenHeroes.length > 10) hero.fallenHeroes.pop();
     cObj.avengingWrathTurns = 2;
     playSfx("death");
     addLog("🐾💀 <b style='color:#ef4444;'>ANIMAL COMPANION SLAIN IN BATTLE!</b> <b>" + (deadPet.icon || "🐾") + " " + escapeHtml(deadPet.name) + "</b> fell before <b>" + escapeHtml(cObj.name) + "</b>! Its spirit scattered into the Whispering Weald (<b>7-Day Weald-Stone Reincarnation Rite started</b>, +2% Martyr DEF &amp; Avenging Wrath triggered)!");
@@ -17405,67 +18469,6 @@ function checkCompanionMortality(cObj) {
   }
 }
 
-var _origGenSingleQuest = window.generateSingleBoardQuest;
-window.generateSingleBoardQuest = function(h, targetAreaId, forceType) {
-  var q = _origGenSingleQuest(h, targetAreaId, forceType);
-  if (q && h) {
-    var aId = q.areaId || 1;
-    var curTier = (h.areaQuestTier && h.areaQuestTier[aId]) ? h.areaQuestTier[aId] : 0;
-    var nextTier = Math.min(REQ_BOSS_WARRANT_TIERS, curTier + 1);
-    q.tier = nextTier;
-    q.isBossUnlockQuest = (curTier < REQ_BOSS_WARRANT_TIERS);
-    q.rewardGems = (nextTier >= REQ_BOSS_WARRANT_TIERS ? 1 : 0);
-  }
-  return q;
-};
-
-window.turnInBoardQuest = function(qIdx) {
-  ensureHeroV3Fields(hero);
-  var q = hero.boardQuests[qIdx];
-  if (!q) return;
-  var prog = getBoardQuestProgress(q);
-  if (prog < q.reqQty) {
-    showRequirementModal(
-      "Warrant Incomplete (" + prog + " / " + q.reqQty + ")", q.matIcon || "📋",
-      "You need <b>" + q.reqQty + "x " + escapeHtml(q.matName) + "</b> to claim this Warrant reward (Currently have <b>" + prog + "</b>).",
-      (q.qType === "kill" && !q.accepted) ? "⚠️ Make sure you click <b>💬 Parley ➔ 📌 Sign Warrant</b> first so your kills are tracked!" : ("Patrol <b>" + escapeHtml(q.areaName) + "</b> in the Realms tab to finish collecting!"),
-      ""
-    );
-    return;
-  }
-  if (q.qType !== "kill") {
-    hero.materials[q.matName] = Math.max(0, (hero.materials[q.matName] || 0) - q.reqQty);
-  }
-  var st = getHeroStats();
-  var gWon = Math.round(q.rewardGold * st.goldBonusMult);
-  var xpWon = Math.round(q.rewardXp * (serverData.xpMult || 1));
-  hero.gold += gWon;
-  hero.xp += xpWon;
-  addHeroFame(18);
-  var curT = hero.areaQuestTier[q.areaId] || 0;
-  var newT = Math.min(REQ_BOSS_WARRANT_TIERS, curT + 1);
-  hero.areaQuestTier[q.areaId] = newT;
-  var gemAwarded = (newT === REQ_BOSS_WARRANT_TIERS) ? 1 : 0;
-  if (gemAwarded) hero.gems = (hero.gems || 0) + gemAwarded;
-  if (hero.guild && hero.guild.founded) {
-    hero.guild.stability = Math.min(100, (hero.guild.stability || 75) + (q.rewardStability || 5));
-  }
-
-  var nextType = (q.qType === "kill") ? "gather" : "kill";
-  hero.boardQuests[qIdx] = generateSingleBoardQuest(hero, q.areaId, nextType);
-  playSfx("levelup");
-  if (window.spawnCanvasParticles) window.spawnCanvasParticles("gold", 35);
-  var msg = "🏆📜 <b>ROYAL WARRANT COMPLETED (" + escapeHtml(q.areaName) + " Tier " + newT + "/" + REQ_BOSS_WARRANT_TIERS + ")!</b><br>" +
-    "• <b>Rewards:</b> +" + xpWon.toLocaleString() + " XP, +" + gWon.toLocaleString() + " Gold &amp; +18 Court Fame" +
-    (gemAwarded ? (" &amp; <b>+1💎 Dragon Gem</b>!") : "!") +
-    (newT >= REQ_BOSS_WARRANT_TIERS ? "<br>🐉 <b style='color:#4ade80;'>RARE BOSS LAIR UNSEALED (10/10)!</b> You have tracked down the Region Boss's lair!" : ("<br>🔎 <b>Boss Lair Tracking:</b> Complete <b>" + (REQ_BOSS_WARRANT_TIERS - newT) + " more Warrant(s)</b> in this region to unseal the Area Boss!"));
-  addLog(msg);
-  checkLevelUp();
-  saveCurrentHero(null, false, null);
-  renderGameScreen();
-  showOutcomeModal("🏆 Warrant Claimed (Tier " + newT + "/" + REQ_BOSS_WARRANT_TIERS + ")!", q.giverIcon || "📋", q.giver, "#4ade80", msg, null);
-};
-
 function scaleHardcoreCombatantStats(c) {
   if (!c || !hero || c._hardcoreScaled) return;
   c._hardcoreScaled = true;
@@ -17483,18 +18486,18 @@ function scaleHardcoreCombatantStats(c) {
   if (hero.activeChildIdx >= 0 && hero.children && hero.children[hero.activeChildIdx]) {
     helperOffense += (hero.children[hero.activeChildIdx].atk || 15);
   }
-  if (hero.companion) helperOffense += (10 + hLv * 2.2);
+  if (hero.companion) helperOffense += (8 + hLv * 1.8);
 
   var isAnyBoss = !!(c.isBoss || c.isDelveBoss || c.isSpire || c.isWorldRaid || c.isZoneRaid || c.isHolidayBoss || c.isNemesis || c.isWeatherApex || c.isRoamingMiniBoss);
 
   if (isAnyBoss) {
     var isDelveB = !!c.isDelveBoss;
-    c.level = Math.max(c.level || 1, hLv + (isDelveB ? 2 : (c.isRoamingMiniBoss ? 1 : 2)));
-    var estBossRoundBurst = Math.round((heroOffense * 1.65) + (helperOffense * 0.90));
-    var minRoundsRequired = c.isWorldRaid ? 11 : (c.isZoneRaid ? 8 : (isDelveB ? 5.4 : (c.isRoamingMiniBoss ? 3.6 : 4.6)));
+    c.level = Math.max(c.level || 1, hLv + 1);
+    var estBossRoundBurst = Math.round((heroOffense * 1.15) + (helperOffense * 0.65));
+    var minRoundsRequired = c.isWorldRaid ? 8 : (c.isZoneRaid ? 5 : (isDelveB ? 3.5 : (c.isRoamingMiniBoss || c.isNemesis ? 2.4 : 3.0)));
     var dynamicBossHpFloor = Math.round(estBossRoundBurst * minRoundsRequired);
-    var rawHpMult = (c.isWorldRaid || c.isZoneRaid) ? 1.50 : (isDelveB ? 2.95 : 2.50);
-    var rawMultipliedHp = Math.round((c.maxHp || 750) * rawHpMult);
+    var rawHpMult = (c.isWorldRaid || c.isZoneRaid) ? 1.15 : (isDelveB ? 1.65 : 1.45);
+    var rawMultipliedHp = Math.round((c.maxHp || 550) * rawHpMult);
 
     var usedSab = (c.loreIntro && c.loreIntro.indexOf("-15%") >= 0);
     var newMaxHp = Math.max(rawMultipliedHp, dynamicBossHpFloor);
@@ -17502,46 +18505,81 @@ function scaleHardcoreCombatantStats(c) {
     c.hp = usedSab ? Math.round(newMaxHp * 0.85) : newMaxHp;
 
     var usedIntel = (c.loreIntro && c.loreIntro.indexOf("-20% Armor") >= 0);
-    var armPct = isDelveB ? 0.38 : 0.34;
+    var armPct = isDelveB ? 0.25 : 0.22;
     var newMaxArmor = Math.round(newMaxHp * armPct * (usedIntel ? 0.80 : 1.0));
-    c.maxArmor = Math.max(c.maxArmor || 160, newMaxArmor);
+    c.maxArmor = Math.max(80, newMaxArmor);
     c.armor = c.maxArmor;
 
-    var minBossDef = Math.round(heroOffense * 0.36 + c.level * 3.2);
-    c.def = Math.max(Math.round((c.def || 16) * 1.35), minBossDef);
-
-    var minBossAtk = Math.round((hero.maxHp * (isDelveB ? 0.26 : 0.23)) + (st.def * 0.42));
-    c.atk = Math.max(Math.round((c.atk || 26) * 1.30), minBossAtk);
-    c.eva = Math.max(c.eva || 14, 15 + Math.min(18, Math.floor(c.level / 5)));
-    c.acc = Math.max(c.acc || 96, st.dodgePct + 64);
-    c.crit = Math.max(c.crit || 15, isDelveB ? 18 : 16);
+    c.def = Math.max(10, Math.min(Math.round((c.def || 14) * 0.95), Math.round(heroOffense * 0.24 + c.level * 2.2)));
+    var maxSafeBossAtk = Math.round((hero.maxHp * (isDelveB ? 0.17 : 0.14)) + (st.def * 0.35));
+    c.atk = Math.max(16, Math.min(Math.round((c.atk || 22) * 0.95), maxSafeBossAtk));
+    c.eva = Math.min(20, Math.max(10, c.eva || 12));
+    c.acc = Math.min(108, Math.max(88, (c.acc || 92)));
+    c.crit = Math.min(16, c.crit || 14);
   } else if ((c.areaId || 1) > 1 || c.isGauntlet || c.isGuard || c.isHerald) {
     var isEliteMob = !!(c.isHerald || c.isGuard || c.isHolidayMob || c.isZombie || c.isVampire || c.isWerewolf || c.isPvp || c.isGauntlet || /^(Frenzied|Armored|Venomous|Vampiric|Arcane|Cursed|Savage|Giant|Spectral|Infernal|Elder|Golden) /.test(c.name || ""));
     c._isEliteMob = isEliteMob;
     c._upgradedPostShireMob = true;
-    c.level = Math.max(c.level || 1, hLv);
 
-    var estMobRoundBurst = Math.round((heroOffense * 1.45) + (helperOffense * 0.85));
-    var mobRoundsTarget = isEliteMob ? (2.4 + Math.random() * 0.5) : (1.7 + Math.random() * 0.4);
-    var dynamicMobHpFloor = Math.round(estMobRoundBurst * mobRoundsTarget);
-    var rawMobMultHp = Math.round((c.maxHp || 240) * (isEliteMob ? 2.00 : 1.55));
-
-    c.maxHp = Math.max(rawMobMultHp, dynamicMobHpFloor);
+    var smoothHpMult = isEliteMob ? 0.82 : 0.70;
+    c.maxHp = Math.max(65, Math.round((c.maxHp || 160) * smoothHpMult));
     c.hp = c.maxHp;
 
-    var armRatio = (c.trait === "Armored" || isEliteMob) ? 0.34 : 0.25;
-    c.maxArmor = Math.max(c.maxArmor || 80, Math.round(c.maxHp * armRatio));
+    var armRatio = (c.trait === "Armored" || isEliteMob) ? 0.22 : 0.15;
+    c.maxArmor = Math.max(25, Math.round(c.maxHp * armRatio));
     c.armor = c.maxArmor;
 
-    var minMobDef = Math.round(heroOffense * 0.30 + c.level * 2.6);
-    c.def = Math.max(Math.round((c.def || 10) * 1.25), minMobDef);
-
-    var minMobAtk = Math.round((hero.maxHp * (isEliteMob ? 0.20 : 0.16)) + (st.def * 0.40));
-    c.atk = Math.max(Math.round((c.atk || 16) * 1.20), minMobAtk);
-    c.eva = Math.max(c.eva || 10, 12 + Math.min(15, Math.floor(c.level / 6)));
-    c.acc = Math.max(c.acc || 88, st.dodgePct + 58);
-    c.crit = Math.max(c.crit || 12, isEliteMob ? 15 : 12);
+    c.def = Math.max(6, Math.round((c.def || 10) * 0.80));
+    var maxSafeMobAtk = Math.round((hero.maxHp * (isEliteMob ? 0.14 : 0.11)) + (st.def * 0.32));
+    c.atk = Math.max(12, Math.min(Math.round((c.atk || 16) * 0.82), maxSafeMobAtk));
+    c.eva = Math.min(16, Math.max(8, c.eva || 10));
+    c.acc = Math.min(100, Math.max(84, c.acc || 88));
+    c.crit = isEliteMob ? 13 : 10;
   }
+}
+'''
+}
+
+String buildV16ChunkB2d3() {
+    return '''
+function enforceRandomEncounterScarcityCap(prevGems, prevSp, prevLv) {
+  if (!hero) return;
+  var leveledUp = (hero.level || 1) > prevLv;
+  var spGain = (hero.skillPoints || 0) - prevSp;
+  if (!leveledUp && spGain > 0) {
+    if ((hero.randomSkillPtsToday || 0) >= 1 || Math.random() < 0.85) {
+      hero.skillPoints = prevSp;
+      var xpComp = Math.max(45, (hero.level || 1) * 35);
+      hero.xp = (hero.xp || 0) + xpComp;
+    } else {
+      hero.skillPoints = prevSp + 1;
+      hero.randomSkillPtsToday = (hero.randomSkillPtsToday || 0) + 1;
+    }
+  }
+  var gemGain = (hero.gems || 0) - prevGems;
+  if (gemGain > 0) {
+    if ((hero.randomGemsToday || 0) >= 1 || Math.random() < 0.70) {
+      hero.gems = prevGems;
+      var gComp = Math.max(60, (hero.level || 1) * 40);
+      hero.gold = (hero.gold || 0) + gComp;
+    } else {
+      hero.gems = prevGems + 1;
+      hero.randomGemsToday = (hero.randomGemsToday || 0) + 1;
+    }
+  }
+}
+
+var _origResolveStoryChoice = window.resolveStoryChoice;
+if (_origResolveStoryChoice && !window._storyScarcityWrapped) {
+  window._storyScarcityWrapped = true;
+  window.resolveStoryChoice = function(choiceIdx) {
+    var pGems = hero ? (hero.gems || 0) : 0;
+    var pSp = hero ? (hero.skillPoints || 0) : 0;
+    var pLv = hero ? (hero.level || 1) : 1;
+    _origResolveStoryChoice(choiceIdx);
+    enforceRandomEncounterScarcityCap(pGems, pSp, pLv);
+    renderGameScreen();
+  };
 }
 
 var _origEmbarkOnQuest = window.embarkOnQuest;
@@ -17575,7 +18613,20 @@ window.embarkOnQuest = function(mode) {
     }
   }
 
+  var pGems = hero ? (hero.gems || 0) : 0;
+  var pSp = hero ? (hero.skillPoints || 0) : 0;
+  var pLv = hero ? (hero.level || 1) : 1;
+
   _origEmbarkOnQuest(mode);
+
+  if (mode === "patrol" && !activeCombat) {
+    enforceRandomEncounterScarcityCap(pGems, pSp, pLv);
+  }
+
+  if ((mode === "soloBoss" || mode === "zoneRaid") && activeCombat) {
+    activeCombat.isTrueAreaBoss = true;
+    if (hero.zoneBossDaily) hero.zoneBossDaily[area.id] = 0;
+  }
 
   if (mode === "patrol" && activeCombat && activeCombat.isRoamingMiniBoss && !activeCombat.isRevenant && !activeCombat.isTrophyEcho && Math.random() < 0.75) {
     var mob = area.enemies[Math.floor(Math.random() * area.enemies.length)];
@@ -17583,7 +18634,7 @@ window.embarkOnQuest = function(mode) {
     var eLv = activeCombat.level || area.minLv;
     var areaMult = (area.id > 1) ? AREA_POST_SHIRE_MULT : 1.0;
     var baseHp = Math.round((78 + (eLv * 44) + Math.pow(eLv, 1.75) * 6.2) * affix.multHp * areaMult);
-    var baseArm = Math.round(baseHp * 0.30);
+    var baseArm = Math.round(baseHp * 0.20);
     activeCombat = {
       isBoss: false, isWorldRaid: false, isZoneRaid: false, isDelveBoss: false, isSpire: false, isHerald: false, isPvp: false,
       areaId: area.id, baseMobName: mob.name, trait: mob.trait || "Fierce",
@@ -17608,23 +18659,12 @@ window.embarkOnQuest = function(mode) {
 var _origResolveDelveChoice = window.resolveDelveChoice;
 window.resolveDelveChoice = function(which) {
   syncHeirAndHelperCaps(hero);
-  var prevTorches = activeDelve ? activeDelve.torches : 0;
-  var prevStep = activeDelve ? activeDelve.step : 0;
-
+  var pGems = hero ? (hero.gems || 0) : 0;
+  var pSp = hero ? (hero.skillPoints || 0) : 0;
+  var pLv = hero ? (hero.level || 1) : 1;
   _origResolveDelveChoice(which);
-
-  if (activeDelve && prevStep < 4 && activeDelve.torches < prevTorches && hero) {
-    var extraTrapDmg = Math.max(6, Math.round(hero.maxHp * 0.06));
-    var mpDrain = Math.max(2, Math.round(hero.maxMp * 0.14));
-    hero.hp = Math.max(1, hero.hp - extraTrapDmg);
-    hero.mp = Math.max(0, hero.mp - mpDrain);
-    var extraStress = addHeroStress(5);
-    if (activeDelve.lastResultHtml) {
-      activeDelve.lastResultHtml += "<br>🩸 <b style='color:#f87171;'>Delve Hazard Strain:</b> Lost an additional <b>-" + extraTrapDmg + " HP, -" + mpDrain + " MP &amp; +5% Stress</b>!" + extraStress;
-    }
-    renderBattleModal();
-  }
-
+  if (!activeCombat) enforceRandomEncounterScarcityCap(pGems, pSp, pLv);
+  if (window.updateAmbianceVignetteOverlay) updateAmbianceVignetteOverlay();
   if (activeCombat) {
     scaleHardcoreCombatantStats(activeCombat);
     renderBattleModal();
@@ -17637,31 +18677,43 @@ window.combatAction = function(act) {
   syncHeirAndHelperCaps(hero);
   scaleHardcoreCombatantStats(activeCombat);
 
-  var isExecuteOrRansom = (act === "execute" || act === "ransom");
-  var isProtectedBoss = !!(activeCombat.isBoss || activeCombat.isDelveBoss || activeCombat.isSpire || activeCombat.isHolidayBoss || activeCombat.isNemesis || activeCombat.isWeatherApex);
-  var isPostShireUpgradedMob = !isProtectedBoss && !!activeCombat._upgradedPostShireMob;
-  var startRoundHp = activeCombat.hp;
-  var hadUnbrokenArmorAtStart = ((activeCombat.armor || 0) > 0 && (activeCombat.armorBrokenTurns || 0) <= 0);
-  var isRoundOne = ((activeCombat.battleRound || 0) === 0);
-
-  var maxRoundLossPct = 1.0;
-  if (isProtectedBoss) {
-    maxRoundLossPct = activeCombat.isDelveBoss ? 0.30 : 0.34;
-  } else if (isPostShireUpgradedMob && !isExecuteOrRansom) {
-    if (hadUnbrokenArmorAtStart || isRoundOne) {
-      maxRoundLossPct = activeCombat._isEliteMob ? 0.55 : 0.65;
+  if (act === "flee" && (activeCombat.isRoamingMiniBoss || activeCombat.isNemesis || activeCombat.isHerald)) {
+    var stFlee = getHeroStats();
+    var fleeChance = Math.min(92, 75 + Math.max(0, Math.round((stFlee.dodgePct - (activeCombat.eva || 12)) * 0.5)));
+    if ((Math.random() * 100) < fleeChance) {
+      var fledFrom = activeCombat.name;
+      activeCombat = null;
+      lastCombatBanner = null;
+      addLog("🏃💨 <b style='color:#4ade80;'>ESCAPED ROAMING ENCOUNTER (" + fleeChance + "% Odds)!</b> You slipped past <b>" + escapeHtml(fledFrom) + "</b> and retreated safely!");
+      whisperAncestorToast("Discretion is the better part of valor—live to bleed another day.");
+      queueDeltaSaveHero();
+      renderGameScreen();
+      if (window.checkAndShowPostBattleDiseasePopup) checkAndShowPostBattleDiseasePopup();
+      return;
+    } else {
+      addLog("⚠️🏃 <b>Escape Blocked (" + fleeChance + "% Odds):</b> <b>" + escapeHtml(activeCombat.name) + "</b> cut off your retreat and struck as you turned!");
+      var blockDmg = Math.max(6, Math.round((activeCombat.atk || 18) * 0.55 - stFlee.def * 0.45));
+      hero.hp = Math.max(1, hero.hp - blockDmg);
+      floatingHeroTag = { text: "-" + blockDmg + " HP (BLOCKED)", color: "#ef4444" };
+      renderBattleModal();
+      return;
     }
   }
 
+  var isExecuteOrRansom = (act === "execute" || act === "ransom");
+  var isProtectedBoss = !!(activeCombat.isBoss || activeCombat.isDelveBoss || activeCombat.isSpire || activeCombat.isHolidayBoss || activeCombat.isNemesis || activeCombat.isWeatherApex);
+  var startRoundHp = activeCombat.hp;
+
+  var maxRoundLossPct = isProtectedBoss ? (activeCombat.isDelveBoss ? 0.40 : 0.45) : 1.0;
   var maxSingleRoundLoss = Math.max(1, Math.round(activeCombat.maxHp * maxRoundLossPct));
-  var minAllowedHpAfterRound = (isProtectedBoss || (isPostShireUpgradedMob && maxRoundLossPct < 1.0)) ? Math.max(0, startRoundHp - maxSingleRoundLoss) : 0;
+  var minAllowedHpAfterRound = isProtectedBoss ? Math.max(0, startRoundHp - maxSingleRoundLoss) : 0;
   var phaseGateFloor = Math.round(activeCombat.maxHp * 0.50);
   var mustStopAtPhaseGate = isProtectedBoss && !activeCombat.phase2Triggered && (startRoundHp > phaseGateFloor);
 
   var _realVictory = window.handleCombatVictory;
   var wardBlockedKill = false;
   window.handleCombatVictory = function() {
-    if (activeCombat && !isExecuteOrRansom && (mustStopAtPhaseGate || minAllowedHpAfterRound > 0)) {
+    if (activeCombat && !isExecuteOrRansom && isProtectedBoss && (mustStopAtPhaseGate || minAllowedHpAfterRound > 0)) {
       wardBlockedKill = true;
       var clampedHp = mustStopAtPhaseGate ? Math.max(phaseGateFloor, minAllowedHpAfterRound) : minAllowedHpAfterRound;
       activeCombat.hp = Math.max(1, clampedHp);
@@ -17676,28 +18728,25 @@ window.combatAction = function(act) {
     window.handleCombatVictory = _realVictory;
   }
 
-  if (activeCombat && !isExecuteOrRansom && (isProtectedBoss || isPostShireUpgradedMob)) {
+  if (activeCombat && !isExecuteOrRansom && isProtectedBoss) {
     var targetFloor = mustStopAtPhaseGate ? Math.max(phaseGateFloor, minAllowedHpAfterRound) : minAllowedHpAfterRound;
     if (activeCombat.hp < targetFloor && activeCombat.hp > 0) {
       activeCombat.hp = targetFloor;
       wardBlockedKill = true;
     }
     if (wardBlockedKill && activeCombat.hp > 0) {
-      if (isProtectedBoss) {
-        if (mustStopAtPhaseGate && activeCombat.hp <= phaseGateFloor && !activeCombat.phase2Triggered) {
-          activeCombat.phase2Triggered = true;
-          activeCombat.armor = Math.round((activeCombat.maxArmor || 400) * 0.65);
-          activeCombat.armorBrokenTurns = 0;
-          activeCombat.stunned = false;
-          activeCombat.poiseBroken = false;
-          activeCombat.poise = 100;
-          activeCombat.bossCharging = true;
-          addLog("🐉🛡️ <b style='color:#fde047;'>BOSS PHASE-GATE AEGIS (50% HP)!</b> <b>" + escapeHtml(activeCombat.name) + "</b> braced at 50% HP, reforged <b>65% Armor</b>, and is charging an <b>Annihilation Cleave</b>!");
-        } else {
-          addLog("🛡️⚡ <b style='color:#fca5a5;'>SOVEREIGN BOSS WARD:</b> Bosses cannot lose more than <b>" + Math.round(maxRoundLossPct * 100) + "% Max HP</b> in a single round (Clamped at <b>" + activeCombat.hp.toLocaleString() + " / " + activeCombat.maxHp.toLocaleString() + " HP</b>)!");
-        }
+      if (mustStopAtPhaseGate && activeCombat.hp <= phaseGateFloor && !activeCombat.phase2Triggered) {
+        activeCombat.phase2Triggered = true;
+        activeCombat.armor = Math.round((activeCombat.maxArmor || 300) * 0.50);
+        activeCombat.armorBrokenTurns = 0;
+        activeCombat.stunned = false;
+        activeCombat.poiseBroken = false;
+        activeCombat.poise = 100;
+        activeCombat.bossCharging = true;
+        addLog("🐉🛡️ <b style='color:#fde047;'>BOSS PHASE-GATE AEGIS (50% HP)!</b> <b>" + escapeHtml(activeCombat.name) + "</b> braced at 50% HP, reforged <b>50% Armor</b>, and is charging an <b>Annihilation Cleave</b>!");
+        whisperAncestorToast("The beast refuses the grave—brace for its wrath!");
       } else {
-        addLog("🛡️⚔️ <b style='color:#fde68a;'>ARMORED GRIT:</b> <b>" + escapeHtml(activeCombat.name) + "</b> survived behind its unbroken armor at <b>" + activeCombat.hp.toLocaleString() + " / " + activeCombat.maxHp.toLocaleString() + " HP</b>!");
+        addLog("🛡️⚡ <b style='color:#fca5a5;'>SOVEREIGN BOSS WARD:</b> Bosses cannot lose more than <b>" + Math.round(maxRoundLossPct * 100) + "% Max HP</b> in a single round (Clamped at <b>" + activeCombat.hp.toLocaleString() + " / " + activeCombat.maxHp.toLocaleString() + " HP</b>)!");
       }
       renderBattleModal();
     }
@@ -17712,10 +18761,40 @@ window.combatAction = function(act) {
 
 var _origHandleCombatVictory = window.handleCombatVictory;
 window.handleCombatVictory = function() {
-  var wasAreaBossFight = activeCombat && activeCombat.isBoss && !activeCombat.isDelveBoss && !activeCombat.isSpire && !activeCombat.isWorldRaid && !activeCombat.isGauntlet && !activeCombat.isRevenant && !activeCombat.isMirrorClone && !activeCombat.isGuard && !activeCombat.isWeatherApex && !activeCombat.isRoamingMiniBoss && !activeCombat.isTrophyEcho && !activeCombat.isHolidayBoss && !activeCombat.isNemesis;
-  var defeatedAreaId = activeCombat ? activeCombat.areaId : null;
+  var cSnap = activeCombat;
+  var wasTrueAreaBoss = !!(cSnap && (cSnap.isTrueAreaBoss || (cSnap.isBoss && !cSnap.isDelveBoss && !cSnap.isSpire && !cSnap.isWorldRaid && !cSnap.isZoneRaid && !cSnap.isGauntlet && !cSnap.isRevenant && !cSnap.isMirrorClone && !cSnap.isGuard && !cSnap.isWeatherApex && !cSnap.isRoamingMiniBoss && !cSnap.isTrophyEcho && !cSnap.isHolidayBoss && !cSnap.isNemesis && !cSnap.isHerald && !cSnap.isPvp)));
+  var wasZoneRaidFight = !!(cSnap && cSnap.isZoneRaid);
+  var defeatedAreaId = cSnap ? cSnap.areaId : null;
+
+  var prevUnlockedArea = hero ? (hero.unlockedArea || 1) : 1;
+  var prevBossesDefeated = (hero && Array.isArray(hero.bossesDefeated)) ? hero.bossesDefeated.slice() : [];
+  var prevTrophyWall = (hero && Array.isArray(hero.trophyWall)) ? hero.trophyWall.slice() : [];
+  var prevGems = hero ? (hero.gems || 0) : 0;
+
   _origHandleCombatVictory();
-  if (wasAreaBossFight && defeatedAreaId && hero) {
+
+  if (hero && cSnap && !wasTrueAreaBoss && !wasZoneRaidFight && !cSnap.isSpire && !cSnap.isGauntlet && !cSnap.isWorldRaid) {
+    var gemDiff = (hero.gems || 0) - prevGems;
+    if (gemDiff > 0) {
+      var allowedGem = (cSnap && (cSnap.isDelveBoss || cSnap.isNemesis || Math.random() < 0.45)) ? 1 : 0;
+      hero.gems = prevGems + allowedGem;
+    }
+  }
+
+  if (hero && !wasTrueAreaBoss && !wasZoneRaidFight) {
+    if (hero.unlockedArea > prevUnlockedArea) {
+      hero.unlockedArea = prevUnlockedArea;
+      addLog("🔒🗺️ <b>Area Progression Locked:</b> Defeating a Roaming Boss, Rival, or Nemesis does not unseal the next realm—you must complete <b>10/10 Warrants</b> and defeat the <b>Area Boss</b>!");
+    }
+    hero.bossesDefeated = prevBossesDefeated;
+    hero.trophyWall = prevTrophyWall;
+  }
+
+  if ((wasTrueAreaBoss || wasZoneRaidFight) && defeatedAreaId && hero) {
+    if (!hero.zoneBossDaily) hero.zoneBossDaily = {};
+    hero.zoneBossDaily[defeatedAreaId] = 1;
+  }
+  if (wasTrueAreaBoss && defeatedAreaId && hero) {
     if (!hero.areaBossCooldownUntil) hero.areaBossCooldownUntil = {};
     hero.areaBossCooldownUntil[defeatedAreaId] = Date.now() + AREA_BOSS_RESPAWN_MS;
     hero.areaQuestTier[defeatedAreaId] = Math.max(0, (hero.areaQuestTier[defeatedAreaId] || REQ_BOSS_WARRANT_TIERS) - 5);
@@ -17725,7 +18804,47 @@ window.handleCombatVictory = function() {
   }
 };
 
-// Wrap renderKingdomAndGuildTabHtml so the Royal Kennels show 7-Day Weald-Stone Cooldowns & Toned-Down Evolution Costs!
+var _origHealAtSanctuary = window.healAtSanctuary;
+if (_origHealAtSanctuary && !window._sanctuaryPetHealWrapped) {
+  window._sanctuaryPetHealWrapped = true;
+  window.healAtSanctuary = function() {
+    _origHealAtSanctuary();
+    if (hero && hero.companion) {
+      ensureCompanionVitals(hero);
+      hero.companion.hp = hero.companion.maxHp;
+    }
+    if (window.playAmbianceChord) playAmbianceChord("bell");
+    if (window.updateAmbianceVignetteOverlay) updateAmbianceVignetteOverlay();
+  };
+}
+
+var _origRestAtTavernInn = window.restAtTavernInn;
+if (_origRestAtTavernInn && !window._innPetHealWrapped) {
+  window._innPetHealWrapped = true;
+  window.restAtTavernInn = function() {
+    _origRestAtTavernInn();
+    if (hero && hero.companion) {
+      ensureCompanionVitals(hero);
+      hero.companion.hp = hero.companion.maxHp;
+    }
+    if (window.playAmbianceChord) playAmbianceChord("lute");
+    if (window.updateAmbianceVignetteOverlay) updateAmbianceVignetteOverlay();
+  };
+}
+
+var _origWakeUpFromLodging = window.wakeUpFromLodging;
+if (_origWakeUpFromLodging && !window._wakePetHealWrapped) {
+  window._wakePetHealWrapped = true;
+  window.wakeUpFromLodging = function() {
+    _origWakeUpFromLodging();
+    if (hero && hero.companion) {
+      ensureCompanionVitals(hero);
+      hero.companion.hp = hero.companion.maxHp;
+    }
+    if (window.updateAmbianceVignetteOverlay) updateAmbianceVignetteOverlay();
+  };
+}
+
 var _origRenderKingdomTab = window.renderKingdomAndGuildTabHtml;
 if (_origRenderKingdomTab && !window._petKennelUiWrapped) {
   window._petKennelUiWrapped = true;
@@ -17754,9 +18873,208 @@ if (_origRenderKingdomTab && !window._petKennelUiWrapped) {
     return outHtml;
   };
 }
+'''
+}
+
+String buildV16ChunkB2d4() {
+    return '''
+// ============================================================================
+// THE GRAND ROYAL LIBRARY ENCYCLOPEDIA & SCROLL-LOCKED BATTLE ENGINE (v18.4.1)
+// ============================================================================
+var currentHelpSubTab = "ui";
+window.setHelpSubTab = function(sub) {
+  currentHelpSubTab = sub || "ui";
+  openGrandRoyalLibraryModal(currentHelpSubTab);
+};
+
+window.openGrandRoyalLibraryModal = function(sub) {
+  if (!window.hero) {
+    showGothicToast("⚠️ Load a Hero Slot first to open The Grand Royal Library!");
+    return;
+  }
+  if (sub) currentHelpSubTab = sub;
+  showPopupModal(
+    renderHelpEncyclopediaTabHtml() +
+    '<button class="btn" style="width:100%;margin-top:10px;" onclick="closePopupModal()">Leave the Grand Royal Library</button>'
+  );
+};
+
+function renderHelpEncyclopediaTabHtml() {
+  ensureHeroV3Fields(hero);
+  ensureCompanionVitals(hero);
+  var htm = '<div class="card-title"><span>📚 The Grand Royal Library &amp; Archives</span><button class="btn btn-shine" style="min-height:28px;padding:3px 9px;font-size:11px;" onclick="showHeroOnboardingLoreAndGuideModal(&#39;new&#39;)">📜 Starter Walkthrough</button></div>' +
+    '<div class="sub-nav-pills">' +
+      '<button class="btn ' + (currentHelpSubTab === "ui" ? "btn-gold" : "") + '" onclick="setHelpSubTab(&#39;ui&#39;)">🧭 UI &amp; World Guide</button>' +
+      '<button class="btn ' + (currentHelpSubTab === "diseases" ? "btn-crimson" : "") + '" onclick="setHelpSubTab(&#39;diseases&#39;)">🦠 Diseases &amp; Sanity</button>' +
+      '<button class="btn ' + (currentHelpSubTab === "quirks" ? "btn-sky" : "") + '" onclick="setHelpSubTab(&#39;quirks&#39;)">🎖️ Recruit Quirks &amp; Pets</button>' +
+      '<button class="btn ' + (currentHelpSubTab === "dynasty" ? "btn-arcane" : "") + '" onclick="setHelpSubTab(&#39;dynasty&#39;)">🏰 Citadel, Tavern &amp; Dynasty</button>' +
+    '</div>';
+
+  if (currentHelpSubTab === "ui") {
+    htm += '<div class="lore-subtitle-box">Welcome to <b>The Grand Royal Library of Valoria</b>. Below is a complete breakdown of every icon on your screen, how combat and Warrants work, and how to progress through all 22 Realms.</div>' +
+      '<div style="background:#0b0811;border:1px solid #c5a059;border-radius:6px;padding:10px;margin-bottom:10px;text-align:left;font-size:12px;line-height:1.6;">' +
+        '<div style="font-size:14px;font-weight:900;color:#fde047;font-family:Cinzel,serif;margin-bottom:6px;">📊 Top Hero Strip &amp; Status Icons Explained</div>' +
+        '<div>• <b>🗡️ ATK / 🛡️ DEF:</b> Your total melee/ranged Attack power and Armor Defense after all gear, skills, and active blessings.</div>' +
+        '<div>• <b>💰 Gold, 💎 Dragon Gems &amp; 📦 Trophies:</b> Gold buys gear, drinks, and strongholds. Dragon Gems socket gear, fuel the <b>⚡🔥 Astral Ley-Well</b>, and pay <b>Sister Vespera (15💎)</b> for emergency disease cures—<b>⚠️ carrying &gt;4💎 at midnight decays 15%</b> (seal up to 20💎 in your <b>🏦 Reliquary Vault</b>!). Surplus <b>📦 Monster Trophies</b> temper weapons and can be traded in bulk at <b>🏹🔥 Master Huntsman Kraven&apos;s Trophy Exchange</b>.</div>' +
+        '<div>• <b>🪽 Valkyrie Seals (Max 3/3):</b> Auto-resurrection stones (consecrate 1/day at the Cathedral). Taking a fatal blow shatters 1 Seal to revive you at 50% HP. Dying with <b>0 Seals</b> drops your <b>⚱️ Soul-Urn</b> in the Crypt for a one-chance Rescue Delve!</div>' +
+        '<div>• <b>🏅 Court Fame (Decays -8 every 45m):</b> Required to petition for higher Noble Ranks in <b>👑 The Obsidian High Court</b> and unlock higher-tier Inn suites.</div>' +
+        '<div>• <b>😰 Stress (0–100%), 🍺 Drunk &amp; 🦠 Diseases:</b> Cure Stress via <b>🥃 Aged Dragon-Malt (-50% Stress)</b> at the Boar&apos;s Head Tavern, sleeping in any bed <b>above the floor</b> (Cot, Feather Suite, or Royal Palace), or praying at the <b>🙏 Confessional Booth</b>. Cure Hero &amp; Recruit Diseases via the <b>🦠 Plague-Doctor&apos;s Leech Ward (2/day)</b> or <b>💎🩺 Sister Vespera (15💎, unlimited)</b>!</div>' +
+      '</div>' +
+      '<div style="background:#091318;border:1px solid #38bdf8;border-radius:6px;padding:10px;margin-bottom:10px;text-align:left;font-size:12px;line-height:1.6;">' +
+        '<div style="font-size:14px;font-weight:900;color:#7dd3fc;font-family:Cinzel,serif;margin-bottom:6px;">⚔️ Combat, Anatomical Targeting &amp; The 10/10 Warrant Loop</div>' +
+        '<div>• <b>📋 10/10 Royal Warrants Unseal Area Bosses:</b> Sign Kill or Gather Warrants on the <b>📋 Warrants</b> tab. Completing <b>10/10 Warrant Tiers</b> in a region awards <b>+1💎 Gem</b> and unseals that region&apos;s <b>Area Boss</b>.</div>' +
+        '<div>• <b>🛡️ Torso vs. 🎯 Head vs. 🦵 Legs:</b> Strike <b>🛡️ Torso</b> (or throw a <b>💣 Fire-Bomb</b>) first to break the Enemy Armor &amp; Poise bars (+40% DMG taken), then strike <b>🎯 Head</b> for 1.35x damage, Stuns, and Boss Limb Severing!</div>' +
+        '<div>• <b>⚖️ The Law of Six Blessings (6-Buff FIFO):</b> Temporary buffs cap at <b>6 active slots</b> (First-In, First-Out), while Innate Progression Passives and Debuffs/Diseases never displace!</div>' +
+      '</div>';
+  } else if (currentHelpSubTab === "diseases") {
+    var myDis = Array.isArray(hero.diseases) ? hero.diseases : [];
+    var mercDisList = [];
+    (hero.mercenaries || []).forEach(function(m) {
+      if (m && m.disease) mercDisList.push(m.name + ": " + m.disease.name);
+    });
+    var totalPartyDis = countTotalPartyDiseases(hero);
+    var myAff = hero.resolveState;
+    htm += '<div style="background:#1f090d;border:2px solid #ef4444;border-radius:6px;padding:10px;margin-bottom:10px;text-align:left;font-size:12px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
+        '<div><b style="color:#fde047;font-family:Cinzel,serif;font-size:13.5px;">🩺 Live Party Medical &amp; Sanity Diagnosis:</b><br>' +
+        '• <b>😰 Stress Level:</b> <b style="color:#c084fc;">' + (hero.stress || 0) + '% / 100%</b> ' + ((hero.stress || 0) >= 75 ? '<span style="color:#ef4444;font-weight:bold;">[😱 PARANOIA]</span>' : ((hero.stress || 0) >= 50 ? '<span style="color:#f59e0b;font-weight:bold;">[😰 CREEPING DREAD]</span>' : '[🟢 Calm Mind]')) + (isHeroDrunk(hero) ? ' • <b style="color:#fbbf24;">[🍺 STUMBLING DRUNK]</b>' : '') + '<br>' +
+        '• <b>🧠 Resolve State:</b> ' + (myAff ? ('<b style="color:' + (myAff.isVirtue ? '#4ade80' : '#ef4444') + ';">' + escapeHtml(myAff.name) + '</b>') : '<span style="color:#86efac;">None</span>') + '<br>' +
+        '• <b>🦠 Hero Diseases (' + myDis.length + '/3):</b> ' + (myDis.length ? myDis.map(function(d){ return '<b style="color:#fca5a5;">' + escapeHtml(d.name) + '</b>'; }).join(' • ') : '<span style="color:#86efac;">Healthy</span>') + '<br>' +
+        '• <b>🦠 Sellsword Recruit Diseases (' + mercDisList.length + '):</b> ' + (mercDisList.length ? ('<b style="color:#fca5a5;">' + escapeHtml(mercDisList.join(" • ")) + '</b>') : '<span style="color:#86efac;">All Recruits Healthy</span>') + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+          '<button class="btn btn-emerald" onclick="openTownFacilityModal(&#39;sanctuary&#39;)">🕯️ Cathedral Leech Ward</button>' +
+          '<button class="btn ' + (totalPartyDis > 0 ? 'btn-shine' : 'btn-arcane') + '" onclick="openSisterVesperaModal()">💎 Sister Vespera Clinic</button>' +
+        '</div>' +
+      '</div></div>';
+
+    htm += '<div class="card-title"><span>🦠 Physical Diseases Encyclopedia (Affects Both Hero &amp; Recruits)</span></div>' +
+      '<div class="lore-subtitle-box">Whenever a battle ends and your Hero or a Sellsword Recruit still has a disease, a <b>Post-Battle Plague Diagnosis Popup</b> opens automatically. Cure diseases at the <b>🦠 Plague-Doctor&apos;s Leech Ward (2/day)</b> or anytime via <b>💎🩺 Sister Vespera&apos;s Dragon-Glass Clinic (15💎 per disease, unlimited)</b>!</div>' +
+      '<div class="slot-grid" style="margin-bottom:12px;">' +
+      (window.DISEASE_STATES || []).map(function(d) {
+        var hasIt = myDis.some(function(x) { return x.id === d.id; }) || (hero.mercenaries || []).some(function(m) { return m && m.disease && m.disease.id === d.id; });
+        return '<div class="slot-card" style="border-color:' + (hasIt ? '#ef4444' : '#4a3823') + ';text-align:left;">' +
+          '<div style="font-weight:900;color:' + (hasIt ? '#fca5a5' : '#fde047') + ';font-family:Cinzel,serif;font-size:13px;">' + escapeHtml(d.name) + (hasIt ? ' <span style="background:#7f1d1d;color:#fecaca;padding:1px 6px;border-radius:3px;font-size:10px;">ACTIVE IN PARTY!</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:#e5dec9;margin:3px 0;"><b>What It Is:</b> ' + escapeHtml(d.what || '') + '</div>' +
+          '<div style="font-size:11.5px;color:#f87171;font-weight:bold;margin:2px 0;">Hero Effect: ' + escapeHtml(d.desc) + ' | Recruit Effect: ' + escapeHtml(d.recruitEffect || '-15% ATK') + '</div>' +
+          '<div style="font-size:11px;color:#86efac;"><b>How Contracted &amp; Cure:</b> ' + escapeHtml(d.originLore || '') + ' ' + escapeHtml(d.cureHow || '') + '</div>' +
+        '</div>';
+      }).join('') + '</div>';
+
+    htm += '<div class="card-title"><span>😰 Sanity Thresholds, Mental Afflictions &amp; Heroic Virtues (0–100% Stress)</span></div>' +
+      '<div class="slot-grid">' +
+      ((window.RESOLVE_STATES && RESOLVE_STATES.afflictions) ? RESOLVE_STATES.afflictions : []).map(function(a) {
+        return '<div class="slot-card" style="border-color:#991b1b;text-align:left;">' +
+          '<div style="font-weight:900;color:#fca5a5;font-family:Cinzel,serif;font-size:13px;">' + escapeHtml(a.name) + '</div>' +
+          '<div style="font-size:11.5px;color:#f87171;font-weight:bold;margin:3px 0;">Debuff: ' + escapeHtml(a.desc) + '</div>' +
+          '<div style="font-size:11px;color:#e5dec9;"><b>Cure:</b> Pray at the <b>🙏 Confessional Booth</b>, perform a Sanctuary Rite, or sleep 2+ hours offline in a <b>Cot, Feather Suite, or Royal Palace</b>.</div>' +
+        '</div>';
+      }).join('') +
+      ((window.RESOLVE_STATES && RESOLVE_STATES.virtues) ? RESOLVE_STATES.virtues : []).map(function(v) {
+        return '<div class="slot-card" style="border-color:#15803d;text-align:left;">' +
+          '<div style="font-weight:900;color:#4ade80;font-family:Cinzel,serif;font-size:13px;">' + escapeHtml(v.name) + ' (25% Roll)</div>' +
+          '<div style="font-size:11.5px;color:#86efac;font-weight:bold;margin:3px 0;">Blessing: ' + escapeHtml(v.desc) + '</div>' +
+          '<div style="font-size:11px;color:#e5dec9;"><b>Effect:</b> Instantly drops Stress to 40% and empowers your hero for 6 Quests!</div>' +
+        '</div>';
+      }).join('') + '</div>';
+  } else if (currentHelpSubTab === "quirks") {
+    var totDeaths = hero.totalRecruitDeaths || (hero.fallenHeroes ? hero.fallenHeroes.length : 0);
+    var curHazPct = Math.min(60, totDeaths * 12);
+    htm += '<div class="lore-subtitle-box">⚖️ <b>The Two-Helper Party Law &amp; Mortality:</b> Bring at most <b>2 Helpers</b> into battle. Fallen Sellswords &amp; Companions require <b>7 real-world days</b> to revive (+12% Hazard Pay per death, capped at +60% — Current: +' + curHazPct + '%).</div>';
+
+    if (hero.mercenaries && hero.mercenaries.length) {
+      htm += '<div style="background:#09131c;border:1px solid #38bdf8;border-radius:6px;padding:10px;margin-bottom:10px;text-align:left;font-size:12px;">' +
+        '<div style="font-weight:900;color:#7dd3fc;font-family:Cinzel,serif;font-size:13px;margin-bottom:4px;">🎖️ Your Current Sellsword Retinue Diagnosis:</div>' +
+        hero.mercenaries.map(function(m, idx) {
+          var qTxt = m.quirk ? ('<b style="color:' + (m.quirk.isPositive ? '#4ade80' : '#f87171') + ';">' + escapeHtml(m.quirk.name) + '</b>') : '<span style="color:#86efac;">No Quirk</span>';
+          var dTxt = m.disease ? (' • <b style="color:#ef4444;">🦠 ' + escapeHtml(m.disease.name) + '</b>') : '';
+          return '<div style="padding:3px 0;">• <b>' + m.icon + ' ' + escapeHtml(m.name) + ' (❤️ ' + m.hp + '/' + m.maxHp + ' HP):</b> Quirk: ' + qTxt + dTxt + '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    htm += '<div class="card-title"><span>🧠 Mercenary Psychological Quirks Encyclopedia</span></div>' +
+      '<div class="slot-grid">' +
+      (window.MERCENARY_QUIRKS || []).map(function(q) {
+        return '<div class="slot-card" style="border-color:' + (q.isPositive ? '#15803d' : '#991b1b') + ';text-align:left;">' +
+          '<div style="font-weight:900;color:' + (q.isPositive ? '#4ade80' : '#fca5a5') + ';font-family:Cinzel,serif;font-size:13px;">' + (q.isPositive ? '🌟 Positive Quirk: ' : '⚠️ Negative Quirk: ') + escapeHtml(q.name) + '</div>' +
+          '<div style="font-size:11.5px;color:#fde68a;font-weight:bold;margin:3px 0;">Combat Effect: ' + escapeHtml(q.desc) + '</div>' +
+          '<div style="font-size:11px;color:#e5dec9;">' + (q.isPositive ? '<b>Keep This Quirk:</b> Permanently empowers this sellsword!' : '<b>How to Cure:</b> Cure at the <b>🏥 Sanctuary Sanitarium</b> inside the Cathedral or Retinue tab.') + '</div>' +
+        '</div>';
+      }).join('') + '</div>';
+  } else {
+    htm += '<div style="background:#0b0811;border:1px solid #c5a059;border-radius:6px;padding:12px;text-align:left;font-size:12.5px;line-height:1.65;color:#e5dec9;">' +
+      '<div style="font-size:14.5px;font-weight:900;color:#fde047;font-family:Cinzel,serif;margin-bottom:6px;">🍺 Boar&apos;s Head Taproom, Above-Floor Sleep &amp; The Astral Ley-Well</div>' +
+      '<div style="margin-bottom:8px;">• <b>🥃 Aged Dragon-Malt Reserve (-50% Stress / 2h Drunk Risk):</b> At the Boar&apos;s Head Tavern, you can buy a costly goblet of Aged Dragon-Malt to drop Stress by <b>-50%</b> immediately. Ordering multiple goblets within 2 hours risks a <b>2-Hour 🍺 Stumbling Drunk</b> debuff (-15% Hit Accuracy, -12% Dodge &amp; -15% Wits)!</div>' +
+      '<div style="margin-bottom:8px;">• <b>🛌 Sleeping Above the Floor Heals Stress:</b> Sleeping on the <b>Cold Tavern Floor</b> gives <b>0% Stress relief</b>. Checking into a <b>Straw Cot, Feather Suite, or Royal Palace</b> eases -15% to -35% Stress immediately on check-in, purges -65% to -100% Stress &amp; Afflictions after 2 hours, and grants a <b>Lucid Calm (-25% to -35% Stress Gain)</b> ward!</div>' +
+      '<div style="margin-bottom:8px;">• <b>⚡🔥 The Astral Ley-Well (Max 2/Day Full Energy):</b> Spend <b>4💎 Dragon Gems, Gold &amp; 12 Monster Trophies</b> in the Citadel to restore <b>100% of your Max Quest Energy</b> up to twice a day!</div>' +
+      '<div style="margin-bottom:10px;">• <b>🏹🔥 Huntsman&apos;s Trophy Exchange:</b> Trade surplus Monster Trophies (10, 15, or 30 at a time, no daily limit) in the Warrants or Bazaar tab for Stress relief, Kingdom Timber/Stone/Iron, Rare–Mythic Reliquary Chests, or guaranteed Dragon Gems + Permanent Stat Points!</div>' +
+      '<div style="font-size:14.5px;font-weight:900;color:#fca5a5;font-family:Cinzel,serif;margin-bottom:6px;">🌹 Dynasty Bloodlines &amp; Same-Slot Graveyard Exhumation</div>' +
+      '<div>• Each Royal Consort can bear at most <b>3 Royal Scions in her lifetime</b> (fallen heirs permanently count toward her 3-child limit). If a Hero suffers True Permadeath, forge a new Hero in that same slot and reach <b>Level 5</b> to exhume their soul at <b>⚰️ The Weeping Graveyard</b> (+20% Stats &amp; 50% Heirloom)!</div>' +
+    '</div>';
+  }
+  return htm;
+}
+
+function showHeroOnboardingLoreAndGuideModal(mode) {
+  if (!hero) return;
+  ensureHeroV3Fields(hero);
+  if (!Array.isArray(hero.seenIntros)) hero.seenIntros = [];
+  if (!hero.seenIntros.includes("starter_guide_v1")) {
+    hero.seenIntros.push("starter_guide_v1");
+  }
+
+  var titleBanner = "📜 THE OATH OF VALORIA — NEW CHAMPION'S GUIDE";
+  var loreParagraph = "";
+  var originMeta = (window.HERO_ORIGINS && HERO_ORIGINS[hero.origin]) ? HERO_ORIGINS[hero.origin] : null;
+  var cryptEntry = (activeSlotKey && serverData && serverData.fallenCrypt && serverData.fallenCrypt[activeSlotKey] && serverData.fallenCrypt[activeSlotKey].hero) ? serverData.fallenCrypt[activeSlotKey].hero : null;
+
+  if (mode === "heir") {
+    titleBanner = "👑👶 ROYAL DYNASTY SUCCESSION — THE CROWN PASSES";
+    loreParagraph = "The bells of the High Citadel toll across the twenty-two realms! Your parent has abdicated the throne, passing the royal signet, the family vault, and the ancestral banner to you, <b>" + escapeHtml(hero.name) + " (Prestige Rank " + (hero.prestigeRank || 1) + ")</b>.";
+  } else if (mode === "prestige") {
+    titleBanner = "🌟👑 RITE OF ETERNAL PRESTIGE — REBORN IN GLORY";
+    loreParagraph = "Having ascended to the pinnacle of mortal war, you drank from the Chalice of First Genesis and stepped through the Astral Cycle as <b>" + escapeHtml(hero.name) + " (Prestige Rank " + (hero.prestigeRank || 1) + ")</b>!";
+  } else {
+    var origDesc = originMeta ? originMeta.desc : "Exiled from the high courts, you arrive at the iron gates of Valoria with little more than your blade and your oath.";
+    loreParagraph = "The iron portcullis of the High Citadel groans open beneath a blood-red sky. You enter Valoria as <b>" + escapeHtml(hero.name) + "</b>, a sworn <b>" + escapeHtml(hero.race + " " + hero.calling) + "</b> (<i>" + escapeHtml(origDesc) + "</i>), carrying <b>3x 🪽 Seals of the Valkyrie</b>.";
+  }
+
+  var ancestorGraveAlert = "";
+  if (cryptEntry && cryptEntry.name) {
+    ancestorGraveAlert = '<div style="background:#1f091d;border:2px solid #c084fc;border-radius:4px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#fde047;text-align:left;">' +
+      '⛏️👻 <b>ANCESTRAL SOUL BURIED IN THIS SLOT:</b> Reach <b>Level 5</b> and visit <b>⚰️ The Weeping Graveyard</b> in the Citadel to dig up the soul of <b>' + escapeHtml(cryptEntry.name) + '</b> (+20% Stats &amp; 50% Heirloom)!' +
+    '</div>';
+  }
+
+  showPopupModal(
+    '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px;">' +
+      renderHeroPortraitSvg(hero, 60) +
+      '<div style="text-align:left;">' +
+        '<div style="font-size:17px;font-weight:900;color:#fde047;font-family:Cinzel,serif;">' + titleBanner + '</div>' +
+        '<div style="font-size:12px;color:#7dd3fc;">Sworn ' + escapeHtml(hero.race + ' ' + hero.calling) + ' • Starting with <b>3/3 🪽 Valkyrie Seals</b> &amp; <b>' + hero.quests + '⚡ Stamina</b></div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="background:#0b0811;border:2px solid #c5a059;border-radius:4px;padding:10px 12px;margin-bottom:8px;text-align:left;font-size:12.5px;line-height:1.55;color:#e5dec9;">' +
+      loreParagraph +
+    '</div>' +
+    ancestorGraveAlert +
+    '<div style="background:#091318;border:1px solid #38bdf8;border-radius:4px;padding:10px 12px;margin-bottom:10px;text-align:left;font-size:12px;line-height:1.55;color:#e0f2fe;">' +
+      '<div style="font-size:13.5px;font-weight:900;color:#fde047;font-family:Cinzel,serif;margin-bottom:6px;">🧭 5-STEP CAMPAIGN QUICK-START:</div>' +
+      '<div style="margin-bottom:4px;"><b>1. 📋 Sign Royal Warrants:</b> Complete <b>10/10 Warrants</b> in a region to unseal its Area Boss &amp; earn +1💎 Gem.</div>' +
+      '<div style="margin-bottom:4px;"><b>2. ⚔️ Shred Armor &amp; Time QTEs:</b> Strike <b>🛡️ Torso</b> first to break Enemy Armor, then target <b>👑 Head</b>!</div>' +
+      '<div style="margin-bottom:4px;"><b>3. 🦠 Cure Diseases &amp; Stress:</b> Visit <b>💎🩺 Sister Vespera</b> or the <b>🕯️ Cathedral</b> in the Citadel to cure plagues, or drink <b>🥃 Dragon-Malt</b> / sleep above the floor at the <b>🍺 Boar&apos;s Head Tavern</b> to drop Stress!</div>' +
+      '<div style="margin-bottom:4px;"><b>4. ⚡ Astral Ley-Well &amp; Trophy Exchange:</b> Trade surplus Trophies on the Warrants/Bazaar screen, or sacrifice Gems, Gold &amp; Trophies at the <b>⚡🔥 Astral Ley-Well</b> for 100% Energy (2/day)!</div>' +
+      '<div><b>5. 📚 Grand Royal Library:</b> Tap <b>📚 Library</b> in the top bar or Citadel anytime for the full encyclopedia!</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button class="btn btn-shine" style="flex:1;padding:11px;font-size:13px;" onclick="closePopupModal();setTab(&#39;questboard&#39;);">📋 Step 1: Sign Warrants Now</button>' +
+      '<button class="btn btn-gold" style="flex:1;padding:11px;font-size:13px;" onclick="closePopupModal();setTab(&#39;adventure&#39;);">⚔️ Enter Area 1: Shire Fields</button>' +
+    '</div>'
+  );
+}
 
 // ============================================================================
-// SCROLL-LOCKED BATTLE ENGINE + BREATHING, HALO SPIN, LUNGE, DODGE & PET HP BAR
+// SCROLL-LOCKED BATTLE ENGINE + BREATHING, HALO SPIN, LUNGE, DODGE & FLEE UNLOCK
 // ============================================================================
 window.triggerHitStopZoom = function() {
   document.body.classList.remove("hit-stop-zoom");
@@ -17783,6 +19101,14 @@ function applyBattleDomErgonomics(rootEl) {
   var headBtn = arena.querySelector("button[onclick*='attackHead']");
   if (headBtn && headBtn.parentElement) {
     headBtn.parentElement.classList.add("strike-grid-5");
+  }
+
+  if (activeCombat && (activeCombat.isRoamingMiniBoss || activeCombat.isNemesis || activeCombat.isHerald)) {
+    var fleeBtn = arena.querySelector("button[onclick*='flee']");
+    if (fleeBtn) {
+      fleeBtn.classList.remove("btn-locked");
+      fleeBtn.innerHTML = "🏃 Flee Roaming Threat";
+    }
   }
 
   if (hero && hero.companion) {
@@ -17938,5 +19264,5 @@ function applyBattleDomErgonomics(rootEl) {
 
 boolean part7BBoundaryGuard() { return true }
 // ==============================================================================
-// END OF PART 7 OF 7 — DUNGEON COURT REVIVE v18.3.2 COMPLETE!
+// END OF PART 7B OF 7 — DUNGEON COURT REVIVE v18.4.1 COMPLETE!
 // ==============================================================================
